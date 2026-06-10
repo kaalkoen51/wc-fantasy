@@ -52,6 +52,30 @@ create table if not exists team_stages (
     created_at timestamptz default now()
 );
 
+-- Draft app additions (index.html). Purely additive: nothing daily_pull.py
+-- reads or writes changes. Safe to run on an existing database.
+-- picks.player_id for the TEAM slot uses the convention "team:<TeamName>",
+-- e.g. "team:Argentina"; regular slots use players.json ids like "arg_10".
+alter table leagues add column if not exists invite_code text;
+alter table leagues add column if not exists admin_token text;
+alter table leagues add column if not exists num_managers int default 8;
+alter table leagues add column if not exists pick_duration_seconds int default 60;
+alter table leagues add column if not exists current_pick int default 0;
+alter table leagues add column if not exists pick_started_at timestamptz;
+
+alter table managers add column if not exists join_token text;
+alter table managers add column if not exists draft_position int;
+
+alter table picks add column if not exists pick_number int;
+alter table picks add column if not exists is_sub bool default false;
+alter table picks add column if not exists slot text;
+
+-- Guard the draft against double-picks from racing clients.
+create unique index if not exists picks_league_pick_number_key
+    on picks (league_id, pick_number);
+create unique index if not exists picks_league_player_key
+    on picks (league_id, player_id);
+
 -- Realtime: stream changes to connected clients.
 alter publication supabase_realtime add table leagues;
 alter publication supabase_realtime add table managers;

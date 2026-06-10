@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WC Fantasy Draft</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  .pos-GK  { background:#7c3aed33; color:#c4b5fd; }
+  .pos-DEF { background:#0ea5e933; color:#7dd3fc; }
+  .pos-MID { background:#22c55e33; color:#86efac; }
+  .pos-FWD { background:#f9731633; color:#fdba74; }
+  .pos-TEAM{ background:#eab30833; color:#fde047; }
+</style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+
+<header class="sticky top-0 z-20 bg-slate-900/95 backdrop-blur border-b border-slate-800">
+  <div class="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
+    <h1 class="font-bold text-lg">⚽ WC Fantasy <span class="text-emerald-400">Draft</span></h1>
+    <div class="flex items-center gap-2 text-xs text-slate-400">
+      <span id="hdr-league" class="truncate max-w-[10rem]"></span>
+      <span id="conn-dot" title="realtime connection" class="w-2 h-2 rounded-full bg-slate-600"></span>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-3xl mx-auto px-4 py-5 pb-24">
+
+  <!-- Supabase config -->
+  <section data-view="config" class="hidden space-y-4">
+    <h2 class="text-xl font-semibold">Connect to Supabase</h2>
+    <p class="text-sm text-slate-400">One-time setup on this device. Use your project URL and the
+      <b>anon</b> key (Project Settings → API). Stored only in this browser.</p>
+    <input id="cfg-url" placeholder="https://xxxx.supabase.co" class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2">
+    <input id="cfg-key" placeholder="anon key" class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2">
+    <button id="cfg-save" class="w-full bg-emerald-600 hover:bg-emerald-500 rounded-lg py-2 font-semibold">Save & continue</button>
+  </section>
+
+  <!-- Home -->
+  <section data-view="home" class="hidden space-y-4">
+    <div id="home-resume" class="hidden rounded-xl border border-emerald-700 bg-emerald-950/40 p-4">
+      <div class="text-sm text-slate-300 mb-2">You have a league on this device:</div>
+      <div class="flex items-center justify-between gap-2">
+        <span id="home-resume-name" class="font-semibold"></span>
+        <div class="flex gap-2">
+          <button id="home-resume-go" class="bg-emerald-600 hover:bg-emerald-500 rounded-lg px-4 py-1.5 text-sm font-semibold">Resume</button>
+          <button id="home-resume-leave" class="text-xs text-slate-400 underline">forget</button>
+        </div>
+      </div>
+    </div>
+    <button id="home-create" class="w-full bg-emerald-600 hover:bg-emerald-500 rounded-xl py-4 font-semibold text-lg">Create a league</button>
+    <button id="home-join" class="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl py-4 font-semibold text-lg">Join with invite code</button>
+    <button id="home-reconfig" class="w-full text-xs text-slate-500 underline pt-2">change Supabase connection</button>
+  </section>
+
+  <!-- Create league -->
+  <section data-view="create" class="hidden space-y-4">
+    <h2 class="text-xl font-semibold">Create a league</h2>
+    <label class="block text-sm text-slate-400">League name
+      <input id="create-name" placeholder="Braai Boys WC 2026" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100"></label>
+    <label class="block text-sm text-slate-400">Number of managers (5–10 recommended)
+      <input id="create-num" type="number" min="2" max="10" value="8" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100"></label>
+    <label class="block text-sm text-slate-400">Seconds per pick
+      <input id="create-dur" type="number" min="15" max="300" value="60" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100"></label>
+    <button id="create-go" class="w-full bg-emerald-600 hover:bg-emerald-500 rounded-lg py-2.5 font-semibold">Create league</button>
+    <div id="create-result" class="hidden rounded-xl border border-amber-600 bg-amber-950/30 p-4 space-y-2 text-sm">
+      <p>League created! <b>Save these somewhere safe:</b></p>
+      <p>Invite code (share with managers): <code id="create-code" class="text-amber-300 text-lg font-bold"></code>
+        <button class="copy-btn text-xs underline text-slate-400" data-copy="create-code">copy</button></p>
+      <p>Admin token (stats entry, keep private): <code id="create-admin" class="text-amber-300 break-all"></code>
+        <button class="copy-btn text-xs underline text-slate-400" data-copy="create-admin">copy</button></p>
+      <p class="text-slate-400">You're the admin. Join as a manager below to also draft a team.</p>
+      <button id="create-tolobby" class="w-full bg-emerald-600 hover:bg-emerald-500 rounded-lg py-2 font-semibold">Go to lobby</button>
+    </div>
+    <button class="back-btn w-full text-xs text-slate-500 underline">back</button>
+  </section>
+
+  <!-- Join league -->
+  <section data-view="join" class="hidden space-y-4">
+    <h2 class="text-xl font-semibold">Join a league</h2>
+    <label class="block text-sm text-slate-400">Invite code
+      <input id="join-code" placeholder="ABC123" autocapitalize="characters" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100 uppercase tracking-widest"></label>
+    <button id="join-find" class="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg py-2.5 font-semibold">Find league</button>
+    <div id="join-found" class="hidden space-y-3">
+      <div class="rounded-xl border border-slate-700 bg-slate-900 p-4">
+        <div class="font-semibold" id="join-league-name"></div>
+        <div class="text-xs text-slate-400" id="join-league-meta"></div>
+      </div>
+      <div id="join-new-wrap">
+        <label class="block text-sm text-slate-400">Your manager name
+          <input id="join-name" placeholder="Koen" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100"></label>
+        <button id="join-go" class="mt-3 w-full bg-emerald-600 hover:bg-emerald-500 rounded-lg py-2.5 font-semibold">Join as new manager</button>
+      </div>
+      <div id="join-reclaim-wrap" class="hidden">
+        <div class="text-sm text-slate-400 mb-2">Or continue as an existing manager (e.g. switched phones):</div>
+        <div id="join-reclaim-list" class="space-y-2"></div>
+      </div>
+      <div>
+        <label class="block text-sm text-slate-400">Admin? Paste your admin token to manage this league on this device
+          <input id="join-admin-token" placeholder="admin token (optional)" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100"></label>
+      </div>
+    </div>
+    <button class="back-btn w-full text-xs text-slate-500 underline">back</button>
+  </section>
+
+  <!-- Lobby -->
+  <section data-view="lobby" class="hidden space-y-4">
+    <div class="rounded-xl border border-slate-700 bg-slate-900 p-4">
+      <div class="text-xs text-slate-400">League</div>
+      <div id="lobby-name" class="text-xl font-bold"></div>
+      <div class="mt-2 text-sm">Invite code:
+        <code id="lobby-code" class="text-amber-300 text-lg font-bold tracking-widest"></code>
+        <button class="copy-btn text-xs underline text-slate-400" data-copy="lobby-code">copy</button>
+      </div>
+      <div id="lobby-settings" class="text-xs text-slate-400 mt-1"></div>
+    </div>
+    <div class="rounded-xl border border-slate-700 bg-slate-900 p-4">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="font-semibold">Managers</h3>
+        <span id="lobby-count" class="text-sm text-slate-400"></span>
+      </div>
+      <ul id="lobby-managers" class="space-y-1.5 text-sm"></ul>
+    </div>
+    <div id="lobby-admin" class="hidden space-y-2">
+      <button id="lobby-start" class="w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 rounded-xl py-3 font-semibold">Start draft</button>
+      <p class="text-xs text-slate-500 text-center">Random draft order is assigned when the draft starts. Snake order, 14 rounds.</p>
+    </div>
+    <p id="lobby-wait" class="text-center text-sm text-slate-400">Waiting for the admin to start the draft…</p>
+  </section>
+
+  <!-- Draft room (part 2) -->
+  <section data-view="draft" class="hidden space-y-4">
+    <p class="text-center text-sm text-slate-400 py-10">Draft view coming in part 2.</p>
+  </section>
+
+  <!-- Leaderboard / rosters (part 3) -->
+  <section data-view="board" class="hidden space-y-4">
+    <p class="text-center text-sm text-slate-400 py-10">Leaderboard coming in part 3.</p>
+  </section>
+
+  <!-- Admin stats entry (part 3) -->
+  <section data-view="admin" class="hidden space-y-4">
+    <p class="text-center text-sm text-slate-400 py-10">Admin view coming in part 3.</p>
+  </section>
+
+</main>
+
+<div id="toast" class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-sm z-50 max-w-[90vw]"></div>
+
+<script>
+"use strict";
+
+/* ---------- constants ---------- */
+
+const SLOT_ORDER = ["GK","DEF","DEF","DEF","MID","MID","MID","FWD","FWD","TEAM",
+                    "SUB_GK","SUB_DEF","SUB_MID","SUB_FWD"];
+const SLOT_POS = { GK:"GK", DEF:"DEF", MID:"MID", FWD:"FWD", TEAM:"TEAM",
+                   SUB_GK:"GK", SUB_DEF:"DEF", SUB_MID:"MID", SUB_FWD:"FWD" };
+
+// Mirrors SCORING in daily_pull.py — keep the two in sync.
+const SCORING = {
+  goal:        { GK: 8, DEF: 6, MID: 5, FWD: 4 },
+  assist:      3,
+  clean_sheet: { GK: 6, DEF: 4, MID: 1, FWD: 0 },
+  yellow_card: -1,
+  red_card:    -3,
+  save_per_2:  1,
+  motm:        3,
+  penalty_saved:  5,
+  penalty_missed: -2,
+};
+
+/* ---------- state & tiny helpers ---------- */
+
+const S = {
+  sb: null, players: [], teams: [],
+  league: null, managers: [], picks: [], stats: [],
+  channel: null,
+};
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
+  (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+
+let toastTimer;
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.add("hidden"), 3500);
+}
+
+const getConfig  = () => JSON.parse(localStorage.getItem("wcf_config") || "null");
+const setConfig  = (c) => localStorage.setItem("wcf_config", JSON.stringify(c));
+const getSession = () => JSON.parse(localStorage.getItem("wcf_session") || "null");
+const setSession = (s) => s ? localStorage.setItem("wcf_session", JSON.stringify(s))
+                            : localStorage.removeItem("wcf_session");
+
+function myManager() {
+  const s = getSession();
+  return S.managers.find((m) => m.id === s?.managerId) || null;
+}
+function isAdmin() {
+  const s = getSession();
+  return !!(S.league && s?.adminToken && s.adminToken === S.league.admin_token);
+}
+
+function showView(name) {
+  document.querySelectorAll("[data-view]").forEach(
+    (el) => el.classList.toggle("hidden", el.dataset.view !== name));
+  window.scrollTo(0, 0);
+}
+
+function genInviteCode() {
+  const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  return Array.from(crypto.getRandomValues(new Uint8Array(6)),
+    (b) => chars[b % chars.length]).join("");
+}
+
+/* ---------- data loading & realtime ---------- */
+
+async function loadPlayers() {
+  if (S.players.length) return;
+  try {
+    const resp = await fetch("players.json");
+    S.players = await resp.json();
+    S.teams = [...new Set(S.players.map((p) => p.team))].sort();
+  } catch (e) {
+    toast("Could not load players.json — serve this file over HTTP (e.g. GitHub Pages or `python -m http.server`).");
+    throw e;
+  }
+}
+
+async function refetchAll() {
+  const id = getSession()?.leagueId;
+  if (!id) return;
+  const [l, m, p, st] = await Promise.all([
+    S.sb.from("leagues").select("*").eq("id", id).maybeSingle(),
+    S.sb.from("managers").select("*").eq("league_id", id).order("created_at"),
+    S.sb.from("picks").select("*").eq("league_id", id).order("pick_number"),
+    S.sb.from("match_stats").select("*").eq("league_id", id),
+  ]);
+  const err = l.error || m.error || p.error || st.error;
+  if (err) { toast("Load failed: " + err.message); return; }
+  if (!l.data) { toast("League not found."); setSession(null); showView("home"); return; }
+  S.league = l.data;
+  S.managers = m.data;
+  S.picks = p.data;
+  S.stats = st.data;
+  route();
+}
+
+let refetchTimer;
+const scheduleRefetch = () => { clearTimeout(refetchTimer); refetchTimer = setTimeout(refetchAll, 250); };
+
+function subscribeRealtime() {
+  const id = getSession()?.leagueId;
+  if (!id || S.channel) return;
+  S.channel = S.sb.channel("league-" + id)
+    .on("postgres_changes", { event: "*", schema: "public", table: "leagues",     filter: "id=eq." + id },        scheduleRefetch)
+    .on("postgres_changes", { event: "*", schema: "public", table: "managers",    filter: "league_id=eq." + id }, scheduleRefetch)
+    .on("postgres_changes", { event: "*", schema: "public", table: "picks",       filter: "league_id=eq." + id }, scheduleRefetch)
+    .on("postgres_changes", { event: "*", schema: "public", table: "match_stats", filter: "league_id=eq." + id }, scheduleRefetch)
+    .subscribe((status) => {
+      $("conn-dot").className = "w-2 h-2 rounded-full " +
+        (status === "SUBSCRIBED" ? "bg-emerald-400" : "bg-amber-400");
+    });
+}
+
+function leaveLeague() {
+  if (S.channel) { S.sb.removeChannel(S.channel); S.channel = null; }
+  setSession(null);
+  S.league = null; S.managers = []; S.picks = []; S.stats = [];
+  $("hdr-league").textContent = "";
+  renderHome();
+  showView("home");
+}
+
+/* ---------- routing ---------- */
+
+const totalPicks = () => SLOT_ORDER.length * (S.league?.num_managers || 0);
+
+function route() {
+  if (!S.league) { showView("home"); return; }
+  $("hdr-league").textContent = S.league.name;
+  if (!S.league.current_pick) {
+    renderLobby();
+    showView("lobby");
+  } else if (S.league.current_pick <= totalPicks()) {
+    renderDraft();
+    showView("draft");
+  } else {
+    renderBoard();
+    showView("board");
+  }
+}
+
+async function enterLeague() {
+  await loadPlayers();
+  await refetchAll();
+  subscribeRealtime();
+}
+
+/* ---------- create / join / lobby ---------- */
+
+async function createLeague() {
+  const name = $("create-name").value.trim();
+  const num = parseInt($("create-num").value, 10);
+  const dur = parseInt($("create-dur").value, 10);
+  if (!name) return toast("Give the league a name.");
+  if (!(num >= 2 && num <= 10)) return toast("Managers must be 2–10.");
+  if (!(dur >= 15 && dur <= 300)) return toast("Pick duration must be 15–300s.");
+  const row = {
+    name, num_managers: num, pick_duration_seconds: dur,
+    invite_code: genInviteCode(), admin_token: crypto.randomUUID(), current_pick: 0,
+  };
+  const { data, error } = await S.sb.from("leagues").insert(row).select().single();
+  if (error) return toast("Create failed: " + error.message);
+  setSession({ leagueId: data.id, adminToken: data.admin_token, managerId: null });
+  $("create-code").textContent = data.invite_code;
+  $("create-admin").textContent = data.admin_token;
+  $("create-result").classList.remove("hidden");
+  $("create-go").disabled = true;
+}
+
+async function findLeague() {
+  const code = $("join-code").value.trim().toUpperCase();
+  if (code.length < 4) return toast("Enter the invite code.");
+  const { data, error } = await S.sb.from("leagues")
+    .select("*").eq("invite_code", code).maybeSingle();
+  if (error) return toast(error.message);
+  if (!data) return toast("No league with that code.");
+  S.joinTarget = data;
+  const { data: mgrs } = await S.sb.from("managers")
+    .select("*").eq("league_id", data.id).order("created_at");
+  S.joinManagers = mgrs || [];
+  $("join-league-name").textContent = data.name;
+  $("join-league-meta").textContent =
+    `${S.joinManagers.length}/${data.num_managers} managers · ${data.pick_duration_seconds}s per pick` +
+    (data.current_pick ? " · draft already started" : "");
+  const full = S.joinManagers.length >= data.num_managers;
+  $("join-new-wrap").classList.toggle("hidden", full || data.current_pick > 0);
+  const list = $("join-reclaim-list");
+  list.innerHTML = "";
+  for (const m of S.joinManagers) {
+    const b = document.createElement("button");
+    b.className = "w-full text-left rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 hover:border-emerald-500";
+    b.textContent = m.name;
+    b.onclick = () => claimManager(m);
+    list.appendChild(b);
+  }
+  $("join-reclaim-wrap").classList.toggle("hidden", !S.joinManagers.length);
+  $("join-found").classList.remove("hidden");
+}
+
+function joinSessionBase() {
+  const tok = $("join-admin-token").value.trim();
+  return {
+    leagueId: S.joinTarget.id,
+    adminToken: tok && tok === S.joinTarget.admin_token ? tok : (getSession()?.leagueId === S.joinTarget.id ? getSession()?.adminToken : null),
+  };
+}
+
+async function joinLeague() {
+  const name = $("join-name").value.trim();
+  if (!name) return toast("Enter your manager name.");
+  if (S.joinManagers.some((m) => m.name.toLowerCase() === name.toLowerCase()))
+    return toast("That name is taken — pick another or reclaim it below.");
+  if (S.joinManagers.length >= S.joinTarget.num_managers) return toast("League is full.");
+  const { data, error } = await S.sb.from("managers")
+    .insert({ league_id: S.joinTarget.id, name, join_token: crypto.randomUUID() })
+    .select().single();
+  if (error) return toast("Join failed: " + error.message);
+  setSession({ ...joinSessionBase(), managerId: data.id });
+  await enterLeague();
+}
+
+// Trust-based reclaim (friend group, open RLS): pick your name to continue
+// on a new device.
+async function claimManager(m) {
+  setSession({ ...joinSessionBase(), managerId: m.id });
+  await enterLeague();
+}
+
+function renderLobby() {
+  const L = S.league;
+  $("lobby-name").textContent = L.name;
+  $("lobby-code").textContent = L.invite_code;
+  $("lobby-settings").textContent =
+    `${L.num_managers} managers · ${L.pick_duration_seconds}s per pick · 14 rounds`;
+  $("lobby-count").textContent = `${S.managers.length}/${L.num_managers}`;
+  const me = myManager();
+  $("lobby-managers").innerHTML = S.managers.map((m) =>
+    `<li class="rounded-lg bg-slate-800/60 px-3 py-2">${esc(m.name)}` +
+    (m.id === me?.id ? ' <span class="text-emerald-400 text-xs">(you)</span>' : "") +
+    "</li>").join("") || '<li class="text-slate-500">No one yet…</li>';
+  const admin = isAdmin();
+  $("lobby-admin").classList.toggle("hidden", !admin);
+  $("lobby-wait").classList.toggle("hidden", admin);
+  const ready = S.managers.length === L.num_managers;
+  $("lobby-start").disabled = !ready;
+  $("lobby-start").textContent = ready
+    ? "Start draft" : `Start draft (waiting for ${L.num_managers - S.managers.length} more)`;
+}
+
+async function startDraft() {
+  if (!isAdmin()) return;
+  if (S.managers.length !== S.league.num_managers) return;
+  const shuffled = [...S.managers];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  await Promise.all(shuffled.map((m, i) =>
+    S.sb.from("managers").update({ draft_position: i + 1 }).eq("id", m.id)));
+  const { error } = await S.sb.from("leagues")
+    .update({ current_pick: 1, pick_started_at: new Date().toISOString() })
+    .eq("id", S.league.id).eq("current_pick", 0);
+  if (error) return toast(error.message);
+  await refetchAll();
+}
+
+/* ---------- draft (part 2) ---------- */
+
+function renderDraft() {}
+
+/* ---------- scoring & leaderboard (part 3) ---------- */
+
+function renderBoard() {}
+
+/* ---------- home & init ---------- */
+
+function renderHome() {
+  const sess = getSession();
+  const has = !!sess?.leagueId;
+  $("home-resume").classList.toggle("hidden", !has);
+  if (has) $("home-resume-name").textContent = "Tap to rejoin your league";
+}
+
+function wire() {
+  $("cfg-save").onclick = () => {
+    const url = $("cfg-url").value.trim().replace(/\/$/, "");
+    const key = $("cfg-key").value.trim();
+    if (!url.startsWith("https://") || !key) return toast("Enter the project URL and anon key.");
+    setConfig({ url, key });
+    location.reload();
+  };
+  $("home-create").onclick = () => showView("create");
+  $("home-join").onclick = () => showView("join");
+  $("home-reconfig").onclick = () => { localStorage.removeItem("wcf_config"); location.reload(); };
+  $("home-resume-go").onclick = () => enterLeague().catch((e) => toast(e.message));
+  $("home-resume-leave").onclick = leaveLeague;
+  $("create-go").onclick = () => createLeague().catch((e) => toast(e.message));
+  $("create-tolobby").onclick = () => enterLeague().catch((e) => toast(e.message));
+  $("join-find").onclick = () => findLeague().catch((e) => toast(e.message));
+  $("join-go").onclick = () => joinLeague().catch((e) => toast(e.message));
+  $("lobby-start").onclick = () => startDraft().catch((e) => toast(e.message));
+  document.querySelectorAll(".back-btn").forEach((b) => b.onclick = () => showView("home"));
+  document.querySelectorAll(".copy-btn").forEach((b) => b.onclick = () => {
+    navigator.clipboard.writeText($(b.dataset.copy).textContent).then(() => toast("Copied"));
+  });
+}
+
+async function init() {
+  wire();
+  const cfg = getConfig();
+  if (!cfg) { showView("config"); return; }
+  S.sb = window.supabase.createClient(cfg.url, cfg.key);
+  renderHome();
+  const sess = getSession();
+  if (sess?.leagueId) {
+    try { await enterLeague(); } catch { showView("home"); }
+  } else {
+    showView("home");
+  }
+}
+
+document.addEventListener("DOMContentLoaded", init);
+</script>
+</body>
+</html>
