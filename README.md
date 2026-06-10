@@ -1,137 +1,164 @@
 # WC Fantasy
 
-A World Cup 2026 fantasy football league for a friend group: a live snake
-draft app (`index.html`) plus daily stats automation. A GitHub Actions
-workflow runs once a day at **06:00 SAST** (04:00 UTC), pulls
-completed-match player statistics from [API-Football](https://www.api-football.com/),
-calculates fantasy points, and upserts them to a Supabase `match_stats` table.
+World Cup 2026 fantasy league for the friend group: a live snake-draft web
+app (`index.html`) backed by Supabase, plus a GitHub Actions job that pulls
+match stats from API-Football every morning and scores everyone's players.
 
-## The draft app (`index.html`)
+**What's here:**
 
-Single-file app (Supabase JS + Tailwind via CDN). Serve it over HTTP next to
-`players.json` — GitHub Pages works (**Settings → Pages → deploy from
-branch**), or locally `python -m http.server` and open
-`http://localhost:8000`.
-
-- **First open:** paste your Supabase project URL and **anon** key (stored in
-  the browser, asked once per device).
-- **Lobby:** create a league (you get an invite code for managers and a
-  private admin token), friends join with the code, admin starts the draft
-  when everyone's in.
-- **Live snake draft:** random order, 14 rounds, fixed slot sequence
-  (GK, 3×DEF, 3×MID, 2×FWD, TEAM, then SUB_GK/DEF/MID/FWD). A countdown
-  runs per pick; if it expires, a random eligible player is auto-picked so
-  the draft never stalls. Everyone sees picks live via Supabase Realtime.
-- **Roster:** 10 starters (incl. one national-team pick) + 4 subs. A sub's
-  match only scores when a starter in that position had a match that day
-  and didn't play. TEAM picks earn cumulative stage bonuses as the country
-  progresses: R32 +5, R16 +10, QF +15, SF +20, Final +25, Winner +15
-  (a champion totals 90). The admin sets team stages in the admin view.
-- **Leaderboard:** live totals per manager using the same scoring as
-  `daily_pull.py`, updating as `match_stats` rows land.
-- **Admin:** unlock with the admin token to manually enter or fix
-  `match_stats` rows (fallback alongside the automation). Use match labels
-  in the automation's format: `Home vs Away (YYYY-MM-DD)`.
-
-`test_logic.js` (`node test_logic.js`) smoke-tests the snake order and
-scoring/sub-activation logic extracted from `index.html`.
-
-## How the automation works
-
-- `daily_pull.py` — fetches yesterday's completed fixtures (status FT/AET/PEN)
-  for the configured league, flattens per-player stats, scores them, and
-  upserts rows to Supabase via the REST API. Only players who actually
-  appeared (minutes > 0) are written. Prints a top-10 scorer summary.
-- `schema.sql` — Supabase schema (`leagues`, `managers`, `picks`,
-  `match_stats`, `team_stages`) with realtime enabled and open RLS policies
-  (casual friend-group app, not a public product).
-- `.github/workflows/daily-pull.yml` — the scheduled runner. Also supports
-  manual runs via **Actions → Daily stats pull → Run workflow**.
-- `players.json` — the draft player pool: all 48 squads (26 players each,
-  1,248 total) from the official FIFA squad lists, as a flat array of
-  `{player_id, name, position, team, team_code}`. Ids are
-  `<lowercase FIFA code>_<shirt number>`, e.g. `arg_10` = Lionel Messi.
-- `build_players.py` — regenerates `players.json` from the FIFA squad
-  lists PDF (`pip install requests pypdf`, then `python build_players.py`).
-  Run it again if FIFA publishes a squad update.
-
-### Scoring
-
-| Stat | Points |
+| File | Purpose |
 | --- | --- |
-| Goal | GK 8 / DEF 6 / MID 5 / FWD 4 |
-| Assist | 3 |
-| Clean sheet (≥60 min played, team conceded 0) | GK 6 / DEF 4 / MID 1 / FWD 0 |
-| Yellow card | −1 |
-| Red card | −3 |
-| Saves (GK only) | +1 per 2 saves |
-| Man of the match (highest rating in fixture, ≥7.5) | 3 |
-| Penalty saved | 5 |
-| Penalty missed | −2 |
+| `index.html` | The app: lobby, live snake draft, leaderboard, admin stats entry |
+| `players.json` | Draft pool: all 48 squads, 1,248 players, from the official FIFA squad lists |
+| `schema.sql` | Supabase schema (idempotent — safe to re-run anytime) |
+| `daily_pull.py` | Daily stats pull → fantasy points → `match_stats` upsert |
+| `.github/workflows/daily-pull.yml` | Runs the pull daily at 06:00 SAST (04:00 UTC) |
+| `build_players.py` | Regenerates `players.json` if FIFA updates squads |
+| `test_logic.js` | Smoke tests for draft order + scoring (`node test_logic.js`) |
 
-Players who didn't play score 0 and aren't written to the table.
+Scoring rules live in one place each: `SCORING` in `daily_pull.py` (mirrored
+in `index.html`), and TEAM-pick stage bonuses in `STAGE_BONUS` in
+`index.html`. They're kept in sync by hand — change one, change both.
 
-TEAM picks (national team slot) score separately via stage bonuses set by
-the admin in the app — see the draft app section above. They don't use
-`match_stats`.
+---
 
-## Setup
+## Setup guide (in order)
 
-### 1. Supabase
+### 1. Supabase project
 
-1. Create a project at [supabase.com](https://supabase.com).
-2. Open **SQL Editor**, paste the contents of `schema.sql`, and run it.
-3. Insert a league row and note its id — that's your `FANTASY_LEAGUE_ID`:
-   ```sql
-   insert into leagues (name) values ('WC 2026 Fantasy') returning id;
-   ```
-4. From **Project Settings → API**, grab the project URL (`SUPABASE_URL`)
-   and the `service_role` key (`SUPABASE_SERVICE_KEY`).
+1. Go to [supabase.com](https://supabase.com) → New project (free tier is fine).
+2. Open **SQL Editor**, paste the full contents of `schema.sql`, run it.
+   It's additive and idempotent — if you ran an older version before,
+   just run the current one again on top.
+3. Note where your keys live (**Project Settings → API**); you'll need them
+   in later steps:
+   - **Project URL** — e.g. `https://abcdefgh.supabase.co`
+   - **anon key** — used by the app in the browser
+   - **service_role key** — used only by the daily pull (keep private)
 
-### 2. API-Football
+### 2. Push to GitHub & host the app
 
-Sign up at [api-football.com](https://www.api-football.com/) and copy your
-API key from the dashboard. That's `API_FOOTBALL_KEY`. The free tier
-(100 requests/day) is plenty for one daily pull.
+The repo only exists locally so far. Get it onto GitHub (public repo =
+free GitHub Pages + unlimited Actions minutes):
 
-### 3. GitHub secrets
+```powershell
+winget install GitHub.cli     # then restart the terminal
+gh auth login
+cd C:\Users\koenj\Documents\wc-fantasy
+gh repo create wc-fantasy --public --source . --push
+```
 
-The workflow needs four repository secrets:
+Then host the app with GitHub Pages: repo → **Settings → Pages →
+Build and deployment → Deploy from a branch** → branch `master`, folder
+`/ (root)` → Save. After a minute the app is live at
+`https://<your-username>.github.io/wc-fantasy/`.
+
+For local testing instead (or before pushing):
+
+```powershell
+cd C:\Users\koenj\Documents\wc-fantasy
+python -m http.server
+# open http://localhost:8000
+```
+
+(Don't open `index.html` directly as a file — it needs HTTP to load
+`players.json`.)
+
+### 3. First-run app config
+
+The first time the app opens on any device, it asks for the **Supabase
+project URL** and **anon key** from step 1. They're stored in that
+browser's localStorage — each manager enters them once on their phone.
+Nothing secret: the anon key is meant to be public.
+
+### 4. Daily stats automation
+
+`daily_pull.py` runs every morning at 06:00 SAST via the workflow — it
+fetches yesterday's completed fixtures, scores them, and upserts to
+`match_stats`, which the leaderboard picks up live. It needs four repo
+secrets:
 
 | Secret | Value |
 | --- | --- |
-| `API_FOOTBALL_KEY` | your API-Football key |
-| `SUPABASE_URL` | e.g. `https://abcdefgh.supabase.co` |
-| `SUPABASE_SERVICE_KEY` | the `service_role` key |
-| `FANTASY_LEAGUE_ID` | the uuid from the `leagues` insert above |
+| `API_FOOTBALL_KEY` | from [api-football.com](https://www.api-football.com/) dashboard (free tier: 100 req/day, plenty) |
+| `SUPABASE_URL` | project URL from step 1 |
+| `SUPABASE_SERVICE_KEY` | **service_role** key from step 1 |
+| `FANTASY_LEAGUE_ID` | your league's `leagues.id` uuid — exists only after step 5, so come back for this one |
 
-**Via the web UI:** repo → **Settings → Secrets and variables → Actions →
-New repository secret**, add each of the four.
+Set them via CLI (each prompts for the value):
 
-**Via the GitHub CLI** (prompts for the value, so it never lands in shell
-history):
-
-```sh
+```powershell
 gh secret set API_FOOTBALL_KEY
 gh secret set SUPABASE_URL
 gh secret set SUPABASE_SERVICE_KEY
 gh secret set FANTASY_LEAGUE_ID
 ```
 
-## Running locally
+or web UI: repo → **Settings → Secrets and variables → Actions → New
+repository secret**.
 
-```sh
+Test it without waiting for 6am: **Actions → Daily stats pull → Run
+workflow** (or `gh workflow run daily-pull.yml`). Before the tournament
+starts it should report "No completed fixtures found" — that means it's
+working.
+
+### 5. Create your league & draft
+
+1. Open the app → **Create a league** (name, number of managers, seconds
+   per pick). You get an **invite code** (share with the group) and an
+   **admin token** — save the token somewhere safe; it gates stats entry
+   and team-stage updates, and is shown only once.
+2. Join your own league as a manager from the lobby.
+3. **Get `FANTASY_LEAGUE_ID` for step 4:** in Supabase → **Table editor →
+   leagues** → copy your league row's `id` uuid, then
+   `gh secret set FANTASY_LEAGUE_ID`.
+4. Everyone joins with the invite code on their phones; when the lobby is
+   full, the admin hits **Start draft**. Random snake order, 14 rounds,
+   auto-pick if someone's timer runs out.
+
+**Do a test draft first:** create a throwaway league with 2 managers
+(you + a second browser tab in incognito), draft a few rounds, confirm
+picks appear live in both tabs. Then create the real league.
+
+### 6. Manual stats & team stages (admin)
+
+In the app: **Admin** tab (leaderboard view) → unlock with the admin token.
+
+- **Match stats:** enter/edit/delete per-player rows — fallback or
+  supplement to the automation (rows upsert on player + match, so the
+  6am pull and manual edits don't duplicate). Use the same match-label
+  format the automation writes: `Home vs Away (YYYY-MM-DD)`.
+- **Team stages:** set how far each country has progressed (group → r32 →
+  r16 → qf → sf → final → winner). This drives TEAM-pick stage bonuses on
+  the leaderboard. The automation never touches this — it's always manual,
+  after each knockout round.
+
+### 7. Pre-kickoff checklist (tournament starts tomorrow, June 11)
+
+- [ ] Supabase project created, `schema.sql` run
+- [ ] `gh` installed + authenticated; repo pushed (public)
+- [ ] GitHub Pages enabled; app loads at the Pages URL on your phone
+- [ ] API-Football key obtained
+- [ ] Real league created in the app; invite code + admin token saved
+- [ ] All 4 repo secrets set (incl. `FANTASY_LEAGUE_ID` from the real league)
+- [ ] Workflow run manually once — completes green ("no completed fixtures" is correct pre-tournament)
+- [ ] Test draft done in a throwaway league (2 managers, two browser tabs)
+- [ ] Invite code + app URL shared with the group
+- [ ] Real draft completed before the first match kicks off
+
+First automated stats land the morning of **June 12** (06:00 SAST pull
+covering June 11's completed matches).
+
+---
+
+## Reference
+
+### daily_pull.py CLI
+
+```powershell
 pip install -r requirements.txt
-
-# Dry run for a specific date (no Supabase write):
-API_FOOTBALL_KEY=... python daily_pull.py --date 2026-06-15 --dry-run
-
-# Full run:
-API_FOOTBALL_KEY=... SUPABASE_URL=... SUPABASE_SERVICE_KEY=... \
-FANTASY_LEAGUE_ID=... python daily_pull.py
+$env:API_FOOTBALL_KEY = "..."; python daily_pull.py --date 2026-06-15 --dry-run
 ```
-
-CLI options:
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
@@ -142,8 +169,24 @@ CLI options:
 | `--dry-run` | off | fetch + calculate, but don't write |
 | `--mock` | off | use `mock_data/` sample files, no network |
 
-> **Note on `--mock`:** the `mock_data/` sample files are not included in
-> this repo, so `--mock` won't work out of the box. To use it, add
-> `mock_data/fixtures.json` (an API-Football `/fixtures` response) and
-> `mock_data/players_<fixture_id>.json` (a `/fixtures/players` response)
-> for each fixture in the sample.
+`--mock` needs sample files that aren't in the repo: add
+`mock_data/fixtures.json` (an API-Football `/fixtures` response) and
+`mock_data/players_<fixture_id>.json` per fixture.
+
+### Regenerating players.json
+
+If FIFA publishes squad updates (injury replacements):
+
+```powershell
+pip install requests pypdf
+python build_players.py     # re-downloads the FIFA squad lists PDF
+```
+
+Then commit and push the updated `players.json` so the hosted app picks
+it up. Player ids are `<fifa code>_<shirt number>` (e.g. `arg_10` =
+Messi); TEAM picks use `team:<Country>`.
+
+### Sanity tests
+
+`node test_logic.js` — 22 checks on the snake order, scoring parity with
+`daily_pull.py`, sub activation, and stage bonuses.
