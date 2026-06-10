@@ -82,23 +82,85 @@ create unique index if not exists picks_league_player_key
 create unique index if not exists team_stages_league_team_key
     on team_stages (league_id, team);
 
+-- Manager-to-manager trades. Each trade_items row pairs one of the
+-- proposer's picks with one of the target's picks; the app enforces that
+-- both sides of a pair are in the same position group (GK/DEF/MID/FWD,
+-- subs included; TEAM picks are not tradable).
+create table if not exists trades (
+    id uuid primary key default gen_random_uuid(),
+    league_id uuid references leagues(id) on delete cascade,
+    proposer_manager_id uuid references managers(id) on delete cascade,
+    target_manager_id uuid references managers(id) on delete cascade,
+    status text not null default 'proposed'
+        check (status in ('proposed','countered','accepted','rejected','cancelled')),
+    parent_trade_id uuid references trades(id),
+    created_at timestamptz default now(),
+    updated_at timestamptz default now()
+);
+
+create table if not exists trade_items (
+    id uuid primary key default gen_random_uuid(),
+    trade_id uuid references trades(id) on delete cascade,
+    offered_pick_id uuid references picks(id) on delete cascade,
+    requested_pick_id uuid references picks(id) on delete cascade
+);
+
+-- Atomically execute an accepted trade. Swapping player_id between two
+-- picks rows as plain updates would trip the unique (league_id, player_id)
+-- index mid-swap, so each pair goes through a temp value inside this one
+-- transaction.
+create or replace function accept_trade(p_trade_id uuid) returns void
+language plpgsql as $fn$
+declare
+    item record;
+    a picks%rowtype;
+    b picks%rowtype;
+begin
+    update trades set status = 'accepted', updated_at = now()
+        where id = p_trade_id and status = 'proposed';
+    if not found then
+        raise exception 'trade is no longer open';
+    end if;
+    for item in select * from trade_items where trade_id = p_trade_id loop
+        select * into a from picks where id = item.offered_pick_id;
+        select * into b from picks where id = item.requested_pick_id;
+        if a.id is null or b.id is null then
+            raise exception 'trade references a missing pick';
+        end if;
+        update picks set player_id = 'tmp:' || item.id where id = a.id;
+        update picks set player_id = a.player_id, player_name = a.player_name,
+                         team = a.team where id = b.id;
+        update picks set player_id = b.player_id, player_name = b.player_name,
+                         team = b.team where id = a.id;
+    end loop;
+end
+$fn$;
+
 -- Realtime: stream changes to connected clients.
-alter publication supabase_realtime add table leagues;
-alter publication supabase_realtime add table managers;
-alter publication supabase_realtime add table picks;
-alter publication supabase_realtime add table match_stats;
-alter publication supabase_realtime add table team_stages;
+-- (wrapped so re-running this file never errors on already-added tables)
+do $$
+declare t text;
+begin
+    foreach t in array array['leagues','managers','picks','match_stats',
+                             'team_stages','trades','trade_items'] loop
+        begin
+            execute format('alter publication supabase_realtime add table %I', t);
+        exception when duplicate_object then null;
+        end;
+    end loop;
+end $$;
 
 -- RLS with open policies: this is a casual fantasy app for a friend group,
 -- not a public product. Tighten these if that ever changes.
-alter table leagues enable row level security;
-alter table managers enable row level security;
-alter table picks enable row level security;
-alter table match_stats enable row level security;
-alter table team_stages enable row level security;
-
-create policy "open access" on leagues for all using (true) with check (true);
-create policy "open access" on managers for all using (true) with check (true);
-create policy "open access" on picks for all using (true) with check (true);
-create policy "open access" on match_stats for all using (true) with check (true);
-create policy "open access" on team_stages for all using (true) with check (true);
+-- (drop-then-create keeps re-runs of this file error-free)
+do $$
+declare t text;
+begin
+    foreach t in array array['leagues','managers','picks','match_stats',
+                             'team_stages','trades','trade_items'] loop
+        execute format('alter table %I enable row level security', t);
+        execute format('drop policy if exists "open access" on %I', t);
+        execute format(
+            'create policy "open access" on %I for all using (true) with check (true)', t);
+    end loop;
+end $$;

@@ -165,12 +165,14 @@
   <!-- Leaderboard / rosters -->
   <section data-view="board" class="hidden space-y-4">
     <div class="flex gap-2 text-sm">
-      <button id="tab-lb" class="board-tab flex-1 rounded-lg py-2 font-semibold" data-tab="lb">Leaderboard</button>
+      <button id="tab-lb" class="board-tab flex-1 rounded-lg py-2 font-semibold" data-tab="lb">Table</button>
       <button id="tab-rosters" class="board-tab flex-1 rounded-lg py-2 font-semibold" data-tab="rosters">Rosters</button>
+      <button id="tab-trades" class="board-tab flex-1 rounded-lg py-2 font-semibold" data-tab="trades">Trades</button>
       <button id="tab-admin" class="flex-1 rounded-lg py-2 font-semibold bg-slate-800 border border-slate-700">Admin</button>
     </div>
     <div id="board-lb" class="space-y-2"></div>
     <div id="board-rosters" class="hidden space-y-2"></div>
+    <div id="board-trades" class="hidden"></div>
     <p class="text-xs text-slate-500 text-center">Subs score only for matchdays where a starter in their
       position had a match but didn't play. TEAM picks earn cumulative stage bonuses
       (R32 +5, R16 +10, QF +15, SF +20, Final +25, Winner +15).</p>
@@ -296,7 +298,7 @@ const STAGE_BONUS = { r32: 5, r16: 10, qf: 15, sf: 20, final: 25, winner: 15 };
 
 const S = {
   sb: null, players: [], teams: [],
-  league: null, managers: [], picks: [], stats: [], stages: [],
+  league: null, managers: [], picks: [], stats: [], stages: [], trades: [],
   channel: null,
 };
 
@@ -358,14 +360,16 @@ async function loadPlayers() {
 async function refetchAll() {
   const id = getSession()?.leagueId;
   if (!id) return;
-  const [l, m, p, st, tg] = await Promise.all([
+  const [l, m, p, st, tg, tr] = await Promise.all([
     S.sb.from("leagues").select("*").eq("id", id).maybeSingle(),
     S.sb.from("managers").select("*").eq("league_id", id).order("created_at"),
     S.sb.from("picks").select("*").eq("league_id", id).order("pick_number"),
     S.sb.from("match_stats").select("*").eq("league_id", id),
     S.sb.from("team_stages").select("*").eq("league_id", id),
+    S.sb.from("trades").select("*, trade_items(*)").eq("league_id", id)
+      .order("created_at", { ascending: false }),
   ]);
-  const err = l.error || m.error || p.error || st.error || tg.error;
+  const err = l.error || m.error || p.error || st.error || tg.error || tr.error;
   if (err) { toast("Load failed: " + err.message); return; }
   if (!l.data) { toast("League not found."); setSession(null); showView("home"); return; }
   S.league = l.data;
@@ -373,6 +377,7 @@ async function refetchAll() {
   S.picks = p.data;
   S.stats = st.data;
   S.stages = tg.data;
+  S.trades = tr.data;
   route();
 }
 
@@ -388,6 +393,9 @@ function subscribeRealtime() {
     .on("postgres_changes", { event: "*", schema: "public", table: "picks",       filter: "league_id=eq." + id }, scheduleRefetch)
     .on("postgres_changes", { event: "*", schema: "public", table: "match_stats", filter: "league_id=eq." + id }, scheduleRefetch)
     .on("postgres_changes", { event: "*", schema: "public", table: "team_stages", filter: "league_id=eq." + id }, scheduleRefetch)
+    .on("postgres_changes", { event: "*", schema: "public", table: "trades",      filter: "league_id=eq." + id }, scheduleRefetch)
+    // trade_items has no league_id to filter on; unfiltered is fine at this scale.
+    .on("postgres_changes", { event: "*", schema: "public", table: "trade_items" }, scheduleRefetch)
     .subscribe((status) => {
       $("conn-dot").className = "w-2 h-2 rounded-full " +
         (status === "SUBSCRIBED" ? "bg-emerald-400" : "bg-amber-400");
@@ -856,6 +864,7 @@ function setBoardTab(tab) {
   S.boardTab = tab;
   $("board-lb").classList.toggle("hidden", tab !== "lb");
   $("board-rosters").classList.toggle("hidden", tab !== "rosters");
+  $("board-trades").classList.toggle("hidden", tab !== "trades");
   document.querySelectorAll(".board-tab").forEach((b) => {
     const on = b.dataset.tab === tab;
     b.className = "board-tab flex-1 rounded-lg py-2 font-semibold " +
@@ -889,6 +898,7 @@ function renderBoard() {
       </div>
     </details>`).join("") || '<p class="text-sm text-slate-500">No managers.</p>';
   renderRosters("board-rosters");
+  renderTrades();
 }
 
 /* ---------- trading: free-agent swap ---------- */
@@ -947,6 +957,232 @@ async function doSwap(pick, entry) {
   }
   toast(`Swapped in ${entry.name} for ${pick.player_name}.`);
   closeSwap();
+  scheduleRefetch();
+}
+
+/* ---------- trading: manager-to-manager ---------- */
+
+const pickById = (id) => S.picks.find((p) => p.id === id);
+
+// Both sides of a trade pair must be in the same position group; subs and
+// starters mix freely within a group (SUB_GK ↔ GK is fine). TEAM picks
+// are never tradable.
+function pairValid(a, b) {
+  return !!a && !!b && a.slot !== "TEAM" && b.slot !== "TEAM"
+    && slotGroup(a.slot) === slotGroup(b.slot);
+}
+
+// pairs: [{ mine: pick, theirs: pick }] -> error message, or null if valid.
+function tradeError(pairs) {
+  if (!pairs.length) return "Add at least one pair.";
+  const offered = new Set(), requested = new Set();
+  for (const { mine, theirs } of pairs) {
+    if (!mine || !theirs) return "Every pair needs a player on both sides.";
+    if (!pairValid(mine, theirs))
+      return "Pairs must match position groups (GK↔GK, DEF↔DEF, MID↔MID, FWD↔FWD).";
+    if (offered.has(mine.id) || requested.has(theirs.id))
+      return "A player can only appear in one pair.";
+    offered.add(mine.id);
+    requested.add(theirs.id);
+  }
+  return null;
+}
+
+function openBuilder(targetId = "", parentId = null) {
+  S.builder = { target: targetId, parent: parentId, pairs: [{ mine: "", theirs: "" }] };
+  setBoardTab("trades");
+  renderTrades();
+}
+
+function builderHtml(me) {
+  const b = S.builder;
+  const others = S.managers.filter((m) => m.id !== me.id);
+  const myPicks = S.picks.filter((p) => p.manager_id === me.id && p.slot !== "TEAM");
+  const targetPicks = S.picks.filter((p) => p.manager_id === b.target && p.slot !== "TEAM");
+  const optLabel = (p) => `${p.slot} · ${p.player_name}`;
+  return `<div class="rounded-xl border border-emerald-600 bg-slate-900 p-4 space-y-3 mt-3">
+    <h3 class="font-semibold text-sm">${b.parent ? "Counter-offer" : "New trade proposal"}</h3>
+    <label class="block text-xs text-slate-400">Trade with
+      <select id="trade-target" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm" ${b.parent ? "disabled" : ""}>
+        <option value="">— choose manager —</option>
+        ${others.map((m) =>
+          `<option value="${m.id}" ${b.target === m.id ? "selected" : ""}>${esc(m.name)}</option>`).join("")}
+      </select></label>
+    ${b.pairs.map((pair, i) => {
+      const mp = pickById(pair.mine);
+      const theirOpts = targetPicks.filter((p) => !mp || slotGroup(p.slot) === slotGroup(mp.slot));
+      return `<div class="flex items-center gap-1.5">
+        <select data-mine="${i}" class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-1.5 py-1.5 text-xs">
+          <option value="">your player…</option>
+          ${myPicks.map((p) =>
+            `<option value="${p.id}" ${pair.mine === p.id ? "selected" : ""}>${esc(optLabel(p))}</option>`).join("")}
+        </select>
+        <span class="text-slate-500">⇄</span>
+        <select data-theirs="${i}" class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-1.5 py-1.5 text-xs">
+          <option value="">their player…</option>
+          ${theirOpts.map((p) =>
+            `<option value="${p.id}" ${pair.theirs === p.id ? "selected" : ""}>${esc(optLabel(p))}</option>`).join("")}
+        </select>
+        ${b.pairs.length > 1 ? `<button data-rmpair="${i}" class="text-red-400 text-xs px-1">✕</button>` : ""}
+      </div>`;
+    }).join("")}
+    <div class="flex gap-2">
+      <button id="trade-addpair" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg py-1.5 text-xs font-semibold">+ add pair</button>
+      <button id="trade-submit" class="flex-1 bg-emerald-600 hover:bg-emerald-500 rounded-lg py-1.5 text-xs font-semibold">Send</button>
+      <button id="trade-discard" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg py-1.5 text-xs font-semibold">Discard</button>
+    </div>
+  </div>`;
+}
+
+const TRADE_STATUS_STYLE = {
+  proposed: "text-amber-300", accepted: "text-emerald-400", rejected: "text-red-400",
+  cancelled: "text-slate-500", countered: "text-sky-300",
+};
+
+function tradeSectionHtml(title, list, incoming) {
+  const cards = list.map((t) => {
+    const other = S.managers.find((m) =>
+      m.id === (incoming ? t.proposer_manager_id : t.target_manager_id));
+    const rows = (t.trade_items || []).map((it) => {
+      const o = pickById(it.offered_pick_id), r = pickById(it.requested_pick_id);
+      return `<div class="text-xs text-slate-300">
+        ${esc(o?.player_name ?? "?")} <span class="text-slate-500">(${o?.slot ?? "?"})</span>
+        ⇄ ${esc(r?.player_name ?? "?")} <span class="text-slate-500">(${r?.slot ?? "?"})</span>
+      </div>`;
+    }).join("");
+    const actions = t.status !== "proposed" ? "" : incoming
+      ? `<button data-acc="${t.id}" class="bg-emerald-600 hover:bg-emerald-500 rounded-lg px-3 py-1.5 text-xs font-semibold">Accept</button>
+         <button data-rej="${t.id}" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold">Reject</button>
+         <button data-cnt="${t.id}" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold">Counter</button>`
+      : `<button data-can="${t.id}" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold">Cancel</button>`;
+    return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2">
+      <div class="flex items-center justify-between text-sm">
+        <span>${incoming ? "from" : "to"} <b>${esc(other?.name ?? "?")}</b>${
+          t.parent_trade_id ? ' <span class="text-[10px] text-sky-300">(counter-offer)</span>' : ""}</span>
+        <span class="text-xs font-semibold ${TRADE_STATUS_STYLE[t.status] || ""}">${t.status}</span>
+      </div>
+      <div class="space-y-0.5">${rows}</div>
+      ${actions ? `<div class="flex gap-2 pt-1">${actions}</div>` : ""}
+    </div>`;
+  }).join("");
+  return `<div class="mt-4 space-y-2">
+    <h3 class="font-semibold text-sm">${title}</h3>
+    ${cards || '<p class="text-xs text-slate-500">None.</p>'}
+  </div>`;
+}
+
+function renderTrades() {
+  const box = $("board-trades");
+  const me = myManager();
+  if (!me) {
+    box.innerHTML = '<p class="text-sm text-slate-500 py-4">Join as a manager to trade.</p>';
+    return;
+  }
+  const open = !!S.league.trading_open;
+  let html = `<div class="rounded-xl border ${open ? "border-emerald-700 bg-emerald-950/30" : "border-slate-700 bg-slate-900"} p-3 text-sm flex items-center justify-between gap-2">
+    <span>${open ? "Trading window is <b>open</b>."
+                 : "Trading is closed — you can still respond to pending proposals."}</span>
+    ${open && !S.builder ? '<button id="trade-new" class="shrink-0 bg-emerald-600 hover:bg-emerald-500 rounded-lg px-3 py-1.5 font-semibold">New trade</button>' : ""}
+  </div>`;
+  if (S.builder) html += builderHtml(me);
+  html += tradeSectionHtml("Incoming", S.trades.filter((t) => t.target_manager_id === me.id), true);
+  html += tradeSectionHtml("Outgoing", S.trades.filter((t) => t.proposer_manager_id === me.id), false);
+  box.innerHTML = html;
+  wireTrades(me);
+}
+
+function wireTrades(me) {
+  const box = $("board-trades");
+  const byId = (id) => S.trades.find((t) => t.id === id);
+  const newBtn = box.querySelector("#trade-new");
+  if (newBtn) newBtn.onclick = () => openBuilder();
+  const target = box.querySelector("#trade-target");
+  if (target) target.onchange = () => {
+    S.builder.target = target.value;
+    S.builder.pairs = [{ mine: "", theirs: "" }];
+    renderTrades();
+  };
+  box.querySelectorAll("[data-mine]").forEach((sel) => sel.onchange = () => {
+    const pair = S.builder.pairs[+sel.dataset.mine];
+    pair.mine = sel.value;
+    pair.theirs = "";
+    renderTrades();
+  });
+  box.querySelectorAll("[data-theirs]").forEach((sel) => sel.onchange = () => {
+    S.builder.pairs[+sel.dataset.theirs].theirs = sel.value;
+    renderTrades();
+  });
+  box.querySelectorAll("[data-rmpair]").forEach((b) => b.onclick = () => {
+    S.builder.pairs.splice(+b.dataset.rmpair, 1);
+    renderTrades();
+  });
+  const addPair = box.querySelector("#trade-addpair");
+  if (addPair) addPair.onclick = () => {
+    S.builder.pairs.push({ mine: "", theirs: "" });
+    renderTrades();
+  };
+  const discard = box.querySelector("#trade-discard");
+  if (discard) discard.onclick = () => { S.builder = null; renderTrades(); };
+  const submit = box.querySelector("#trade-submit");
+  if (submit) submit.onclick = () => submitTrade(me).catch((e) => toast(e.message));
+  box.querySelectorAll("[data-acc]").forEach((b) => b.onclick = () =>
+    acceptTrade(byId(b.dataset.acc)).catch((e) => toast(e.message)));
+  box.querySelectorAll("[data-rej]").forEach((b) => b.onclick = () =>
+    setTradeStatus(byId(b.dataset.rej), "rejected").catch((e) => toast(e.message)));
+  box.querySelectorAll("[data-can]").forEach((b) => b.onclick = () =>
+    setTradeStatus(byId(b.dataset.can), "cancelled").catch((e) => toast(e.message)));
+  box.querySelectorAll("[data-cnt]").forEach((b) => b.onclick = () => {
+    const t = byId(b.dataset.cnt);
+    openBuilder(t.proposer_manager_id, t.id);
+  });
+}
+
+async function submitTrade(me) {
+  const b = S.builder;
+  if (!b.target) return toast("Choose a manager to trade with.");
+  // New proposals need the window open; counters are responses and are
+  // allowed even after it closes (so negotiations don't get stuck).
+  if (!S.league.trading_open && !b.parent) return toast("Trading window is closed.");
+  const pairs = b.pairs.map((p) => ({ mine: pickById(p.mine), theirs: pickById(p.theirs) }));
+  const err = tradeError(pairs);
+  if (err) return toast(err);
+  const { data, error } = await S.sb.from("trades").insert({
+    league_id: S.league.id, proposer_manager_id: me.id, target_manager_id: b.target,
+    parent_trade_id: b.parent, status: "proposed",
+  }).select().single();
+  if (error) return toast(error.message);
+  const { error: e2 } = await S.sb.from("trade_items").insert(pairs.map((p) => ({
+    trade_id: data.id, offered_pick_id: p.mine.id, requested_pick_id: p.theirs.id,
+  })));
+  if (e2) return toast(e2.message);
+  if (b.parent) {
+    await S.sb.from("trades")
+      .update({ status: "countered", updated_at: new Date().toISOString() })
+      .eq("id", b.parent).eq("status", "proposed");
+  }
+  toast(b.parent ? "Counter-offer sent." : "Proposal sent.");
+  S.builder = null;
+  scheduleRefetch();
+}
+
+async function acceptTrade(t) {
+  const pairs = (t.trade_items || []).map((it) => ({
+    mine: pickById(it.offered_pick_id), theirs: pickById(it.requested_pick_id),
+  }));
+  const err = tradeError(pairs);
+  if (err) return toast("Trade is no longer valid: " + err);
+  if (!confirm("Accept this trade? Players swap immediately.")) return;
+  const { error } = await S.sb.rpc("accept_trade", { p_trade_id: t.id });
+  if (error) return toast("Accept failed: " + error.message);
+  toast("Trade accepted — players swapped!");
+  scheduleRefetch();
+}
+
+async function setTradeStatus(t, status) {
+  const { error } = await S.sb.from("trades")
+    .update({ status, updated_at: new Date().toISOString() })
+    .eq("id", t.id).eq("status", "proposed");
+  if (error) return toast(error.message);
   scheduleRefetch();
 }
 
