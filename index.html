@@ -150,7 +150,10 @@
     </div>
     <div id="draft-mybanner" class="hidden rounded-xl border border-emerald-500 bg-emerald-950/50 p-3 text-center font-semibold"></div>
     <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
-      <input id="pool-search" placeholder="Search player or team…" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+      <div class="flex gap-2">
+        <input id="pool-search" placeholder="Search player…" class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+        <select id="pool-team" class="w-32 shrink-0 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm"></select>
+      </div>
       <div id="pool-chips" class="flex gap-1.5 flex-wrap text-xs"></div>
       <ul id="pool-list" class="divide-y divide-slate-800 max-h-[50vh] overflow-y-auto"></ul>
     </div>
@@ -272,10 +275,15 @@
 
 /* ---------- constants ---------- */
 
-const SLOT_ORDER = ["GK","DEF","DEF","DEF","MID","MID","MID","FWD","FWD","TEAM",
-                    "SUB_GK","SUB_DEF","SUB_MID","SUB_FWD"];
+// Roster: 14 picks per manager, any order, within position quotas.
+const POSITION_QUOTA = { GK: 2, DEF: 4, MID: 4, FWD: 3, TEAM: 1 };
+const STARTER_QUOTA  = { GK: 1, DEF: 3, MID: 3, FWD: 2 };   // rest are subs
+const ROSTER_SIZE = 14;
+const GROUPS = ["GK", "DEF", "MID", "FWD", "TEAM"];
 const SLOT_POS = { GK:"GK", DEF:"DEF", MID:"MID", FWD:"FWD", TEAM:"TEAM",
                    SUB_GK:"GK", SUB_DEF:"DEF", SUB_MID:"MID", SUB_FWD:"FWD" };
+const SLOT_RANK = { GK:0, DEF:1, MID:2, FWD:3, TEAM:4,
+                    SUB_GK:5, SUB_DEF:6, SUB_MID:7, SUB_FWD:8 };
 
 // Mirrors SCORING in daily_pull.py — keep the two in sync.
 const SCORING = {
@@ -413,7 +421,7 @@ function leaveLeague() {
 
 /* ---------- routing ---------- */
 
-const totalPicks = () => SLOT_ORDER.length * (S.league?.num_managers || 0);
+const totalPicks = () => ROSTER_SIZE * (S.league?.num_managers || 0);
 
 function route() {
   if (!S.league) { showView("home"); return; }
@@ -575,7 +583,7 @@ async function startDraft() {
 
 /* ---------- draft ---------- */
 
-S.poolFilter = "auto";
+S.poolFilter = "ALL";
 S.poolSearch = "";
 let autoPickedFor = 0;
 
@@ -584,41 +592,60 @@ function draftOrderManagers() {
     (a, b) => (a.draft_position ?? 99) - (b.draft_position ?? 99));
 }
 
-// Snake order: every manager picks once per round, so the slot being
-// drafted in round r is simply SLOT_ORDER[r-1] for everyone.
+// Snake order decides whose turn it is; the manager drafts any position
+// they like, within POSITION_QUOTA.
 function pickInfo(p) {
   const order = draftOrderManagers();
   const M = order.length;
   const round = Math.ceil(p / M);
   const idx = (p - 1) % M;
   const manager = round % 2 === 1 ? order[idx] : order[M - 1 - idx];
-  return { round, manager, slot: SLOT_ORDER[round - 1] };
+  return { round, manager };
 }
 
-function availableForSlot(slot) {
+function availableForGroup(group) {
   const picked = new Set(S.picks.map((pk) => pk.player_id));
-  if (slot === "TEAM") {
+  if (group === "TEAM") {
     return S.teams.filter((t) => !picked.has("team:" + t))
       .map((t) => ({ player_id: "team:" + t, name: t, position: "TEAM", team: t }));
   }
-  const pos = SLOT_POS[slot];
-  return S.players.filter((pl) => pl.position === pos && !picked.has(pl.player_id));
+  return S.players.filter((pl) => pl.position === group && !picked.has(pl.player_id));
 }
 
-function slotLabel(slot) {
-  if (slot === "TEAM") return "national team (TEAM)";
-  if (slot.startsWith("SUB_")) return "substitute " + SLOT_POS[slot] + " (" + slot + ")";
-  return "starting " + slot;
+const managerPicks = (mgrId) => S.picks.filter((pk) => pk.manager_id === mgrId);
+
+function quotaLeft(mgrPicks, group) {
+  return POSITION_QUOTA[group] - mgrPicks.filter((pk) => pk.position === group).length;
+}
+
+// First picks in a group fill the starter spots, the rest start as subs;
+// the lineup picker can rearrange later.
+function slotForNewPick(mgrPicks, group) {
+  if (group === "TEAM") return "TEAM";
+  const have = mgrPicks.filter((pk) => pk.position === group).length;
+  return have < STARTER_QUOTA[group] ? group : "SUB_" + group;
+}
+
+function needsSummary(mgrPicks) {
+  const parts = GROUPS.map((g) => {
+    const left = quotaLeft(mgrPicks, g);
+    return left > 0 ? `${left} ${g}` : null;
+  }).filter(Boolean);
+  return parts.length ? "Still needs: " + parts.join(" · ") : "Roster complete";
 }
 
 async function makePick(entry, info) {
   const p = S.league.current_pick;
   if (info.pickNumber && info.pickNumber !== p) return;
+  const mgrPicks = managerPicks(info.manager.id);
+  if (quotaLeft(mgrPicks, entry.position) <= 0)
+    return toast(`${info.manager.name} already has the maximum ${entry.position}s.`);
+  const slot = slotForNewPick(mgrPicks, entry.position);
   const row = {
     league_id: S.league.id, manager_id: info.manager.id,
     player_id: entry.player_id, player_name: entry.name,
     position: entry.position, team: entry.team,
-    pick_number: p, is_sub: info.slot.startsWith("SUB_"), slot: info.slot,
+    pick_number: p, is_sub: slot.startsWith("SUB_"), slot,
   };
   const { error } = await S.sb.from("picks").insert(row);
   if (error) {
@@ -634,8 +661,10 @@ async function makePick(entry, info) {
 }
 
 async function autoPick(info) {
-  const pool = availableForSlot(info.slot);
-  if (!pool.length) { toast("No available players left for " + info.slot); return; }
+  const mgrPicks = managerPicks(info.manager.id);
+  const pool = GROUPS.filter((g) => quotaLeft(mgrPicks, g) > 0)
+    .flatMap((g) => availableForGroup(g));
+  if (!pool.length) { toast("No available players fit the open quota."); return; }
   const entry = pool[Math.floor(Math.random() * pool.length)];
   toast(`Time's up — auto-picked ${entry.name} for ${info.manager.name}.`);
   await makePick(entry, info);
@@ -666,26 +695,33 @@ function renderPool() {
   const info = pickInfo(S.league.current_pick);
   const me = myManager();
   const myTurn = !!me && info.manager.id === me.id;
-  const reqPos = SLOT_POS[info.slot];
-  const slotFilter = S.poolFilter === "auto"
-    ? (info.slot === "TEAM" ? "TEAM" : reqPos) : S.poolFilter;
+  const onClockPicks = managerPicks(info.manager.id);
 
-  const chips = ["auto", "GK", "DEF", "MID", "FWD", "TEAM"];
+  const chips = ["ALL", ...GROUPS];
   $("pool-chips").innerHTML = chips.map((c) =>
     `<button data-chip="${c}" class="rounded-full px-3 py-1 border ${
       S.poolFilter === c ? "border-emerald-500 text-emerald-300" : "border-slate-700 text-slate-400"
-    }">${c === "auto" ? "Up next: " + slotFilter : c}</button>`).join("");
+    }">${c}${c !== "ALL" && myTurn ? ` (${quotaLeft(onClockPicks, c)})` : ""}</button>`).join("");
   $("pool-chips").querySelectorAll("[data-chip]").forEach((b) =>
     b.onclick = () => { S.poolFilter = b.dataset.chip; renderPool(); });
 
-  let entries = availableForSlot(slotFilter === "TEAM" ? "TEAM" : slotFilter);
+  if (!$("pool-team").options.length) {
+    $("pool-team").innerHTML = '<option value="">All teams</option>' +
+      S.teams.map((t) => `<option>${esc(t)}</option>`).join("");
+  }
+
+  let entries = S.poolFilter === "ALL"
+    ? GROUPS.flatMap((g) => availableForGroup(g))
+    : availableForGroup(S.poolFilter);
+  const teamF = $("pool-team").value;
+  if (teamF) entries = entries.filter((e) => e.team === teamF);
   const q = S.poolSearch.trim().toLowerCase();
   if (q) entries = entries.filter((e) =>
     e.name.toLowerCase().includes(q) || e.team.toLowerCase().includes(q));
   const shown = entries.slice(0, 80);
 
   $("pool-list").innerHTML = shown.map((e) => {
-    const canPick = myTurn && e.position === (info.slot === "TEAM" ? "TEAM" : reqPos);
+    const canPick = myTurn && quotaLeft(onClockPicks, e.position) > 0;
     return `<li class="flex items-center justify-between py-2 gap-2">
       <div class="min-w-0">
         <div class="truncate font-medium">${esc(e.name)}</div>
@@ -699,11 +735,13 @@ function renderPool() {
   }).join("") || '<li class="py-4 text-sm text-slate-500">No available players match.</li>';
   if (entries.length > shown.length) {
     $("pool-list").insertAdjacentHTML("beforeend",
-      `<li class="py-2 text-xs text-slate-500">${entries.length - shown.length} more — search to narrow.</li>`);
+      `<li class="py-2 text-xs text-slate-500">${entries.length - shown.length} more — search or filter to narrow.</li>`);
   }
   $("pool-list").querySelectorAll(".pick-btn").forEach((btn) => btn.onclick = () => {
     const entry = entries.find((e) => e.player_id === btn.dataset.pick);
-    if (entry && confirm(`Pick ${entry.name} (${entry.position}) as your ${info.slot}?`))
+    if (!entry) return;
+    const slot = slotForNewPick(onClockPicks, entry.position);
+    if (confirm(`Pick ${entry.name} (${entry.position}, ${entry.team})? They'll slot in as ${slot}.`))
       makePick(entry, { ...info, pickNumber: S.league.current_pick }).catch((er) => toast(er.message));
   });
 }
@@ -714,11 +752,11 @@ function renderRosters(containerId) {
   const me = myManager();
   // Free-agent swaps: only on your own roster, post-draft, window open.
   const canSwap = containerId === "board-rosters" && !!S.league?.trading_open;
-  // Slot names repeat (3x DEF etc.), so index by pick order: a manager's
-  // i-th pick is their round-(i+1) pick, which is always SLOT_ORDER[i].
+  // Show starters first (GK→DEF→MID→FWD→TEAM), then subs.
   const byMgr = {};
   for (const pk of S.picks) (byMgr[pk.manager_id] ||= []).push(pk);
-  for (const k in byMgr) byMgr[k].sort((a, b) => a.pick_number - b.pick_number);
+  for (const k in byMgr) byMgr[k].sort((a, b) =>
+    (SLOT_RANK[a.slot] ?? 9) - (SLOT_RANK[b.slot] ?? 9) || a.pick_number - b.pick_number);
   $(containerId).innerHTML = draftOrderManagers().map((m) => `
     <details data-mgr="${m.id}" class="rounded-xl border border-slate-700 bg-slate-900"
              ${open.has(m.id) || (!open.size && m.id === me?.id) ? "open" : ""}>
@@ -726,15 +764,15 @@ function renderRosters(containerId) {
         m.id === me?.id ? ' <span class="text-emerald-400 text-xs">(you)</span>' : ""
       }${m.draft_position ? ` <span class="text-xs text-slate-500">· draft pos ${m.draft_position}</span>` : ""}</summary>
       <div class="px-4 pb-3 grid grid-cols-2 gap-1.5 text-sm">
-        ${SLOT_ORDER.map((slot, i) => {
-          const pk = (byMgr[m.id] || [])[i];
-          const swap = canSwap && pk && m.id === me?.id && slot !== "TEAM"
+        ${(byMgr[m.id] || []).map((pk) => {
+          const swap = canSwap && m.id === me?.id && pk.slot !== "TEAM"
             ? `<button data-swap="${pk.id}" class="ml-auto shrink-0 text-[10px] underline text-emerald-400">swap</button>` : "";
           return `<div class="rounded-lg bg-slate-800/60 px-2 py-1.5 flex items-center gap-1.5">
-            <span class="text-[10px] w-14 shrink-0 text-slate-400">${slot}</span>
-            <span class="truncate ${pk ? "" : "text-slate-600"}">${pk ? esc(pk.player_name) : "—"}</span>${swap}
+            <span class="text-[10px] w-14 shrink-0 text-slate-400">${pk.slot}</span>
+            <span class="min-w-0 truncate">${esc(pk.player_name)}
+              <span class="text-[10px] text-slate-500">${esc(pk.team)}</span></span>${swap}
           </div>`;
-        }).join("")}
+        }).join("") || '<div class="text-slate-600 text-xs col-span-2">No picks yet.</div>'}
       </div>
     </details>`).join("");
   $(containerId).querySelectorAll("[data-swap]").forEach((b) => b.onclick = () =>
@@ -749,10 +787,10 @@ function renderDraft() {
   const myTurn = !!me && info.manager.id === me.id;
 
   $("draft-progress").textContent =
-    `Pick ${L.current_pick} of ${totalPicks()} · Round ${info.round} of ${SLOT_ORDER.length}`;
+    `Pick ${L.current_pick} of ${totalPicks()} · Round ${info.round} of ${ROSTER_SIZE}`;
   $("draft-onclock").textContent =
     myTurn ? "You're on the clock!" : `${info.manager.name} is on the clock`;
-  $("draft-slotline").textContent = "Picking: " + slotLabel(info.slot);
+  $("draft-slotline").textContent = needsSummary(managerPicks(info.manager.id));
   $("draft-order").innerHTML = draftOrderManagers().map((m) =>
     `<span class="rounded-full px-2.5 py-1 whitespace-nowrap border ${
       m.id === info.manager.id ? "border-emerald-500 text-emerald-300 bg-emerald-950/50"
@@ -761,7 +799,7 @@ function renderDraft() {
 
   const banner = $("draft-mybanner");
   banner.classList.toggle("hidden", !myTurn);
-  if (myTurn) banner.textContent = `Your pick — choose your ${slotLabel(info.slot)} below`;
+  if (myTurn) banner.textContent = "Your pick — any position you still need";
 
   renderPool();
 
@@ -926,7 +964,7 @@ function closeSwap() {
 function renderSwapList() {
   const pick = S.swapPick;
   if (!pick) return;
-  let pool = availableForSlot(pick.slot);
+  let pool = availableForGroup(slotGroup(pick.slot));
   const q = $("swap-search").value.trim().toLowerCase();
   if (q) pool = pool.filter((e) =>
     e.name.toLowerCase().includes(q) || e.team.toLowerCase().includes(q));
@@ -1407,6 +1445,7 @@ function wire() {
   $("lobby-start").onclick = () => startDraft().catch((e) => toast(e.message));
   $("lobby-join-go").onclick = () => joinFromLobby().catch((e) => toast(e.message));
   $("pool-search").oninput = (e) => { S.poolSearch = e.target.value; renderPool(); };
+  $("pool-team").onchange = () => renderPool();
   $("draft-force").onclick = () => {
     if (confirm("Force a random auto-pick for the manager on the clock?"))
       autoPick(pickInfo(S.league.current_pick)).catch((e) => toast(e.message));

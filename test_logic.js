@@ -9,11 +9,11 @@ const stubDoc = {
 };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, SLOT_ORDER, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, POSITION_QUOTA };"
 )(stubDoc, { getItem: () => null, setItem: () => {}, removeItem: () => {} }, {}, {}, {});
 
-const { S, SLOT_ORDER, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
-        slotGroup, pairValid, tradeError } = api;
+const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
+        slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, POSITION_QUOTA } = api;
 let fails = 0;
 const check = (label, got, want) => {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -24,13 +24,29 @@ const check = (label, got, want) => {
 /* snake order: 4 managers */
 S.managers = [1, 2, 3, 4].map((i) => ({ id: "m" + i, name: "M" + i, draft_position: i }));
 S.league = { num_managers: 4 };
-check("pick 1 -> M1 GK", [pickInfo(1).manager.name, pickInfo(1).slot], ["M1", "GK"]);
+check("pick 1 -> M1", pickInfo(1).manager.name, "M1");
 check("pick 4 -> M4", pickInfo(4).manager.name, "M4");
-check("pick 5 -> M4 (snake)", [pickInfo(5).manager.name, pickInfo(5).slot], ["M4", "DEF"]);
+check("pick 5 -> M4 (snake)", pickInfo(5).manager.name, "M4");
 check("pick 8 -> M1", pickInfo(8).manager.name, "M1");
 check("pick 9 -> M1 (snake back)", pickInfo(9).manager.name, "M1");
-check("pick 37 round 10 TEAM", [pickInfo(37).round, pickInfo(37).slot], [10, "TEAM"]);
-check("pick 56 last -> SUB_FWD M1", [pickInfo(56).slot, pickInfo(56).manager.name], ["SUB_FWD", "M1"]);
+check("pick 37 round 10", pickInfo(37).round, 10);
+check("pick 56 last -> M1", pickInfo(56).manager.name, "M1");
+
+/* position quotas & default starter/sub slotting */
+const roster = [];
+const draftOne = (pos) => {
+  const slot = slotForNewPick(roster, pos);
+  roster.push({ position: pos, slot });
+  return slot;
+};
+check("quota sums to 14", Object.values(POSITION_QUOTA).reduce((a, b) => a + b, 0), 14);
+check("1st GK is starter", draftOne("GK"), "GK");
+check("2nd GK is sub", draftOne("GK"), "SUB_GK");
+check("GK quota now 0", quotaLeft(roster, "GK"), 0);
+check("DEF 1-3 start", [draftOne("DEF"), draftOne("DEF"), draftOne("DEF")], ["DEF", "DEF", "DEF"]);
+check("4th DEF is sub", draftOne("DEF"), "SUB_DEF");
+check("TEAM slot is TEAM", draftOne("TEAM"), "TEAM");
+check("MID quota untouched", quotaLeft(roster, "MID"), 4);
 
 /* scoring */
 const row = (o) => ({ appeared: true, goals: 0, assists: 0, clean_sheet: false,
