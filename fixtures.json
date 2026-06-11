@@ -7,15 +7,15 @@
     "status": "NS"
   },
   {
-    "home": "South Korea",
-    "away": "Czech Republic",
+    "home": "Korea Republic",
+    "away": "Czechia",
     "kickoff_utc": "2026-06-12T02:00:00+00:00",
     "date": "2026-06-12",
     "status": "NS"
   },
   {
     "home": "Canada",
-    "away": "Bosnia & Herzegovina",
+    "away": "Bosnia And Herzegovina",
     "kickoff_utc": "2026-06-12T19:00:00+00:00",
     "date": "2026-06-12",
     "status": "NS"
@@ -70,7 +70,7 @@
     "status": "NS"
   },
   {
-    "home": "Ivory Coast",
+    "home": "Côte D'Ivoire",
     "away": "Ecuador",
     "kickoff_utc": "2026-06-14T23:00:00+00:00",
     "date": "2026-06-14",
@@ -85,7 +85,7 @@
   },
   {
     "home": "Spain",
-    "away": "Cape Verde Islands",
+    "away": "Cabo Verde",
     "kickoff_utc": "2026-06-15T16:00:00+00:00",
     "date": "2026-06-15",
     "status": "NS"
@@ -105,7 +105,7 @@
     "status": "NS"
   },
   {
-    "home": "Iran",
+    "home": "IR Iran",
     "away": "New Zealand",
     "kickoff_utc": "2026-06-16T01:00:00+00:00",
     "date": "2026-06-16",
@@ -168,7 +168,7 @@
     "status": "NS"
   },
   {
-    "home": "Czech Republic",
+    "home": "Czechia",
     "away": "South Africa",
     "kickoff_utc": "2026-06-18T16:00:00+00:00",
     "date": "2026-06-18",
@@ -176,7 +176,7 @@
   },
   {
     "home": "Switzerland",
-    "away": "Bosnia & Herzegovina",
+    "away": "Bosnia And Herzegovina",
     "kickoff_utc": "2026-06-18T19:00:00+00:00",
     "date": "2026-06-18",
     "status": "NS"
@@ -190,7 +190,7 @@
   },
   {
     "home": "Mexico",
-    "away": "South Korea",
+    "away": "Korea Republic",
     "kickoff_utc": "2026-06-19T01:00:00+00:00",
     "date": "2026-06-19",
     "status": "NS"
@@ -232,7 +232,7 @@
   },
   {
     "home": "Germany",
-    "away": "Ivory Coast",
+    "away": "Côte D'Ivoire",
     "kickoff_utc": "2026-06-20T20:00:00+00:00",
     "date": "2026-06-20",
     "status": "NS"
@@ -260,14 +260,14 @@
   },
   {
     "home": "Belgium",
-    "away": "Iran",
+    "away": "IR Iran",
     "kickoff_utc": "2026-06-21T19:00:00+00:00",
     "date": "2026-06-21",
     "status": "NS"
   },
   {
     "home": "Uruguay",
-    "away": "Cape Verde Islands",
+    "away": "Cabo Verde",
     "kickoff_utc": "2026-06-21T22:00:00+00:00",
     "date": "2026-06-21",
     "status": "NS"
@@ -343,7 +343,7 @@
     "status": "NS"
   },
   {
-    "home": "Bosnia & Herzegovina",
+    "home": "Bosnia And Herzegovina",
     "away": "Qatar",
     "kickoff_utc": "2026-06-24T19:00:00+00:00",
     "date": "2026-06-24",
@@ -364,7 +364,7 @@
     "status": "NS"
   },
   {
-    "home": "Czech Republic",
+    "home": "Czechia",
     "away": "Mexico",
     "kickoff_utc": "2026-06-25T01:00:00+00:00",
     "date": "2026-06-25",
@@ -372,7 +372,7 @@
   },
   {
     "home": "South Africa",
-    "away": "South Korea",
+    "away": "Korea Republic",
     "kickoff_utc": "2026-06-25T01:00:00+00:00",
     "date": "2026-06-25",
     "status": "NS"
@@ -386,7 +386,7 @@
   },
   {
     "home": "Curaçao",
-    "away": "Ivory Coast",
+    "away": "Côte D'Ivoire",
     "kickoff_utc": "2026-06-25T20:00:00+00:00",
     "date": "2026-06-25",
     "status": "NS"
@@ -441,7 +441,7 @@
     "status": "NS"
   },
   {
-    "home": "Cape Verde Islands",
+    "home": "Cabo Verde",
     "away": "Saudi Arabia",
     "kickoff_utc": "2026-06-27T00:00:00+00:00",
     "date": "2026-06-27",
@@ -449,7 +449,7 @@
   },
   {
     "home": "Egypt",
-    "away": "Iran",
+    "away": "IR Iran",
     "kickoff_utc": "2026-06-27T03:00:00+00:00",
     "date": "2026-06-27",
     "status": "NS"

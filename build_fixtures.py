@@ -16,6 +16,8 @@ from pathlib import Path
 
 import requests
 
+from daily_pull import fix_team_name
+
 API_BASE = "https://v3.football.api-sports.io"
 
 
@@ -39,8 +41,8 @@ def main() -> None:
 
     fixtures = [
         {
-            "home": f["teams"]["home"]["name"],
-            "away": f["teams"]["away"]["name"],
+            "home": fix_team_name(f["teams"]["home"]["name"]),
+            "away": fix_team_name(f["teams"]["away"]["name"]),
             "kickoff_utc": f["fixture"]["date"],
             "date": f["fixture"]["date"][:10],
             "status": f["fixture"]["status"]["short"],

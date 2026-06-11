@@ -124,9 +124,11 @@ working.
    **lock when the admin closes the trading window** — each matchday is
    scored against the lineup/roster that was locked at the time, so
    later changes and trades never rewrite earlier rounds.
-6. For next-fixture info on the Home tab, run
+6. For next-fixture info on the Home and Trades tabs, run
    `python build_fixtures.py` (needs `API_FOOTBALL_KEY` set) and commit
-   the generated `fixtures.json`. Optional but nice.
+   the generated `fixtures.json`. Optional but nice. (API-Football names
+   a few countries differently from the FIFA squad lists — the scripts
+   and app normalize them via a shared `TEAM_NAME_FIX` map.)
 
 **Do a test draft first:** create a throwaway league with 2 managers
 (you + a second browser tab in incognito), draft a few rounds, confirm
@@ -213,7 +215,10 @@ position groups — a slot only trades within its position, subs included
 
 - **Free-agent swap:** Trades tab → trading partner "Free Agent Pool"
   (or "swap" on your own roster card) → pick any unpicked player in that
-  position, filterable by team. Instant, no approval.
+  position, filterable by team. Instant, no approval. The list also shows
+  same-position players already on other rosters (badged with their
+  owner) — tapping **Trade** on one jumps straight into a pre-filled
+  trade proposal with that manager instead.
 - **Manager trades:** Trades tab → propose player-for-player pairs (multi-
   player trades supported) to another manager, who can accept (players
   swap immediately), reject, or counter. Counters chain, and pending

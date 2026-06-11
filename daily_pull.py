@@ -50,6 +50,23 @@ POSITION_MAP = {
     "Attacker": "FWD",
 }
 
+# API-Football names some countries differently from the FIFA squad lists
+# (players.json). Match labels must use the FIFA names: the app's sub-
+# activation rule compares label team names against squad team names.
+# Same map lives in index.html (TEAM_NAME_FIX) — keep in sync.
+TEAM_NAME_FIX = {
+    "Bosnia & Herzegovina": "Bosnia And Herzegovina",
+    "Cape Verde Islands": "Cabo Verde",
+    "Czech Republic": "Czechia",
+    "Iran": "IR Iran",
+    "Ivory Coast": "Côte D'Ivoire",
+    "South Korea": "Korea Republic",
+}
+
+
+def fix_team_name(name: str) -> str:
+    return TEAM_NAME_FIX.get(name, name)
+
 COMPLETED_STATUSES = {"FT", "AET", "PEN"}
 
 MOTM_MIN_RATING = 7.5
@@ -127,7 +144,10 @@ def extract_player_rows(fixture: dict, teams_data: list) -> list:
     home = fixture["teams"]["home"]
     away = fixture["teams"]["away"]
     goals = fixture.get("goals", {})
-    match_label = f"{home['name']} vs {away['name']} ({fixture['fixture']['date'][:10]})"
+    match_label = (
+        f"{fix_team_name(home['name'])} vs {fix_team_name(away['name'])} "
+        f"({fixture['fixture']['date'][:10]})"
+    )
 
     conceded_by_team = {
         home["id"]: to_int(goals.get("away")),
