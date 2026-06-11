@@ -43,8 +43,10 @@ def log(msg: str) -> None:
 
 
 def fetch_live_fixtures(league: int) -> list:
-    # live=<league id> returns that league's in-play fixtures only.
-    return api_get("fixtures", {"live": str(league)}).get("response", [])
+    # live=all then filter: one call either way, and "all" is the parameter
+    # form the API documents unambiguously.
+    return [f for f in api_get("fixtures", {"live": "all"}).get("response", [])
+            if f.get("league", {}).get("id") == league]
 
 
 def minutes_to_next_kickoff(league: int, season: int):
