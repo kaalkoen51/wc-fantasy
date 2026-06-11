@@ -182,15 +182,23 @@
 
   <!-- Leaderboard / rosters -->
   <section data-view="board" class="hidden space-y-4">
-    <div class="flex gap-2 text-sm">
-      <button id="tab-home" class="board-tab flex-1 rounded-lg py-2 font-semibold" data-tab="home">Home</button>
-      <button id="tab-lb" class="board-tab flex-1 rounded-lg py-2 font-semibold" data-tab="lb">Table</button>
-      <button id="tab-rosters" class="board-tab flex-1 rounded-lg py-2 font-semibold" data-tab="rosters">Rosters</button>
-      <button id="tab-trades" class="board-tab flex-1 rounded-lg py-2 font-semibold" data-tab="trades">Trades</button>
-      <button id="tab-admin" class="flex-1 rounded-lg py-2 font-semibold bg-slate-800 border border-slate-700">Admin</button>
+    <div class="grid grid-cols-3 gap-2 text-sm">
+      <button id="tab-home" class="board-tab rounded-lg py-2 font-semibold" data-tab="home">Home</button>
+      <button id="tab-lb" class="board-tab rounded-lg py-2 font-semibold" data-tab="lb">Table</button>
+      <button id="tab-stats" class="board-tab rounded-lg py-2 font-semibold" data-tab="stats">Stats</button>
+      <button id="tab-rosters" class="board-tab rounded-lg py-2 font-semibold" data-tab="rosters">Rosters</button>
+      <button id="tab-trades" class="board-tab rounded-lg py-2 font-semibold" data-tab="trades">Trades</button>
+      <button id="tab-admin" class="rounded-lg py-2 font-semibold bg-slate-800 border border-slate-700">Admin</button>
     </div>
     <div id="board-home" class="space-y-3"></div>
     <div id="board-lb" class="hidden space-y-2"></div>
+    <div id="board-stats" class="hidden space-y-3">
+      <input id="stats-search" placeholder="Search any player or country…"
+             class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm">
+      <div id="stats-chips" class="flex gap-1.5 flex-wrap text-xs"></div>
+      <div id="stats-detail"></div>
+      <ol id="stats-list" class="rounded-xl border border-slate-700 bg-slate-900 px-4 divide-y divide-slate-800"></ol>
+    </div>
     <div id="board-rosters" class="hidden space-y-2"></div>
     <div id="board-trades" class="hidden"></div>
     <p class="text-xs text-slate-500 text-center">Subs score only for matchdays where a starter in their
@@ -1170,6 +1178,7 @@ function setBoardTab(tab) {
   S.boardTab = tab;
   $("board-home").classList.toggle("hidden", tab !== "home");
   $("board-lb").classList.toggle("hidden", tab !== "lb");
+  $("board-stats").classList.toggle("hidden", tab !== "stats");
   $("board-rosters").classList.toggle("hidden", tab !== "rosters");
   $("board-trades").classList.toggle("hidden", tab !== "trades");
   document.querySelectorAll(".board-tab").forEach((b) => {
@@ -1206,7 +1215,163 @@ function renderBoard() {
       </div>
     </details>`).join("") || '<p class="text-sm text-slate-500">No managers.</p>';
   renderRosters("board-rosters");
+  renderStatsTab();
   renderTrades();
+}
+
+/* ---------- player stats tab ---------- */
+
+S.statsPos = "ALL";
+S.statsSearch = "";
+S.statsSel = null;
+
+const statRowsFor = (pid) =>
+  (S.stats || []).filter((r) => r.player_id === pid);
+
+// Per-category breakdown for one player; the pts sum equals
+// playerPoints() because saves/defensive actions floor per match.
+function playerBreakdown(pid, pos) {
+  const cats = [
+    ["goals", "Goals"], ["assists", "Assists"], ["cs", "Clean sheets"],
+    ["saves", "Saves (per 2)"], ["da", "Defensive actions (per 2)"],
+    ["motm", "Man of the match"], ["ps", "Penalties saved"],
+    ["pm", "Penalties missed"], ["yc", "Yellow cards"], ["rc", "Red cards"],
+  ];
+  const n = Object.fromEntries(cats.map(([k]) => [k, 0]));
+  const p = Object.fromEntries(cats.map(([k]) => [k, 0]));
+  for (const r of statRowsFor(pid)) {
+    if (!r.appeared) continue;
+    n.goals += r.goals || 0;       p.goals += (r.goals || 0) * SCORING.goal[pos];
+    n.assists += r.assists || 0;   p.assists += (r.assists || 0) * SCORING.assist;
+    if (r.clean_sheet) { n.cs++;   p.cs += SCORING.clean_sheet[pos]; }
+    n.yc += r.yellow_cards || 0;   p.yc += (r.yellow_cards || 0) * SCORING.yellow_card;
+    n.rc += r.red_cards || 0;      p.rc += (r.red_cards || 0) * SCORING.red_card;
+    if (pos === "GK") {
+      n.saves += r.saves || 0;
+      p.saves += Math.floor((r.saves || 0) / 2) * SCORING.save_per_2;
+    } else {
+      n.da += r.defensive_actions || 0;
+      p.da += Math.floor((r.defensive_actions || 0) / 2) * SCORING.def_action_per_2;
+    }
+    if (r.motm) { n.motm++;        p.motm += SCORING.motm; }
+    n.ps += r.penalty_saved || 0;  p.ps += (r.penalty_saved || 0) * SCORING.penalty_saved;
+    n.pm += r.penalty_missed || 0; p.pm += (r.penalty_missed || 0) * SCORING.penalty_missed;
+  }
+  return cats.filter(([k]) => n[k])
+    .map(([k, label]) => ({ label, count: n[k], pts: p[k] }));
+}
+
+function statBits(r) {
+  const bits = [];
+  if (!r.appeared) bits.push("DNP");
+  if (r.goals) bits.push(r.goals + "g");
+  if (r.assists) bits.push(r.assists + "a");
+  if (r.clean_sheet) bits.push("CS");
+  if (r.saves) bits.push(r.saves + "sv");
+  if (r.defensive_actions) bits.push(r.defensive_actions + "da");
+  if (r.yellow_cards) bits.push(r.yellow_cards + "Y");
+  if (r.red_cards) bits.push("R");
+  if (r.motm) bits.push("MOTM");
+  if (r.penalty_saved) bits.push(r.penalty_saved + "PS");
+  if (r.penalty_missed) bits.push(r.penalty_missed + "PM");
+  return bits.join(" ");
+}
+
+const ownerOf = (pid) => {
+  const pk = S.picks.find((x) => x.player_id === pid);
+  return pk ? S.managers.find((m) => m.id === pk.manager_id)?.name : null;
+};
+
+function renderStatsDetail() {
+  const box = $("stats-detail");
+  const p = S.statsSel ? S.playerById[S.statsSel] : null;
+  if (!p) { box.innerHTML = ""; return; }
+  const total = playerPoints(p.player_id, p.position);
+  const rows = playerBreakdown(p.player_id, p.position);
+  const matches = statRowsFor(p.player_id).sort((a, b) =>
+    String(labelDate(a.match_label)).localeCompare(String(labelDate(b.match_label))));
+  const owner = ownerOf(p.player_id);
+  box.innerHTML = `
+    <div class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
+      <div class="flex items-start gap-2">
+        <div class="min-w-0 flex-1">
+          <div class="font-bold truncate">${esc(p.name)}</div>
+          <div class="text-xs text-slate-400">${teamFixLine(p.team)}</div>
+          <div class="text-[10px] text-slate-500 mt-0.5">${
+            owner ? "👤 drafted by " + esc(owner) : "free agent"}</div>
+        </div>
+        <span class="pos-${p.position} rounded px-1.5 py-0.5 text-xs font-semibold">${p.position}</span>
+        <span class="text-xl font-bold text-wcgold">${total} pts</span>
+        <button id="stats-close" class="text-slate-400 px-1 -mt-1">✕</button>
+      </div>
+      ${rows.length ? `<table class="w-full text-xs"><tbody>
+        ${rows.map((r) => `<tr class="border-b border-slate-800">
+          <td class="py-1 text-slate-400">${r.label}</td>
+          <td class="py-1 text-right font-mono">×${r.count}</td>
+          <td class="py-1 text-right font-mono w-12 ${
+            r.pts > 0 ? "text-wcgold" : r.pts < 0 ? "text-red-400" : "text-slate-500"
+          }">${r.pts > 0 ? "+" : ""}${r.pts}</td>
+        </tr>`).join("")}
+      </tbody></table>` : ""}
+      ${matches.length ? `<div class="space-y-1">
+        ${matches.map((r) => `<div class="flex items-center gap-2 text-xs rounded-lg bg-slate-800/60 px-2 py-1.5">
+          <span class="truncate flex-1 text-slate-300">${esc(r.match_label)}</span>
+          <span class="text-slate-500 shrink-0">${statBits(r) || "0"}</span>
+          <span class="font-mono w-8 text-right shrink-0">${calcPlayerPoints(r, p.position)}</span>
+        </div>`).join("")}
+      </div>` : '<p class="text-xs text-slate-500">No stats yet — points appear once their matches are pulled.</p>'}
+    </div>`;
+  box.querySelector("#stats-close").onclick = () => {
+    S.statsSel = null;
+    renderStatsDetail();
+  };
+}
+
+function renderStatsTab() {
+  const chips = ["ALL", ...GROUPS.slice(0, 4)];
+  $("stats-chips").innerHTML = chips.map((c) =>
+    `<button data-chip="${c}" class="rounded-full px-3 py-1 border ${
+      S.statsPos === c ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"
+    }">${c}</button>`).join("");
+  $("stats-chips").querySelectorAll("[data-chip]").forEach((b) =>
+    b.onclick = () => { S.statsPos = b.dataset.chip; renderStatsTab(); });
+
+  const q = S.statsSearch.trim().toLowerCase();
+  let pool;
+  if (q) {
+    pool = S.players.filter((p) =>
+      p.name.toLowerCase().includes(q) || p.team.toLowerCase().includes(q));
+  } else {
+    // default view: everyone who has a stats row, ranked
+    const ids = new Set((S.stats || []).map((r) => r.player_id));
+    pool = [...ids].map((id) => S.playerById[id]).filter(Boolean);
+  }
+  if (S.statsPos !== "ALL") pool = pool.filter((p) => p.position === S.statsPos);
+  const ranked = pool
+    .map((p) => ({ p, pts: playerPoints(p.player_id, p.position) }))
+    .sort((a, b) => b.pts - a.pts || a.p.name.localeCompare(b.p.name))
+    .slice(0, 30);
+
+  $("stats-list").innerHTML = ranked.map(({ p, pts }, i) => {
+    const owner = ownerOf(p.player_id);
+    return `<li><button data-sp="${esc(p.player_id)}" class="w-full flex items-center gap-2 py-2 text-left">
+      <span class="text-slate-500 font-mono w-6 shrink-0">${q ? "" : i + 1 + "."}</span>
+      <span class="min-w-0 flex-1">
+        <span class="block truncate text-sm">${esc(p.name)}${
+          owner ? ` <span class="rounded bg-slate-700 px-1 py-0.5 text-[10px] text-wcgold">👤 ${esc(owner)}</span>` : ""}</span>
+        <span class="block truncate text-[10px] text-slate-500">${esc(p.team)}</span>
+      </span>
+      <span class="pos-${p.position} rounded px-1.5 py-0.5 text-[10px] font-semibold shrink-0">${p.position}</span>
+      <span class="font-mono font-bold ${pts > 0 ? "text-wcgold" : "text-slate-500"} w-10 text-right shrink-0">${pts}</span>
+    </button></li>`;
+  }).join("") || `<li class="py-4 text-sm text-slate-500">${
+    q ? "No players match." : "No stats yet — the list fills up once matches are pulled. Search to look anyone up."}</li>`;
+  $("stats-list").querySelectorAll("[data-sp]").forEach((b) => b.onclick = () => {
+    S.statsSel = b.dataset.sp;
+    renderStatsDetail();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
+  renderStatsDetail();
 }
 
 /* ---------- roster snapshots (lineup locks) ---------- */
@@ -2007,6 +2172,7 @@ function wire() {
   $("lobby-join-go").onclick = () => joinFromLobby().catch((e) => toast(e.message));
   $("pool-search").oninput = (e) => { S.poolSearch = e.target.value; renderPool(); };
   $("pool-team").onchange = () => renderPool();
+  $("stats-search").oninput = (e) => { S.statsSearch = e.target.value; renderStatsTab(); };
   $("draft-force").onclick = () => {
     if (confirm("Force a random auto-pick for the manager on the clock?"))
       autoPick(pickInfo(S.league.current_pick)).catch((e) => toast(e.message));

@@ -10,11 +10,12 @@ const stubDoc = {
 };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, POSITION_QUOTA };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, POSITION_QUOTA, playerBreakdown, playerPoints };"
 )(stubDoc, { getItem: () => null, setItem: () => {}, removeItem: () => {} }, {}, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
-        slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, POSITION_QUOTA } = api;
+        slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, POSITION_QUOTA,
+        playerBreakdown, playerPoints } = api;
 let fails = 0;
 const check = (label, got, want) => {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -125,6 +126,21 @@ check("current pick scores from lock date only",
 check("former player line shows banked points",
   hist.items.find((i) => i.pick.player_id === "__former__").pts, 6);
 S.snapshots = [];
+
+/* player stats breakdown: per-category points sum to the player total */
+S.stats = [
+  row({ player_id: "ger_1", match_label: "Germany vs X (2026-06-20)", saves: 5, clean_sheet: true }),
+  row({ player_id: "ger_1", match_label: "Germany vs Y (2026-06-24)", saves: 3 }),
+  row({ player_id: "ger_5", match_label: "Germany vs X (2026-06-20)", defensive_actions: 5, goals: 1, yellow_cards: 1 }),
+];
+check("GK breakdown sums to playerPoints",
+  playerBreakdown("ger_1", "GK").reduce((s, r) => s + r.pts, 0),
+  playerPoints("ger_1", "GK"));
+check("GK saves floor per match (2+1, not 4)",
+  playerBreakdown("ger_1", "GK").find((r) => r.label.startsWith("Saves")).pts, 3);
+check("DEF breakdown categories", playerBreakdown("ger_5", "DEF")
+  .map((r) => [r.label, r.count, r.pts]),
+  [["Goals", 1, 6], ["Defensive actions (per 2)", 5, 2], ["Yellow cards", 1, -1]]);
 
 /* trading: slot position groups */
 check("SUB_GK and GK same group", slotGroup("SUB_GK"), slotGroup("GK"));

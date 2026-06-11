@@ -8,7 +8,7 @@ match stats from API-Football every morning and scores everyone's players.
 
 | File | Purpose |
 | --- | --- |
-| `index.html` | The app: lobby, live snake draft, leaderboard, admin stats entry |
+| `index.html` | The app: lobby, live snake draft, leaderboard, player stats, admin stats entry |
 | `players.json` | Draft pool: all 48 squads, 1,248 players, from the official FIFA squad lists |
 | `schema.sql` | Supabase schema (idempotent — safe to re-run anytime) |
 | `daily_pull.py` | Daily stats pull → fantasy points → `match_stats` upsert |
@@ -236,8 +236,8 @@ position groups — a slot only trades within its position, subs included
 
 ### Sanity tests
 
-`node test_logic.js` — 49 checks on the snake order, position quotas,
+`node test_logic.js` — 52 checks on the snake order, position quotas,
 scoring parity with `daily_pull.py` (incl. defensive actions), sub
-activation, lineup-lock history replay, stage bonuses, and trade
-validity. `python -m unittest test_daily_pull` — 16 tests on the
+activation, lineup-lock history replay, stage bonuses, player stat
+breakdowns, and trade validity. `python -m unittest test_daily_pull` — 16 tests on the
 API-Football → FIFA player-id mapping.
