@@ -120,7 +120,10 @@ working.
    auto-pick if your timer runs out.
 5. After the draft (and before each round), set your lineup via
    **Home → Pick my team**: starters are 1 GK, 3 DEF, 3 MID, 2 FWD;
-   the other four are subs. Lineups aren't fixed at the draft.
+   the other four are subs. Lineups aren't fixed at the draft, but they
+   **lock when the admin closes the trading window** — each matchday is
+   scored against the lineup/roster that was locked at the time, so
+   later changes and trades never rewrite earlier rounds.
 6. For next-fixture info on the Home tab, run
    `python build_fixtures.py` (needs `API_FOOTBALL_KEY` set) and commit
    the generated `fixtures.json`. Optional but nice.
@@ -141,11 +144,13 @@ In the app: **Admin** tab (leaderboard view) → unlock with the admin token.
   r16 → qf → sf → final → winner). This drives TEAM-pick stage bonuses on
   the leaderboard. The automation never touches this — it's always manual,
   after each knockout round.
-- **Trading window:** open/close trading from the same admin view. While
-  open, managers can swap free agents and propose trades to each other
-  (see Trading rules under Reference). Intended use: open it between
-  rounds once all teams have played, close it when the next round kicks
-  off.
+- **Trading window & lineup locks:** open/close trading from the same
+  admin view. While open, managers can swap free agents, propose trades
+  and change lineups (see Trading rules under Reference). **Closing the
+  window snapshots and locks every lineup** for the upcoming games —
+  open it between rounds once all teams have played, close it before
+  the next kickoff. A fallback "re-lock now" button exists in case a
+  lock was missed.
 
 ### 7. Pre-kickoff checklist (tournament starts tomorrow, June 11)
 
@@ -217,6 +222,6 @@ position groups — a slot only trades within its position, subs included
 
 ### Sanity tests
 
-`node test_logic.js` — 43 checks on the snake order, position quotas,
-scoring parity with `daily_pull.py`, sub activation, stage bonuses, and
-trade validity.
+`node test_logic.js` — 46 checks on the snake order, position quotas,
+scoring parity with `daily_pull.py`, sub activation, lineup-lock history
+replay, stage bonuses, and trade validity.

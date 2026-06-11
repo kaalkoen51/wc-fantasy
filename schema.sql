@@ -105,6 +105,22 @@ create table if not exists trade_items (
     requested_pick_id uuid references picks(id) on delete cascade
 );
 
+-- Roster snapshots: one row per manager per lineup lock. Scoring for a
+-- matchday uses the latest snapshot taken on or before that day, so
+-- lineup changes and trades never rewrite already-played rounds. Written
+-- automatically at draft completion and whenever the admin closes the
+-- trading window; roster is the manager's 14 picks as JSON.
+create table if not exists lineup_snapshots (
+    id uuid primary key default gen_random_uuid(),
+    league_id uuid references leagues(id) on delete cascade,
+    manager_id uuid references managers(id) on delete cascade,
+    effective_from timestamptz not null default now(),
+    roster jsonb not null,
+    created_at timestamptz default now()
+);
+create index if not exists lineup_snapshots_lookup_idx
+    on lineup_snapshots (league_id, manager_id, effective_from);
+
 -- Atomically execute an accepted trade. Swapping player_id between two
 -- picks rows as plain updates would trip the unique (league_id, player_id)
 -- index mid-swap, so each pair goes through a temp value inside this one
@@ -142,7 +158,8 @@ do $$
 declare t text;
 begin
     foreach t in array array['leagues','managers','picks','match_stats',
-                             'team_stages','trades','trade_items'] loop
+                             'team_stages','trades','trade_items',
+                             'lineup_snapshots'] loop
         begin
             execute format('alter publication supabase_realtime add table %I', t);
         exception when duplicate_object then null;
@@ -157,7 +174,8 @@ do $$
 declare t text;
 begin
     foreach t in array array['leagues','managers','picks','match_stats',
-                             'team_stages','trades','trade_items'] loop
+                             'team_stages','trades','trade_items',
+                             'lineup_snapshots'] loop
         execute format('alter table %I enable row level security', t);
         execute format('drop policy if exists "open access" on %I', t);
         execute format(

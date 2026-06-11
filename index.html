@@ -253,14 +253,17 @@
         <div id="adm-existing" class="space-y-3 text-sm"></div>
       </div>
       <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-2">
-        <h3 class="font-semibold text-sm">Trading window</h3>
+        <h3 class="font-semibold text-sm">Trading window &amp; lineup locks</h3>
         <p class="text-xs text-slate-500">Open it between rounds (once all teams have played);
-          managers can then swap free agents and trade with each other. Close it when the next
-          round starts.</p>
+          managers can then trade, swap free agents and change their lineups. <b>Closing it
+          locks everyone's lineup in</b> for the next games — points for each matchday are
+          scored against the lineup that was locked at the time, so later changes never
+          rewrite earlier rounds. Close it before kickoff.</p>
         <div class="flex items-center justify-between gap-3">
           <span id="adm-trading-status" class="text-sm font-semibold"></span>
           <button id="adm-trading-toggle" class="rounded-lg px-4 py-2 text-sm font-semibold bg-wcred hover:bg-wcred-hov"></button>
         </div>
+        <button id="adm-snapshot" class="w-full bg-slate-800 border border-slate-700 rounded-lg py-1.5 text-xs font-semibold">Re-lock current lineups now (fallback)</button>
       </div>
       <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-2">
         <h3 class="font-semibold text-sm">Team stages</h3>
@@ -342,6 +345,7 @@ const STAGE_BONUS = { r32: 5, r16: 10, qf: 15, sf: 20, final: 25, winner: 15 };
 const S = {
   sb: null, players: [], teams: [],
   league: null, managers: [], picks: [], stats: [], stages: [], trades: [],
+  snapshots: [],
   channel: null,
 };
 
@@ -403,7 +407,7 @@ async function loadPlayers() {
 async function refetchAll() {
   const id = getSession()?.leagueId;
   if (!id) return;
-  const [l, m, p, st, tg, tr] = await Promise.all([
+  const [l, m, p, st, tg, tr, sn] = await Promise.all([
     S.sb.from("leagues").select("*").eq("id", id).maybeSingle(),
     S.sb.from("managers").select("*").eq("league_id", id).order("created_at"),
     S.sb.from("picks").select("*").eq("league_id", id).order("pick_number"),
@@ -411,6 +415,8 @@ async function refetchAll() {
     S.sb.from("team_stages").select("*").eq("league_id", id),
     S.sb.from("trades").select("*, trade_items(*)").eq("league_id", id)
       .order("created_at", { ascending: false }),
+    S.sb.from("lineup_snapshots").select("*").eq("league_id", id)
+      .order("effective_from"),
   ]);
   const err = l.error || m.error || p.error || st.error || tg.error || tr.error;
   if (err) { toast("Load failed: " + err.message); return; }
@@ -421,6 +427,7 @@ async function refetchAll() {
   S.stats = st.data;
   S.stages = tg.data;
   S.trades = tr.data;
+  S.snapshots = sn.data || [];
   ptsCache = null;
   route();
 }
@@ -440,6 +447,7 @@ function subscribeRealtime() {
     .on("postgres_changes", { event: "*", schema: "public", table: "trades",      filter: "league_id=eq." + id }, scheduleRefetch)
     // trade_items has no league_id to filter on; unfiltered is fine at this scale.
     .on("postgres_changes", { event: "*", schema: "public", table: "trade_items" }, scheduleRefetch)
+    .on("postgres_changes", { event: "*", schema: "public", table: "lineup_snapshots", filter: "league_id=eq." + id }, scheduleRefetch)
     .subscribe((status) => {
       $("conn-dot").className = "w-2 h-2 rounded-full " +
         (status === "SUBSCRIBED" ? "bg-wcgreen" : "bg-amber-400");
@@ -722,6 +730,11 @@ async function makePick(entry, info) {
   await S.sb.from("leagues")
     .update({ current_pick: p + 1, pick_started_at: new Date().toISOString() })
     .eq("id", S.league.id).eq("current_pick", p);
+  if (p + 1 > totalPicks()) {
+    // Draft just finished: this client writes the baseline lineup lock.
+    await refetchAll();
+    await snapshotRosters();
+  }
   scheduleRefetch();
 }
 
@@ -952,37 +965,72 @@ function computeScores() {
     (statsByPlayer[pid] || []).filter((r) => r.appeared)
       .map((r) => labelDate(r.match_label)).filter(Boolean));
 
+  const statDates = [...new Set(
+    S.stats.map((r) => labelDate(r.match_label)).filter(Boolean))].sort();
+
+  // Snapshots per manager, oldest first; rosterAt(d) is the lineup that
+  // was locked in on or before matchday d. Before the first lock (or with
+  // no snapshots at all) the current picks apply.
+  const snapsByMgr = {};
+  for (const s of S.snapshots || []) (snapsByMgr[s.manager_id] ||= []).push(s);
+  for (const k in snapsByMgr) snapsByMgr[k].sort((a, b) =>
+    String(a.effective_from).localeCompare(String(b.effective_from)));
+  const rosterAt = (mgrId, d) => {
+    const snaps = snapsByMgr[mgrId] || [];
+    let chosen = null;
+    for (const s of snaps) {
+      if (String(s.effective_from).slice(0, 10) <= d) chosen = s;
+      else break;
+    }
+    chosen = chosen || snaps[0];
+    return chosen ? chosen.roster : managerPicks(mgrId);
+  };
+
   return S.managers.map((m) => {
-    const mPicks = S.picks.filter((p) => p.manager_id === m.id)
-      .sort((a, b) => a.pick_number - b.pick_number);
-    const starters = mPicks.filter((p) => !p.is_sub && p.slot !== "TEAM");
     let total = 0;
-    const items = mPicks.map((pk) => {
-      let pts = 0, note = "";
-      if (pk.slot === "TEAM") {
-        const stage = S.stages.find((s) => s.team === pk.team)?.stage || "group";
-        pts = calcTeamPoints(stage);
-        note = stage;
-      } else if (!pk.is_sub) {
-        pts = (statsByPlayer[pk.player_id] || [])
-          .reduce((s, r) => s + calcPlayerPoints(r, pk.position), 0);
-      } else {
-        const mates = starters.filter((st) => st.position === pk.position);
-        let activated = 0;
-        for (const r of statsByPlayer[pk.player_id] || []) {
-          if (!r.appeared) continue;
-          const d = labelDate(r.match_label);
-          if (!d) continue;
-          if (mates.some((st) => playedByDate[d]?.has(st.team)
-                                 && !appearedDates(st.player_id).has(d))) {
-            pts += calcPlayerPoints(r, pk.position);
-            activated++;
-          }
+    const earnedByPlayer = {};
+    for (const d of statDates) {
+      const roster = rosterAt(m.id, d);
+      const starters = roster.filter((e) => !e.is_sub && e.position !== "TEAM");
+      for (const entry of roster) {
+        if (entry.position === "TEAM") continue;
+        const rows = (statsByPlayer[entry.player_id] || [])
+          .filter((r) => labelDate(r.match_label) === d);
+        if (!rows.length) continue;
+        let pts = 0;
+        if (!entry.is_sub) {
+          pts = rows.reduce((s2, r) => s2 + calcPlayerPoints(r, entry.position), 0);
+        } else {
+          const mates = starters.filter((st) => st.position === entry.position);
+          const activated = mates.some((st) => playedByDate[d]?.has(st.team)
+            && !appearedDates(st.player_id).has(d));
+          if (activated) pts = rows.reduce(
+            (s2, r) => s2 + calcPlayerPoints(r, entry.position), 0);
         }
-        note = activated ? `active ${activated}×` : "bench";
+        earnedByPlayer[entry.player_id] = (earnedByPlayer[entry.player_id] || 0) + pts;
+        total += pts;
       }
-      total += pts;
-      return { pick: pk, pts, note };
+    }
+
+    const mPicks = managerPicks(m.id).sort((a, b) =>
+      (SLOT_RANK[a.slot] ?? 9) - (SLOT_RANK[b.slot] ?? 9) || a.pick_number - b.pick_number);
+    const items = mPicks.map((pk) => {
+      if (pk.slot === "TEAM") {
+        const stage = stageOf(pk.team);
+        const pts = calcTeamPoints(stage);
+        total += pts;
+        return { pick: pk, pts, note: stage };
+      }
+      const pts = earnedByPlayer[pk.player_id] || 0;
+      delete earnedByPlayer[pk.player_id];
+      return { pick: pk, pts, note: pk.is_sub ? "sub" : "" };
+    });
+    // Points earned by players since traded away or swapped out stay banked.
+    const formerPts = Object.values(earnedByPlayer).reduce((a, b) => a + b, 0);
+    if (formerPts) items.push({
+      pick: { slot: "—", player_name: "Former players (traded out)",
+              player_id: "__former__", position: "", team: "" },
+      pts: formerPts, note: "",
     });
     return { manager: m, total, items };
   });
@@ -1027,7 +1075,10 @@ function draftRulesHtml() {
     <p><b>Timer:</b> miss your pick window and a random player you still need is auto-picked,
       so stay sharp.</p>
     <p><b>Lineup:</b> after the draft you choose your starters
-      (1 GK, 3 DEF, 3 MID, 2 FWD) before each round — the rest are subs.</p>
+      (1 GK, 3 DEF, 3 MID, 2 FWD) before each round — the rest are subs.
+      Lineups (and trades) are only open between rounds and lock when the
+      admin closes the window; each matchday scores against the lineup
+      that was locked at the time.</p>
   </div>`;
 }
 
@@ -1055,7 +1106,9 @@ function renderHomeTab() {
         <div class="text-xs text-slate-400">#${rank} of ${scores.length}</div>
       </div>
     </div>
-    <button id="home-lineup" class="w-full bg-slate-800 border border-wcgold/60 text-wcgold rounded-xl py-2.5 text-sm font-semibold">Pick my team for the next games</button>
+    <button id="home-lineup" class="w-full bg-slate-800 border ${S.league.trading_open ? "border-wcgold/60 text-wcgold" : "border-slate-700 text-slate-500"} rounded-xl py-2.5 text-sm font-semibold">${
+      S.league.trading_open ? "Pick my team for the next games"
+                            : "🔒 Lineup locked — opens with the trading window"}</button>
     <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-1">
       ${mine.map((pk) => `
         <div class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-2 py-2">
@@ -1121,11 +1174,31 @@ function renderBoard() {
   renderTrades();
 }
 
+/* ---------- roster snapshots (lineup locks) ---------- */
+
+// Record every manager's current 14 picks. Scoring replays history against
+// these, so changes after a lock never rewrite already-played rounds.
+async function snapshotRosters() {
+  const rows = S.managers.map((m) => ({
+    league_id: S.league.id,
+    manager_id: m.id,
+    roster: managerPicks(m.id).map((pk) => ({
+      player_id: pk.player_id, player_name: pk.player_name,
+      position: pk.position, team: pk.team, is_sub: pk.is_sub, slot: pk.slot,
+    })),
+  }));
+  if (!rows.length) return;
+  const { error } = await S.sb.from("lineup_snapshots").insert(rows);
+  if (error) toast("Lineup lock failed: " + error.message);
+}
+
 /* ---------- lineup picker ---------- */
 
 function openLineup() {
   const me = myManager();
   if (!me) return;
+  if (!S.league.trading_open)
+    return toast("Lineups are locked — the admin opens the window between rounds.");
   // Draft of the new lineup: set of pick ids that will be starters.
   S.lineupDraft = new Set(managerPicks(me.id)
     .filter((pk) => !pk.is_sub && pk.slot !== "TEAM").map((pk) => pk.id));
@@ -1181,6 +1254,8 @@ function renderLineup() {
 
 async function saveLineup() {
   const me = myManager();
+  if (!S.league.trading_open)
+    return toast("Lineups are locked — the window closed while you were editing.");
   if (!lineupValid(lineupCounts())) return;
   const changes = managerPicks(me.id).filter((pk) => pk.slot !== "TEAM").map((pk) => {
     const isSub = !S.lineupDraft.has(pk.id);
@@ -1700,7 +1775,9 @@ async function toggleTrading() {
   const { error } = await S.sb.from("leagues")
     .update({ trading_open: next }).eq("id", S.league.id);
   if (error) return toast(error.message);
-  toast(next ? "Trading window opened." : "Trading window closed.");
+  if (!next) await snapshotRosters(); // closing = lock everyone's lineups in
+  toast(next ? "Trading window opened — lineups and trades unlocked."
+             : "Trading window closed — lineups locked in for the next games.");
   scheduleRefetch();
 }
 
@@ -1753,6 +1830,11 @@ function wire() {
   $("adm-drafted").onchange = admRenderPlayerSearch;
   $("adm-tsearch").oninput = admRenderStages;
   $("adm-trading-toggle").onclick = () => toggleTrading().catch((e) => toast(e.message));
+  $("adm-snapshot").onclick = () => {
+    if (confirm("Snapshot every manager's current lineup as the locked state from today?"))
+      snapshotRosters().then(() => { toast("Lineups locked."); scheduleRefetch(); })
+        .catch((e) => toast(e.message));
+  };
   $("swap-close").onclick = closeSwap;
   $("swap-search").oninput = renderSwapList;
   $("lineup-cancel").onclick = () => $("lineup-sheet").classList.add("hidden");

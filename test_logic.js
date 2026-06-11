@@ -75,7 +75,7 @@ const sc = computeScores()[0];
 const subItem = sc.items.find((i) => i.pick.is_sub);
 const startItem = sc.items.find((i) => !i.pick.is_sub);
 check("starter DEF cs pts", startItem.pts, 4);
-check("sub active only day 1 (goal 6 + cs 4)", [subItem.pts, subItem.note], [10, "active 1×"]);
+check("sub active only day 1 (goal 6 + cs 4)", [subItem.pts, subItem.note], [10, "sub"]);
 check("manager total", sc.total, 14);
 
 /* team stage bonuses */
@@ -97,6 +97,31 @@ check("total includes stage bonus", sc2.total, 14 + 50);
 S.stages = [];
 const teamItem0 = computeScores()[0].items.find((i) => i.pick.slot === "TEAM");
 check("no stage row = group = 0", [teamItem0.pts, teamItem0.note], [0, "group"]);
+
+/* lineup locks: each matchday scores against the snapshot in effect */
+S.managers = [{ id: "m1", name: "M1", draft_position: 1 }];
+S.picks = [{ id: "p1", manager_id: "m1", player_id: "bra_2", player_name: "New Def",
+  position: "DEF", team: "Brazil", slot: "DEF", is_sub: false, pick_number: 1 }];
+S.stats = [
+  row({ player_id: "fra_5", match_label: "France vs Chile (2026-06-12)", goals: 1 }),
+  row({ player_id: "fra_5", match_label: "France vs Spain (2026-06-16)", goals: 1 }),
+  row({ player_id: "bra_2", match_label: "Brazil vs Peru (2026-06-16)", clean_sheet: true }),
+];
+S.snapshots = [
+  { manager_id: "m1", effective_from: "2026-06-10T08:00:00+00:00",
+    roster: [{ player_id: "fra_5", player_name: "Old Def", position: "DEF",
+               team: "France", is_sub: false, slot: "DEF" }] },
+  { manager_id: "m1", effective_from: "2026-06-15T08:00:00+00:00",
+    roster: [{ player_id: "bra_2", player_name: "New Def", position: "DEF",
+               team: "Brazil", is_sub: false, slot: "DEF" }] },
+];
+const hist = computeScores()[0];
+check("pre-trade points banked, post-trade not credited", hist.total, 6 + 4);
+check("current pick scores from lock date only",
+  hist.items.find((i) => i.pick.player_id === "bra_2").pts, 4);
+check("former player line shows banked points",
+  hist.items.find((i) => i.pick.player_id === "__former__").pts, 6);
+S.snapshots = [];
 
 /* trading: slot position groups */
 check("SUB_GK and GK same group", slotGroup("SUB_GK"), slotGroup("GK"));
