@@ -174,6 +174,10 @@ In the app: **Admin** tab (leaderboard view) → unlock with the admin token.
   open it between rounds once all teams have played, close it before
   the next kickoff. A fallback "re-lock now" button exists in case a
   lock was missed.
+- **Redrafts & final phase:** as the field narrows, run redrafts with
+  smaller squads (see Redraft phases under Reference). The admin card
+  handles removing managers, opening keeper picks, setting the new
+  squad size, and starting the redraft or the final phase.
 
 ### 7. Pre-kickoff checklist (tournament starts tomorrow, June 11)
 
@@ -228,6 +232,35 @@ Then commit and push the updated `players.json` so the hosted app picks
 it up. Player ids are `<fifa code>_<shirt number>` (e.g. `arg_10` =
 Messi); TEAM picks use `team:<Country>`.
 
+### Redraft phases
+
+With a big league (13+ managers) the player pool runs dry as countries
+get knocked out, so the league moves through phases. Points always carry
+over — one leaderboard, all tournament. The flow, all manual from the
+Admin tab:
+
+1. **(Optional) Remove trailing managers.** Their total freezes on the
+   leaderboard (greyed, "eliminated") and all their players — TEAM pick
+   included — return to the pool. Can't be undone.
+2. **Open keeper picks.** Every surviving manager chooses 1 player to
+   protect on their Home tab (their TEAM pick carries automatically).
+   The admin card shows who has/hasn't chosen.
+3. **Set the new squad size** (per-position quota + starters; the kept
+   player rides on top of the quota as a bonus slot) and hit **Start
+   redraft now**. Everything else returns to the pool, open trade
+   proposals are cancelled, and the draft starts **immediately** in
+   reverse-standings snake order (last place picks first) — so do it
+   when everyone's around, on a day with no matches. Earlier rounds
+   stay banked via lineup snapshots.
+4. Repeat (typically after the R32, and again around the quarters).
+5. **Start final phase** before the final: all squads dissolve (TEAM
+   picks stay for stage bonuses) and every surviving manager calls the
+   champion on their Home tab for **+5**, paid out when the admin sets
+   the winner under Team stages. Mark the two finalists' stage as
+   `final` first so the picker shows them.
+
+Requires re-running `schema.sql` (additive as always).
+
 ### Trading rules
 
 Both mechanisms need the trading window open (admin toggle) and respect
@@ -248,8 +281,10 @@ position groups — a slot only trades within its position, subs included
 
 ### Sanity tests
 
-`node test_logic.js` — 52 checks on the snake order, position quotas,
+`node test_logic.js` — 62 checks on the snake order, position quotas,
 scoring parity with `daily_pull.py` (incl. defensive actions), sub
 activation, lineup-lock history replay, stage bonuses, player stat
-breakdowns, and trade validity. `python -m unittest test_daily_pull` — 16 tests on the
+breakdowns, trade validity, and redraft phases (phase quotas, kept
+players, eliminated managers, champion picks).
+`python -m unittest test_daily_pull` — 16 tests on the
 API-Football → FIFA player-id mapping.

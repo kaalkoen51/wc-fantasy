@@ -68,6 +68,22 @@ alter table leagues add column if not exists pick_started_at timestamptz;
 -- scored as +1 per 2 actions (GK excluded). Additive; older rows stay 0.
 alter table match_stats add column if not exists defensive_actions int default 0;
 
+-- Redraft phases: as the tournament field narrows the admin can remove
+-- trailing managers (their points freeze) and run redrafts with smaller,
+-- admin-chosen squads. Each manager protects one player (picks.kept rides
+-- on top of the phase quota); TEAM picks always carry through. In the
+-- final phase squads dissolve and surviving managers predict the champion.
+alter table leagues add column if not exists phase int not null default 1;
+alter table leagues add column if not exists phase_quota jsonb;
+alter table leagues add column if not exists phase_starters jsonb;
+alter table leagues add column if not exists keeper_window boolean not null default false;
+alter table leagues add column if not exists final_phase boolean not null default false;
+alter table managers add column if not exists eliminated boolean not null default false;
+alter table managers add column if not exists frozen_points int;
+alter table managers add column if not exists keeper_pick_id uuid;
+alter table managers add column if not exists final_pick text;
+alter table picks add column if not exists kept boolean not null default false;
+
 alter table managers add column if not exists join_token text;
 alter table managers add column if not exists draft_position int;
 

@@ -203,7 +203,8 @@
     <div id="board-trades" class="hidden"></div>
     <p class="text-xs text-slate-500 text-center">Subs score only for matchdays where a starter in their
       position had a match but didn't play. TEAM picks earn cumulative stage bonuses
-      (R32 +5, R16 +10, QF +15, SF +20, Final +25, Winner +15).</p>
+      (R32 +5, R16 +10, QF +15, SF +20, Final +25, Winner +15) and carry through every
+      redraft. In the final phase, surviving managers call the champion for +5.</p>
   </section>
 
   <!-- Admin stats entry -->
@@ -287,6 +288,36 @@
         </div>
         <button id="adm-snapshot" class="w-full bg-slate-800 border border-slate-700 rounded-lg py-1.5 text-xs font-semibold">Re-lock current lineups now (fallback)</button>
       </div>
+      <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
+        <h3 class="font-semibold text-sm">Redrafts &amp; final phase</h3>
+        <p class="text-xs text-slate-500">As the field narrows: (1) optionally remove trailing
+          managers — their points freeze and their players return to the pool; (2) open keeper
+          picks so everyone protects one player; (3) set the new squad size and hit Start —
+          the redraft begins <b>immediately</b> in reverse-standings snake order, so do it when
+          everyone's around, on a day with no matches. TEAM picks always carry through.</p>
+        <div id="adm-phase-info" class="text-sm font-semibold text-wcgold"></div>
+        <div id="adm-mgr-list" class="space-y-1"></div>
+        <div class="flex items-center justify-between gap-3">
+          <span id="adm-keeper-status" class="text-xs text-slate-400"></span>
+          <button id="adm-keeper-toggle" class="shrink-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold"></button>
+        </div>
+        <div class="text-xs text-slate-400">New squad per position (the kept player is extra)</div>
+        <div class="grid grid-cols-4 gap-2 text-sm">
+          <label class="text-xs text-slate-400">GK<input id="adm-q-gk" type="number" value="1" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">DEF<input id="adm-q-def" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">MID<input id="adm-q-mid" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">FWD<input id="adm-q-fwd" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+        </div>
+        <div class="text-xs text-slate-400">Starters per position (the rest are subs)</div>
+        <div class="grid grid-cols-4 gap-2 text-sm">
+          <label class="text-xs text-slate-400">GK<input id="adm-s-gk" type="number" value="1" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">DEF<input id="adm-s-def" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">MID<input id="adm-s-mid" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">FWD<input id="adm-s-fwd" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+        </div>
+        <button id="adm-redraft" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2 text-sm font-semibold">Start redraft now</button>
+        <button id="adm-final" class="w-full bg-slate-800 border border-wcgold/60 text-wcgold rounded-lg py-2 text-sm font-semibold">Start final phase (champion picks, +5)</button>
+      </div>
       <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-2">
         <h3 class="font-semibold text-sm">Team stages</h3>
         <p class="text-xs text-slate-500">How far each national team has progressed. TEAM picks earn
@@ -304,8 +335,7 @@
 <div id="lineup-sheet" class="hidden fixed inset-0 z-40 bg-black/60">
   <div class="absolute bottom-0 inset-x-0 max-h-[85vh] bg-slate-900 border-t border-slate-700 rounded-t-2xl p-4 flex flex-col">
     <div class="font-semibold">Pick your team for the next games</div>
-    <p class="text-xs text-slate-500 mt-0.5 mb-2">Starters: 1 GK, 3 DEF, 3 MID, 2 FWD. The other four
-      are subs — a sub only scores on days their starter doesn't play.</p>
+    <p id="lineup-rule" class="text-xs text-slate-500 mt-0.5 mb-2"></p>
     <div id="lineup-list" class="overflow-y-auto flex-1 min-h-0 space-y-1"></div>
     <div class="flex items-center gap-2 mt-3">
       <span id="lineup-count" class="flex-1 text-xs text-slate-400"></span>
@@ -335,10 +365,11 @@
 
 /* ---------- constants ---------- */
 
-// Roster: 14 picks per manager, any order, within position quotas.
-const POSITION_QUOTA = { GK: 2, DEF: 4, MID: 4, FWD: 3, TEAM: 1 };
-const STARTER_QUOTA  = { GK: 1, DEF: 3, MID: 3, FWD: 2 };   // rest are subs
-const ROSTER_SIZE = 14;
+// Roster: 14 picks per manager in the initial draft, any order, within
+// position quotas. Redraft phases (2+) use the admin-chosen quota stored
+// on the league row; the kept player rides on top of that quota.
+const PHASE1_QUOTA    = { GK: 2, DEF: 4, MID: 4, FWD: 3, TEAM: 1 };
+const PHASE1_STARTERS = { GK: 1, DEF: 3, MID: 3, FWD: 2 };   // rest are subs
 const GROUPS = ["GK", "DEF", "MID", "FWD", "TEAM"];
 const SLOT_POS = { GK:"GK", DEF:"DEF", MID:"MID", FWD:"FWD", TEAM:"TEAM",
                    SUB_GK:"GK", SUB_DEF:"DEF", SUB_MID:"MID", SUB_FWD:"FWD" };
@@ -364,6 +395,10 @@ const SCORING = {
 // TEAM pick stage bonuses, awarded once per stage reached (cumulative).
 const STAGE_ORDER = ["group", "r32", "r16", "qf", "sf", "final", "winner"];
 const STAGE_BONUS = { r32: 5, r16: 10, qf: 15, sf: 20, final: 25, winner: 15 };
+
+// Final phase: squads dissolve and each surviving manager predicts the
+// champion — paid out when the admin sets a team's stage to "winner".
+const FINAL_PICK_BONUS = 5;
 
 /* ---------- state & tiny helpers ---------- */
 
@@ -490,7 +525,20 @@ function leaveLeague() {
 
 /* ---------- routing ---------- */
 
-const totalPicks = () => ROSTER_SIZE * (S.league?.num_managers || 0);
+const leaguePhase = () => S.league?.phase || 1;
+const activeManagers = () => S.managers.filter((m) => !m.eliminated);
+
+// Quotas for the current phase. Phase 1 is fixed; redrafts use the
+// admin-chosen quota on the league row. TEAM picks carry through every
+// phase and are never redrafted, so their quota is 0 after phase 1.
+const posQuota = () => leaguePhase() === 1 ? PHASE1_QUOTA
+  : { TEAM: 0, ...(S.league.phase_quota || {}) };
+const starterQuota = () => leaguePhase() === 1 ? PHASE1_STARTERS
+  : (S.league.phase_starters || S.league.phase_quota || PHASE1_STARTERS);
+const picksPerManager = () =>
+  GROUPS.reduce((s, g) => s + (posQuota()[g] || 0), 0);
+const totalPicks = () => picksPerManager() *
+  (leaguePhase() === 1 ? (S.league?.num_managers || 0) : activeManagers().length);
 
 function route() {
   if (!S.league) { showView("home"); return; }
@@ -645,7 +693,7 @@ function renderLobby() {
   $("lobby-name").textContent = L.name;
   $("lobby-code").textContent = L.invite_code;
   $("lobby-settings").textContent =
-    `${L.num_managers} managers · ${L.pick_duration_seconds}s per pick · 14 rounds`;
+    `${L.num_managers} managers · ${L.pick_duration_seconds}s per pick · ${picksPerManager()} rounds`;
   $("lobby-count").textContent = `${S.managers.length}/${L.num_managers}`;
   const me = myManager();
   $("lobby-managers").innerHTML = S.managers.map((m) =>
@@ -701,12 +749,12 @@ S.poolSearch = "";
 let autoPickedFor = 0;
 
 function draftOrderManagers() {
-  return [...S.managers].sort(
+  return activeManagers().sort(
     (a, b) => (a.draft_position ?? 99) - (b.draft_position ?? 99));
 }
 
 // Snake order decides whose turn it is; the manager drafts any position
-// they like, within POSITION_QUOTA.
+// they like, within the phase's position quota.
 function pickInfo(p) {
   const order = draftOrderManagers();
   const M = order.length;
@@ -727,8 +775,11 @@ function availableForGroup(group) {
 
 const managerPicks = (mgrId) => S.picks.filter((pk) => pk.manager_id === mgrId);
 
+// Kept players (redraft keepers) don't consume quota — they're a bonus
+// slot on top — but they do occupy a starter spot for slotting.
 function quotaLeft(mgrPicks, group) {
-  return POSITION_QUOTA[group] - mgrPicks.filter((pk) => pk.position === group).length;
+  return (posQuota()[group] || 0)
+    - mgrPicks.filter((pk) => pk.position === group && !pk.kept).length;
 }
 
 // First picks in a group fill the starter spots, the rest start as subs;
@@ -736,7 +787,7 @@ function quotaLeft(mgrPicks, group) {
 function slotForNewPick(mgrPicks, group) {
   if (group === "TEAM") return "TEAM";
   const have = mgrPicks.filter((pk) => pk.position === group).length;
-  return have < STARTER_QUOTA[group] ? group : "SUB_" + group;
+  return have < (starterQuota()[group] || 0) ? group : "SUB_" + group;
 }
 
 function needsSummary(mgrPicks) {
@@ -758,7 +809,10 @@ async function makePick(entry, info) {
     league_id: S.league.id, manager_id: info.manager.id,
     player_id: entry.player_id, player_name: entry.name,
     position: entry.position, team: entry.team,
-    pick_number: p, is_sub: slot.startsWith("SUB_"), slot,
+    // Phase offset keeps redraft pick numbers clear of earlier phases'
+    // (kept rows retain theirs and there's a unique index on the pair).
+    pick_number: (leaguePhase() - 1) * 1000 + p,
+    is_sub: slot.startsWith("SUB_"), slot,
   };
   const { error } = await S.sb.from("picks").insert(row);
   if (error) {
@@ -815,7 +869,8 @@ function renderPool() {
   const myTurn = !!me && info.manager.id === me.id;
   const onClockPicks = managerPicks(info.manager.id);
 
-  const chips = ["ALL", ...GROUPS];
+  const groups = GROUPS.filter((g) => posQuota()[g] > 0);
+  const chips = ["ALL", ...groups];
   $("pool-chips").innerHTML = chips.map((c) =>
     `<button data-chip="${c}" class="rounded-full px-3 py-1 border ${
       S.poolFilter === c ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"
@@ -829,7 +884,7 @@ function renderPool() {
   }
 
   let entries = S.poolFilter === "ALL"
-    ? GROUPS.flatMap((g) => availableForGroup(g))
+    ? groups.flatMap((g) => availableForGroup(g))
     : availableForGroup(S.poolFilter);
   const teamF = $("pool-team").value;
   if (teamF) entries = entries.filter((e) => e.team === teamF);
@@ -912,7 +967,8 @@ function renderDraft() {
   const myTurn = !!me && info.manager.id === me.id;
 
   $("draft-progress").textContent =
-    `Pick ${L.current_pick} of ${totalPicks()} · Round ${info.round} of ${ROSTER_SIZE}`;
+    `Pick ${L.current_pick} of ${totalPicks()} · Round ${info.round} of ${picksPerManager()}` +
+    (leaguePhase() > 1 ? ` · Redraft (phase ${leaguePhase()})` : "");
   $("draft-onclock").textContent =
     myTurn ? "You're on the clock!" : `${info.manager.name} is on the clock`;
   $("draft-slotline").textContent = needsSummary(managerPicks(info.manager.id));
@@ -930,7 +986,7 @@ function renderDraft() {
 
   $("draft-recent").innerHTML = [...S.picks].slice(-5).reverse().map((pk) => {
     const m = S.managers.find((x) => x.id === pk.manager_id);
-    return `<li><span class="text-slate-500">#${pk.pick_number}</span> ${esc(m?.name ?? "?")}: <b>${esc(pk.player_name)}</b> <span class="text-xs text-slate-500">${pk.slot}</span></li>`;
+    return `<li><span class="text-slate-500">#${pk.pick_number % 1000}</span> ${esc(m?.name ?? "?")}: <b>${esc(pk.player_name)}</b> <span class="text-xs text-slate-500">${pk.slot}</span></li>`;
   }).join("") || '<li class="text-slate-500">No picks yet.</li>';
 
   renderRosters("draft-rosters");
@@ -1028,6 +1084,9 @@ function computeScores() {
   };
 
   return S.managers.map((m) => {
+    // Removed managers: total frozen at removal time, no live items.
+    if (m.eliminated) return { manager: m, total: m.frozen_points || 0,
+                               items: [], eliminated: true };
     let total = 0;
     const earnedByPlayer = {};
     for (const d of statDates) {
@@ -1073,6 +1132,17 @@ function computeScores() {
               player_id: "__former__", position: "", team: "" },
       pts: formerPts, note: "",
     });
+    // Final phase: champion prediction pays out once the winner is set.
+    if (m.final_pick) {
+      const champion = S.stages.find((s) => s.stage === "winner")?.team;
+      const pts = champion === m.final_pick ? FINAL_PICK_BONUS : 0;
+      total += pts;
+      items.push({
+        pick: { slot: "WIN", player_name: `Champion pick: ${m.final_pick}`,
+                player_id: "__final__", position: "", team: m.final_pick },
+        pts, note: champion ? (pts ? "correct" : champion + " won") : "pending",
+      });
+    }
     return { manager: m, total, items };
   });
 }
@@ -1093,6 +1163,7 @@ function scoringHtml() {
     ["Man of the match", `+${SCORING.motm}`],
     ["Penalty saved", `+${SCORING.penalty_saved}`],
     ["Penalty missed", SCORING.penalty_missed],
+    ["Champion pick (final phase only)", `+${FINAL_PICK_BONUS}`],
   ];
   const stages = STAGE_ORDER.slice(1).map((s) =>
     `${s.toUpperCase()} +${STAGE_BONUS[s]}`).join(" · ");
@@ -1107,22 +1178,97 @@ function scoringHtml() {
       ${stages} (a champion banks ${calcTeamPoints("winner")} in total).</p>
     <p class="text-xs"><b>Subs:</b> a sub only scores on days where a starter in their position
       had a match but didn't play. Players who don't appear score 0.</p>
+    <p class="text-xs"><b>Redrafts:</b> as the tournament field narrows the admin runs redrafts
+      with smaller squads — everyone keeps 1 player plus their TEAM pick, the rest go back in
+      the pool, and the order is reverse standings (last place picks first). Earlier points stay
+      banked. For the final there are no squads: surviving managers just call the champion
+      for +${FINAL_PICK_BONUS}.</p>
   </div>`;
 }
 
 function draftRulesHtml() {
+  const q = posQuota(), sq = starterQuota();
+  const starterLine = ["GK", "DEF", "MID", "FWD"]
+    .filter((g) => sq[g] > 0).map((g) => `${sq[g]} ${g}`).join(", ");
   return `<div class="space-y-1.5 text-xs text-slate-300 mb-3">
-    <p><b>Draft:</b> snake order (random, reverses every round), ${ROSTER_SIZE} rounds.
+    <p><b>Draft:</b> snake order (reverses every round), ${picksPerManager()} rounds.
       Pick any position on your turn within your roster quota:
-      ${GROUPS.map((g) => `${POSITION_QUOTA[g]} ${g}`).join(", ")}.</p>
+      ${GROUPS.filter((g) => q[g] > 0).map((g) => `${q[g]} ${g}`).join(", ")}.</p>
     <p><b>Timer:</b> miss your pick window and a random player you still need is auto-picked,
       so stay sharp.</p>
     <p><b>Lineup:</b> after the draft you choose your starters
-      (1 GK, 3 DEF, 3 MID, 2 FWD) before each round — the rest are subs.
+      (${starterLine}) before each round — the rest are subs.
       Lineups (and trades) are only open between rounds and lock when the
       admin closes the window; each matchday scores against the lineup
       that was locked at the time.</p>
   </div>`;
+}
+
+// Keeper-window and final-phase prompts shown at the top of the Home tab.
+function phaseCardsHtml(me) {
+  if (me.eliminated) {
+    return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-4 text-sm text-slate-400">
+      You're out of the redrafts — your points are frozen on the table at
+      <b class="text-slate-200">${me.frozen_points || 0} pts</b>. Spectator glory from here.</div>`;
+  }
+  let html = "";
+  if (S.league.keeper_window) {
+    const mine = managerPicks(me.id).filter((pk) => pk.slot !== "TEAM");
+    html += `<div class="rounded-xl border border-wcgold bg-wcred/10 p-4 space-y-2">
+      <div class="font-semibold text-sm">Redraft coming up — choose 1 player to keep</div>
+      <p class="text-xs text-slate-400">Everyone else goes back into the pool (your TEAM pick is
+        kept automatically). You can change your mind until the admin starts the redraft.</p>
+      <div class="grid grid-cols-2 gap-1.5 text-sm">
+        ${mine.map((pk) => `<button data-keep="${pk.id}" class="rounded-lg px-2 py-1.5 text-left border ${
+          me.keeper_pick_id === pk.id ? "border-wcgold bg-wcred/20" : "border-slate-700 bg-slate-800/60"
+        }">
+          <span class="block truncate">${me.keeper_pick_id === pk.id ? "⭐ " : ""}${esc(pk.player_name)}</span>
+          <span class="block truncate text-[10px] text-slate-500">${pk.position} · ${esc(pk.team)} · ${playerPoints(pk.player_id, pk.position)}p</span>
+        </button>`).join("")}
+      </div>
+    </div>`;
+  }
+  if (S.league.final_phase) {
+    const champion = S.stages.find((s) => s.stage === "winner")?.team;
+    const finalists = S.stages
+      .filter((s) => ["final", "winner"].includes(s.stage)).map((s) => s.team);
+    html += `<div class="rounded-xl border border-wcgold bg-wcred/10 p-4 space-y-2">
+      <div class="font-semibold text-sm">The final — call the champion (+${FINAL_PICK_BONUS})</div>
+      ${champion
+        ? `<p class="text-sm">${esc(champion)} won it. ${
+            me.final_pick === champion ? `You called it — +${FINAL_PICK_BONUS}!`
+            : me.final_pick ? `You picked ${esc(me.final_pick)}.` : "You didn't pick."}</p>`
+        : finalists.length
+          ? `<div class="flex gap-2">${finalists.map((t) =>
+              `<button data-final="${esc(t)}" class="flex-1 rounded-lg py-2 font-semibold border ${
+                me.final_pick === t ? "border-wcgold bg-wcred/20 text-wcgold"
+                                    : "border-slate-700 bg-slate-800/60"
+              }">${me.final_pick === t ? "⭐ " : ""}${esc(t)}</button>`).join("")}</div>`
+          : '<p class="text-xs text-slate-500">Waiting for the admin to mark the two finalists (Team stages → final).</p>'}
+    </div>`;
+  }
+  return html;
+}
+
+async function setKeeper(pickId) {
+  const me = myManager();
+  if (!S.league.keeper_window) return toast("Keeper picks are closed.");
+  const { error } = await S.sb.from("managers")
+    .update({ keeper_pick_id: pickId }).eq("id", me.id);
+  if (error) return toast(error.message);
+  toast("Keeper saved: " + (pickById(pickId)?.player_name || ""));
+  scheduleRefetch();
+}
+
+async function setFinalPick(team) {
+  const me = myManager();
+  if (S.stages.some((s) => s.stage === "winner"))
+    return toast("The winner is already decided.");
+  const { error } = await S.sb.from("managers")
+    .update({ final_pick: team }).eq("id", me.id);
+  if (error) return toast(error.message);
+  toast("Champion pick saved: " + team);
+  scheduleRefetch();
 }
 
 function renderHomeTab() {
@@ -1138,7 +1284,26 @@ function renderHomeTab() {
   const mine = managerPicks(me.id).sort((a, b) =>
     (SLOT_RANK[a.slot] ?? 9) - (SLOT_RANK[b.slot] ?? 9) || a.pick_number - b.pick_number);
   const noFix = !S.fixtures || !S.fixtures.length;
+  const squadHtml = me.eliminated ? "" : `
+    <button id="home-lineup" class="w-full bg-slate-800 border ${S.league.trading_open ? "border-wcgold/60 text-wcgold" : "border-slate-700 text-slate-500"} rounded-xl py-2.5 text-sm font-semibold">${
+      S.league.trading_open ? "Pick my team for the next games"
+                            : "🔒 Lineup locked — opens with the trading window"}</button>
+    <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-1">
+      ${mine.map((pk) => `
+        <div class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-2 py-2">
+          <span class="text-[10px] w-14 shrink-0 ${pk.is_sub ? "text-slate-500" : "text-slate-300"}">${pk.slot}${pk.kept ? " ⭐" : ""}</span>
+          <span class="min-w-0 flex-1">
+            <span class="block truncate text-sm">${esc(pk.player_name)}</span>
+            <span class="block truncate text-[10px] text-slate-500">${esc(pk.team)}${
+              noFix ? "" : " · " + esc(fixtureText(pk.position === "TEAM" ? pk.team : pk.team))}</span>
+          </span>
+          <span class="pos-${pk.position} rounded px-1.5 py-0.5 text-[10px] font-semibold shrink-0">${pk.position}</span>
+          <span class="shrink-0 w-10 text-right text-xs font-mono text-slate-300">${entryPoints(pk.player_id, pk.position, pk.team)}p</span>
+        </div>`).join("") || '<p class="text-sm text-slate-500">No players yet.</p>'}
+      ${noFix ? '<p class="text-[10px] text-slate-500 pt-1">Fixtures unavailable — run build_fixtures.py and commit fixtures.json to see next games.</p>' : ""}
+    </div>`;
   box.innerHTML = `
+    ${phaseCardsHtml(me)}
     <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 flex items-center justify-between">
       <div>
         <div class="text-xs text-slate-400">Your team</div>
@@ -1149,27 +1314,15 @@ function renderHomeTab() {
         <div class="text-xs text-slate-400">#${rank} of ${scores.length}</div>
       </div>
     </div>
-    <button id="home-lineup" class="w-full bg-slate-800 border ${S.league.trading_open ? "border-wcgold/60 text-wcgold" : "border-slate-700 text-slate-500"} rounded-xl py-2.5 text-sm font-semibold">${
-      S.league.trading_open ? "Pick my team for the next games"
-                            : "🔒 Lineup locked — opens with the trading window"}</button>
-    <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-1">
-      ${mine.map((pk) => `
-        <div class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-2 py-2">
-          <span class="text-[10px] w-14 shrink-0 ${pk.is_sub ? "text-slate-500" : "text-slate-300"}">${pk.slot}</span>
-          <span class="min-w-0 flex-1">
-            <span class="block truncate text-sm">${esc(pk.player_name)}</span>
-            <span class="block truncate text-[10px] text-slate-500">${esc(pk.team)}${
-              noFix ? "" : " · " + esc(fixtureText(pk.position === "TEAM" ? pk.team : pk.team))}</span>
-          </span>
-          <span class="pos-${pk.position} rounded px-1.5 py-0.5 text-[10px] font-semibold shrink-0">${pk.position}</span>
-          <span class="shrink-0 w-10 text-right text-xs font-mono text-slate-300">${entryPoints(pk.player_id, pk.position, pk.team)}p</span>
-        </div>`).join("") || '<p class="text-sm text-slate-500">No players yet.</p>'}
-      ${noFix ? '<p class="text-[10px] text-slate-500 pt-1">Fixtures unavailable — run build_fixtures.py and commit fixtures.json to see next games.</p>' : ""}
-    </div>
+    ${squadHtml}
     <details class="rounded-xl border border-slate-700 bg-slate-900">
       <summary class="px-4 py-3 font-semibold cursor-pointer select-none text-sm">How points are scored</summary>
       <div class="px-4 pb-4">${scoringHtml()}</div>
     </details>`;
+  box.querySelectorAll("[data-keep]").forEach((b) => b.onclick = () =>
+    setKeeper(b.dataset.keep).catch((e) => toast(e.message)));
+  box.querySelectorAll("[data-final]").forEach((b) => b.onclick = () =>
+    setFinalPick(b.dataset.final).catch((e) => toast(e.message)));
   const lb = box.querySelector("#home-lineup");
   if (lb) lb.onclick = openLineup;
 }
@@ -1196,12 +1349,14 @@ function renderBoard() {
   const me = myManager();
   const scores = computeScores().sort((a, b) => b.total - a.total);
   $("board-lb").innerHTML = scores.map((s, i) => `
-    <details data-mgr="${s.manager.id}" class="rounded-xl border border-slate-700 bg-slate-900"
+    <details data-mgr="${s.manager.id}" class="rounded-xl border border-slate-700 ${
+      s.eliminated ? "bg-slate-900/50 opacity-60" : "bg-slate-900"}"
              ${open.has(s.manager.id) ? "open" : ""}>
       <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3">
         <span class="text-slate-500 font-mono w-6">${i + 1}.</span>
         <span class="font-semibold flex-1 truncate">${esc(s.manager.name)}${
-          s.manager.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}</span>
+          s.manager.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}${
+          s.eliminated ? ' <span class="text-[10px] text-red-400">eliminated</span>' : ""}</span>
         <span class="font-bold text-wcgold">${s.total} pts</span>
       </summary>
       <div class="px-4 pb-3 space-y-1 text-sm">
@@ -1379,7 +1534,7 @@ function renderStatsTab() {
 // Record every manager's current 14 picks. Scoring replays history against
 // these, so changes after a lock never rewrite already-played rounds.
 async function snapshotRosters() {
-  const rows = S.managers.map((m) => ({
+  const rows = activeManagers().map((m) => ({
     league_id: S.league.id,
     manager_id: m.id,
     roster: managerPicks(m.id).map((pk) => ({
@@ -1402,6 +1557,10 @@ function openLineup() {
   // Draft of the new lineup: set of pick ids that will be starters.
   S.lineupDraft = new Set(managerPicks(me.id)
     .filter((pk) => !pk.is_sub && pk.slot !== "TEAM").map((pk) => pk.id));
+  const sq = starterQuota();
+  $("lineup-rule").textContent = "Starters: " + ["GK", "DEF", "MID", "FWD"]
+    .filter((g) => sq[g] > 0).map((g) => `${sq[g]} ${g}`).join(", ")
+    + ". The rest are subs — a sub only scores on days their starter doesn't play.";
   renderLineup();
   $("lineup-sheet").classList.remove("hidden");
 }
@@ -1416,7 +1575,8 @@ function lineupCounts() {
 }
 
 function lineupValid(counts) {
-  return ["GK", "DEF", "MID", "FWD"].every((g) => counts[g] === STARTER_QUOTA[g]);
+  const sq = starterQuota();
+  return ["GK", "DEF", "MID", "FWD"].every((g) => counts[g] === (sq[g] || 0));
 }
 
 function renderLineup() {
@@ -1426,8 +1586,9 @@ function renderLineup() {
   mine.sort((a, b) => order[a.position] - order[b.position] || a.pick_number - b.pick_number);
   let lastPos = "";
   $("lineup-list").innerHTML = mine.map((pk) => {
+    const need = starterQuota()[pk.position] || 0;
     const header = pk.position !== lastPos
-      ? `<div class="text-[10px] text-slate-500 mt-2 first:mt-0">${pk.position} — pick ${STARTER_QUOTA[pk.position]} starter${STARTER_QUOTA[pk.position] > 1 ? "s" : ""}</div>`
+      ? `<div class="text-[10px] text-slate-500 mt-2 first:mt-0">${pk.position} — pick ${need} starter${need === 1 ? "" : "s"}</div>`
       : "";
     lastPos = pk.position;
     const starter = S.lineupDraft.has(pk.id);
@@ -1447,8 +1608,10 @@ function renderLineup() {
     renderLineup();
   });
   const counts = lineupCounts();
-  $("lineup-count").textContent =
-    `Starters: ${counts.GK}/1 GK · ${counts.DEF}/3 DEF · ${counts.MID}/3 MID · ${counts.FWD}/2 FWD`;
+  const sq = starterQuota();
+  $("lineup-count").textContent = "Starters: " + ["GK", "DEF", "MID", "FWD"]
+    .filter((g) => (sq[g] || 0) > 0 || counts[g] > 0)
+    .map((g) => `${counts[g]}/${sq[g] || 0} ${g}`).join(" · ");
   $("lineup-save").disabled = !lineupValid(counts);
 }
 
@@ -1610,7 +1773,7 @@ function openBuilder(targetId = "", parentId = null, pairs = null) {
 
 function builderHtml(me) {
   const b = S.builder;
-  const others = S.managers.filter((m) => m.id !== me.id);
+  const others = activeManagers().filter((m) => m.id !== me.id);
   const myPicks = S.picks.filter((p) => p.manager_id === me.id && p.slot !== "TEAM");
   const targetPicks = S.picks.filter((p) => p.manager_id === b.target && p.slot !== "TEAM");
   const optLabel = (p) =>
@@ -2105,6 +2268,119 @@ async function pullStatsNow() {
   }
 }
 
+/* ---------- admin: redrafts, eliminations & final phase ---------- */
+
+function admQuotaInputs(prefix) {
+  const v = (g) => Math.max(0, parseInt($(prefix + g.toLowerCase()).value, 10) || 0);
+  return { GK: v("GK"), DEF: v("DEF"), MID: v("MID"), FWD: v("FWD") };
+}
+
+// A manager's chosen keeper, validated: must still exist, be theirs, and
+// not be the TEAM pick (which carries through automatically).
+function keeperOf(m) {
+  const pk = m.keeper_pick_id && pickById(m.keeper_pick_id);
+  return pk && pk.manager_id === m.id && pk.slot !== "TEAM" ? pk : null;
+}
+
+async function removeManager(m) {
+  const total = computeScores().find((s) => s.manager.id === m.id)?.total || 0;
+  if (!confirm(`Remove ${m.name}? Their points freeze at ${total} and all their players (TEAM pick included) go back to the pool. This can't be undone.`))
+    return;
+  const { error } = await S.sb.from("managers")
+    .update({ eliminated: true, frozen_points: total }).eq("id", m.id);
+  if (error) return toast(error.message);
+  const { error: e2 } = await S.sb.from("picks")
+    .delete().eq("league_id", S.league.id).eq("manager_id", m.id);
+  if (e2) return toast(e2.message);
+  toast(`${m.name} removed — frozen at ${total} pts.`);
+  scheduleRefetch();
+}
+
+async function toggleKeeperWindow() {
+  const next = !S.league.keeper_window;
+  const { error } = await S.sb.from("leagues")
+    .update({ keeper_window: next }).eq("id", S.league.id);
+  if (error) return toast(error.message);
+  toast(next ? "Keeper picks open — managers choose on their Home tab."
+             : "Keeper picks closed.");
+  scheduleRefetch();
+}
+
+async function startRedraft() {
+  const quota = admQuotaInputs("adm-q-"), starters = admQuotaInputs("adm-s-");
+  const size = quota.GK + quota.DEF + quota.MID + quota.FWD;
+  if (!size) return toast("Set the squad size first.");
+  for (const g of ["GK", "DEF", "MID", "FWD"]) {
+    if (starters[g] > quota[g])
+      return toast(`${g}: starters (${starters[g]}) can't exceed the quota (${quota[g]}).`);
+  }
+  const active = activeManagers();
+  // Pool feasibility per position once everything but keepers is released.
+  for (const g of ["GK", "DEF", "MID", "FWD"]) {
+    const keptHere = active.filter((m) => keeperOf(m)?.position === g).length;
+    const pool = S.players.filter((p) => p.position === g).length - keptHere;
+    if (quota[g] * active.length > pool)
+      return toast(`Not enough ${g}s in the pool: need ${quota[g] * active.length}, have ${pool}.`);
+  }
+  const missing = active.filter((m) => !keeperOf(m));
+  if (!confirm(`Start redraft for ${active.length} managers — ${size} per squad `
+    + `(${quota.GK} GK, ${quota.DEF} DEF, ${quota.MID} MID, ${quota.FWD} FWD) + keeper?`
+    + (missing.length ? `\n\nNo keeper chosen (they keep no one): ${missing.map((m) => m.name).join(", ")}` : "")
+    + "\n\nEveryone's other players return to the pool and the draft starts immediately, last place picking first."))
+    return;
+  // Bank the outgoing rosters, then reseed the order: reverse standings.
+  await snapshotRosters();
+  const order = computeScores().filter((s) => !s.eliminated)
+    .sort((a, b) => a.total - b.total);
+  await Promise.all(order.map((s, i) => S.sb.from("managers")
+    .update({ draft_position: i + 1 }).eq("id", s.manager.id)));
+  // Keepers stay (as starters, on top of the quota); the rest is wiped.
+  for (const m of active) {
+    const keep = keeperOf(m);
+    if (keep) {
+      const { error } = await S.sb.from("picks")
+        .update({ kept: true, is_sub: false, slot: keep.position }).eq("id", keep.id);
+      if (error) return toast(error.message);
+    }
+    let del = S.sb.from("picks").delete()
+      .eq("league_id", S.league.id).eq("manager_id", m.id).neq("slot", "TEAM");
+    if (keep) del = del.neq("id", keep.id);
+    const { error: e2 } = await del;
+    if (e2) return toast(e2.message);
+  }
+  // Open proposals reference deleted picks — clear them out.
+  await S.sb.from("trades").update({ status: "cancelled" })
+    .eq("league_id", S.league.id).eq("status", "proposed");
+  const { error } = await S.sb.from("leagues").update({
+    phase: (S.league.phase || 1) + 1,
+    phase_quota: quota, phase_starters: starters,
+    keeper_window: false, trading_open: false,
+    current_pick: 1, pick_started_at: new Date().toISOString(),
+  }).eq("id", S.league.id);
+  if (error) return toast(error.message);
+  toast("Redraft started!");
+  await refetchAll();
+}
+
+async function startFinalPhase() {
+  if (!confirm("Start the final phase? All squads dissolve (TEAM picks stay for stage bonuses) "
+    + `and every surviving manager calls the champion for +${FINAL_PICK_BONUS}. `
+    + "Do this on a day with no matches. This can't be undone."))
+    return;
+  await snapshotRosters();              // bank everything up to the semis
+  const { error } = await S.sb.from("picks").delete()
+    .eq("league_id", S.league.id).neq("slot", "TEAM");
+  if (error) return toast(error.message);
+  await refetchAll();                   // refresh S.picks before the empty lock
+  await snapshotRosters();              // TEAM-only lock: the final scores no squads
+  const { error: e2 } = await S.sb.from("leagues")
+    .update({ final_phase: true, trading_open: false, keeper_window: false })
+    .eq("id", S.league.id);
+  if (e2) return toast(e2.message);
+  toast("Final phase — managers pick the champion on their Home tab.");
+  scheduleRefetch();
+}
+
 function renderAdmin() {
   const ok = isAdmin();
   $("admin-gate").classList.toggle("hidden", ok);
@@ -2126,6 +2402,28 @@ function renderAdmin() {
   $("adm-trading-status").className =
     "text-sm font-semibold " + (open ? "text-wcgold" : "text-slate-400");
   $("adm-trading-toggle").textContent = open ? "Close trading" : "Open trading";
+  const active = activeManagers();
+  $("adm-phase-info").textContent = `Phase ${S.league.phase || 1}`
+    + (S.league.final_phase ? " · final phase (champion picks)" : "")
+    + ` · ${active.length} active manager${active.length === 1 ? "" : "s"}`;
+  const chosen = active.filter((m) => keeperOf(m)).length;
+  $("adm-keeper-status").textContent = S.league.keeper_window
+    ? `Keeper picks OPEN — ${chosen}/${active.length} chosen`
+    : "Keeper picks closed";
+  $("adm-keeper-toggle").textContent =
+    S.league.keeper_window ? "Close keeper picks" : "Open keeper picks";
+  $("adm-mgr-list").innerHTML = S.managers.map((m) => m.eliminated
+    ? `<div class="flex items-center gap-2 rounded-lg bg-slate-800/40 px-2 py-1.5 text-sm text-slate-500">
+        <span class="truncate flex-1 line-through">${esc(m.name)}</span>
+        <span class="text-xs">frozen at ${m.frozen_points || 0} pts</span></div>`
+    : `<div class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-2 py-1.5 text-sm">
+        <span class="truncate flex-1">${esc(m.name)}</span>${
+        S.league.keeper_window ? `<span class="text-[10px] text-slate-500">${
+          keeperOf(m) ? "⭐ " + esc(keeperOf(m).player_name) : "no keeper yet"}</span>` : ""}
+        <button data-rmmgr="${m.id}" class="text-xs underline text-red-400">remove</button></div>`).join("");
+  $("adm-mgr-list").querySelectorAll("[data-rmmgr]").forEach((b) => b.onclick = () =>
+    removeManager(S.managers.find((m) => m.id === b.dataset.rmmgr))
+      .catch((e) => toast(e.message)));
   admRenderSelected();
   admRenderExisting();
   admRenderStages();
@@ -2192,6 +2490,9 @@ function wire() {
   $("adm-drafted").onchange = admRenderPlayerSearch;
   $("adm-tsearch").oninput = admRenderStages;
   $("adm-trading-toggle").onclick = () => toggleTrading().catch((e) => toast(e.message));
+  $("adm-keeper-toggle").onclick = () => toggleKeeperWindow().catch((e) => toast(e.message));
+  $("adm-redraft").onclick = () => startRedraft().catch((e) => toast(e.message));
+  $("adm-final").onclick = () => startFinalPhase().catch((e) => toast(e.message));
   $("adm-pull-now").onclick = () => pullStatsNow().catch((e) => toast(e.message));
   $("adm-snapshot").onclick = () => {
     if (confirm("Snapshot every manager's current lineup as the locked state from today?"))

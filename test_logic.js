@@ -10,11 +10,12 @@ const stubDoc = {
 };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, POSITION_QUOTA, playerBreakdown, playerPoints };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints };"
 )(stubDoc, { getItem: () => null, setItem: () => {}, removeItem: () => {} }, {}, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
-        slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, POSITION_QUOTA,
+        slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick,
+        posQuota, picksPerManager, totalPicks,
         playerBreakdown, playerPoints } = api;
 let fails = 0;
 const check = (label, got, want) => {
@@ -41,7 +42,7 @@ const draftOne = (pos) => {
   roster.push({ position: pos, slot });
   return slot;
 };
-check("quota sums to 14", Object.values(POSITION_QUOTA).reduce((a, b) => a + b, 0), 14);
+check("quota sums to 14", Object.values(posQuota()).reduce((a, b) => a + b, 0), 14);
 check("1st GK is starter", draftOne("GK"), "GK");
 check("2nd GK is sub", draftOne("GK"), "SUB_GK");
 check("GK quota now 0", quotaLeft(roster, "GK"), 0);
@@ -172,5 +173,41 @@ check("same pick twice rejected", tradeError([
   { mine: P("a", "DEF"), theirs: P("b", "DEF") },
   { mine: P("a", "DEF"), theirs: P("c", "SUB_DEF") },
 ]) !== null, true);
+
+/* redraft phases: admin quota, kept players, eliminated managers */
+S.league = { num_managers: 4, phase: 2,
+  phase_quota: { GK: 1, DEF: 2, MID: 2, FWD: 2 },
+  phase_starters: { GK: 1, DEF: 2, MID: 2, FWD: 1 } };
+S.managers = [
+  { id: "m1", name: "M1", draft_position: 1 },
+  { id: "m2", name: "M2", draft_position: 2 },
+  { id: "m3", name: "M3", draft_position: 3, eliminated: true, frozen_points: 42 },
+];
+check("phase 2 quota has no TEAM", posQuota().TEAM, 0);
+check("picks per manager from phase quota", picksPerManager(), 7);
+check("totalPicks counts active managers only", totalPicks(), 14);
+check("kept player rides outside the quota",
+  quotaLeft([{ position: "DEF", kept: true }, { position: "DEF" }], "DEF"), 1);
+check("kept player still fills a starter slot",
+  slotForNewPick([{ position: "DEF", kept: true }, { position: "DEF" }], "DEF"), "SUB_DEF");
+check("draft order skips eliminated managers",
+  [pickInfo(1).manager.name, pickInfo(2).manager.name, pickInfo(3).manager.name],
+  ["M1", "M2", "M2"]);
+
+/* frozen totals & champion picks in scoring */
+S.picks = []; S.stats = []; S.snapshots = [];
+S.stages = [{ team: "France", stage: "winner" }];
+S.managers = [
+  { id: "m1", name: "M1", final_pick: "France" },
+  { id: "m2", name: "M2", final_pick: "Brazil" },
+  { id: "m3", name: "M3", eliminated: true, frozen_points: 42 },
+];
+const fin = computeScores();
+check("correct champion pick +5", fin[0].total, 5);
+check("wrong champion pick scores 0", fin[1].total, 0);
+check("eliminated manager shows frozen points",
+  [fin[2].total, fin[2].items.length], [42, 0]);
+S.stages = [];
+check("champion pick pending = 0", computeScores()[0].total, 0);
 
 process.exit(fails ? 1 : 0);
