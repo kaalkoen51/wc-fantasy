@@ -177,7 +177,12 @@ In the app: **Admin** tab (leaderboard view) → unlock with the admin token.
   window snapshots and locks every lineup** for the upcoming games —
   open it between rounds once all teams have played, close it before
   the next kickoff. A fallback "re-lock now" button exists in case a
-  lock was missed.
+  lock was missed. Locks are precise to **kickoff times** (via
+  `fixtures.json`): trading in the afternoon between a morning game and
+  an evening game credits each game to the right roster. For matches
+  missing from `fixtures.json` the lock applies per calendar date, so
+  keep `fixtures.json` current through the knockouts (re-run
+  `build_fixtures.py` once each round's pairings are known).
 - **Redrafts & final phase:** as the field narrows, run redrafts with
   smaller squads (see Redraft phases under Reference). The admin card
   handles removing managers, opening keeper picks, setting the new
@@ -308,7 +313,7 @@ position groups — a slot only trades within its position, subs included
 
 ### Sanity tests
 
-`node test_logic.js` — 69 checks on the snake order, position quotas,
+`node test_logic.js` — 73 checks on the snake order, position quotas,
 scoring parity with `daily_pull.py` (incl. defensive actions), sub
 activation, lineup-lock history replay, stage bonuses, player stat
 breakdowns, trade validity, redraft phases (phase quotas, kept

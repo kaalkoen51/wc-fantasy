@@ -1083,22 +1083,47 @@ function computeScores() {
     (statsByPlayer[pid] || []).filter((r) => r.appeared)
       .map((r) => labelDate(r.match_label)).filter(Boolean));
 
-  const statDates = [...new Set(
-    S.stats.map((r) => labelDate(r.match_label)).filter(Boolean))].sort();
+  // Each match is scored against the roster locked before its kickoff.
+  // Kickoff times come from fixtures.json; for matches we can't find
+  // there, end-of-day is assumed, which reproduces the older per-date
+  // behavior. This is what keeps a same-day trade honest: a player
+  // traded in between a morning and an evening game only earns their
+  // new manager points for the evening one.
+  const kickoffs = {};
+  for (const f of S.fixtures || []) {
+    const d = String(f.kickoff_utc || "").slice(0, 10);
+    if (d) kickoffs[`${f.home} vs ${f.away} (${d})`] = Date.parse(f.kickoff_utc);
+  }
+  const matchTime = (label) =>
+    kickoffs[label] ?? Date.parse(labelDate(label) + "T23:59:59Z");
 
-  // Snapshots per manager, oldest first; rosterAt(d) is the lineup that
-  // was locked in on or before matchday d. Before the first lock (or with
+  const statLabels = [...new Set(S.stats.map((r) => r.match_label))]
+    .filter((l) => labelDate(l))
+    .sort((a, b) => String(labelDate(a)).localeCompare(String(labelDate(b))));
+
+  // Snapshots per manager, oldest first; rosterAt(t) is the lineup that
+  // was locked in at or before epoch-ms t. Before the first lock (or with
   // no snapshots at all) the current picks apply.
   const snapsByMgr = {};
   for (const s of S.snapshots || []) (snapsByMgr[s.manager_id] ||= []).push(s);
   for (const k in snapsByMgr) snapsByMgr[k].sort((a, b) =>
     String(a.effective_from).localeCompare(String(b.effective_from)));
-  const rosterAt = (mgrId, d) => {
+  const rosterAt = (mgrId, t, d) => {
     const snaps = snapsByMgr[mgrId] || [];
     let chosen = null;
     for (const s of snaps) {
-      if (String(s.effective_from).slice(0, 10) <= d) chosen = s;
+      if (Date.parse(s.effective_from) <= t) chosen = s;
       else break;
+    }
+    // Draft-night grace: when no lock predates kickoff (the draft and
+    // first lineup window ran during the opening match), same-day locks
+    // still count for that day's games. Mid-tournament every match has
+    // an earlier lock, so the precise kickoff rule above always wins.
+    if (!chosen) {
+      for (const s of snaps) {
+        if (String(s.effective_from).slice(0, 10) <= d) chosen = s;
+        else break;
+      }
     }
     chosen = chosen || snaps[0];
     return chosen ? chosen.roster : managerPicks(mgrId);
@@ -1110,13 +1135,14 @@ function computeScores() {
                                items: [], eliminated: true };
     let total = 0;
     const earnedByPlayer = {};
-    for (const d of statDates) {
-      const roster = rosterAt(m.id, d);
+    for (const label of statLabels) {
+      const d = labelDate(label);
+      const roster = rosterAt(m.id, matchTime(label), d);
       const starters = roster.filter((e) => !e.is_sub && e.position !== "TEAM");
       for (const entry of roster) {
         if (entry.position === "TEAM") continue;
         const rows = (statsByPlayer[entry.player_id] || [])
-          .filter((r) => labelDate(r.match_label) === d);
+          .filter((r) => r.match_label === label);
         if (!rows.length) continue;
         let pts = 0;
         if (!entry.is_sub) {

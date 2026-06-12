@@ -210,6 +210,66 @@ check("eliminated manager shows frozen points",
 S.stages = [];
 check("champion pick pending = 0", computeScores()[0].total, 0);
 
+/* same-day trade boundary: kickoff times decide which lock applies.
+   Round-1 finale at 10:00, trade locked at 14:00, so the morning goal
+   stays with the old owner and only later games credit the new one. */
+S.fixtures = [
+  { home: "Alpha", away: "Beta", kickoff_utc: "2026-06-20T10:00:00+00:00", status: "FT" },
+];
+S.managers = [{ id: "m1", name: "M1" }, { id: "m2", name: "M2" }];
+S.picks = [
+  { id: "p1", manager_id: "m1", player_id: "al_9", player_name: "Morning Scorer",
+    position: "FWD", team: "Alpha", slot: "FWD", is_sub: false, pick_number: 1 },
+  { id: "p2", manager_id: "m2", player_id: "ga_5", player_name: "Quiet Def",
+    position: "DEF", team: "Gamma", slot: "DEF", is_sub: false, pick_number: 2 },
+];
+S.stats = [
+  row({ player_id: "al_9", match_label: "Alpha vs Beta (2026-06-20)", goals: 1 }),
+  row({ player_id: "al_9", match_label: "Alpha vs Delta (2026-06-22)", goals: 1 }),
+];
+const fwdAl9 = { player_id: "al_9", player_name: "Morning Scorer",
+                 position: "FWD", team: "Alpha", is_sub: false, slot: "FWD" };
+const defGa5 = { player_id: "ga_5", player_name: "Quiet Def",
+                 position: "DEF", team: "Gamma", is_sub: false, slot: "DEF" };
+S.snapshots = [
+  { manager_id: "m1", effective_from: "2026-06-15T08:00:00+00:00", roster: [defGa5] },
+  { manager_id: "m1", effective_from: "2026-06-20T14:00:00+00:00", roster: [fwdAl9] },
+  { manager_id: "m2", effective_from: "2026-06-15T08:00:00+00:00", roster: [fwdAl9] },
+  { manager_id: "m2", effective_from: "2026-06-20T14:00:00+00:00", roster: [defGa5] },
+];
+const sameDay = computeScores();
+check("morning goal stays with the old owner", sameDay[1].total, 4);
+check("new owner only gets post-trade games", sameDay[0].total, 4);
+check("unknown kickoff falls back to end-of-day (lock still applies)",
+  sameDay[0].items.find((i) => i.pick.player_id === "al_9").pts, 4);
+S.fixtures = []; S.snapshots = [];
+
+/* draft-night grace: draft + lineup window ran during the opening game,
+   so no lock predates kickoff — the latest same-day lock counts, and the
+   sub->starter promotion made during the match still pays out. */
+S.fixtures = [
+  { home: "Alpha", away: "Beta", kickoff_utc: "2026-06-11T19:00:00+00:00", status: "FT" },
+];
+S.managers = [{ id: "m1", name: "M1" }];
+S.picks = [
+  { id: "p1", manager_id: "m1", player_id: "al_9", player_name: "Opening Scorer",
+    position: "FWD", team: "Alpha", slot: "FWD", is_sub: false, pick_number: 1 },
+];
+S.stats = [
+  row({ player_id: "al_9", match_label: "Alpha vs Beta (2026-06-11)", goals: 1 }),
+];
+S.snapshots = [
+  { manager_id: "m1", effective_from: "2026-06-11T20:00:00+00:00",   // draft baseline: sub
+    roster: [{ player_id: "al_9", player_name: "Opening Scorer",
+               position: "FWD", team: "Alpha", is_sub: true, slot: "SUB_FWD" }] },
+  { manager_id: "m1", effective_from: "2026-06-11T20:15:00+00:00",   // lineup window: starter
+    roster: [{ player_id: "al_9", player_name: "Opening Scorer",
+               position: "FWD", team: "Alpha", is_sub: false, slot: "FWD" }] },
+];
+check("draft-night promotion still scores the opening game",
+  computeScores()[0].total, 4);
+S.fixtures = []; S.snapshots = [];
+
 /* suspension indicator (best-effort, from our own card data) */
 S.stats = [
   row({ player_id: "x1", match_label: "A vs B (2026-06-15)", red_cards: 1 }),
