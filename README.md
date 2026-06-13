@@ -317,12 +317,25 @@ local changes.
   and synced across your devices; the app only ever renders **your own**,
   so it's private in practice (same open-access caveat as the rest of the
   app — nothing here is encrypted).
-- **Trades tab → ★ My shortlist:** each shortlisted player with their
-  current owner (or "free agent") and a **Trade** button when the window
-  is open — owned players jump into a pre-filled proposal to the owner;
-  free agents open the swap screen.
+- **Trades tab → ★ View shortlist:** collapsed by default; open it to see
+  your shortlisted players with the **same position + category filters as
+  the Stats tab**. Each player is tappable for the full detail card, shows
+  their current owner (or "free agent"), and carries a **Trade** button
+  when the window is open — owned players jump into a pre-filled proposal
+  to the owner; free agents open the swap screen.
 - **Draft room → ★ shortlist** filter: during the draft or a redraft,
   narrow the pool to just your shortlisted targets.
+
+### Knocked-out teams
+
+Mark a team **out** in **Admin → Team stages** when they're eliminated
+(a checkbox separate from the stage/bonus). Their players are then badged
+**🚫** everywhere, can't be **drafted** (no Pick button in the pool) or
+**swapped in** as free agents, and drop out of the free-agent swap list —
+so a redraft after the round of 32 won't offer players who can no longer
+score. Already-rostered knocked-out players stay put (badged) so you can
+see and trade them; they simply earn nothing further. Needs `schema.sql`
+re-run for the `team_stages.eliminated` column.
 
 ### Draft pool shows picked players
 
@@ -418,7 +431,7 @@ position groups — a slot only trades within its position, subs included
 
 ### Sanity tests
 
-`node test_logic.js` — 96 checks on the snake order, position quotas,
+`node test_logic.js` — 99 checks on the snake order, position quotas,
 scoring parity with `daily_pull.py` (incl. defensive actions), sub
 activation, lineup-lock history replay, the per-manager history
 decomposition (current credited + former + per-round split), stage

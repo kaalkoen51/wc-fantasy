@@ -347,7 +347,8 @@
         <h3 class="font-semibold text-sm">Team stages</h3>
         <p class="text-xs text-slate-500">How far each national team has progressed. TEAM picks earn
           cumulative bonuses (R32 +5, R16 +10, QF +15, SF +20, Final +25, Winner +15).
-          Changes save immediately.</p>
+          Tick <b>out</b> when a team is knocked out — their players then can't be drafted or
+          swapped in and are badged 🚫 everywhere. Changes save immediately.</p>
         <input id="adm-tsearch" placeholder="Filter teams…" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
         <div id="adm-stages" class="space-y-1 max-h-[40vh] overflow-y-auto"></div>
       </div>
@@ -1047,8 +1048,9 @@ function renderPool() {
 
   $("pool-list").innerHTML = shown.map((e) => {
     const owner = ownerName[e.player_id];
-    const canPick = myTurn && !owner && quotaLeft(onClockPicks, e.position) > 0;
-    return `<li class="flex items-center py-2 gap-1.5 ${owner ? "opacity-60" : ""}">
+    const ko = isEliminated(e.team);
+    const canPick = myTurn && !owner && !ko && quotaLeft(onClockPicks, e.position) > 0;
+    return `<li class="flex items-center py-2 gap-1.5 ${owner || ko ? "opacity-60" : ""}">
       ${starHtml(e.player_id)}
       ${avatarHtml(e.player_id, e.team)}
       <div class="min-w-0 flex-1">
@@ -1193,6 +1195,7 @@ function playerPoints(playerId, position) {
 }
 
 const stageOf = (team) => S.stages.find((s) => s.team === team)?.stage || "group";
+const isEliminated = (team) => !!S.stages.find((s) => s.team === team)?.eliminated;
 
 // Points badge for any pool entry or pick: TEAM entries show stage bonuses.
 function entryPoints(playerId, position, team) {
@@ -2018,6 +2021,9 @@ S.statsSearch = "";
 S.statsSel = null;
 S.statsSort = "points";
 S.histIdxByMgr = {};   // manager id -> history pager index (0 = current)
+S.showShortlist = false;   // Trades tab: shortlist collapsed until opened
+S.slPos = "ALL";           // shortlist position filter
+S.slSort = "points";       // shortlist sort key
 
 // Stats-tab ranking options: label + the match_stats key to total. "points"
 // uses the full fantasy total; the rest are raw counts from existing
@@ -2116,9 +2122,11 @@ function suspendedNext(pid) {
 
 const injuryOf = (pid) => (S.injuryByPid || {})[pid] || null;
 
-// 🟥 suspended next match · 🤕 out injured · ⚠️ doubtful
+// 🚫 team knocked out · 🟥 suspended next match · 🤕 out injured · ⚠️ doubtful
 function availBadges(pid) {
   let out = "";
+  const team = S.playerById?.[pid]?.team;
+  if (team && isEliminated(team)) out += `<span title="team knocked out">🚫</span>`;
   const susp = suspendedNext(pid);
   if (susp) out += `<span title="suspended next match (${susp})">🟥</span>`;
   const inj = injuryOf(pid);
@@ -2130,6 +2138,8 @@ function availBadges(pid) {
 // Plain-text variant for <option> labels in the trade builder.
 function availText(pid) {
   const bits = [];
+  const team = S.playerById?.[pid]?.team;
+  if (team && isEliminated(team)) bits.push("🚫 KO");
   if (suspendedNext(pid)) bits.push("🟥 susp");
   const inj = injuryOf(pid);
   if (inj) bits.push(inj.status === "out" ? "🤕 out" : "⚠ doubtful");
@@ -2486,7 +2496,7 @@ function renderSwapList() {
     && (!q || name.toLowerCase().includes(q) || team.toLowerCase().includes(q));
 
   const free = availableForGroup(group)
-    .filter((e) => match(e.name, e.team)).slice(0, 60);
+    .filter((e) => match(e.name, e.team) && !isEliminated(e.team)).slice(0, 60);
   // Same-position players already on other rosters: tapping one jumps
   // straight into a trade proposal with their owner.
   const owned = S.picks
@@ -2734,38 +2744,79 @@ function tradeHistoryHtml() {
   </div>`;
 }
 
-// Your private shortlist, with a Trade shortcut per player (when the window
-// is open). Only ever built from your own shortlist.
+// Your private shortlist — collapsed behind a "View shortlist" button,
+// with the same position + category filters as the Stats tab. Players are
+// tappable for the full detail card, and carry a Trade shortcut when the
+// window is open. Only ever built from your own shortlist.
 function shortlistSectionHtml(me) {
-  const ids = myShortlist();
   const open = !!S.league.trading_open;
-  const rows = ids.map((pid) => {
-    const p = S.playerById[pid];
-    if (!p) return "";
-    const ownPick = S.picks.find((pk) => pk.player_id === pid);
+  const allIds = myShortlist();
+
+  if (!S.showShortlist) {
+    return `<div class="mt-4">
+      <button id="sl-toggle" class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm font-semibold flex items-center justify-between">
+        <span>★ View shortlist <span class="text-slate-500 font-normal">· ${allIds.length} player${allIds.length === 1 ? "" : "s"}</span></span>
+        <span class="text-slate-500">▾</span>
+      </button>
+    </div>`;
+  }
+
+  const sortKey = S.slSort || "points";
+  const byPoints = sortKey === "points";
+  const valOf = (p) => byPoints ? playerPoints(p.player_id, p.position)
+    : playerStatTotal(p.player_id, sortKey);
+
+  let players = allIds.map((pid) => S.playerById[pid]).filter(Boolean);
+  if (S.slPos !== "ALL") players = players.filter((p) => p.position === S.slPos);
+  const ranked = players
+    .map((p) => ({ p, pts: playerPoints(p.player_id, p.position), val: valOf(p) }))
+    .sort((a, b) => b.val - a.val || b.pts - a.pts || a.p.name.localeCompare(b.p.name));
+
+  const rows = ranked.map(({ p, pts, val }) => {
+    const ownPick = S.picks.find((pk) => pk.player_id === p.player_id);
     const owner = ownPick && S.managers.find((m) => m.id === ownPick.manager_id);
     const mine = ownPick && ownPick.manager_id === me.id;
     const status = mine ? '<span class="text-slate-500">on your roster</span>'
       : owner ? `<span class="rounded bg-slate-700 px-1 py-0.5 text-[10px] text-wcgold">👤 ${esc(owner.name)}</span>`
       : '<span class="text-slate-500">free agent</span>';
     return `<li class="flex items-center py-2 gap-1.5">
-      ${starHtml(pid)}
-      ${avatarHtml(pid, p.team)}
-      <div class="min-w-0 flex-1">
-        <div class="truncate font-medium">${esc(p.name)} ${availBadges(pid)}</div>
-        <div class="text-xs text-slate-400">${teamFixLine(p.team)} · ${status}</div>
-      </div>
-      <span class="shrink-0 text-xs font-mono text-slate-400">${entryPoints(pid, p.position, p.team)} pts</span>
-      <span class="pos-${p.position} rounded px-1.5 py-0.5 text-[10px] font-semibold shrink-0">${p.position}</span>
-      ${!mine && open ? `<button data-sltrade="${esc(pid)}" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-sm font-semibold">Trade</button>` : ""}
+      ${starHtml(p.player_id)}
+      <button data-sldetail="${esc(p.player_id)}" class="flex-1 min-w-0 flex items-center gap-2 text-left">
+        ${avatarHtml(p.player_id, p.team)}
+        <span class="min-w-0 flex-1">
+          <span class="block truncate font-medium text-sm">${esc(p.name)} ${availBadges(p.player_id)}</span>
+          <span class="block truncate text-[10px] text-slate-400">${esc(p.team)} · ${status}</span>
+        </span>
+        <span class="pos-${p.position} rounded px-1.5 py-0.5 text-[10px] font-semibold shrink-0">${p.position}</span>
+        <span class="shrink-0 w-10 text-right">
+          <span class="block font-mono font-bold ${val > 0 ? "text-wcgold" : "text-slate-500"}">${val}</span>
+          ${byPoints ? "" : `<span class="block text-[10px] text-slate-500">${pts}p</span>`}
+        </span>
+      </button>
+      ${!mine && open ? `<button data-sltrade="${esc(p.player_id)}" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-sm font-semibold">Trade</button>` : ""}
     </li>`;
   }).join("");
-  return `<div class="mt-4">
-    <h3 class="font-semibold text-sm mb-1">★ My shortlist
-      <span class="text-[10px] text-slate-500 font-normal">· only you can see this</span></h3>
-    ${ids.length
+
+  const chips = ["ALL", ...GROUPS.slice(0, 4)];
+  return `<div class="mt-4 space-y-2">
+    <button id="sl-toggle" class="w-full rounded-xl border border-wcgold/60 bg-wcred/10 px-3 py-2.5 text-sm font-semibold flex items-center justify-between">
+      <span>★ My shortlist <span class="text-[10px] text-slate-400 font-normal">· only you can see this</span></span>
+      <span class="text-slate-500">▴ hide</span>
+    </button>
+    <div class="flex items-center gap-2 flex-wrap">
+      <div id="sl-chips" class="flex gap-1.5 flex-wrap text-xs">
+        ${chips.map((c) => `<button data-slchip="${c}" class="rounded-full px-3 py-1 border ${
+          S.slPos === c ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"}">${c}</button>`).join("")}
+      </div>
+      <select id="sl-sort" class="ml-auto rounded-lg bg-slate-900 border border-slate-700 px-2 py-1 text-xs">
+        ${STAT_SORTS.map(([k, lbl]) => `<option value="${k}" ${sortKey === k ? "selected" : ""}>${lbl}</option>`).join("")}
+      </select>
+    </div>
+    ${ranked.length
       ? `<ul class="rounded-xl border border-slate-700 bg-slate-900 px-3 divide-y divide-slate-800">${rows}</ul>`
-      : '<p class="text-xs text-slate-500">No players shortlisted yet — tap ☆ on a player in the Stats tab.</p>'}
+      : `<p class="text-xs text-slate-500">${allIds.length
+          ? "No shortlisted players in this position."
+          : "No players shortlisted yet — tap ☆ on a player in the Stats tab."}</p>`}
   </div>`;
 }
 
@@ -2823,6 +2874,15 @@ function wireTrades(me) {
   const box = $("board-trades");
   const byId = (id) => S.trades.find((t) => t.id === id);
   wireStars(box, renderTrades);
+  const slToggle = box.querySelector("#sl-toggle");
+  if (slToggle) slToggle.onclick = () => { S.showShortlist = !S.showShortlist; renderTrades(); };
+  box.querySelectorAll("[data-slchip]").forEach((b) => b.onclick = () => {
+    S.slPos = b.dataset.slchip; renderTrades();
+  });
+  const slSort = box.querySelector("#sl-sort");
+  if (slSort) slSort.onchange = () => { S.slSort = slSort.value; renderTrades(); };
+  box.querySelectorAll("[data-sldetail]").forEach((b) => b.onclick = () =>
+    openPlayerDetail(b.dataset.sldetail));
   box.querySelectorAll("[data-sltrade]").forEach((b) => b.onclick = () =>
     tradeForShortlisted(b.dataset.sltrade));
   const newBtn = box.querySelector("#trade-new");
@@ -3067,8 +3127,11 @@ function admRenderStages() {
   const teams = S.teams.filter((t) => !q || t.toLowerCase().includes(q));
   $("adm-stages").innerHTML = teams.map((t) => {
     const stage = cur[t] || "group";
-    return `<div class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-2 py-1.5 text-sm">
+    return `<div class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-2 py-1.5 text-sm ${
+      isEliminated(t) ? "opacity-60" : ""}">
       <span class="truncate flex-1">${esc(t)}</span>
+      <label class="flex items-center gap-1 text-[10px] text-slate-400 shrink-0" title="knocked out">
+        <input type="checkbox" data-koteam="${esc(t)}" ${isEliminated(t) ? "checked" : ""}> out</label>
       <span class="text-xs text-slate-500 font-mono">+${calcTeamPoints(stage)}</span>
       <select data-team="${esc(t)}" class="stage-sel rounded bg-slate-900 border border-slate-700 px-1.5 py-1 text-xs">
         ${STAGE_ORDER.map((s) =>
@@ -3079,6 +3142,9 @@ function admRenderStages() {
   $("adm-stages").querySelectorAll(".stage-sel").forEach((sel) =>
     sel.onchange = () => setTeamStage(sel.dataset.team, sel.value)
       .catch((e) => toast(e.message)));
+  $("adm-stages").querySelectorAll("[data-koteam]").forEach((cb) =>
+    cb.onchange = () => setTeamEliminated(cb.dataset.koteam, cb.checked)
+      .catch((e) => toast(e.message)));
 }
 
 async function setTeamStage(team, stage) {
@@ -3086,6 +3152,16 @@ async function setTeamStage(team, stage) {
     .upsert({ league_id: S.league.id, team, stage }, { onConflict: "league_id,team" });
   if (error) return toast("Save failed: " + error.message);
   toast(`${team} → ${stage} (+${calcTeamPoints(stage)} pts)`);
+  scheduleRefetch();
+}
+
+async function setTeamEliminated(team, eliminated) {
+  const { error } = await S.sb.from("team_stages").upsert(
+    { league_id: S.league.id, team, stage: stageOf(team), eliminated },
+    { onConflict: "league_id,team" });
+  if (error) return toast(/eliminated/.test(error.message)
+    ? "Knocked-out flag needs a schema update — run schema.sql." : "Save failed: " + error.message);
+  toast(`${team} ${eliminated ? "marked knocked out" : "back in"}.`);
   scheduleRefetch();
 }
 

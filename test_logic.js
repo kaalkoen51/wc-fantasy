@@ -10,7 +10,7 @@ const stubDoc = {
 };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated };"
 )(stubDoc, { getItem: () => null, setItem: () => {}, removeItem: () => {} }, {}, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -18,7 +18,8 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         posQuota, picksPerManager, totalPicks,
         playerBreakdown, playerPoints, suspendedNext, resilientWrite,
         playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt,
-        slotLabel, managerHistory, poolEntries, availableForGroup } = api;
+        slotLabel, managerHistory, poolEntries, availableForGroup,
+        isEliminated } = api;
 let fails = 0;
 const check = (label, got, want) => {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -390,6 +391,14 @@ check("poolEntries keeps picked players in the list",
 check("availableForGroup excludes picked (auto-pick pool)",
   availableForGroup("DEF").map((e) => e.player_id), ["fra_6"]);
 S.players = []; S.teams = []; S.picks = [];
+
+/* knocked-out teams: eliminated flag drives badges + draft/swap blocking */
+S.stages = [{ team: "France", stage: "r32", eliminated: true },
+            { team: "Brazil", stage: "r16" }];
+check("isEliminated reads the eliminated flag", isEliminated("France"), true);
+check("non-eliminated team is in", isEliminated("Brazil"), false);
+check("unknown team defaults to in", isEliminated("Spain"), false);
+S.stages = [];
 
 /* resilientWrite: an unapplied additive migration (missing optional
    column) is dropped and retried instead of failing the whole write. */

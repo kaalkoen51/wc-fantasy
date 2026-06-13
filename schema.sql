@@ -130,6 +130,12 @@ create unique index if not exists picks_league_player_key
 create unique index if not exists team_stages_league_team_key
     on team_stages (league_id, team);
 
+-- Knocked-out flag (separate from `stage`, which records furthest round
+-- reached for the cumulative bonus). The admin marks losers "out" each
+-- round; the app then blocks drafting/swapping their players and badges
+-- them everywhere. Additive; defaults to still-in.
+alter table team_stages add column if not exists eliminated boolean not null default false;
+
 -- Manager-to-manager trades. Each trade_items row pairs one of the
 -- proposer's picks with one of the target's picks; the app enforces that
 -- both sides of a pair are in the same position group (GK/DEF/MID/FWD,
