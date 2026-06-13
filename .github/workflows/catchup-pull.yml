@@ -1,0 +1,40 @@
+name: Catch-up stats sweep
+
+# Same-day safety net for the live watchdog. daily-pull.yml sweeps
+# *yesterday* each morning; this sweeps *today* twice during the day, so
+# any game the live triggers missed is reconciled within hours instead of
+# waiting for the next morning. Date-based and idempotent, so the exact
+# firing time doesn't matter (GitHub may delay it — that's fine) and it's
+# safe to overlap with the morning sweep and the live pulls; the last
+# write simply wins. A few API calls per run.
+on:
+  schedule:
+    - cron: "0 12 * * *"    # midday UTC: covers the early (00:00-04:00 UTC) block
+    - cron: "45 23 * * *"   # late UTC: covers the afternoon/evening block
+  workflow_dispatch:
+
+concurrency:
+  group: catchup-pull
+  cancel-in-progress: false
+
+jobs:
+  catchup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Sweep today's completed matches
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          FANTASY_LEAGUE_ID: ${{ secrets.FANTASY_LEAGUE_ID }}
+        run: python daily_pull.py --date "$(date -u +%F)"
