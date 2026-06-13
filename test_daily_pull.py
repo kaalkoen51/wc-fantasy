@@ -157,6 +157,12 @@ class TestExtractPlayerRows(unittest.TestCase):
         # tackles + blocks + interceptions roll up into defensive_actions
         self.assertEqual(by_api["154"]["defensive_actions"], 6)
 
+        # official score from fixture["goals"] is stored per row
+        self.assertEqual(by_api["154"]["home_score"], 2)
+        self.assertEqual(by_api["154"]["away_score"], 0)
+        self.assertEqual(by_api["284"]["home_score"], 2)
+        self.assertEqual(by_api["284"]["away_score"], 0)
+
         self.assertEqual(
             by_api["154"]["match_label"],
             "Argentina vs Scotland (2026-06-15)",
@@ -172,6 +178,7 @@ class TestMultiLeague(unittest.TestCase):
         "minutes": 90, "conceded": 0, "goals": 1, "assists": 0,
         "yellow_cards": 0, "red_cards": 0, "saves": 0, "motm": True,
         "penalty_saved": 0, "penalty_missed": 0, "defensive_actions": 2,
+        "home_score": 1, "away_score": 0,
     }
 
     def test_parse_league_ids(self):

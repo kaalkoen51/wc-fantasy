@@ -1451,10 +1451,13 @@ const saDay = (iso) => new Date(iso).toLocaleDateString("en-CA", { timeZone: SA_
 const saTime = (iso) => new Date(iso).toLocaleTimeString("en-GB",
   { hour: "2-digit", minute: "2-digit", timeZone: SA_TZ });
 
-// Score derived from our own per-player stat rows (sum of goals per
-// side). Own goals aren't in player rows, so treat this as "fantasy
-// score" — right virtually always, and only shown once stats exist.
+// Score from the official API result stored on each stat row (handles own
+// goals correctly). Falls back to summing player goals for legacy rows
+// written before home_score/away_score were added.
 function matchScore(label) {
+  const row = S.stats.find((r) => r.match_label === label
+    && r.home_score != null && r.away_score != null);
+  if (row) return [row.home_score, row.away_score];
   const [home, away] = labelTeams(label);
   let h = 0, a = 0;
   for (const r of S.stats) {

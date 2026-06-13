@@ -68,6 +68,14 @@ alter table leagues add column if not exists pick_started_at timestamptz;
 -- scored as +1 per 2 actions (GK excluded). Additive; older rows stay 0.
 alter table match_stats add column if not exists defensive_actions int default 0;
 
+-- Official match score stored alongside player rows so the banner can
+-- display the correct result even when own goals are involved (own goals
+-- don't appear in any individual player's goals tally). Nullable so
+-- existing rows are unaffected; the app falls back to summing player goals
+-- for any row written before this column was added.
+alter table match_stats add column if not exists home_score int;
+alter table match_stats add column if not exists away_score int;
+
 -- Redraft phases: as the tournament field narrows the admin can remove
 -- trailing managers (their points freeze) and run redrafts with smaller,
 -- admin-chosen squads. Each manager protects one player (picks.kept rides

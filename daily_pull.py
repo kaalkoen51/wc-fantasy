@@ -310,6 +310,8 @@ def extract_player_rows(fixture: dict, teams_data: list, matcher: PlayerMatcher)
                     "assists": to_int(stat_goals.get("assists")),
                     "saves": to_int(stat_goals.get("saves")),
                     "conceded": team_conceded,
+                    "home_score": to_int(goals.get("home")),
+                    "away_score": to_int(goals.get("away")),
                     "yellow_cards": to_int(cards.get("yellow")),
                     "red_cards": to_int(cards.get("red")),
                     "penalty_saved": to_int(penalty.get("saved")),
@@ -390,6 +392,8 @@ def build_stats_payload(rows: list, league_ids) -> list:
             "penalty_saved": row["penalty_saved"],
             "penalty_missed": row["penalty_missed"],
             "defensive_actions": row["defensive_actions"],
+            "home_score": row.get("home_score"),
+            "away_score": row.get("away_score"),
         }
         for league_id in league_ids
         for row in rows
