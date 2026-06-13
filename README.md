@@ -369,10 +369,11 @@ position groups — a slot only trades within its position, subs included
 
 ### Sanity tests
 
-`node test_logic.js` — 76 checks on the snake order, position quotas,
+`node test_logic.js` — 80 checks on the snake order, position quotas,
 scoring parity with `daily_pull.py` (incl. defensive actions), sub
 activation, lineup-lock history replay, stage bonuses, player stat
 breakdowns, trade validity, redraft phases (phase quotas, kept
-players, eliminated managers, champion picks), and suspension flags.
-`python -m unittest test_daily_pull` — 20 tests on the
-API-Football → FIFA player-id mapping and multi-league stat fan-out.
+players, eliminated managers, champion picks), suspension flags, and
+resilient writes. `python -m unittest test_daily_pull` — 22 tests on the
+API-Football → FIFA player-id mapping, multi-league stat fan-out, and
+graceful degradation when a migration is unapplied.

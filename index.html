@@ -471,6 +471,35 @@ function genInviteCode() {
     (b) => chars[b % chars.length]).join("");
 }
 
+// Display-only columns added by later schema.sql migrations. A write that
+// includes one of these must not fail just because the migration hasn't
+// been applied yet — drop it and retry. Mirrors the self-heal in
+// daily_pull.py's upsert. (Scoring/trade mechanics never read these.)
+const STRIPPABLE_COLUMNS = new Set([
+  "home_score", "away_score", "offered_player_name", "requested_player_name",
+]);
+
+// Insert/upsert that tolerates an unapplied additive migration. Throws on
+// any other error. `opts.upsert` + `opts.onConflict` select the mode.
+async function resilientWrite(table, rows, opts = {}) {
+  let payload = rows;
+  for (let i = 0; i <= STRIPPABLE_COLUMNS.size; i++) {
+    const q = S.sb.from(table);
+    const { error } = opts.upsert
+      ? await q.upsert(payload, { onConflict: opts.onConflict })
+      : await q.insert(payload);
+    if (!error) return;
+    const col = error.code === "PGRST204"
+      && (/Could not find the '(\w+)' column/.exec(error.message || "") || [])[1];
+    if (col && STRIPPABLE_COLUMNS.has(col)) {
+      payload = payload.map((r) => { const c = { ...r }; delete c[col]; return c; });
+      continue;
+    }
+    throw new Error(error.message);
+  }
+  throw new Error(`${table} write failed after dropping optional columns`);
+}
+
 /* ---------- data loading & realtime ---------- */
 
 async function loadPlayers() {
@@ -2234,8 +2263,11 @@ function tradeSectionHtml(title, list, incoming) {
 
 // Trade history: all accepted trades in the league, newest first.
 // After accept_trade the pick slots are swapped in-place, so
-// offered_pick now holds what the proposer received (target's player)
-// and requested_pick holds what the target received (proposer's player).
+// Prefers the player-name snapshot taken on each trade_items row when the
+// trade was proposed (offered = proposer's given player, requested =
+// target's given player), so history reads correctly forever. Legacy
+// rows without the snapshot fall back to the live pick, which after
+// accept_trade's in-place swap holds the player each side received.
 function tradeHistoryHtml() {
   const done = S.trades
     .filter((t) => t.status === "accepted")
@@ -2248,14 +2280,16 @@ function tradeHistoryHtml() {
     const when = new Date(t.updated_at).toLocaleDateString("en-GB",
       { day: "numeric", month: "short", timeZone: SA_TZ });
     const pairs = (t.trade_items || []).map((it) => {
-      const toProposer = pickById(it.offered_pick_id);
-      const toTarget   = pickById(it.requested_pick_id);
+      const toProposer = it.requested_player_name
+        ?? pickById(it.offered_pick_id)?.player_name ?? "?";
+      const toTarget = it.offered_player_name
+        ?? pickById(it.requested_pick_id)?.player_name ?? "?";
       return `<div class="text-xs text-slate-400">
-        <span class="text-slate-200">${esc(toProposer?.player_name ?? "?")}</span>
+        <span class="text-slate-200">${esc(toProposer)}</span>
         <span class="text-slate-500 mx-1">→</span>
         <span>${esc(proposer?.name ?? "?")}</span>
         <span class="text-slate-600 mx-2">·</span>
-        <span class="text-slate-200">${esc(toTarget?.player_name ?? "?")}</span>
+        <span class="text-slate-200">${esc(toTarget)}</span>
         <span class="text-slate-500 mx-1">→</span>
         <span>${esc(target?.name ?? "?")}</span>
       </div>`;
@@ -2358,10 +2392,15 @@ async function submitTrade(me) {
     parent_trade_id: b.parent, status: "proposed",
   }).select().single();
   if (error) return toast(error.message);
-  const { error: e2 } = await S.sb.from("trade_items").insert(pairs.map((p) => ({
-    trade_id: data.id, offered_pick_id: p.mine.id, requested_pick_id: p.theirs.id,
-  })));
-  if (e2) return toast(e2.message);
+  // Snapshot both players' names now so trade history stays faithful even
+  // after these picks are later traded again, swapped, or wiped.
+  try {
+    await resilientWrite("trade_items", pairs.map((p) => ({
+      trade_id: data.id, offered_pick_id: p.mine.id, requested_pick_id: p.theirs.id,
+      offered_player_name: p.mine.player_name,
+      requested_player_name: p.theirs.player_name,
+    })));
+  } catch (e) { return toast(e.message); }
   if (b.parent) {
     await S.sb.from("trades")
       .update({ status: "countered", updated_at: new Date().toISOString() })
@@ -2642,6 +2681,7 @@ async function pullStatsNow() {
             penalty_saved: +pen.saved || 0, penalty_missed: +pen.missed || 0,
             defensive_actions: (+tk.total || 0) + (+tk.blocks || 0)
                                + (+tk.interceptions || 0),
+            home_score: +f.goals.home || 0, away_score: +f.goals.away || 0,
           };
           const rating = parseFloat(games.rating);
           if (!isNaN(rating) && (!best || rating > best.rating))
@@ -2650,9 +2690,8 @@ async function pullStatsNow() {
         }
       }
       if (best && best.rating >= 7.5) best.row.motm = true; // MOTM heuristic
-      const { error } = await S.sb.from("match_stats")
-        .upsert(rows, { onConflict: "league_id,player_id,match_label" });
-      if (error) throw new Error(error.message);
+      await resilientWrite("match_stats", rows,
+        { upsert: true, onConflict: "league_id,player_id,match_label" });
       total += rows.length;
     }
     log(`Done — ${total} player rows from ${fixtures.length} match(es).`

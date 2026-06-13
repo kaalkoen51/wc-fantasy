@@ -10,13 +10,13 @@ const stubDoc = {
 };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite };"
 )(stubDoc, { getItem: () => null, setItem: () => {}, removeItem: () => {} }, {}, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick,
         posQuota, picksPerManager, totalPicks,
-        playerBreakdown, playerPoints, suspendedNext } = api;
+        playerBreakdown, playerPoints, suspendedNext, resilientWrite } = api;
 let fails = 0;
 const check = (label, got, want) => {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -306,4 +306,39 @@ check("yellow slate wiped after the QFs", suspendedNext("x5"), null);
 check("two-yellow red doesn't count toward accumulation", suspendedNext("x6"), null);
 check("no stats -> no flag", suspendedNext("x7"), null);
 
-process.exit(fails ? 1 : 0);
+/* resilientWrite: an unapplied additive migration (missing optional
+   column) is dropped and retried instead of failing the whole write. */
+function mockSb(responses) {
+  const sent = [];
+  const seq = responses.slice();
+  const builder = {
+    upsert: (rows) => { sent.push(rows); return Promise.resolve(seq.shift()); },
+    insert: (rows) => { sent.push(rows); return Promise.resolve(seq.shift()); },
+  };
+  return { sb: { from: () => builder }, sent };
+}
+const PGRST = (col) => ({ error: { code: "PGRST204",
+  message: `Could not find the '${col}' column of 'match_stats' in the schema cache` } });
+
+(async () => {
+  // Two missing optional columns -> three attempts, both stripped, real data kept.
+  let m = mockSb([PGRST("away_score"), PGRST("home_score"), { error: null }]);
+  S.sb = m.sb;
+  await resilientWrite("match_stats",
+    [{ player_id: "arg_10", goals: 1, home_score: 2, away_score: 0 }],
+    { upsert: true, onConflict: "league_id,player_id,match_label" });
+  check("resilientWrite retries until it succeeds", m.sent.length, 3);
+  check("resilientWrite strips the missing optional columns",
+    [("home_score" in m.sent[2][0]), ("away_score" in m.sent[2][0])], [false, false]);
+  check("resilientWrite keeps the real data", m.sent[2][0].goals, 1);
+
+  // A non-strippable / non-column error must propagate.
+  m = mockSb([{ error: { code: "23505", message: "duplicate key" } }]);
+  S.sb = m.sb;
+  let threw = false;
+  try { await resilientWrite("trade_items", [{ trade_id: "t1" }]); }
+  catch { threw = true; }
+  check("resilientWrite rethrows a real error", threw, true);
+
+  process.exit(fails ? 1 : 0);
+})();

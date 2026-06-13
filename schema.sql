@@ -142,6 +142,13 @@ create table if not exists trade_items (
     requested_pick_id uuid references picks(id) on delete cascade
 );
 
+-- Faithful trade history: snapshot the two players' names onto each
+-- trade_items row when the proposal is made, so accepted trades read
+-- correctly even after the underlying picks are traded again, swapped,
+-- or wiped in a redraft. Nullable; older rows fall back to the live pick.
+alter table trade_items add column if not exists offered_player_name text;
+alter table trade_items add column if not exists requested_player_name text;
+
 -- Roster snapshots: one row per manager per lineup lock. Scoring for a
 -- matchday uses the latest snapshot taken on or before that day, so
 -- lineup changes and trades never rewrite already-played rounds. Written
