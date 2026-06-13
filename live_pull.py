@@ -4,8 +4,11 @@
 Designed to run from the "Live stats pull" GitHub Actions workflow,
 which wakes it every 15 minutes (see .github/workflows/live-pull.yml):
 
-- Nothing live and no kickoff within --lookahead minutes -> exits
+- Nothing live and no kickoff within --max-wait minutes -> exits
   immediately (1-2 API calls, a few seconds of runner time).
+- Kickoff within --max-wait (default 90 min) but not yet live ->
+  stays alive, polling every --poll seconds; this bridges multi-hour
+  gaps in GitHub Actions cron scheduling so nearby games are not missed.
 - Otherwise it polls every --poll seconds: upserts player stats for
   every live fixture, gives each fixture one final pull when it goes
   full-time, and exits once nothing is live or imminent.
@@ -95,6 +98,9 @@ def main() -> None:
                         help="engage if a kickoff is this many minutes away")
     parser.add_argument("--max-minutes", type=int, default=330,
                         help="exit after this long; the next cron resumes")
+    parser.add_argument("--max-wait", type=int, default=90,
+                        help="stay alive if kickoff is within this many "
+                        "minutes (bridges cron scheduling gaps; default: 90)")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -130,12 +136,15 @@ def main() -> None:
 
         if not live:
             nxt = minutes_to_next_kickoff(args.league, args.season)
-            if nxt is None or nxt > args.lookahead:
+            if nxt is None or nxt > args.max_wait:
                 log("nothing live, next kickoff "
                     + (f"in {nxt:.0f} min" if nxt is not None else "unknown")
                     + " — exiting.")
                 return
-            log(f"kickoff in {nxt:.0f} min — standing by.")
+            if nxt > args.lookahead:
+                log(f"next kickoff in {nxt:.0f} min — staying alive.")
+            else:
+                log(f"kickoff in {nxt:.0f} min — standing by.")
 
         if time.monotonic() > deadline:
             log("max runtime reached — exiting; the next cron resumes.")
