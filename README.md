@@ -310,6 +310,28 @@ missing or stale files just mean no badges/photos, never broken scoring.
 Because workflows now commit to the repo, run `git pull` before pushing
 local changes.
 
+### Shortlist
+
+- Tap the **☆** next to any player (Stats tab, draft pool, or a player's
+  detail card) to add them to your **shortlist**. It's stored per manager
+  and synced across your devices; the app only ever renders **your own**,
+  so it's private in practice (same open-access caveat as the rest of the
+  app — nothing here is encrypted).
+- **Trades tab → ★ My shortlist:** each shortlisted player with their
+  current owner (or "free agent") and a **Trade** button when the window
+  is open — owned players jump into a pre-filled proposal to the owner;
+  free agents open the swap screen.
+- **Draft room → ★ shortlist** filter: during the draft or a redraft,
+  narrow the pool to just your shortlisted targets.
+
+### Draft pool shows picked players
+
+During the initial draft and redrafts, already-picked players **stay in
+the pool in place**, greyed with a **👤 manager** badge showing who took
+them, instead of vanishing — so the list doesn't shuffle under you.
+Auto-pick and quota checks still only consider genuinely available
+players.
+
 ### Player detail & stats
 
 - **Lineup history pager.** Home (your team) and Table (any manager,
@@ -396,7 +418,7 @@ position groups — a slot only trades within its position, subs included
 
 ### Sanity tests
 
-`node test_logic.js` — 94 checks on the snake order, position quotas,
+`node test_logic.js` — 96 checks on the snake order, position quotas,
 scoring parity with `daily_pull.py` (incl. defensive actions), sub
 activation, lineup-lock history replay, the per-manager history
 decomposition (current credited + former + per-round split), stage

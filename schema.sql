@@ -111,6 +111,9 @@ alter table managers add column if not exists keeper_pick_ids jsonb;
 
 alter table managers add column if not exists join_token text;
 alter table managers add column if not exists draft_position int;
+-- Per-manager shortlist of player ids (jsonb array). Synced so it follows
+-- the manager across devices; the app only ever renders your own.
+alter table managers add column if not exists shortlist jsonb;
 
 alter table picks add column if not exists pick_number int;
 alter table picks add column if not exists is_sub bool default false;

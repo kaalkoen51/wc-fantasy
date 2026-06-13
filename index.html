@@ -826,6 +826,7 @@ async function startDraft() {
 
 S.poolFilter = "ALL";
 S.poolSearch = "";
+S.poolShortlistOnly = false;
 let autoPickedFor = 0;
 
 function draftOrderManagers() {
@@ -869,7 +870,51 @@ function availableForGroup(group) {
   return S.players.filter((pl) => pl.position === group && !picked.has(pl.player_id));
 }
 
+// All players in a group (picked or not) for the draft pool display — picked
+// players stay visible with an owner badge rather than vanishing.
+function poolEntries(group) {
+  if (group === "TEAM")
+    return S.teams.map((t) => ({ player_id: "team:" + t, name: t, position: "TEAM", team: t }));
+  return S.players.filter((pl) => pl.position === group);
+}
+
 const managerPicks = (mgrId) => S.picks.filter((pk) => pk.manager_id === mgrId);
+
+/* ---------- shortlist (per-manager, synced; only ever shown to its owner) ---------- */
+
+const myShortlist = () => myManager()?.shortlist || [];
+const isShortlisted = (pid) => myShortlist().includes(pid);
+
+async function toggleShortlist(pid) {
+  const me = myManager();
+  if (!me) return toast("Join as a manager to shortlist players.");
+  const cur = myShortlist();
+  const next = cur.includes(pid) ? cur.filter((x) => x !== pid) : [...cur, pid];
+  me.shortlist = next;                         // optimistic, so the star flips now
+  const { error } = await S.sb.from("managers").update({ shortlist: next }).eq("id", me.id);
+  if (error) {
+    me.shortlist = cur;                        // revert on failure
+    return toast(/shortlist/.test(error.message)
+      ? "Shortlist needs a schema update — run schema.sql." : error.message);
+  }
+  scheduleRefetch();
+}
+
+// ☆/★ toggle for a player. Caller wires [data-star] via wireStars().
+function starHtml(pid) {
+  const on = isShortlisted(pid);
+  return `<button data-star="${esc(pid)}" title="${on ? "Remove from shortlist" : "Shortlist"}"
+    class="shrink-0 px-1 text-base leading-none ${
+      on ? "text-wcgold" : "text-slate-600 hover:text-slate-300"}">${on ? "★" : "☆"}</button>`;
+}
+
+function wireStars(el, rerender) {
+  el.querySelectorAll("[data-star]").forEach((b) => b.onclick = (ev) => {
+    ev.stopPropagation();
+    toggleShortlist(b.dataset.star);
+    rerender();
+  });
+}
 
 // Kept players (redraft keepers) fill quota slots like any other pick.
 function quotaLeft(mgrPicks, group) {
@@ -969,31 +1014,46 @@ function renderPool() {
   $("pool-chips").innerHTML = chips.map((c) =>
     `<button data-chip="${c}" class="rounded-full px-3 py-1 border ${
       S.poolFilter === c ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"
-    }">${c}${c !== "ALL" && myTurn ? ` (${quotaLeft(onClockPicks, c)})` : ""}</button>`).join("");
+    }">${c}${c !== "ALL" && myTurn ? ` (${quotaLeft(onClockPicks, c)})` : ""}</button>`).join("")
+    + `<button data-slfilter class="rounded-full px-3 py-1 border ${
+      S.poolShortlistOnly ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"
+    }">★ shortlist</button>`;
   $("pool-chips").querySelectorAll("[data-chip]").forEach((b) =>
     b.onclick = () => { S.poolFilter = b.dataset.chip; renderPool(); });
+  $("pool-chips").querySelector("[data-slfilter]").onclick = () => {
+    S.poolShortlistOnly = !S.poolShortlistOnly; renderPool();
+  };
 
   if (!$("pool-team").options.length) {
     $("pool-team").innerHTML = '<option value="">All teams</option>' +
       S.teams.map((t) => `<option>${esc(t)}</option>`).join("");
   }
 
+  // Owner name per picked player, so taken players show who grabbed them.
+  const mgrName = Object.fromEntries(S.managers.map((m) => [m.id, m.name]));
+  const ownerName = {};
+  for (const pk of S.picks) ownerName[pk.player_id] = mgrName[pk.manager_id];
+
   let entries = S.poolFilter === "ALL"
-    ? groups.flatMap((g) => availableForGroup(g))
-    : availableForGroup(S.poolFilter);
+    ? groups.flatMap((g) => poolEntries(g))
+    : poolEntries(S.poolFilter);
   const teamF = $("pool-team").value;
   if (teamF) entries = entries.filter((e) => e.team === teamF);
   const q = S.poolSearch.trim().toLowerCase();
   if (q) entries = entries.filter((e) =>
     e.name.toLowerCase().includes(q) || e.team.toLowerCase().includes(q));
+  if (S.poolShortlistOnly) entries = entries.filter((e) => isShortlisted(e.player_id));
   const shown = entries.slice(0, 80);
 
   $("pool-list").innerHTML = shown.map((e) => {
-    const canPick = myTurn && quotaLeft(onClockPicks, e.position) > 0;
-    return `<li class="flex items-center py-2 gap-2">
+    const owner = ownerName[e.player_id];
+    const canPick = myTurn && !owner && quotaLeft(onClockPicks, e.position) > 0;
+    return `<li class="flex items-center py-2 gap-1.5 ${owner ? "opacity-60" : ""}">
+      ${starHtml(e.player_id)}
       ${avatarHtml(e.player_id, e.team)}
       <div class="min-w-0 flex-1">
-        <div class="truncate font-medium">${esc(e.name)} ${availBadges(e.player_id)}</div>
+        <div class="truncate font-medium">${esc(e.name)} ${availBadges(e.player_id)}${
+          owner ? ` <span class="rounded bg-slate-700 px-1 py-0.5 text-[10px] text-wcgold">👤 ${esc(owner)}</span>` : ""}</div>
         <div class="text-xs text-slate-400">${esc(e.team)}</div>
       </div>
       <div class="flex items-center gap-2 shrink-0">
@@ -1002,7 +1062,8 @@ function renderPool() {
         ${canPick ? `<button data-pick="${esc(e.player_id)}" class="pick-btn bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-sm font-semibold">Pick</button>` : ""}
       </div>
     </li>`;
-  }).join("") || '<li class="py-4 text-sm text-slate-500">No available players match.</li>';
+  }).join("") || `<li class="py-4 text-sm text-slate-500">${
+    S.poolShortlistOnly ? "No shortlisted players match — star players to add them." : "No players match."}</li>`;
   if (entries.length > shown.length) {
     $("pool-list").insertAdjacentHTML("beforeend",
       `<li class="py-2 text-xs text-slate-500">${entries.length - shown.length} more — search or filter to narrow.</li>`);
@@ -1014,6 +1075,7 @@ function renderPool() {
     if (confirm(`Pick ${entry.name} (${entry.position}, ${entry.team})? They'll slot in as ${slot}.`))
       makePick(entry, { ...info, pickNumber: S.league.current_pick }).catch((er) => toast(er.message));
   });
+  wireStars($("pool-list"), renderPool);
 }
 
 function renderRosters(containerId) {
@@ -2167,6 +2229,7 @@ function playerDetailHtml(p, opts = {}) {
       </div>
       <span class="pos-${p.position} rounded px-1.5 py-0.5 text-xs font-semibold shrink-0">${p.position}</span>
       <span class="text-xl font-bold text-wcgold shrink-0">${total}</span>
+      ${starHtml(p.player_id)}
       ${opts.closeId ? `<button id="${opts.closeId}" class="text-slate-400 px-1 -mt-1 shrink-0">✕</button>` : ""}
     </div>
     ${breakdown.length ? `<table class="w-full text-xs"><tbody>
@@ -2193,6 +2256,7 @@ function renderStatsDetail() {
     S.statsSel = null;
     renderStatsDetail();
   };
+  wireStars(box, renderStatsDetail);
 }
 
 // Home-tab player detail in a bottom sheet, from your manager's view.
@@ -2204,6 +2268,7 @@ function openPlayerDetail(pid, managerId, perspectiveLabel) {
       { managerId, perspectiveLabel, closeId: "player-sheet-close" })}</div>`;
   $("player-sheet").classList.remove("hidden");
   $("player-sheet-close").onclick = () => $("player-sheet").classList.add("hidden");
+  wireStars($("player-sheet-body"), () => openPlayerDetail(pid, managerId, perspectiveLabel));
 }
 
 function renderStatsTab() {
@@ -2244,20 +2309,22 @@ function renderStatsTab() {
 
   $("stats-list").innerHTML = ranked.map(({ p, pts, val }, i) => {
     const owner = ownerOf(p.player_id);
-    return `<li><button data-sp="${esc(p.player_id)}" class="w-full flex items-center gap-2 py-2 text-left">
-      <span class="text-slate-500 font-mono w-6 shrink-0">${q ? "" : i + 1 + "."}</span>
-      ${avatarHtml(p.player_id, p.team)}
-      <span class="min-w-0 flex-1">
-        <span class="block truncate text-sm">${esc(p.name)} ${availBadges(p.player_id)}${
-          owner ? ` <span class="rounded bg-slate-700 px-1 py-0.5 text-[10px] text-wcgold">👤 ${esc(owner)}</span>` : ""}</span>
-        <span class="block truncate text-[10px] text-slate-500">${esc(p.team)}</span>
-      </span>
-      <span class="pos-${p.position} rounded px-1.5 py-0.5 text-[10px] font-semibold shrink-0">${p.position}</span>
-      <span class="shrink-0 w-10 text-right">
-        <span class="block font-mono font-bold ${val > 0 ? "text-wcgold" : "text-slate-500"}">${val}</span>
-        ${byPoints ? "" : `<span class="block text-[10px] text-slate-500">${pts}p</span>`}
-      </span>
-    </button></li>`;
+    return `<li class="flex items-center gap-1">
+      ${starHtml(p.player_id)}
+      <button data-sp="${esc(p.player_id)}" class="flex-1 min-w-0 flex items-center gap-2 py-2 text-left">
+        <span class="text-slate-500 font-mono w-6 shrink-0">${q ? "" : i + 1 + "."}</span>
+        ${avatarHtml(p.player_id, p.team)}
+        <span class="min-w-0 flex-1">
+          <span class="block truncate text-sm">${esc(p.name)} ${availBadges(p.player_id)}${
+            owner ? ` <span class="rounded bg-slate-700 px-1 py-0.5 text-[10px] text-wcgold">👤 ${esc(owner)}</span>` : ""}</span>
+          <span class="block truncate text-[10px] text-slate-500">${esc(p.team)}</span>
+        </span>
+        <span class="pos-${p.position} rounded px-1.5 py-0.5 text-[10px] font-semibold shrink-0">${p.position}</span>
+        <span class="shrink-0 w-10 text-right">
+          <span class="block font-mono font-bold ${val > 0 ? "text-wcgold" : "text-slate-500"}">${val}</span>
+          ${byPoints ? "" : `<span class="block text-[10px] text-slate-500">${pts}p</span>`}
+        </span>
+      </button></li>`;
   }).join("") || `<li class="py-4 text-sm text-slate-500">${
     q ? "No players match." : "No stats yet — the list fills up once matches are pulled. Search to look anyone up."}</li>`;
   $("stats-list").querySelectorAll("[data-sp]").forEach((b) => b.onclick = () => {
@@ -2265,6 +2332,7 @@ function renderStatsTab() {
     renderStatsDetail();
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
+  wireStars($("stats-list"), renderStatsTab);
   renderStatsDetail();
 }
 
@@ -2666,6 +2734,69 @@ function tradeHistoryHtml() {
   </div>`;
 }
 
+// Your private shortlist, with a Trade shortcut per player (when the window
+// is open). Only ever built from your own shortlist.
+function shortlistSectionHtml(me) {
+  const ids = myShortlist();
+  const open = !!S.league.trading_open;
+  const rows = ids.map((pid) => {
+    const p = S.playerById[pid];
+    if (!p) return "";
+    const ownPick = S.picks.find((pk) => pk.player_id === pid);
+    const owner = ownPick && S.managers.find((m) => m.id === ownPick.manager_id);
+    const mine = ownPick && ownPick.manager_id === me.id;
+    const status = mine ? '<span class="text-slate-500">on your roster</span>'
+      : owner ? `<span class="rounded bg-slate-700 px-1 py-0.5 text-[10px] text-wcgold">👤 ${esc(owner.name)}</span>`
+      : '<span class="text-slate-500">free agent</span>';
+    return `<li class="flex items-center py-2 gap-1.5">
+      ${starHtml(pid)}
+      ${avatarHtml(pid, p.team)}
+      <div class="min-w-0 flex-1">
+        <div class="truncate font-medium">${esc(p.name)} ${availBadges(pid)}</div>
+        <div class="text-xs text-slate-400">${teamFixLine(p.team)} · ${status}</div>
+      </div>
+      <span class="shrink-0 text-xs font-mono text-slate-400">${entryPoints(pid, p.position, p.team)} pts</span>
+      <span class="pos-${p.position} rounded px-1.5 py-0.5 text-[10px] font-semibold shrink-0">${p.position}</span>
+      ${!mine && open ? `<button data-sltrade="${esc(pid)}" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-sm font-semibold">Trade</button>` : ""}
+    </li>`;
+  }).join("");
+  return `<div class="mt-4">
+    <h3 class="font-semibold text-sm mb-1">★ My shortlist
+      <span class="text-[10px] text-slate-500 font-normal">· only you can see this</span></h3>
+    ${ids.length
+      ? `<ul class="rounded-xl border border-slate-700 bg-slate-900 px-3 divide-y divide-slate-800">${rows}</ul>`
+      : '<p class="text-xs text-slate-500">No players shortlisted yet — tap ☆ on a player in the Stats tab.</p>'}
+  </div>`;
+}
+
+// Trade shortcut from the shortlist: owned → propose to the owner with their
+// player pre-filled; free agent → the normal swap screen (direct when you
+// have one same-position player, else the FA swap builder to choose).
+function tradeForShortlisted(pid) {
+  if (!S.league.trading_open) return toast("Trading window is closed.");
+  const me = myManager();
+  const p = S.playerById[pid];
+  if (!p) return;
+  const ownPick = S.picks.find((pk) => pk.player_id === pid);
+  if (ownPick && ownPick.manager_id === me.id) return toast("Already on your roster.");
+  if (ownPick) {
+    openBuilder(ownPick.manager_id, null, [{ mine: "", theirs: ownPick.id }]);
+    return;
+  }
+  const mySwappable = managerPicks(me.id)
+    .filter((pk) => pk.slot !== "TEAM" && slotGroup(pk.slot) === p.position);
+  if (!mySwappable.length)
+    return toast(`You have no ${p.position} to swap out for ${p.name}.`);
+  if (mySwappable.length === 1) {
+    openSwap(mySwappable[0]);
+    $("swap-search").value = p.name;
+    renderSwapList();
+  } else {
+    openBuilder("FA");
+    toast(`Pick which ${p.position} to swap out for ${p.name}.`);
+  }
+}
+
 function renderTrades() {
   const box = $("board-trades");
   const me = myManager();
@@ -2680,6 +2811,7 @@ function renderTrades() {
     ${open && !S.builder ? '<button id="trade-new" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 font-semibold">New trade</button>' : ""}
   </div>`;
   if (S.builder) html += builderHtml(me);
+  html += shortlistSectionHtml(me);
   html += tradeSectionHtml("Incoming", S.trades.filter((t) => t.target_manager_id === me.id), true);
   html += tradeSectionHtml("Outgoing", S.trades.filter((t) => t.proposer_manager_id === me.id), false);
   html += tradeHistoryHtml();
@@ -2690,6 +2822,9 @@ function renderTrades() {
 function wireTrades(me) {
   const box = $("board-trades");
   const byId = (id) => S.trades.find((t) => t.id === id);
+  wireStars(box, renderTrades);
+  box.querySelectorAll("[data-sltrade]").forEach((b) => b.onclick = () =>
+    tradeForShortlisted(b.dataset.sltrade));
   const newBtn = box.querySelector("#trade-new");
   if (newBtn) newBtn.onclick = () => openBuilder();
   const target = box.querySelector("#trade-target");

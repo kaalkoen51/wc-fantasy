@@ -10,7 +10,7 @@ const stubDoc = {
 };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup };"
 )(stubDoc, { getItem: () => null, setItem: () => {}, removeItem: () => {} }, {}, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -18,7 +18,7 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         posQuota, picksPerManager, totalPicks,
         playerBreakdown, playerPoints, suspendedNext, resilientWrite,
         playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt,
-        slotLabel, managerHistory } = api;
+        slotLabel, managerHistory, poolEntries, availableForGroup } = api;
 let fails = 0;
 const check = (label, got, want) => {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -376,6 +376,20 @@ check("two past rounds, one per lock period",
   mh.rounds.map((r) => [r.n, r.subtotal]), [[1, 6], [2, 4]]);
 check("round 1 covers the pre-trade matchday", mh.rounds[0].dates, ["2026-06-12"]);
 S.fixtures = []; S.snapshots = []; S.picks = []; S.playerById = {};
+
+/* draft pool keeps picked players visible (Feature B); the auto-pick /
+   quota pool (availableForGroup) still excludes them. */
+S.players = [
+  { player_id: "fra_5", name: "A", position: "DEF", team: "France" },
+  { player_id: "fra_6", name: "B", position: "DEF", team: "France" },
+];
+S.teams = ["France"];
+S.picks = [{ manager_id: "m1", player_id: "fra_5", position: "DEF" }];
+check("poolEntries keeps picked players in the list",
+  poolEntries("DEF").map((e) => e.player_id).sort(), ["fra_5", "fra_6"]);
+check("availableForGroup excludes picked (auto-pick pool)",
+  availableForGroup("DEF").map((e) => e.player_id), ["fra_6"]);
+S.players = []; S.teams = []; S.picks = [];
 
 /* resilientWrite: an unapplied additive migration (missing optional
    column) is dropped and retried instead of failing the whole write. */
