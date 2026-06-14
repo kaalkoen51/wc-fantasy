@@ -431,10 +431,11 @@ position groups — a slot only trades within its position, subs included
 
 ### Sanity tests
 
-`node test_logic.js` — 99 checks on the snake order, position quotas,
+`node test_logic.js` — 104 checks on the snake order, position quotas,
 scoring parity with `daily_pull.py` (incl. defensive actions), sub
 activation, lineup-lock history replay, the per-manager history
-decomposition (current credited + former + per-round split), stage
+decomposition (current credited + former + per-round split), the
+played-since-lock highlight and starters-yet-to-play counter, stage
 bonuses, player stat breakdowns, per-match lineup status, category
 leaderboards, trade validity, redraft phases (phase quotas, kept
 players, eliminated managers, champion picks), suspension flags, and

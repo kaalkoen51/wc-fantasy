@@ -1288,14 +1288,26 @@ function teamMatchLabels(team) {
     String(labelDate(b)).localeCompare(String(labelDate(a))));
 }
 
-function computeScores() {
-  const statsByPlayer = {};
-  const playedByDate = {};
-  for (const r of S.stats) {
-    (statsByPlayer[r.player_id] ||= []).push(r);
+// Stats grouped by player, plus which teams played each date — both derived
+// purely from S.stats and shared by computeScores/managerHistory/
+// computeYetToPlay. Memoized on the S.stats array identity, which is
+// replaced wholesale on every refetch, so one render pass builds it once.
+let _statsDerived = null, _statsDerivedFor = null;
+function statsDerived() {
+  if (_statsDerivedFor === S.stats) return _statsDerived;
+  const byPlayer = {}, playedByDate = {};
+  for (const r of S.stats || []) {
+    (byPlayer[r.player_id] ||= []).push(r);
     const d = labelDate(r.match_label);
     if (d) for (const t of labelTeams(r.match_label)) (playedByDate[d] ||= new Set()).add(t);
   }
+  _statsDerivedFor = S.stats;
+  _statsDerived = { byPlayer, playedByDate };
+  return _statsDerived;
+}
+
+function computeScores() {
+  const { byPlayer: statsByPlayer, playedByDate } = statsDerived();
   const appearedDates = (pid) => new Set(
     (statsByPlayer[pid] || []).filter((r) => r.appeared)
       .map((r) => labelDate(r.match_label)).filter(Boolean));
@@ -1408,13 +1420,7 @@ function managerHistory(mgrId) {
   const mgr = S.managers.find((m) => m.id === mgrId);
   const elimAt = mgr?.eliminated_at ? Date.parse(mgr.eliminated_at) : null;
 
-  const statsByPlayer = {};
-  const playedByDate = {};
-  for (const r of S.stats) {
-    (statsByPlayer[r.player_id] ||= []).push(r);
-    const d = labelDate(r.match_label);
-    if (d) for (const t of labelTeams(r.match_label)) (playedByDate[d] ||= new Set()).add(t);
-  }
+  const { byPlayer: statsByPlayer, playedByDate } = statsDerived();
   const appearedDates = (pid) => new Set(
     (statsByPlayer[pid] || []).filter((r) => r.appeared)
       .map((r) => labelDate(r.match_label)).filter(Boolean));
@@ -2006,8 +2012,7 @@ function setBoardTab(tab) {
 // Only computed when there is at least one snapshot; returns hasSnapshot flag
 // so the caller can suppress the counter before any lock has been taken.
 function computeYetToPlay() {
-  const statsByPlayer = {};
-  for (const r of S.stats) (statsByPlayer[r.player_id] ||= []).push(r);
+  const statsByPlayer = statsDerived().byPlayer;
   const now = Date.now();
   const snapsByMgr = snapshotsByManager();
   const result = {};

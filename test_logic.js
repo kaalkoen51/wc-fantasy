@@ -10,7 +10,7 @@ const stubDoc = {
 };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay };"
 )(stubDoc, { getItem: () => null, setItem: () => {}, removeItem: () => {} }, {}, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -19,7 +19,7 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         playerBreakdown, playerPoints, suspendedNext, resilientWrite,
         playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt,
         slotLabel, managerHistory, poolEntries, availableForGroup,
-        isEliminated } = api;
+        isEliminated, computeYetToPlay } = api;
 let fails = 0;
 const check = (label, got, want) => {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -376,6 +376,40 @@ check("current view shows current player credited", mh.current.items[0].pts, 4);
 check("two past rounds, one per lock period",
   mh.rounds.map((r) => [r.n, r.subtotal]), [[1, 6], [2, 4]]);
 check("round 1 covers the pre-trade matchday", mh.rounds[0].dates, ["2026-06-12"]);
+S.fixtures = []; S.snapshots = []; S.picks = []; S.playerById = {};
+
+/* "played since last lock" highlight + starters-yet-to-play counter */
+S.fixtures = [];
+S.managers = [{ id: "m1", name: "Koen" }];
+S.playerById = {
+  fra_5: { player_id: "fra_5", name: "P5", position: "DEF", team: "France" },
+  arg_3: { player_id: "arg_3", name: "P3", position: "MID", team: "Argentina" },
+  ger_7: { player_id: "ger_7", name: "P7", position: "FWD", team: "Germany" },
+};
+S.picks = [
+  { id: "a", manager_id: "m1", player_id: "fra_5", player_name: "P5",
+    position: "DEF", team: "France", slot: "DEF", is_sub: false, pick_number: 1 },
+  { id: "b", manager_id: "m1", player_id: "arg_3", player_name: "P3",
+    position: "MID", team: "Argentina", slot: "MID", is_sub: false, pick_number: 2 },
+  { id: "c", manager_id: "m1", player_id: "ger_7", player_name: "P7",
+    position: "FWD", team: "Germany", slot: "SUB_FWD", is_sub: true, pick_number: 3 },
+];
+S.snapshots = [{ manager_id: "m1", effective_from: "2026-06-10T08:00:00+00:00",
+  roster: S.picks.map((pk) => ({ player_id: pk.player_id, player_name: pk.player_name,
+    position: pk.position, team: pk.team, is_sub: pk.is_sub, slot: pk.slot })) }];
+// fra_5 played (0 pts) after the lock; arg_3 hasn't; ger_7 is a sub.
+S.stats = [row({ player_id: "fra_5", match_label: "France vs Chile (2026-06-12)", goals: 0 })];
+const playedBy = Object.fromEntries(
+  managerHistory("m1").current.items.map((i) => [i.entry.player_id, i.played]));
+check("played-since-lock true even at 0 pts", playedBy.fra_5, true);
+check("yet-to-play starter not flagged played", playedBy.arg_3, false);
+const ytp = computeYetToPlay().m1;
+check("yet-to-play counts only starters",
+  [ytp.played, ytp.total, ytp.yet, ytp.hasSnapshot], [1, 2, 1, true]);
+// before any lineup lock the counter is suppressed
+S.snapshots = [];
+check("no snapshot -> not flagged played", managerHistory("m1").current.items[0].played, false);
+check("no snapshot -> counter suppressed", computeYetToPlay().m1.hasSnapshot, false);
 S.fixtures = []; S.snapshots = []; S.picks = []; S.playerById = {};
 
 /* draft pool keeps picked players visible (Feature B); the auto-pick /
