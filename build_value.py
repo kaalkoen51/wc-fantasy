@@ -127,14 +127,14 @@ COMPETITIONS = [
     ("WCQ CONCACAF",         31,  [2022, 2026], 0.85),
     ("WCQ Asia",             30,  [2022, 2026], 0.85),
     ("WCQ Africa",           29,  [2022, 2023], 0.85),
-    ("WCQ Oceania",          33,  [2022, 2026], 0.80),
+    ("WCQ Oceania",          33,  [2022, 2026], 0.40),
     ("WCQ Play-offs",        37,  [2022, 2026], 0.85),
     ("UEFA Nations League",   5,  [2022, 2024], 0.80),
     ("Euro 2024",             4,  [2024],       1.00),
     ("Copa America 2024",     9,  [2024],       1.00),
-    ("AFCON",                 6,  [2023, 2025], 0.90),
+    ("AFCON",                 6,  [2023, 2025],       0.90),
     ("Asian Cup 2023",        7,  [2023],       0.90),
-    ("Friendlies",           10,  [2022, 2023, 2024, 2025, 2026], 0.15),
+    ("Friendlies",           10,  [2022, 2023, 2024, 2025, 2026], 0.35),
 ]
 FRIENDLY_LEAGUE_ID = 10  # availability (start_prob) ignores these -- stars rest them
 DEFAULT_DECAY_HALFLIFE_DAYS = 540.0  # ~18 months
@@ -418,7 +418,7 @@ def _collect_appearances(fid, fixture, matcher, weight, out, competitive=True):
 class TeamModel:
     """Weighted Dixon-Coles bivariate-Poisson team-strength model."""
 
-    def __init__(self, results):
+    def __init__(self, results, reg=4.0, goal_cap=6):
         teams = sorted({r["home"] for r in results} | {r["away"] for r in results})
         self.teams = teams
         self.idx = {t: i for i, t in enumerate(teams)}
@@ -426,6 +426,8 @@ class TeamModel:
         self.defence = {t: 0.0 for t in teams}
         self.home_adv = 0.25
         self.rho = -0.05
+        self.reg = reg            # ridge toward the global mean (anchors weak pools)
+        self.goal_cap = goal_cap  # cap scoreline so minnow-bashing doesn't inflate
         self._results = results
 
     def fit(self):
@@ -434,8 +436,9 @@ class TeamModel:
             return self
         H = np.array([self.idx[r["home"]] for r in self._results])
         A = np.array([self.idx[r["away"]] for r in self._results])
-        X = np.array([r["hg"] for r in self._results], dtype=float)
-        Y = np.array([r["ag"] for r in self._results], dtype=float)
+        cap = self.goal_cap
+        X = np.clip(np.array([r["hg"] for r in self._results], dtype=float), 0, cap)
+        Y = np.clip(np.array([r["ag"] for r in self._results], dtype=float), 0, cap)
         W = np.array([r["weight"] for r in self._results], dtype=float)
         # params: attack[0..n-1], defence[0..n-1], home_adv, rho
         p0 = np.concatenate([np.zeros(n), np.zeros(n), [0.25, -0.05]])
@@ -455,7 +458,10 @@ class TeamModel:
             m11 = (X == 1) & (Y == 1); tau[m11] = 1 - rho
             tau = np.clip(tau, 1e-6, None)
             ll = ll + np.log(tau)
-            return -np.sum(W * ll)
+            # Ridge prior: teams with little (or weakly-connected) data are pulled
+            # toward average; teams pinned by many competitive games barely move.
+            penalty = self.reg * np.sum(att ** 2 + dfc ** 2)
+            return -np.sum(W * ll) + penalty
 
         bounds = [(-3, 3)] * (2 * n) + [(-0.5, 1.0), (-0.2, 0.2)]
         res = minimize(negll, p0, method="L-BFGS-B", bounds=bounds,
@@ -895,7 +901,7 @@ def demo_inputs(rng):
 # ---------------------------------------------------------------------------
 # Backtest (self-validation)
 # ---------------------------------------------------------------------------
-def run_backtest(season, matcher, players, weigh, sims, managers, prior_strength):
+def run_backtest(season, matcher, players, weigh, sims, managers, prior_strength, reg=4.0):
     """Fit on pre-tournament data, project that World Cup, compare to actual.
 
     Reports both the fair test (projected TOTAL = per-match x games the team
@@ -910,7 +916,7 @@ def run_backtest(season, matcher, players, weigh, sims, managers, prior_strength
         sys.exit("[backtest] no training data fetched (check API key / leagues).")
     print(f"[backtest] trained on {len(results)} matches, "
           f"{len(set(a['player_id'] for a in appearances))} players with stats.")
-    model = TeamModel(results).fit()
+    model = TeamModel(results, reg=reg).fit()
     tmw, tmw_comp = defaultdict(float), defaultdict(float)
     for r in results:
         tmw[r["home"]] += r["weight"]
@@ -1068,7 +1074,10 @@ def main():
     ap.add_argument("--decay", type=float, default=DEFAULT_DECAY_HALFLIFE_DAYS,
                     help="time-decay half-life in days")
     ap.add_argument("--prior-strength", type=float, default=6.0,
-                    help="shrinkage pseudo-exposure (team-matches)")
+                    help="player shrinkage pseudo-exposure (team-matches)")
+    ap.add_argument("--reg", type=float, default=4.0,
+                    help="team-rating ridge strength (higher = pull weak/isolated "
+                         "pools harder toward average; combats minnow inflation)")
     ap.add_argument("--no-friendlies", action="store_true", help="drop friendlies")
     ap.add_argument("--leagues", help="override COMPETITIONS: id:season:weight,...")
     ap.add_argument("--top", type=int, default=25, help="rows per leaderboard")
@@ -1102,7 +1111,7 @@ def main():
             comps = [c for c in comps if c[1] != 10]
         if args.backtest:
             run_backtest(args.backtest, matcher, players, weigh, args.sims,
-                         args.managers, args.prior_strength)
+                         args.managers, args.prior_strength, args.reg)
             return
         print(f"[fetch] pulling {len(comps)} competition-seasons (cached) ...")
         results, appearances = fetch_dataset(comps, matcher, weigh)
@@ -1111,8 +1120,8 @@ def main():
 
     if not results:
         sys.exit("No match results -- nothing to model.")
-    print(f"[model] fitting Dixon-Coles on {len(results)} matches ...")
-    model = TeamModel(results).fit()
+    print(f"[model] fitting Dixon-Coles on {len(results)} matches (reg={args.reg}) ...")
+    model = TeamModel(results, reg=args.reg).fit()
 
     tmw, tmw_comp = defaultdict(float), defaultdict(float)
     for r in results:
