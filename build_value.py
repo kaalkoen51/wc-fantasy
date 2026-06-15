@@ -118,14 +118,15 @@ QUOTA = {"GK": 2, "DEF": 4, "MID": 4, "FWD": 3, "TEAM": 1}
 # API-Football's; verify with /leagues and override via --leagues if needed.
 COMPETITIONS = [
     ("World Cup 2022",        1,  [2022],             1.00),
-    ("WC 2026 qualifiers",   32,  [2023, 2024, 2025], 0.85),
-    ("UEFA Nations League",   5,  [2022, 2024, 2025], 0.80),
+    ("WC 2026 qualifiers",   32,  [2023, 2024, 2025, 2026], 0.85),
+    ("UEFA Nations League",   5,  [2022, 2023, 2024, 2025], 0.80),
     ("Euro 2024",             4,  [2024],             1.00),
     ("Copa America 2024",     9,  [2024],             1.00),
     ("AFCON",                 6,  [2023, 2025],       0.90),
     ("Asian Cup 2023",        7,  [2023],             0.90),
-    ("Friendlies",           10,  [2022, 2023, 2024, 2025, 2026], 0.35),
+    ("Friendlies",           10,  [2022, 2023, 2024, 2025, 2026], 0.15),
 ]
+FRIENDLY_LEAGUE_ID = 10  # availability (start_prob) ignores these -- stars rest them
 DEFAULT_DECAY_HALFLIFE_DAYS = 540.0  # ~18 months
 
 
@@ -339,9 +340,11 @@ def fetch_dataset(competitions, matcher, weigh, only_before=None):
                 goals = f.get("goals", {})
                 hg, ag = to_int(goals.get("home")), to_int(goals.get("away"))
                 w = weigh(date, cweight)
+                competitive = league != FRIENDLY_LEAGUE_ID
                 results.append({"date": date, "home": home, "away": away,
-                                "hg": hg, "ag": ag, "weight": w})
-                _collect_appearances(fid, f, matcher, w, appearances)
+                                "hg": hg, "ag": ag, "weight": w,
+                                "competitive": competitive})
+                _collect_appearances(fid, f, matcher, w, appearances, competitive)
             got = len(results) - n_before
             if got == 0 and only_before:
                 flag = f"  <-- 0 (likely excluded by --backtest cutoff {only_before})"
@@ -353,7 +356,7 @@ def fetch_dataset(competitions, matcher, weigh, only_before=None):
     return results, appearances
 
 
-def _collect_appearances(fid, fixture, matcher, weight, out):
+def _collect_appearances(fid, fixture, matcher, weight, out, competitive=True):
     teams_data = cached_get("fixtures/players", {"fixture": fid}).get("response", [])
     goals = fixture.get("goals", {})
     conceded = {fixture["teams"]["home"]["id"]: to_int(goals.get("away")),
@@ -389,7 +392,7 @@ def _collect_appearances(fid, fixture, matcher, weight, out):
                 "pen_missed": to_int(pen.get("missed")),
                 "def_actions": (to_int(tk.get("total")) + to_int(tk.get("blocks"))
                                 + to_int(tk.get("interceptions"))),
-                "motm": False,
+                "motm": False, "competitive": competitive,
             })
     rated = [r for r in rows if r["rating"] is not None]
     if rated:
@@ -472,11 +475,12 @@ class TeamModel:
 # ---------------------------------------------------------------------------
 # Player model
 # ---------------------------------------------------------------------------
-def aggregate_players(appearances, players, team_match_weight):
+def aggregate_players(appearances, players, team_match_weight, team_comp_weight):
     """Collapse appearance rows into one weighted record per player_id.
 
-    team_match_weight: {team -> total weight of that team's matches in window},
-    so per-team-match rates account for games the player sat out.
+    team_match_weight / team_comp_weight: {team -> total weight of that team's
+    matches (all / competitive only) in window}, so per-team-match rates and the
+    competitive-only start rate account for games the player sat out.
     """
     by_id = defaultdict(lambda: defaultdict(float))
     meta = {}
@@ -484,10 +488,13 @@ def aggregate_players(appearances, players, team_match_weight):
         a = by_id[r["player_id"]]
         meta[r["player_id"]] = (r["name"], r["team"], r["position"])
         w = r["weight"]
+        started = r["minutes"] >= 60
         a["w_minutes"] += w * r["minutes"]
         a["w_apps"] += w
-        a["w_starts"] += w if r["minutes"] >= 60 else 0.0
+        a["w_starts"] += w if started else 0.0
         a["nineties"] += w * r["minutes"] / 90.0
+        if r.get("competitive", True):  # availability signal: competitive only
+            a["w_starts_comp"] += w if started else 0.0
         for k in ("goals", "assists", "saves", "def_actions", "yellow", "red",
                   "pen_saved", "pen_missed"):
             a[f"w_{k}"] += w * r[k]
@@ -499,10 +506,11 @@ def aggregate_players(appearances, players, team_match_weight):
         pid = p["player_id"]
         a = by_id.get(pid, defaultdict(float))
         name, team, pos = meta.get(pid, (p["name"], p["team"], p["position"]))
-        tmw = team_match_weight.get(team, 0.0)
         records[pid] = {
             "player_id": pid, "name": name, "team": team, "position": pos,
-            "team_match_weight": tmw, **{k: a[k] for k in a},
+            "team_match_weight": team_match_weight.get(team, 0.0),
+            "team_comp_weight": team_comp_weight.get(team, 0.0),
+            **{k: a[k] for k in a},
         }
     return records
 
@@ -541,9 +549,16 @@ def project_player(rec, model, opp_list, priors, prior_strength, injured_ids):
     tmw = rec.get("team_match_weight", 0.0)
     pri = priors.get(pos, {})
 
-    # Start probability from recent minutes; injured -> heavily damped.
-    start_rate = gamma_poisson_shrink(
-        rec.get("w_starts", 0.0), tmw, pri.get("w_starts", 0.3), prior_strength)
+    # Start probability from COMPETITIVE matches only (stars rest friendlies, so
+    # a friendly-heavy pool unfairly buries them). Fall back to all matches when
+    # a team has too little competitive history in the window. Injured -> damped.
+    comp_w = rec.get("team_comp_weight", 0.0)
+    if comp_w >= 2.0:
+        start_rate = gamma_poisson_shrink(
+            rec.get("w_starts_comp", 0.0), comp_w, pri.get("w_starts", 0.3), prior_strength)
+    else:
+        start_rate = gamma_poisson_shrink(
+            rec.get("w_starts", 0.0), tmw, pri.get("w_starts", 0.3), prior_strength)
     start_rate = float(np.clip(start_rate, 0.0, 1.0))
     if rec["player_id"] in injured_ids:
         start_rate *= 0.2
@@ -589,7 +604,7 @@ def project_player(rec, model, opp_list, priors, prior_strength, injured_ids):
         # availability: counting stats already include playing time via shares/
         # per-team-match rates; clean sheet handled above. Apply a mild extra
         # damp for fringe players so non-starters don't carry full rates.
-        mu *= 0.4 + 0.6 * start_rate
+        mu *= 0.5 + 0.5 * start_rate
 
         # crude per-match variance for p10/p90 bands (independent categories)
         var = (e_goals * SCORING["goal"][pos] ** 2 + e_assists * SCORING["assist"] ** 2
@@ -886,11 +901,14 @@ def run_backtest(season, matcher, players, weigh, sims, managers, prior_strength
     print(f"[backtest] trained on {len(results)} matches, "
           f"{len(set(a['player_id'] for a in appearances))} players with stats.")
     model = TeamModel(results).fit()
-    tmw = defaultdict(float)
+    tmw, tmw_comp = defaultdict(float), defaultdict(float)
     for r in results:
         tmw[r["home"]] += r["weight"]
         tmw[r["away"]] += r["weight"]
-    records = aggregate_players(appearances, players, tmw)
+        if r.get("competitive", True):
+            tmw_comp[r["home"]] += r["weight"]
+            tmw_comp[r["away"]] += r["weight"]
+    records = aggregate_players(appearances, players, tmw, tmw_comp)
     priors = position_priors(records, None)
 
     # actual WC `season`: per-player total fantasy points + games each team played
@@ -1012,6 +1030,26 @@ def parse_leagues_override(spec):
     return comps
 
 
+def list_leagues(query):
+    """Print API-Football leagues matching QUERY with the seasons that have
+    fixture coverage -- so the right ids/seasons can go into COMPETITIONS."""
+    data = cached_get("leagues", {"search": query})
+    rows = data.get("response", [])
+    if not rows:
+        print(f"No leagues matched {query!r}.")
+        return
+    print(f"{len(rows)} league(s) matching {query!r} "
+          f"(seasons listed only if they have fixture coverage):")
+    for item in rows:
+        lg = item.get("league", {})
+        country = item.get("country", {}).get("name", "")
+        seasons = [str(s.get("year")) for s in item.get("seasons", [])
+                   if (s.get("coverage", {}).get("fixtures", {}) or {}).get("events")]
+        print(f"  id={lg.get('id'):<5} {lg.get('type','?'):<4} "
+              f"{lg.get('name','?')} ({country})")
+        print(f"        seasons w/ data: {', '.join(seasons) or '(none)'}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1029,7 +1067,14 @@ def main():
                     help="validate against a past World Cup (e.g. 2022)")
     ap.add_argument("--demo", action="store_true",
                     help="run on synthetic data with no network (smoke test)")
+    ap.add_argument("--list-leagues", metavar="QUERY",
+                    help="print API-Football leagues matching QUERY (id + seasons "
+                         "with coverage) to fix COMPETITIONS, then exit")
     args = ap.parse_args()
+
+    if args.list_leagues:
+        list_leagues(args.list_leagues)
+        return
 
     rng = np.random.default_rng(args.seed)
     weigh = competition_weight(args.decay, datetime.now(timezone.utc))
@@ -1059,11 +1104,14 @@ def main():
     print(f"[model] fitting Dixon-Coles on {len(results)} matches ...")
     model = TeamModel(results).fit()
 
-    tmw = defaultdict(float)
+    tmw, tmw_comp = defaultdict(float), defaultdict(float)
     for r in results:
         tmw[r["home"]] += r["weight"]
         tmw[r["away"]] += r["weight"]
-    records = aggregate_players(appearances, players, tmw)
+        if r.get("competitive", True):
+            tmw_comp[r["home"]] += r["weight"]
+            tmw_comp[r["away"]] += r["weight"]
+    records = aggregate_players(appearances, players, tmw, tmw_comp)
     priors = position_priors(records, None)
     injured = load_injured_ids()
 
