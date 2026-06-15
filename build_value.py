@@ -680,6 +680,7 @@ def project_player(rec, model, opp_list, priors, prior_strength, injured_ids):
         rec.get("w_assists", 0.0), tmw, pri.get("w_assists", 0.0), prior_strength) / team_g
 
     mus, vars = [], []
+    cat = defaultdict(float)  # avg per-match expected points by category (for --explain)
     for opp in opp_list:
         lf, la = model.expected_goals(team, opp, neutral=True)
         opp_scale = la / max(0.2, team_avg_conceded(team, model))  # workload vs strong opp
@@ -692,15 +693,24 @@ def project_player(rec, model, opp_list, priors, prior_strength, injured_ids):
             if pos != "GK" else 0.0
         cs_pts = poisson_zero_prob(la) * start_rate * SCORING["clean_sheet"][pos]
 
-        mu = (e_goals * SCORING["goal"][pos] + e_assists * SCORING["assist"]
-              + cs_pts + e_saves_pts + e_da_pts
-              + yel_r * SCORING["yellow_card"] + red_r * SCORING["red_card"]
-              + ps_r * SCORING["penalty_saved"] + pm_r * SCORING["penalty_missed"]
-              + motm_r * SCORING["motm"])
+        avail = 0.5 + 0.5 * start_rate
+        parts = {
+            "goals": e_goals * SCORING["goal"][pos],
+            "assists": e_assists * SCORING["assist"],
+            "clean_sheet": cs_pts,
+            "saves": e_saves_pts,
+            "def_actions": e_da_pts,
+            "cards": yel_r * SCORING["yellow_card"] + red_r * SCORING["red_card"],
+            "penalties": ps_r * SCORING["penalty_saved"] + pm_r * SCORING["penalty_missed"],
+            "motm": motm_r * SCORING["motm"],
+        }
+        mu = sum(parts.values())
         # availability: counting stats already include playing time via shares/
         # per-team-match rates; clean sheet handled above. Apply a mild extra
         # damp for fringe players so non-starters don't carry full rates.
-        mu *= 0.5 + 0.5 * start_rate
+        mu *= avail
+        for k, v in parts.items():
+            cat[k] += v * avail / len(opp_list)
 
         # crude per-match variance for p10/p90 bands (independent categories)
         var = (e_goals * SCORING["goal"][pos] ** 2 + e_assists * SCORING["assist"] ** 2
@@ -711,7 +721,11 @@ def project_player(rec, model, opp_list, priors, prior_strength, injured_ids):
         mus.append(mu)
         vars.append(max(0.05, var))
 
-    return float(np.mean(mus)), float(np.mean(vars)), start_rate
+    detail = {"start_rate": start_rate, "goal_share": goal_share,
+              "assist_share": assist_share, "categories": dict(cat),
+              "team_goal_rate": team_g, "comp_weight": comp_w,
+              "apps": rec.get("w_apps", 0.0), "nineties": rec.get("nineties", 0.0)}
+    return float(np.mean(mus)), float(np.mean(vars)), start_rate, detail
 
 
 def team_goal_rate_for(team, model):
@@ -849,7 +863,7 @@ def build_projections(records, model, groups, stage_prob, matches, priors,
     for rec in records.values():
         team = rec["team"]
         opp_list = [o for o in group_of.get(team, []) if o != team] or [team]
-        mu, var, start_rate = project_player(
+        mu, var, start_rate, _ = project_player(
             rec, model, opp_list, priors, prior_strength, injured_ids)
         n_played = matches.get(team)
         if n_played is None:
@@ -897,6 +911,41 @@ def build_projections(records, model, groups, stage_prob, matches, priors,
 # ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
+def explain_players(query, records, model, groups, matches, priors,
+                    prior_strength, injured, sims):
+    """Print why matching players rate as they do: their data in the window,
+    start probability, shares, and the per-match expected points by category."""
+    group_of = {t: g for g in groups for t in g}
+    q = query.strip().lower()
+    hits = [r for r in records.values()
+            if q in r["name"].lower() or q in r["team"].lower()]
+    if not hits:
+        print(f"No players match {query!r}. (Use part of a name or a team.)")
+        return
+    hits.sort(key=lambda r: r["name"])
+    for rec in hits[:12]:
+        team, pos = rec["team"], rec["position"]
+        opp = [o for o in group_of.get(team, []) if o != team] or [team]
+        mu, var, start, d = project_player(rec, model, opp, priors, prior_strength, injured)
+        exp_n = float(matches.get(team, np.full(sims, 3.0)).mean())
+        injured_flag = "  [INJURED]" if rec["player_id"] in injured else ""
+        print(f"\n=== {rec['name']} ({team}, {pos}){injured_flag} ===")
+        print(f"  data in window : {d['apps']:.1f} weighted apps "
+              f"({d['nineties']:.1f} 90s), competitive team-weight {d['comp_weight']:.1f}")
+        print(f"  start prob     : {start:.2f}  ->  availability damp x{0.5 + 0.5 * start:.2f}")
+        print(f"  goal share     : {d['goal_share']:.3f}   assist share {d['assist_share']:.3f}"
+              f"   (team goals/avg match {d['team_goal_rate']:.2f})")
+        print(f"  group opponents: {', '.join(opp)}")
+        print(f"  per-match expected points by category:")
+        for k, v in sorted(d["categories"].items(), key=lambda kv: -abs(kv[1])):
+            if abs(v) >= 0.005:
+                print(f"      {k:<12} {v:+.2f}")
+        print(f"  => per-match {mu:.2f}  x  {exp_n:.1f} expected matches  "
+              f"=  projected {mu * exp_n:.1f}")
+    if len(hits) > 12:
+        print(f"\n(+{len(hits) - 12} more matched; narrow the query.)")
+
+
 def print_leaderboards(df, top):
     cols = ["name", "team", "position", "proj_points", "p10", "p90", "vor",
             "start_prob", "exp_matches"]
@@ -1043,7 +1092,7 @@ def run_backtest(season, matcher, players, weigh, sims, managers, prior_strength
             continue
         team = rec["team"]
         opp = [t for t in field if t != team] or list(model.teams)
-        mu, _, start = project_player(rec, model, opp, priors, prior_strength, set())
+        mu, _, start, _ = project_player(rec, model, opp, priors, prior_strength, set())
         n_games = games_played.get(team, 3)
         rows.append({"pid": pid, "mu": mu, "proj_total": mu * n_games,
                      "actual": pts, "n": n_games, "start": start,
@@ -1177,6 +1226,10 @@ def main():
     ap.add_argument("--list-leagues", metavar="QUERY",
                     help="print API-Football leagues matching QUERY (id + seasons "
                          "with coverage) to fix COMPETITIONS, then exit")
+    ap.add_argument("--explain", metavar="QUERY",
+                    help="print a category-by-category projection breakdown for "
+                         "players whose name/team matches QUERY (why they rate as "
+                         "they do), instead of the leaderboards")
     args = ap.parse_args()
 
     if args.list_leagues:
@@ -1230,6 +1283,11 @@ def main():
         groups = [[t] for t in teams]
     print(f"[sim] simulating {len(groups)} groups x {args.sims} runs ...")
     stage_prob, matches = simulate_tournament(model, groups, args.sims, rng)
+
+    if args.explain:
+        explain_players(args.explain, records, model, groups, matches, priors,
+                        args.prior_strength, injured, args.sims)
+        return
 
     df = build_projections(records, model, groups, stage_prob, matches, priors,
                            args.prior_strength, injured, args.managers, args.sims, rng)
