@@ -341,7 +341,7 @@ def competition_weight(decay_halflife, now):
     return weigh
 
 
-def fetch_dataset(competitions, matcher, weigh, only_before=None):
+def fetch_dataset(competitions, matcher, weigh, only_before=None, by_api=False):
     """Pull fixtures + per-player stats across competitions.
 
     Returns (results, appearances):
@@ -377,7 +377,8 @@ def fetch_dataset(competitions, matcher, weigh, only_before=None):
                 results.append({"date": date, "home": home, "away": away,
                                 "hg": hg, "ag": ag, "weight": w,
                                 "competitive": competitive})
-                _collect_appearances(fid, f, matcher, w, appearances, competitive)
+                _collect_appearances(fid, f, matcher, w, appearances, competitive,
+                                     by_api=by_api)
             got = len(results) - n_before
             if got == 0 and only_before:
                 flag = f"  <-- 0 (likely excluded by --backtest cutoff {only_before})"
@@ -389,7 +390,13 @@ def fetch_dataset(competitions, matcher, weigh, only_before=None):
     return results, appearances
 
 
-def _collect_appearances(fid, fixture, matcher, weight, out, competitive=True):
+def _collect_appearances(fid, fixture, matcher, weight, out, competitive=True,
+                         by_api=False):
+    """Flatten a fixture's per-player stats into rows. Normally each row is keyed
+    by the FIFA squad-list player_id (via `matcher`); with by_api=True it is keyed
+    by API-Football's own player id and uses the API name/team/position instead --
+    used by the backtest so EVERY player who featured is scored, not just those in
+    the 2026 squad lists."""
     teams_data = cached_get("fixtures/players", {"fixture": fid}).get("response", [])
     goals = fixture.get("goals", {})
     conceded = {fixture["teams"]["home"]["id"]: to_int(goals.get("away")),
@@ -408,13 +415,21 @@ def _collect_appearances(fid, fixture, matcher, weight, out, competitive=True):
             minutes = to_int(games.get("minutes"))
             if minutes <= 0:
                 continue
-            matched = matcher.match(entry.get("player", {}).get("name", ""),
-                                    tname, to_int(games.get("number")) or None)
-            if not matched:
-                continue
+            api_name = entry.get("player", {}).get("name", "")
+            if by_api:
+                pid = "api:" + str(entry.get("player", {}).get("id"))
+                pinfo = {"player_id": pid, "name": api_name,
+                         "team": fix_team_name(tname),
+                         "position": POSITION_MAP.get(games.get("position"), "MID")}
+            else:
+                matched = matcher.match(api_name, tname,
+                                        to_int(games.get("number")) or None)
+                if not matched:
+                    continue
+                pinfo = {"player_id": matched["player_id"], "name": matched["name"],
+                         "team": matched["team"], "position": matched["position"]}
             rows.append({
-                "player_id": matched["player_id"], "name": matched["name"],
-                "team": matched["team"], "position": matched["position"],
+                **pinfo,
                 "weight": weight, "minutes": minutes,
                 "rating": to_float(games.get("rating")),
                 "goals": to_int(g.get("total")), "assists": to_int(g.get("assists")),
@@ -572,6 +587,24 @@ def aggregate_players(appearances, players, team_match_weight, team_comp_weight)
             **{k: a[k] for k in a},
         }
     return records
+
+
+def _universe_from_appearances(appearances):
+    """Build a player list ({player_id, name, team, position}) straight from the
+    appearance data -- the set of everyone who actually featured, with each
+    player's weight-modal position. Used by the backtest so the player universe
+    isn't limited to a squad list."""
+    pos_w = defaultdict(lambda: defaultdict(float))
+    meta = {}
+    for a in appearances:
+        pid = a["player_id"]
+        pos_w[pid][a["position"]] += a["weight"]
+        meta[pid] = (a["name"], a["team"])
+    out = []
+    for pid, (name, team) in meta.items():
+        pos = max(pos_w[pid].items(), key=lambda kv: kv[1])[0]
+        out.append({"player_id": pid, "name": name, "team": team, "position": pos})
+    return out
 
 
 def position_priors(records, team_goal_rate):
@@ -955,11 +988,15 @@ def run_backtest(season, matcher, players, weigh, sims, managers, prior_strength
     """
     cutoff = f"{season}-11-01"  # WC 2022 started 2022-11-20; trains on prior data
     print(f"[backtest] training on matches before {cutoff} ...")
-    results, appearances = fetch_dataset(COMPETITIONS, matcher, weigh, only_before=cutoff)
+    # Key everything by API-Football player id (by_api) so EVERY player who
+    # featured is scored -- not just those who happen to be in the 2026 squads.
+    results, appearances = fetch_dataset(COMPETITIONS, matcher, weigh,
+                                         only_before=cutoff, by_api=True)
     if not results:
         sys.exit("[backtest] no training data fetched (check API key / leagues).")
+    universe = _universe_from_appearances(appearances)  # all players, from the data
     print(f"[backtest] trained on {len(results)} matches, "
-          f"{len(set(a['player_id'] for a in appearances))} players with stats.")
+          f"{len(universe)} players with pre-tournament stats.")
     model = TeamModel(results, reg=reg, use_prior=use_prior).fit()
     tmw, tmw_comp = defaultdict(float), defaultdict(float)
     for r in results:
@@ -968,7 +1005,7 @@ def run_backtest(season, matcher, players, weigh, sims, managers, prior_strength
         if r.get("competitive", True):
             tmw_comp[r["home"]] += r["weight"]
             tmw_comp[r["away"]] += r["weight"]
-    records = aggregate_players(appearances, players, tmw, tmw_comp)
+    records = aggregate_players(appearances, universe, tmw, tmw_comp)
     priors = position_priors(records, None)
 
     # actual WC `season`: per-player total fantasy points + games each team played
@@ -983,7 +1020,7 @@ def run_backtest(season, matcher, players, weigh, sims, managers, prior_strength
             games_played[t] += 1
             wc_teams.add(t)
         apps = []
-        _collect_appearances(f["fixture"]["id"], f, matcher, 1.0, apps)
+        _collect_appearances(f["fixture"]["id"], f, matcher, 1.0, apps, by_api=True)
         for a in apps:
             row = {"minutes": a["minutes"], "position": a["position"], "goals": a["goals"],
                    "assists": a["assists"], "conceded": a["conceded"], "saves": a["saves"],
