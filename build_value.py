@@ -322,6 +322,7 @@ def fetch_dataset(competitions, matcher, weigh, only_before=None):
     for label, league, seasons, cweight in competitions:
         for season in seasons:
             fixtures = cached_get("fixtures", {"league": league, "season": season})
+            n_before = len(results)
             for f in fixtures.get("response", []):
                 fx = f["fixture"]
                 if fx["status"]["short"] not in COMPLETED_STATUSES:
@@ -341,6 +342,9 @@ def fetch_dataset(competitions, matcher, weigh, only_before=None):
                 results.append({"date": date, "home": home, "away": away,
                                 "hg": hg, "ag": ag, "weight": w})
                 _collect_appearances(fid, f, matcher, w, appearances)
+            got = len(results) - n_before
+            flag = "  <-- no completed matches (check league id/season/plan)" if got == 0 else ""
+            print(f"    {label} {season}: {got} matches{flag}")
     return results, appearances
 
 
@@ -862,12 +866,20 @@ def demo_inputs(rng):
 # Backtest (self-validation)
 # ---------------------------------------------------------------------------
 def run_backtest(season, matcher, players, weigh, sims, managers, prior_strength):
-    """Fit on pre-tournament data, project that World Cup, compare to actual."""
+    """Fit on pre-tournament data, project that World Cup, compare to actual.
+
+    Reports both the fair test (projected TOTAL = per-match x games the team
+    actually played, vs actual total) and the per-match test, plus naive
+    baselines (team strength only, recent minutes only) so we can see whether
+    the model adds anything over a dumb heuristic.
+    """
     cutoff = f"{season}-11-01"  # WC 2022 started 2022-11-20; trains on prior data
     print(f"[backtest] training on matches before {cutoff} ...")
     results, appearances = fetch_dataset(COMPETITIONS, matcher, weigh, only_before=cutoff)
     if not results:
         sys.exit("[backtest] no training data fetched (check API key / leagues).")
+    print(f"[backtest] trained on {len(results)} matches, "
+          f"{len(set(a['player_id'] for a in appearances))} players with stats.")
     model = TeamModel(results).fit()
     tmw = defaultdict(float)
     for r in results:
@@ -876,11 +888,17 @@ def run_backtest(season, matcher, players, weigh, sims, managers, prior_strength
     records = aggregate_players(appearances, players, tmw)
     priors = position_priors(records, None)
 
-    # actual WC `season` fantasy points (no opponent weighting -- ground truth)
+    # actual WC `season`: per-player total fantasy points + games each team played
     actual_fix = [f for f in cached_get("fixtures", {"league": 1, "season": season})["response"]
                   if f["fixture"]["status"]["short"] in COMPLETED_STATUSES]
     actual = defaultdict(float)
+    games_played = defaultdict(int)
+    wc_teams = set()
     for f in actual_fix:
+        for side in ("home", "away"):
+            t = fix_team_name(f["teams"][side]["name"])
+            games_played[t] += 1
+            wc_teams.add(t)
         apps = []
         _collect_appearances(f["fixture"]["id"], f, matcher, 1.0, apps)
         for a in apps:
@@ -891,27 +909,47 @@ def run_backtest(season, matcher, players, weigh, sims, managers, prior_strength
                    "defensive_actions": a["def_actions"]}
             actual[a["player_id"]] += _points(row)
 
-    # project per-match mu for players who actually featured, rank-correlate
-    rng = np.random.default_rng(0)
+    # project each player against a consistent, representative opponent field
+    # (the actual tournament participants), then scale by games actually played.
+    field = sorted(wc_teams)
     rows = []
     for pid, pts in actual.items():
         rec = records.get(pid)
         if not rec:
             continue
         team = rec["team"]
-        mu, _, _ = project_player(rec, model, [t for t in model.teams if t != team][:5],
-                                  priors, prior_strength, set())
-        rows.append((pid, mu, pts))
+        opp = [t for t in field if t != team] or list(model.teams)
+        mu, _, start = project_player(rec, model, opp, priors, prior_strength, set())
+        n_games = games_played.get(team, 3)
+        rows.append({"pid": pid, "mu": mu, "proj_total": mu * n_games,
+                     "actual": pts, "n": n_games, "start": start,
+                     "strength": model.strength(team)})
     if len(rows) < 10:
         sys.exit("[backtest] too few overlapping players to validate.")
-    proj = np.array([r[1] for r in rows])
-    act = np.array([r[2] for r in rows])
-    rho = _spearman(proj, act)
-    top20_proj = {rows[i][0] for i in np.argsort(-proj)[:20]}
-    top20_act = {rows[i][0] for i in np.argsort(-act)[:20]}
-    print(f"[backtest] {len(rows)} players. Spearman(projected per-match, "
-          f"actual total) = {rho:.3f}")
-    print(f"[backtest] top-20 overlap = {len(top20_proj & top20_act)}/20")
+
+    df = pd.DataFrame(rows)
+    act = df["actual"].to_numpy()
+    per_match_actual = act / df["n"].to_numpy()
+
+    def report(label, pred, target):
+        rho = _spearman(pred, target)
+        top = {df["pid"].iloc[i] for i in np.argsort(-pred)[:20]}
+        gold = {df["pid"].iloc[i] for i in np.argsort(-target)[:20]}
+        print(f"  {label:<42} Spearman={rho:+.3f}  top20={len(top & gold)}/20")
+
+    print(f"\n[backtest] {len(df)} players overlap. Higher Spearman = better.")
+    print("  MODEL")
+    report("projected total vs actual total", df["proj_total"].to_numpy(), act)
+    report("per-match value vs actual per-match", df["mu"].to_numpy(), per_match_actual)
+    print("  BASELINES (does the model beat these?)")
+    report("team strength only vs actual total", df["strength"].to_numpy(), act)
+    report("recent minutes/start only vs actual total", df["start"].to_numpy(), act)
+    # restrict to genuine contributors (>=2 games) -- less DNP noise
+    reg = df[df["n"] >= 2]
+    if len(reg) >= 10:
+        ra, rp = reg["actual"].to_numpy(), reg["proj_total"].to_numpy()
+        print(f"  Among {len(reg)} players whose team played >=2 games: "
+              f"Spearman(proj total, actual)={_spearman(rp, ra):+.3f}")
 
 
 def _points(row):
