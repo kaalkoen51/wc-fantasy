@@ -343,7 +343,12 @@ def fetch_dataset(competitions, matcher, weigh, only_before=None):
                                 "hg": hg, "ag": ag, "weight": w})
                 _collect_appearances(fid, f, matcher, w, appearances)
             got = len(results) - n_before
-            flag = "  <-- no completed matches (check league id/season/plan)" if got == 0 else ""
+            if got == 0 and only_before:
+                flag = f"  <-- 0 (likely excluded by --backtest cutoff {only_before})"
+            elif got == 0:
+                flag = "  <-- 0 completed matches (check league id/season/plan)"
+            else:
+                flag = ""
             print(f"    {label} {season}: {got} matches{flag}")
     return results, appearances
 
