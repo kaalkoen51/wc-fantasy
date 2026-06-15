@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -27,7 +27,7 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt,
         slotLabel, managerHistory, poolEntries, availableForGroup,
         isEliminated, computeYetToPlay, showView,
-        plannerChoiceRank, choiceStatus } = api;
+        plannerChoiceRank, choiceStatus, plannerPickPool } = api;
 let fails = 0;
 const check = (label, got, want) => {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -468,6 +468,29 @@ check("choice status: my roster = yours", choiceStatus("fra_1").kind, "yours");
 S.stages = [{ team: "Argentina", eliminated: true }];
 check("choice status: eliminated team = ko", choiceStatus("arg_8").kind, "ko");
 S.stages = []; S.managers = []; S.picks = []; S.playerById = {};
+
+/* squad-planner replacement picker pool: position scope, own-roster exclusion,
+   shortlist + nation filters, and keeping already-chosen players visible. */
+S.managers = [{ id: "m1", name: "Koen", shortlist: ["arg_8", "bra_5"],
+  planner: { moves: [{ out: "pk_out", choices: ["arg_8"] }] } }];
+S.players = [
+  { player_id: "arg_8", name: "Aaa", position: "MID", team: "Argentina" },
+  { player_id: "bra_5", name: "Bbb", position: "MID", team: "Brazil" },
+  { player_id: "fra_1", name: "Ccc", position: "MID", team: "France" }, // on my roster
+  { player_id: "esp_2", name: "Ddd", position: "MID", team: "Spain" },
+  { player_id: "gk_1", name: "Eee", position: "GK", team: "Spain" },
+];
+S.playerById = Object.fromEntries(S.players.map((p) => [p.player_id, p]));
+S.picks = [{ id: "pk_out", manager_id: "m1", player_id: "fra_1",
+  position: "MID", team: "France", slot: "MID" }];
+S.stats = [];
+const pickIds = (opts) => plannerPickPool("MID", opts).map((x) => x.p.player_id);
+check("picker excludes own-roster player", pickIds({}).includes("fra_1"), false);
+check("picker excludes other positions", pickIds({}).includes("gk_1"), false);
+check("picker keeps an already-chosen player", pickIds({}).includes("arg_8"), true);
+check("picker shortlist-only filter", pickIds({ shortlistOnly: true }).sort(), ["arg_8", "bra_5"]);
+check("picker nation filter", pickIds({ nation: "Spain" }), ["esp_2"]);
+S.managers = []; S.picks = []; S.playerById = {}; S.players = []; S.stats = [];
 
 /* showView only scrolls to top on an actual view change, so a re-render
    of the current view (e.g. the refetch after starring) doesn't jump. */

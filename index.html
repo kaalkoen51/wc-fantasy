@@ -383,8 +383,9 @@
   </div>
 </div>
 
-<!-- Player detail bottom sheet (Home roster → tap a player) -->
-<div id="player-sheet" class="hidden fixed inset-0 z-40 bg-black/60">
+<!-- Player detail bottom sheet (Home roster → tap a player). z-[45] so it
+     stacks above the squad-planner picker (z-40) when opened from inside it. -->
+<div id="player-sheet" class="hidden fixed inset-0 z-[45] bg-black/60">
   <div class="absolute bottom-0 inset-x-0 max-h-[85vh] overflow-y-auto bg-slate-900 border-t border-slate-700 rounded-t-2xl p-4">
     <div id="player-sheet-body"></div>
   </div>
@@ -395,6 +396,11 @@
   <div class="absolute bottom-0 inset-x-0 max-h-[80vh] bg-slate-900 border-t border-slate-700 rounded-t-2xl p-4 flex flex-col">
     <div id="planner-title" class="font-semibold mb-2 text-sm"></div>
     <input id="planner-search" placeholder="Search players…" class="mb-2 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+    <div class="flex items-center gap-2 mb-2 flex-wrap text-xs">
+      <button id="planner-slfilter" class="rounded-full px-3 py-1 border"></button>
+      <select id="planner-nation" class="rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-xs"></select>
+      <select id="planner-sort" class="ml-auto rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-xs"></select>
+    </div>
     <ul id="planner-list" class="overflow-y-auto divide-y divide-slate-800 flex-1 min-h-0"></ul>
     <button id="planner-done" class="mt-3 w-full bg-slate-800 border border-slate-700 rounded-lg py-2 text-sm font-semibold">Done</button>
   </div>
@@ -688,6 +694,18 @@ function fixtureCrestHtml(team, size = "w-4 h-4") {
     { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
   return `${avatarHtml("team:" + opp, opp, size)}<span class="truncate">${
     f.home === team ? "vs" : "@"} ${esc(opp)} · ${esc(when)}</span>`;
+}
+
+// Compact "up next: <opponent crest>" for tight rows (the squad planner). The
+// crest carries the full "vs Opp · date" as a hover tooltip. "" when unknown.
+function upNextHtml(team, size = "w-4 h-4") {
+  const f = nextFixtureFor(team);
+  if (!f) return "";
+  const opp = f.home === team ? f.away : f.home;
+  const when = new Date(f.kickoff_utc).toLocaleString([],
+    { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return `<span class="inline-flex items-center gap-1 shrink-0" title="${
+    f.home === team ? "vs" : "@"} ${esc(opp)} · ${esc(when)}">up next:${avatarHtml("team:" + opp, opp, size)}</span>`;
 }
 
 // photos.json (faces/crests) and injuries.json (availability hints) are
@@ -2210,6 +2228,9 @@ S.showPlanner = false;     // Trades tab: squad planner collapsed until opened
 S.poolPlannerOnly = false; // draft pool: filter to planner choices
 S.plannerPickFor = null;   // out pick id the choice picker is adding to
 S.plannerSearch = "";      // choice picker search
+S.plannerSort = "points";  // choice picker stat sort/leaderboard
+S.plannerNation = "";      // choice picker nation filter ("" = all)
+S.plannerShortlistOnly = false; // choice picker: show only shortlisted
 
 // Stats-tab ranking options: label + the match_stats key to total. "points"
 // uses the full fantasy total; the rest are raw counts from existing
@@ -3050,13 +3071,16 @@ function plannerSectionHtml(me) {
     (SLOT_RANK[a.slot] ?? 9) - (SLOT_RANK[b.slot] ?? 9) || a.pick_number - b.pick_number);
   const rows = mine.map((pk) => {
     const m = moveFor(pk.id);
+    const pts = playerPoints(pk.player_id, pk.position);
+    const next = upNextHtml(pk.team);
     return `<li class="py-2">
       <div class="flex items-center gap-1.5">
         ${avatarHtml(pk.player_id, pk.team, "w-5 h-5")}
         <span class="min-w-0 flex-1">
           <span class="block truncate text-sm">${esc(pk.player_name)} ${availBadges(pk.player_id)}</span>
-          <span class="block truncate text-[10px] text-slate-500">${pk.slot} · ${esc(pk.team)}</span>
+          <span class="flex items-center gap-1 truncate text-[10px] text-slate-500">${pk.slot} · ${esc(pk.team)}${next ? ` · ${next}` : ""}</span>
         </span>
+        <span class="shrink-0 font-mono text-xs ${pts > 0 ? "text-wcgold" : "text-slate-500"}">${pts}p</span>
         ${m ? "" : `<button data-plplan="${pk.id}" class="shrink-0 text-[10px] text-wcgold underline">plan replacement</button>`}
       </div>
       ${m ? plannerMoveHtml(pk, m, open) : ""}
@@ -3084,14 +3108,19 @@ function plannerMoveHtml(outPick, m, open) {
     : st.kind === "owned" ? `<span class="text-wcgold">👤 ${esc(st.manager?.name ?? "?")}</span>`
     : st.kind === "yours" ? '<span class="text-slate-500">already yours</span>'
     : '<span class="text-red-400">🚫 knocked out</span>';
-  const choiceRows = choices.map((c, i) => `
+  const choiceRows = choices.map((c, i) => {
+    const pts = playerPoints(c.pid, c.p.position);
+    const next = upNextHtml(c.p.team);
+    return `
     <div class="flex items-center gap-1.5 text-xs">
       <span class="text-[10px] text-slate-500 w-7 shrink-0">${i === 0 ? "1st" : "#" + (i + 1)}</span>
       ${avatarHtml(c.pid, c.p.team, "w-4 h-4")}
-      <span class="min-w-0 truncate flex-1">${esc(c.p.name)} · ${statusTxt(c.st)}</span>
+      <span class="min-w-0 truncate flex-1">${esc(c.p.name)} ${availBadges(c.pid)} · ${statusTxt(c.st)}${next ? ` · <span class="text-slate-500">${next}</span>` : ""}</span>
+      <span class="shrink-0 font-mono text-[10px] ${pts > 0 ? "text-wcgold" : "text-slate-500"}">${pts}p</span>
       ${i > 0 ? `<button data-plup="${outPick.id}|${c.pid}" class="shrink-0 text-slate-400 px-1" title="make higher choice">↑</button>` : ""}
       <button data-plrm="${outPick.id}|${c.pid}" class="shrink-0 text-red-400 px-1">✕</button>
-    </div>`).join("");
+    </div>`;
+  }).join("");
 
   let exec = "";
   if (open) {
@@ -3136,14 +3165,43 @@ function plannerExec(outPickId, pid) {
   }
 }
 
+// Candidate pool for the "plan a replacement" picker: every player in the
+// slot's position except ones already on your roster, filtered by shortlist /
+// nation / search and ranked by the chosen stat (points by default). Players
+// already chosen for this move are NOT dropped — they stay so the picker can
+// highlight them. Pure (DOM-free) so it's unit-tested.
+function plannerPickPool(group, { shortlistOnly, nation, q, sortKey } = {}) {
+  const myIds = new Set(managerPicks(myManager()?.id).map((pk) => pk.player_id));
+  const sl = new Set(myShortlist());
+  const key = sortKey || "points";
+  const byPoints = key === "points";
+  const valOf = (p) => byPoints ? playerPoints(p.player_id, p.position)
+    : playerStatTotal(p.player_id, key);
+  const t = (q || "").trim().toLowerCase();
+  return S.players
+    .filter((p) => p.position === group && !myIds.has(p.player_id)
+      && (!shortlistOnly || sl.has(p.player_id))
+      && (!nation || p.team === nation)
+      && (!t || p.name.toLowerCase().includes(t) || p.team.toLowerCase().includes(t)))
+    .map((p) => ({ p, val: valOf(p), pts: playerPoints(p.player_id, p.position) }))
+    .sort((a, b) => b.val - a.val || b.pts - a.pts || a.p.name.localeCompare(b.p.name))
+    .slice(0, 80);
+}
+
 function openPlannerPick(outPickId) {
   const outPick = S.picks.find((pk) => pk.id === outPickId);
   if (!outPick) return;
   S.plannerPickFor = outPickId;
   S.plannerSearch = "";
+  S.plannerNation = "";
+  S.plannerSort = "points";
+  // Open on your shortlist for this position when you've starred someone there.
+  const group = slotGroup(outPick.slot);
+  const sl = new Set(myShortlist());
+  S.plannerShortlistOnly = S.players.some((p) => p.position === group && sl.has(p.player_id));
   $("planner-search").value = "";
   $("planner-title").textContent =
-    `Replacement options for ${outPick.player_name} (${slotGroup(outPick.slot)})`;
+    `Replacement options for ${outPick.player_name} (${group})`;
   renderPlannerPick();
   $("planner-sheet").classList.remove("hidden");
 }
@@ -3152,33 +3210,68 @@ function renderPlannerPick() {
   const outPick = S.picks.find((pk) => pk.id === S.plannerPickFor);
   if (!outPick) return;
   const group = slotGroup(outPick.slot);
-  const chosen = new Set(moveFor(outPick.id)?.choices || []);
-  const myIds = new Set(managerPicks(myManager().id).map((pk) => pk.player_id));
-  const q = S.plannerSearch.trim().toLowerCase();
-  const list = S.players
-    .filter((p) => p.position === group && !myIds.has(p.player_id) && !chosen.has(p.player_id)
-      && (!q || p.name.toLowerCase().includes(q) || p.team.toLowerCase().includes(q)))
-    .map((p) => ({ p, pts: playerPoints(p.player_id, p.position) }))
-    .sort((a, b) => b.pts - a.pts || a.p.name.localeCompare(b.p.name))
-    .slice(0, 60);
-  $("planner-list").innerHTML = list.map(({ p, pts }) => {
+  const move = moveFor(outPick.id);
+  const choices = move?.choices || [];
+  const chosen = new Set(choices);
+
+  // Filter controls: shortlist toggle, nation dropdown, stat leaderboard.
+  $("planner-slfilter").className = `rounded-full px-3 py-1 border ${
+    S.plannerShortlistOnly ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"}`;
+  $("planner-slfilter").textContent = "★ shortlist";
+  const nations = [...new Set(S.players.filter((p) => p.position === group).map((p) => p.team))].sort();
+  $("planner-nation").innerHTML =
+    `<option value="">All nations</option>` + nations.map((n) =>
+      `<option value="${esc(n)}" ${S.plannerNation === n ? "selected" : ""}>${esc(n)}</option>`).join("");
+  $("planner-sort").innerHTML = STAT_SORTS.map(([k, lbl]) =>
+    `<option value="${k}" ${S.plannerSort === k ? "selected" : ""}>${lbl}</option>`).join("");
+
+  let list = plannerPickPool(group, {
+    shortlistOnly: S.plannerShortlistOnly, nation: S.plannerNation,
+    q: S.plannerSearch, sortKey: S.plannerSort,
+  });
+  // Keep already-chosen players visible even if a filter would hide them.
+  const present = new Set(list.map((x) => x.p.player_id));
+  const pinned = choices.map((pid) => S.playerById[pid]).filter((p) => p && !present.has(p.player_id))
+    .map((p) => ({ p, val: 0, pts: playerPoints(p.player_id, p.position) }));
+  list = [...pinned, ...list];
+
+  $("planner-list").innerHTML = list.map(({ p }) => {
     const st = choiceStatus(p.player_id);
     const stTxt = st.kind === "fa" ? "free agent" : st.kind === "owned" ? `👤 ${esc(st.manager?.name ?? "?")}`
-      : st.kind === "ko" ? "🚫 out" : "";
-    return `<li class="flex items-center py-2 gap-1.5">
-      ${avatarHtml(p.player_id, p.team, "w-6 h-6")}
-      <div class="min-w-0 flex-1">
-        <div class="truncate text-sm">${esc(p.name)} ${availBadges(p.player_id)}</div>
-        <div class="text-[10px] text-slate-500">${esc(p.team)} · ${stTxt}</div>
-      </div>
+      : st.kind === "yours" ? "already yours" : st.kind === "ko" ? "🚫 out" : "";
+    const pts = playerPoints(p.player_id, p.position);
+    const next = upNextHtml(p.team, "w-3.5 h-3.5");
+    const idx = choices.indexOf(p.player_id);
+    const picked = idx >= 0;
+    const badge = picked
+      ? `<span class="ml-1 rounded px-1 py-0.5 text-[10px] ${idx === 0
+          ? "bg-wcgold/20 text-wcgold" : "bg-slate-700 text-slate-300"}">${idx === 0 ? "1st choice" : "backup"}</span>`
+      : "";
+    return `<li class="flex items-center py-2 gap-1.5 ${picked ? "bg-wcgold/10 -mx-1 px-1 rounded" : ""}">
+      ${starHtml(p.player_id)}
+      <button data-plopen="${esc(p.player_id)}" class="min-w-0 flex-1 flex items-center gap-1.5 text-left">
+        ${avatarHtml(p.player_id, p.team, "w-6 h-6")}
+        <span class="min-w-0 flex-1">
+          <span class="block truncate text-sm">${esc(p.name)} ${availBadges(p.player_id)}${badge}</span>
+          <span class="flex items-center gap-1 truncate text-[10px] text-slate-500">${esc(p.team)} · ${stTxt}${next ? ` · ${next}` : ""}</span>
+        </span>
+      </button>
       <span class="text-xs font-mono text-slate-400 shrink-0">${pts}p</span>
-      <button data-plpick="${esc(p.player_id)}" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1 text-xs font-semibold">Add</button>
+      <button data-pltoggle="${esc(p.player_id)}" class="shrink-0 rounded-lg px-3 py-1 text-xs font-semibold ${
+        picked ? "bg-slate-800 border border-slate-600 text-slate-300" : "bg-wcred hover:bg-wcred-hov"}">${
+        picked ? "✓ Added" : "Add"}</button>
     </li>`;
-  }).join("") || '<li class="py-4 text-sm text-slate-500">No players match.</li>';
-  $("planner-list").querySelectorAll("[data-plpick]").forEach((b) => b.onclick = () => {
-    plannerAddChoice(S.plannerPickFor, b.dataset.plpick);   // optimistic; refresh list
+  }).join("") || '<li class="py-4 text-sm text-slate-500">No players match these filters.</li>';
+
+  $("planner-list").querySelectorAll("[data-plopen]").forEach((b) => b.onclick = () =>
+    openPlayerDetail(b.dataset.plopen));
+  $("planner-list").querySelectorAll("[data-pltoggle]").forEach((b) => b.onclick = () => {
+    const pid = b.dataset.pltoggle;
+    (chosen.has(pid) ? plannerRemoveChoice(S.plannerPickFor, pid)
+                     : plannerAddChoice(S.plannerPickFor, pid));   // optimistic
     renderPlannerPick();
   });
+  wireStars($("planner-list"), renderPlannerPick);
 }
 
 function renderTrades() {
@@ -3900,6 +3993,9 @@ function wire() {
     if (e.target.id === "player-sheet") $("player-sheet").classList.add("hidden");
   };
   $("planner-search").oninput = (e) => { S.plannerSearch = e.target.value; renderPlannerPick(); };
+  $("planner-sort").onchange = (e) => { S.plannerSort = e.target.value; renderPlannerPick(); };
+  $("planner-nation").onchange = (e) => { S.plannerNation = e.target.value; renderPlannerPick(); };
+  $("planner-slfilter").onclick = () => { S.plannerShortlistOnly = !S.plannerShortlistOnly; renderPlannerPick(); };
   $("planner-done").onclick = () => $("planner-sheet").classList.add("hidden");
   $("planner-sheet").onclick = (e) => {
     if (e.target.id === "planner-sheet") $("planner-sheet").classList.add("hidden");
