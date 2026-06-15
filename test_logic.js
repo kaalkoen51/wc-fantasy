@@ -489,7 +489,7 @@ check("picker excludes own-roster player", pickIds({}).includes("fra_1"), false)
 check("picker excludes other positions", pickIds({}).includes("gk_1"), false);
 check("picker keeps an already-chosen player", pickIds({}).includes("arg_8"), true);
 check("picker shortlist-only filter", pickIds({ shortlistOnly: true }).sort(), ["arg_8", "bra_5"]);
-check("picker nation filter", pickIds({ nation: "Spain" }), ["esp_2"]);
+check("picker search filters by team", pickIds({ q: "Spain" }), ["esp_2"]);
 S.managers = []; S.picks = []; S.playerById = {}; S.players = []; S.stats = [];
 
 /* showView only scrolls to top on an actual view change, so a re-render

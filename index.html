@@ -398,10 +398,9 @@
     <input id="planner-search" placeholder="Search players…" class="mb-2 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
     <div class="flex items-center gap-2 mb-2 flex-wrap text-xs">
       <button id="planner-slfilter" class="rounded-full px-3 py-1 border"></button>
-      <select id="planner-nation" class="rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-xs"></select>
       <select id="planner-sort" class="ml-auto rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-xs"></select>
     </div>
-    <ul id="planner-list" class="overflow-y-auto divide-y divide-slate-800 flex-1 min-h-0"></ul>
+    <ul id="planner-list" class="overflow-y-auto overscroll-contain divide-y divide-slate-800 flex-1 min-h-0"></ul>
     <button id="planner-done" class="mt-3 w-full bg-slate-800 border border-slate-700 rounded-lg py-2 text-sm font-semibold">Done</button>
   </div>
 </div>
@@ -696,7 +695,7 @@ function fixtureCrestHtml(team, size = "w-4 h-4") {
     f.home === team ? "vs" : "@"} ${esc(opp)} · ${esc(when)}</span>`;
 }
 
-// Compact "up next: <opponent crest>" for tight rows (the squad planner). The
+// Compact "next: <opponent crest>" for tight rows (the squad planner). The
 // crest carries the full "vs Opp · date" as a hover tooltip. "" when unknown.
 function upNextHtml(team, size = "w-4 h-4") {
   const f = nextFixtureFor(team);
@@ -705,7 +704,7 @@ function upNextHtml(team, size = "w-4 h-4") {
   const when = new Date(f.kickoff_utc).toLocaleString([],
     { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
   return `<span class="inline-flex items-center gap-1 shrink-0" title="${
-    f.home === team ? "vs" : "@"} ${esc(opp)} · ${esc(when)}">up next:${avatarHtml("team:" + opp, opp, size)}</span>`;
+    f.home === team ? "vs" : "@"} ${esc(opp)} · ${esc(when)}">next:${avatarHtml("team:" + opp, opp, size)}</span>`;
 }
 
 // photos.json (faces/crests) and injuries.json (availability hints) are
@@ -2229,7 +2228,6 @@ S.poolPlannerOnly = false; // draft pool: filter to planner choices
 S.plannerPickFor = null;   // out pick id the choice picker is adding to
 S.plannerSearch = "";      // choice picker search
 S.plannerSort = "points";  // choice picker stat sort/leaderboard
-S.plannerNation = "";      // choice picker nation filter ("" = all)
 S.plannerShortlistOnly = false; // choice picker: show only shortlisted
 
 // Stats-tab ranking options: label + the match_stats key to total. "points"
@@ -2876,8 +2874,10 @@ function tradeSectionHtml(title, list, incoming) {
         ⇄ ${esc(r?.player_name ?? "?")} <span class="text-slate-500">(${r?.slot ?? "?"})</span>
       </div>${fixLine ? `<div class="text-[10px] text-slate-500">${fixLine}</div>` : ""}`;
     }).join("");
+    // Accept only while the window is open; Reject/Counter stay available so
+    // you can still respond to (and renegotiate) pending proposals when closed.
     const actions = t.status !== "proposed" ? "" : incoming
-      ? `<button data-acc="${t.id}" class="bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-xs font-semibold">Accept</button>
+      ? `${S.league.trading_open ? `<button data-acc="${t.id}" class="bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-xs font-semibold">Accept</button>` : ""}
          <button data-rej="${t.id}" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold">Reject</button>
          <button data-cnt="${t.id}" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold">Counter</button>`
       : `<button data-can="${t.id}" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold">Cancel</button>`;
@@ -3071,7 +3071,6 @@ function plannerSectionHtml(me) {
     (SLOT_RANK[a.slot] ?? 9) - (SLOT_RANK[b.slot] ?? 9) || a.pick_number - b.pick_number);
   const rows = mine.map((pk) => {
     const m = moveFor(pk.id);
-    const pts = playerPoints(pk.player_id, pk.position);
     const next = upNextHtml(pk.team);
     return `<li class="py-2">
       <div class="flex items-center gap-1.5">
@@ -3080,7 +3079,6 @@ function plannerSectionHtml(me) {
           <span class="block truncate text-sm">${esc(pk.player_name)} ${availBadges(pk.player_id)}</span>
           <span class="flex items-center gap-1 truncate text-[10px] text-slate-500">${pk.slot} · ${esc(pk.team)}${next ? ` · ${next}` : ""}</span>
         </span>
-        <span class="shrink-0 font-mono text-xs ${pts > 0 ? "text-wcgold" : "text-slate-500"}">${pts}p</span>
         ${m ? "" : `<button data-plplan="${pk.id}" class="shrink-0 text-[10px] text-wcgold underline">plan replacement</button>`}
       </div>
       ${m ? plannerMoveHtml(pk, m, open) : ""}
@@ -3109,14 +3107,11 @@ function plannerMoveHtml(outPick, m, open) {
     : st.kind === "yours" ? '<span class="text-slate-500">already yours</span>'
     : '<span class="text-red-400">🚫 knocked out</span>';
   const choiceRows = choices.map((c, i) => {
-    const pts = playerPoints(c.pid, c.p.position);
     const next = upNextHtml(c.p.team);
     return `
     <div class="flex items-center gap-1.5 text-xs">
       <span class="text-[10px] text-slate-500 w-7 shrink-0">${i === 0 ? "1st" : "#" + (i + 1)}</span>
-      ${avatarHtml(c.pid, c.p.team, "w-4 h-4")}
       <span class="min-w-0 truncate flex-1">${esc(c.p.name)} ${availBadges(c.pid)} · ${statusTxt(c.st)}${next ? ` · <span class="text-slate-500">${next}</span>` : ""}</span>
-      <span class="shrink-0 font-mono text-[10px] ${pts > 0 ? "text-wcgold" : "text-slate-500"}">${pts}p</span>
       ${i > 0 ? `<button data-plup="${outPick.id}|${c.pid}" class="shrink-0 text-slate-400 px-1" title="make higher choice">↑</button>` : ""}
       <button data-plrm="${outPick.id}|${c.pid}" class="shrink-0 text-red-400 px-1">✕</button>
     </div>`;
@@ -3170,7 +3165,7 @@ function plannerExec(outPickId, pid) {
 // nation / search and ranked by the chosen stat (points by default). Players
 // already chosen for this move are NOT dropped — they stay so the picker can
 // highlight them. Pure (DOM-free) so it's unit-tested.
-function plannerPickPool(group, { shortlistOnly, nation, q, sortKey } = {}) {
+function plannerPickPool(group, { shortlistOnly, q, sortKey } = {}) {
   const myIds = new Set(managerPicks(myManager()?.id).map((pk) => pk.player_id));
   const sl = new Set(myShortlist());
   const key = sortKey || "points";
@@ -3181,7 +3176,6 @@ function plannerPickPool(group, { shortlistOnly, nation, q, sortKey } = {}) {
   return S.players
     .filter((p) => p.position === group && !myIds.has(p.player_id)
       && (!shortlistOnly || sl.has(p.player_id))
-      && (!nation || p.team === nation)
       && (!t || p.name.toLowerCase().includes(t) || p.team.toLowerCase().includes(t)))
     .map((p) => ({ p, val: valOf(p), pts: playerPoints(p.player_id, p.position) }))
     .sort((a, b) => b.val - a.val || b.pts - a.pts || a.p.name.localeCompare(b.p.name))
@@ -3193,7 +3187,6 @@ function openPlannerPick(outPickId) {
   if (!outPick) return;
   S.plannerPickFor = outPickId;
   S.plannerSearch = "";
-  S.plannerNation = "";
   S.plannerSort = "points";
   // Open on your shortlist for this position when you've starred someone there.
   const group = slotGroup(outPick.slot);
@@ -3214,25 +3207,26 @@ function renderPlannerPick() {
   const choices = move?.choices || [];
   const chosen = new Set(choices);
 
-  // Filter controls: shortlist toggle, nation dropdown, stat leaderboard.
+  // Filter controls: shortlist toggle + stat leaderboard (team search covers
+  // nation). The right column mirrors the Stats tab — stat tally + points.
   $("planner-slfilter").className = `rounded-full px-3 py-1 border ${
     S.plannerShortlistOnly ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"}`;
   $("planner-slfilter").textContent = "★ shortlist";
-  const nations = [...new Set(S.players.filter((p) => p.position === group).map((p) => p.team))].sort();
-  $("planner-nation").innerHTML =
-    `<option value="">All nations</option>` + nations.map((n) =>
-      `<option value="${esc(n)}" ${S.plannerNation === n ? "selected" : ""}>${esc(n)}</option>`).join("");
   $("planner-sort").innerHTML = STAT_SORTS.map(([k, lbl]) =>
     `<option value="${k}" ${S.plannerSort === k ? "selected" : ""}>${lbl}</option>`).join("");
 
+  const sortKey = S.plannerSort || "points";
+  const byPoints = sortKey === "points";
+  const valOf = (p) => byPoints ? playerPoints(p.player_id, p.position)
+    : playerStatTotal(p.player_id, sortKey);
+
   let list = plannerPickPool(group, {
-    shortlistOnly: S.plannerShortlistOnly, nation: S.plannerNation,
-    q: S.plannerSearch, sortKey: S.plannerSort,
+    shortlistOnly: S.plannerShortlistOnly, q: S.plannerSearch, sortKey,
   });
   // Keep already-chosen players visible even if a filter would hide them.
   const present = new Set(list.map((x) => x.p.player_id));
   const pinned = choices.map((pid) => S.playerById[pid]).filter((p) => p && !present.has(p.player_id))
-    .map((p) => ({ p, val: 0, pts: playerPoints(p.player_id, p.position) }));
+    .map((p) => ({ p }));
   list = [...pinned, ...list];
 
   $("planner-list").innerHTML = list.map(({ p }) => {
@@ -3240,6 +3234,7 @@ function renderPlannerPick() {
     const stTxt = st.kind === "fa" ? "free agent" : st.kind === "owned" ? `👤 ${esc(st.manager?.name ?? "?")}`
       : st.kind === "yours" ? "already yours" : st.kind === "ko" ? "🚫 out" : "";
     const pts = playerPoints(p.player_id, p.position);
+    const val = valOf(p);
     const next = upNextHtml(p.team, "w-3.5 h-3.5");
     const idx = choices.indexOf(p.player_id);
     const picked = idx >= 0;
@@ -3256,7 +3251,10 @@ function renderPlannerPick() {
           <span class="flex items-center gap-1 truncate text-[10px] text-slate-500">${esc(p.team)} · ${stTxt}${next ? ` · ${next}` : ""}</span>
         </span>
       </button>
-      <span class="text-xs font-mono text-slate-400 shrink-0">${pts}p</span>
+      <span class="shrink-0 w-10 text-right">
+        <span class="block font-mono font-bold ${val > 0 ? "text-wcgold" : "text-slate-500"}">${val}</span>
+        ${byPoints ? "" : `<span class="block text-[10px] text-slate-500">${pts}p</span>`}
+      </span>
       <button data-pltoggle="${esc(p.player_id)}" class="shrink-0 rounded-lg px-3 py-1 text-xs font-semibold ${
         picked ? "bg-slate-800 border border-slate-600 text-slate-300" : "bg-wcred hover:bg-wcred-hov"}">${
         picked ? "✓ Added" : "Add"}</button>
@@ -3412,6 +3410,7 @@ async function submitTrade(me) {
 }
 
 async function acceptTrade(t) {
+  if (!S.league.trading_open) return toast("Trading window is closed.");
   const pairs = (t.trade_items || []).map((it) => ({
     mine: pickById(it.offered_pick_id), theirs: pickById(it.requested_pick_id),
   }));
@@ -3994,7 +3993,6 @@ function wire() {
   };
   $("planner-search").oninput = (e) => { S.plannerSearch = e.target.value; renderPlannerPick(); };
   $("planner-sort").onchange = (e) => { S.plannerSort = e.target.value; renderPlannerPick(); };
-  $("planner-nation").onchange = (e) => { S.plannerNation = e.target.value; renderPlannerPick(); };
   $("planner-slfilter").onclick = () => { S.plannerShortlistOnly = !S.plannerShortlistOnly; renderPlannerPick(); };
   $("planner-done").onclick = () => $("planner-sheet").classList.add("hidden");
   $("planner-sheet").onclick = (e) => {

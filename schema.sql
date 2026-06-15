@@ -205,7 +205,17 @@ declare
     item record;
     a picks%rowtype;
     b picks%rowtype;
+    v_open boolean;
 begin
+    -- Window guard: a pending proposal can only be accepted while the league's
+    -- trading window is open. Mirrors the client check so a stale/raced tab
+    -- can't slip an acceptance through after the admin closes trading.
+    select l.trading_open into v_open
+        from trades t join leagues l on l.id = t.league_id
+        where t.id = p_trade_id;
+    if v_open is distinct from true then
+        raise exception 'the trading window is closed';
+    end if;
     update trades set status = 'accepted', updated_at = now()
         where id = p_trade_id and status = 'proposed';
     if not found then

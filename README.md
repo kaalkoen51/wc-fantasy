@@ -331,20 +331,20 @@ local changes.
 **Trades tab → 🗺 Squad planner** (collapsed by default, private like the
 shortlist — stored per manager in `managers.planner`, only ever rendered
 for its owner). It shows your **whole current squad** — each player with
-their **points so far** and **next fixture** (`up next:` + opponent crest)
-— and for any slot you can plan a replacement: a **first choice + ranked
-backups**, each also showing points, next fixture, and status (free agent
-/ owned by whom / knocked out). So at a glance you see the roster you'd
-have if you made your planned moves, and which slots are dragging.
+their **next fixture** (`next:` + opponent crest) — and for any slot you
+can plan a replacement: a **first choice + ranked backups**, each showing
+next fixture and status (free agent / owned by whom / knocked out). So at a
+glance you see the roster you'd have if you made your planned moves.
 
 - **Plan a replacement:** the picker opens on **your shortlist for that
-  position** (starred ★) and lets you filter the whole position by
-  **nation** and rank it by any **stat** (the Stats-tab leaderboards).
-  Every candidate shows points, next fixture, and the usual badges
-  (🚫 knocked out / 🟥 suspended / 🤕⚠️ injured), and is **tappable for the
-  full player detail** card. Adding a player **doesn't remove it** from the
-  list — the row is highlighted and badged **"1st choice" / "backup"** so
-  you can keep building from the same view.
+  position** (starred ★) and lets you rank the whole position by any
+  **stat** (the Stats-tab leaderboards) — each row shows the stat tally and
+  points just like the Stats tab — or search by player/nation. Every
+  candidate shows next fixture and the usual badges (🚫 knocked out /
+  🟥 suspended / 🤕⚠️ injured), and is **tappable for the full player
+  detail** card. Adding a player **doesn't remove it** from the list — the
+  row is highlighted and badged **"1st choice" / "backup"** so you can keep
+  building from the same view.
 - **Execute (window open):** each move offers a button naming exactly the
   player it will act on. If the **first choice is available** it's a one-
   tap "Swap in 1st / Propose 1st" (free agents swap instantly; owned
@@ -461,9 +461,10 @@ position groups — a slot only trades within its position, subs included
   trade proposal with that manager instead.
 - **Manager trades:** Trades tab → propose player-for-player pairs (multi-
   player trades supported) to another manager, who can accept (players
-  swap immediately), reject, or counter. Counters chain, and pending
-  proposals can still be answered after the window closes — only *new*
-  proposals require it open.
+  swap immediately), reject, or counter. Counters chain. **Accepting needs
+  the trading window open** (the Accept button disappears when it's closed,
+  and `accept_trade` refuses with "the trading window is closed"); you can
+  still reject or counter a pending proposal after the window closes.
 
 **Double-allocation is DB-enforced.** A unique index on
 `picks (league_id, player_id)` means a player can sit in at most one
