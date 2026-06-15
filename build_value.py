@@ -119,8 +119,10 @@ QUOTA = {"GK": 2, "DEF": 4, "MID": 4, "FWD": 3, "TEAM": 1}
 # A rolling ~4-year-each-side window so the live 2026 run and the --backtest
 # (which only sees matches before the target tournament) train on comparable
 # amounts of data. Older editions are kept for the backtest's lookback; in the
-# live run they survive only as heavily time-decayed history. Season tags are
-# offset and differ per region (verified via --list-leagues): WC cycles map to
+# live run they survive only as heavily time-decayed history. Friendlies start
+# at 2021 (not 2018) on purpose -- they are the bulk of the API calls and only
+# weight 0.35, so trimming the oldest ones keeps the daily request budget sane.
+# Season tags are offset and differ per region (verified via --list-leagues): WC cycles map to
 # 2018 / 2020 (Europe) / 2022 / 2023 (Africa) / 2024 (Europe) / 2026.
 COMPETITIONS = [
     ("World Cup",             1,  [2018, 2022], 1.00),
@@ -136,8 +138,7 @@ COMPETITIONS = [
     ("Copa America",          9,  [2019, 2021, 2024], 1.00),
     ("AFCON",                 6,  [2019, 2021, 2023, 2025], 0.90),
     ("Asian Cup",             7,  [2019, 2023], 0.90),
-    ("Friendlies",           10,  [2018, 2019, 2020, 2021, 2022,
-                                   2023, 2024, 2025, 2026], 0.35),
+    ("Friendlies",           10,  [2021, 2022, 2023, 2024, 2025, 2026], 0.35),
 ]
 FRIENDLY_LEAGUE_ID = 10  # availability (start_prob) ignores these -- stars rest them
 DEFAULT_DECAY_HALFLIFE_DAYS = 540.0  # ~18 months
