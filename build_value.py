@@ -139,6 +139,29 @@ COMPETITIONS = [
 FRIENDLY_LEAGUE_ID = 10  # availability (start_prob) ignores these -- stars rest them
 DEFAULT_DECAY_HALFLIFE_DAYS = 540.0  # ~18 months
 
+# Approximate world-football Elo per team (eloratings.net-style, ~2025). Used
+# ONLY as the team-rating shrinkage target (a prior mean), so weakly-connected
+# confederation pools default to sane absolute levels instead of floating; the
+# match data still overrides it for teams with enough evidence. Edit freely;
+# accuracy of the ordering matters more than the exact numbers. Keys must match
+# players.json team names exactly.
+TEAM_PRIOR_RATING = {
+    "Argentina": 2120, "Spain": 2070, "France": 2060, "Brazil": 2010,
+    "England": 1985, "Portugal": 1975, "Netherlands": 1970, "Germany": 1945,
+    "Belgium": 1925, "Croatia": 1900, "Uruguay": 1895, "Colombia": 1880,
+    "Morocco": 1855, "Japan": 1840, "Switzerland": 1840, "Ecuador": 1825,
+    "Senegal": 1825, "Austria": 1820, "Norway": 1815, "USA": 1800,
+    "IR Iran": 1795, "Mexico": 1795, "Türkiye": 1790, "Korea Republic": 1785,
+    "Czechia": 1775, "Sweden": 1775, "Scotland": 1770, "Algeria": 1760,
+    "Canada": 1760, "Egypt": 1760, "Côte D'Ivoire": 1745, "Paraguay": 1745,
+    "Australia": 1720, "Ghana": 1715, "Bosnia And Herzegovina": 1710,
+    "Congo DR": 1690, "Panama": 1690, "Tunisia": 1690, "Qatar": 1685,
+    "Saudi Arabia": 1670, "New Zealand": 1660, "South Africa": 1660,
+    "Uzbekistan": 1660, "Iraq": 1655, "Cabo Verde": 1640, "Jordan": 1620,
+    "Curaçao": 1610, "Haiti": 1575,
+}
+PRIOR_SCALE = 0.35  # maps 1 SD of Elo to ~this much attack/defence on log scale
+
 
 # ---------------------------------------------------------------------------
 # Small helpers (copied/adapted from daily_pull.py)
@@ -418,7 +441,7 @@ def _collect_appearances(fid, fixture, matcher, weight, out, competitive=True):
 class TeamModel:
     """Weighted Dixon-Coles bivariate-Poisson team-strength model."""
 
-    def __init__(self, results, reg=4.0, goal_cap=6):
+    def __init__(self, results, reg=4.0, goal_cap=6, use_prior=True):
         teams = sorted({r["home"] for r in results} | {r["away"] for r in results})
         self.teams = teams
         self.idx = {t: i for i, t in enumerate(teams)}
@@ -426,9 +449,26 @@ class TeamModel:
         self.defence = {t: 0.0 for t in teams}
         self.home_adv = 0.25
         self.rho = -0.05
-        self.reg = reg            # ridge toward the global mean (anchors weak pools)
+        self.reg = reg            # ridge strength (pull toward the prior mean)
         self.goal_cap = goal_cap  # cap scoreline so minnow-bashing doesn't inflate
+        self.use_prior = use_prior  # anchor ridge to external Elo prior vs flat mean
         self._results = results
+
+    def _prior_vectors(self, n):
+        """Per-team attack/defence prior means (the ridge target). With
+        use_prior, derive them from TEAM_PRIOR_RATING (standardised); teams with
+        no rating default to 0 (the global mean)."""
+        att_pri, def_pri = np.zeros(n), np.zeros(n)
+        rated = {t: TEAM_PRIOR_RATING[t] for t in self.teams if t in TEAM_PRIOR_RATING}
+        if self.use_prior and len(rated) >= 5:
+            vals = np.array(list(rated.values()), dtype=float)
+            mu, sd = vals.mean(), (vals.std() or 1.0)
+            for t, i in self.idx.items():
+                if t in rated:
+                    z = (rated[t] - mu) / sd
+                    att_pri[i] = def_pri[i] = PRIOR_SCALE * z
+            att_pri = att_pri - att_pri.mean()  # match the att mean-centering
+        return att_pri, def_pri
 
     def fit(self):
         n = len(self.teams)
@@ -440,8 +480,9 @@ class TeamModel:
         X = np.clip(np.array([r["hg"] for r in self._results], dtype=float), 0, cap)
         Y = np.clip(np.array([r["ag"] for r in self._results], dtype=float), 0, cap)
         W = np.array([r["weight"] for r in self._results], dtype=float)
+        att_pri, def_pri = self._prior_vectors(n)
         # params: attack[0..n-1], defence[0..n-1], home_adv, rho
-        p0 = np.concatenate([np.zeros(n), np.zeros(n), [0.25, -0.05]])
+        p0 = np.concatenate([att_pri.copy(), def_pri.copy(), [0.25, -0.05]])
 
         def negll(p):
             att, dfc = p[:n], p[n:2 * n]
@@ -458,9 +499,11 @@ class TeamModel:
             m11 = (X == 1) & (Y == 1); tau[m11] = 1 - rho
             tau = np.clip(tau, 1e-6, None)
             ll = ll + np.log(tau)
-            # Ridge prior: teams with little (or weakly-connected) data are pulled
-            # toward average; teams pinned by many competitive games barely move.
-            penalty = self.reg * np.sum(att ** 2 + dfc ** 2)
+            # Ridge toward the (Elo) prior mean: teams with little or weakly-
+            # connected data are pulled toward their prior rating, so isolated
+            # confederation pools default to sane absolute levels; teams pinned
+            # by many competitive games barely move off the data optimum.
+            penalty = self.reg * np.sum((att - att_pri) ** 2 + (dfc - def_pri) ** 2)
             return -np.sum(W * ll) + penalty
 
         bounds = [(-3, 3)] * (2 * n) + [(-0.5, 1.0), (-0.2, 0.2)]
@@ -901,7 +944,8 @@ def demo_inputs(rng):
 # ---------------------------------------------------------------------------
 # Backtest (self-validation)
 # ---------------------------------------------------------------------------
-def run_backtest(season, matcher, players, weigh, sims, managers, prior_strength, reg=4.0):
+def run_backtest(season, matcher, players, weigh, sims, managers, prior_strength,
+                 reg=4.0, use_prior=True):
     """Fit on pre-tournament data, project that World Cup, compare to actual.
 
     Reports both the fair test (projected TOTAL = per-match x games the team
@@ -916,7 +960,7 @@ def run_backtest(season, matcher, players, weigh, sims, managers, prior_strength
         sys.exit("[backtest] no training data fetched (check API key / leagues).")
     print(f"[backtest] trained on {len(results)} matches, "
           f"{len(set(a['player_id'] for a in appearances))} players with stats.")
-    model = TeamModel(results, reg=reg).fit()
+    model = TeamModel(results, reg=reg, use_prior=use_prior).fit()
     tmw, tmw_comp = defaultdict(float), defaultdict(float)
     for r in results:
         tmw[r["home"]] += r["weight"]
@@ -1077,7 +1121,10 @@ def main():
                     help="player shrinkage pseudo-exposure (team-matches)")
     ap.add_argument("--reg", type=float, default=4.0,
                     help="team-rating ridge strength (higher = pull weak/isolated "
-                         "pools harder toward average; combats minnow inflation)")
+                         "pools harder toward the prior; combats minnow inflation)")
+    ap.add_argument("--no-prior", action="store_true",
+                    help="shrink team ratings toward a flat global mean instead of "
+                         "the built-in Elo prior (TEAM_PRIOR_RATING)")
     ap.add_argument("--no-friendlies", action="store_true", help="drop friendlies")
     ap.add_argument("--leagues", help="override COMPETITIONS: id:season:weight,...")
     ap.add_argument("--top", type=int, default=25, help="rows per leaderboard")
@@ -1111,7 +1158,8 @@ def main():
             comps = [c for c in comps if c[1] != 10]
         if args.backtest:
             run_backtest(args.backtest, matcher, players, weigh, args.sims,
-                         args.managers, args.prior_strength, args.reg)
+                         args.managers, args.prior_strength, args.reg,
+                         not args.no_prior)
             return
         print(f"[fetch] pulling {len(comps)} competition-seasons (cached) ...")
         results, appearances = fetch_dataset(comps, matcher, weigh)
@@ -1121,7 +1169,7 @@ def main():
     if not results:
         sys.exit("No match results -- nothing to model.")
     print(f"[model] fitting Dixon-Coles on {len(results)} matches (reg={args.reg}) ...")
-    model = TeamModel(results, reg=args.reg).fit()
+    model = TeamModel(results, reg=args.reg, use_prior=not args.no_prior).fit()
 
     tmw, tmw_comp = defaultdict(float), defaultdict(float)
     for r in results:

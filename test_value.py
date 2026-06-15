@@ -114,6 +114,22 @@ class TeamModelFit(unittest.TestCase):
         vs_strong, _ = model.expected_goals("A", "A", neutral=True)
         self.assertGreater(vs_weak, vs_strong)
 
+    def test_elo_prior_anchors_uninformative_pool(self):
+        # Six real teams that only ever draw 0-0 carry no information, so the
+        # ridge must fall back on the Elo prior: the higher-rated team ends up
+        # stronger. (Guards the cross-confederation fix.)
+        teams = ["Brazil", "France", "Spain", "Qatar", "Haiti", "New Zealand"]
+        results = [{"home": a, "away": b, "hg": 0, "ag": 0, "weight": 1.0}
+                   for a in teams for b in teams if a != b]
+        model = bv.TeamModel(results, reg=4.0, use_prior=True).fit()
+        self.assertGreater(model.strength("France"), model.strength("Haiti"))
+        self.assertGreater(model.strength("Brazil"), model.strength("New Zealand"))
+        # with the prior off, no data -> ratings collapse together
+        flat = bv.TeamModel(results, reg=4.0, use_prior=False).fit()
+        spread_prior = max(model.strength(t) for t in teams) - min(model.strength(t) for t in teams)
+        spread_flat = max(flat.strength(t) for t in teams) - min(flat.strength(t) for t in teams)
+        self.assertGreater(spread_prior, spread_flat)
+
 
 class GroupInference(unittest.TestCase):
     def test_infer_groups_of_four(self):
