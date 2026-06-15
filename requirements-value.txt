@@ -1,0 +1,7 @@
+# Dependencies for the standalone offline value model (build_value.py).
+# Kept separate from the app's requirements.txt -- the app and its daily/live
+# pulls only need `requests`. Install with:  pip install -r requirements-value.txt
+numpy
+pandas
+scipy
+requests
