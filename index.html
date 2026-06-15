@@ -1562,7 +1562,7 @@ function scoringHtml() {
     ["Saves (GK)", `+${SCORING.save_per_2} per 2 saves`],
     ["Defensive actions — tackles, blocks, interceptions (not GK)",
       `+${SCORING.def_action_per_2} per 2 actions`],
-    ["Man of the match", `+${SCORING.motm}`],
+    ["Top-rated player (per match)", `+${SCORING.motm}`],
     ["Penalty saved", `+${SCORING.penalty_saved}`],
     ["Penalty missed", SCORING.penalty_missed],
     ["Champion pick (final phase only)", `+${FINAL_PICK_BONUS}`],
@@ -1580,6 +1580,10 @@ function scoringHtml() {
       ${stages} (a champion banks ${calcTeamPoints("winner")} in total).</p>
     <p class="text-xs"><b>Subs:</b> a sub only scores on days where a starter in their position
       had a match but didn't play. Players who don't appear score 0.</p>
+    <p class="text-xs"><b>Top-rated player (+${SCORING.motm}):</b> awarded automatically to the
+      single highest-rated player in each match (by API-Football's match rating, and only if it's
+      ≥ 7.5). It's a data-driven "best performer" bonus — a close proxy for, but not always the
+      same as, the official Player of the Match award.</p>
     <p class="text-xs"><b>Redrafts:</b> as the tournament field narrows the admin runs redrafts
       with smaller squads — managers may keep up to an admin-set number of players (keepers fill
       squad slots and each costs your earliest draft round), TEAM picks always carry, the rest
@@ -2125,7 +2129,7 @@ function playerBreakdown(pid, pos) {
   const cats = [
     ["goals", "Goals"], ["assists", "Assists"], ["cs", "Clean sheets"],
     ["saves", "Saves (per 2)"], ["da", "Defensive actions (per 2)"],
-    ["motm", "Man of the match"], ["ps", "Penalties saved"],
+    ["motm", "Top-rated player"], ["ps", "Penalties saved"],
     ["pm", "Penalties missed"], ["yc", "Yellow cards"], ["rc", "Red cards"],
   ];
   const n = Object.fromEntries(cats.map(([k]) => [k, 0]));
