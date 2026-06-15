@@ -117,13 +117,23 @@ QUOTA = {"GK": 2, "DEF": 4, "MID": 4, "FWD": 3, "TEAM": 1}
 # Weight expresses signal quality; friendlies are downweighted. league ids are
 # API-Football's; verify with /leagues and override via --leagues if needed.
 COMPETITIONS = [
-    ("World Cup 2022",        1,  [2022],             1.00),
-    ("WC 2026 qualifiers",   32,  [2023, 2024, 2025, 2026], 0.85),
-    ("UEFA Nations League",   5,  [2022, 2023, 2024, 2025], 0.80),
-    ("Euro 2024",             4,  [2024],             1.00),
-    ("Copa America 2024",     9,  [2024],             1.00),
-    ("AFCON",                 6,  [2023, 2025],       0.90),
-    ("Asian Cup 2023",        7,  [2023],             0.90),
+    ("World Cup 2022",        1,  [2022],       1.00),
+    # WC qualification by confederation. Season tags are offset and differ per
+    # region (verified via --list-leagues): current 2026 cycle = 2024 (Europe),
+    # 2026 (SthAm/CONCACAF/Asia/Oceania/play-offs), 2023 (Africa); plus the
+    # 2022-cycle qualifiers for extra competitive history on non-European teams.
+    ("WCQ Europe",           32,  [2020, 2024], 0.85),
+    ("WCQ South America",     34,  [2022, 2026], 0.85),
+    ("WCQ CONCACAF",         31,  [2022, 2026], 0.85),
+    ("WCQ Asia",             30,  [2022, 2026], 0.85),
+    ("WCQ Africa",           29,  [2022, 2023], 0.85),
+    ("WCQ Oceania",          33,  [2022, 2026], 0.80),
+    ("WCQ Play-offs",        37,  [2022, 2026], 0.85),
+    ("UEFA Nations League",   5,  [2022, 2024], 0.80),
+    ("Euro 2024",             4,  [2024],       1.00),
+    ("Copa America 2024",     9,  [2024],       1.00),
+    ("AFCON",                 6,  [2023, 2025], 0.90),
+    ("Asian Cup 2023",        7,  [2023],       0.90),
     ("Friendlies",           10,  [2022, 2023, 2024, 2025, 2026], 0.15),
 ]
 FRIENDLY_LEAGUE_ID = 10  # availability (start_prob) ignores these -- stars rest them
