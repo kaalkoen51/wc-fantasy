@@ -13,6 +13,13 @@ Output shape: {"players": {"arg_10": 154, ...}, "teams": {"Argentina": 26}}
 photos.json is optional for the app (missing entries fall back to a plain
 circle). Run once and commit; re-run if FIFA publishes squad changes.
 Needs API_FOOTBALL_KEY; ~49 API calls (1 per team + the team list).
+
+Manual corrections: the name matcher struggles with some squads (e.g. Korea,
+where API-Football uses Korean name order / different romanization), producing
+wrong or blank faces. Put fixes in photo_overrides.json — they are applied on
+top of the auto-match every run, so they survive rebuilds:
+
+    { "players": { "kor_7": 186, ... }, "teams": { "Korea Republic": 17 } }
 """
 
 import argparse
@@ -22,6 +29,22 @@ from pathlib import Path
 from daily_pull import PlayerMatcher, api_get, fix_team_name, load_players
 
 OUT = Path(__file__).parent / "photos.json"
+OVERRIDES = Path(__file__).parent / "photo_overrides.json"
+
+
+def apply_overrides(photos: dict) -> int:
+    """Overlay manual corrections from photo_overrides.json (if present).
+    Returns how many player entries were overridden/added."""
+    if not OVERRIDES.exists():
+        return 0
+    try:
+        ov = json.loads(OVERRIDES.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        print(f"  ! {OVERRIDES.name} is not valid JSON ({e}); skipping overrides.")
+        return 0
+    photos.setdefault("players", {}).update(ov.get("players", {}))
+    photos.setdefault("teams", {}).update(ov.get("teams", {}))
+    return len(ov.get("players", {}))
 
 
 def main() -> None:
@@ -55,12 +78,14 @@ def main() -> None:
                 else:
                     unmatched.append(f"{p.get('name')} ({fifa_name}): {how}")
 
+    n_over = apply_overrides(photos)
     OUT.write_text(
         json.dumps(photos, indent=1, sort_keys=True) + "\n", encoding="utf-8"
     )
     print(
         f"Wrote {len(photos['players'])} player photos and "
         f"{len(photos['teams'])} team crests to {OUT.name}."
+        + (f" ({n_over} from {OVERRIDES.name})" if n_over else "")
     )
     if unmatched:
         print(f"{len(unmatched)} squad players unmatched (plain circle shown):")
