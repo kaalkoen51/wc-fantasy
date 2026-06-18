@@ -215,8 +215,8 @@
     </div>
     <div id="board-rosters" class="hidden space-y-2"></div>
     <div id="board-trades" class="hidden"></div>
-    <p class="text-xs text-slate-500 text-center">Subs score only for matchdays where a starter in their
-      position had a match but didn't play. TEAM picks earn cumulative stage bonuses
+    <p class="text-xs text-slate-500 text-center">Subs score only for rounds where a starter in their
+      position played that round but didn't feature. TEAM picks earn cumulative stage bonuses
       (R32 +5, R16 +10, QF +15, SF +20, Final +25, Winner +15) and carry through every
       redraft. In the final phase, surviving managers call the champion for +5.</p>
   </section>
@@ -1347,10 +1347,10 @@ const labelTeams = (l) => {
   return m ? [m[1], m[2]] : [];
 };
 
-// Sub activation: a sub's match (by date) counts only if a starter in the
-// same position had a match that day (their team appears in a match_label)
-// and has no appeared=true row for it. Starter and sub play for different
-// countries, so "same matchday" is the comparable unit, not the same match.
+// Sub activation: a sub's k-th match (round) counts only if a same-position
+// starter's team also played its k-th match but the starter didn't feature in
+// it. Comparing by round (each team's 1st/2nd/3rd… game), not calendar day,
+// lets a sub cover a no-show starter even when they play on different dates.
 /* ---------- shared lineup-history helpers (scoring + player detail) ---------- */
 
 // Kickoff epoch-ms for a match label, from fixtures.json, else end of day
@@ -1434,22 +1434,36 @@ function teamMatchLabels(team) {
 let _statsDerived = null, _statsDerivedFor = null;
 function statsDerived() {
   if (_statsDerivedFor === S.stats) return _statsDerived;
-  const byPlayer = {}, playedByDate = {};
+  const byPlayer = {}, playedByDate = {}, teamLabels = {};
   for (const r of S.stats || []) {
     (byPlayer[r.player_id] ||= []).push(r);
     const d = labelDate(r.match_label);
-    if (d) for (const t of labelTeams(r.match_label)) (playedByDate[d] ||= new Set()).add(t);
+    if (d) for (const t of labelTeams(r.match_label)) {
+      (playedByDate[d] ||= new Set()).add(t);
+      (teamLabels[t] ||= new Set()).add(r.match_label);
+    }
+  }
+  // Each team's matches in date order -> the "round" index (its 1st, 2nd, …
+  // game). Sub activation aligns a sub's k-th game with the starter's k-th
+  // game, so a sub covers a no-show starter in the same round of fixtures even
+  // when the two play on different calendar days.
+  const teamMatches = {};
+  for (const t in teamLabels) {
+    teamMatches[t] = [...teamLabels[t]].sort((a, b) =>
+      String(labelDate(a)).localeCompare(String(labelDate(b))));
   }
   _statsDerivedFor = S.stats;
-  _statsDerived = { byPlayer, playedByDate };
+  _statsDerived = { byPlayer, playedByDate, teamMatches };
   return _statsDerived;
 }
 
 function computeScores() {
-  const { byPlayer: statsByPlayer, playedByDate } = statsDerived();
-  const appearedDates = (pid) => new Set(
-    (statsByPlayer[pid] || []).filter((r) => r.appeared)
-      .map((r) => labelDate(r.match_label)).filter(Boolean));
+  const { byPlayer: statsByPlayer, teamMatches } = statsDerived();
+  // A starter's k-th match (same round as the sub's match), and whether the
+  // starter actually featured in it.
+  const roundOf = (team, label) => (teamMatches[team] || []).indexOf(label);
+  const appearedIn = (pid, label) =>
+    (statsByPlayer[pid] || []).some((r) => r.appeared && r.match_label === label);
 
   // Each match is scored against the roster locked before its kickoff.
   // Kickoff times come from fixtures.json; for matches we can't find
@@ -1492,11 +1506,16 @@ function computeScores() {
         if (!entry.is_sub) {
           pts = rows.reduce((s2, r) => s2 + calcPlayerPoints(r, entry.position), 0);
         } else {
+          // Sub scores its round-k match only if a same-position starter's
+          // team also played its round-k match but the starter didn't feature.
+          const r = roundOf(entry.team, label);
           const mates = starters.filter((st) => st.position === entry.position);
-          const activated = mates.some((st) => playedByDate[d]?.has(st.team)
-            && !appearedDates(st.player_id).has(d));
+          const activated = r >= 0 && mates.some((st) => {
+            const stLabel = (teamMatches[st.team] || [])[r];
+            return stLabel && !appearedIn(st.player_id, stLabel);
+          });
           if (activated) pts = rows.reduce(
-            (s2, r) => s2 + calcPlayerPoints(r, entry.position), 0);
+            (s2, r2) => s2 + calcPlayerPoints(r2, entry.position), 0);
         }
         earnedByPlayer[entry.player_id] = (earnedByPlayer[entry.player_id] || 0) + pts;
         total += pts;
@@ -1559,10 +1578,10 @@ function managerHistory(mgrId) {
   const mgr = S.managers.find((m) => m.id === mgrId);
   const elimAt = mgr?.eliminated_at ? Date.parse(mgr.eliminated_at) : null;
 
-  const { byPlayer: statsByPlayer, playedByDate } = statsDerived();
-  const appearedDates = (pid) => new Set(
-    (statsByPlayer[pid] || []).filter((r) => r.appeared)
-      .map((r) => labelDate(r.match_label)).filter(Boolean));
+  const { byPlayer: statsByPlayer, teamMatches } = statsDerived();
+  const roundOf = (team, label) => (teamMatches[team] || []).indexOf(label);
+  const appearedIn = (pid, label) =>
+    (statsByPlayer[pid] || []).some((r) => r.appeared && r.match_label === label);
   const statLabels = [...new Set(S.stats.map((r) => r.match_label))].filter((l) => labelDate(l));
 
   const snaps = snapshotsByManager()[mgrId] || [];
@@ -1578,7 +1597,6 @@ function managerHistory(mgrId) {
     return idx;
   };
   const matchPoints = (roster, label) => {
-    const d = labelDate(label);
     const starters = roster.filter((e) => !e.is_sub && e.position !== "TEAM");
     const out = {};
     for (const entry of roster) {
@@ -1589,9 +1607,13 @@ function managerHistory(mgrId) {
       if (!entry.is_sub) {
         pts = rows.reduce((s2, r) => s2 + calcPlayerPoints(r, entry.position), 0);
       } else {
+        const r = roundOf(entry.team, label);
         const mates = starters.filter((st) => st.position === entry.position);
-        if (mates.some((st) => playedByDate[d]?.has(st.team) && !appearedDates(st.player_id).has(d)))
-          pts = rows.reduce((s2, r) => s2 + calcPlayerPoints(r, entry.position), 0);
+        if (r >= 0 && mates.some((st) => {
+          const stLabel = (teamMatches[st.team] || [])[r];
+          return stLabel && !appearedIn(st.player_id, stLabel);
+        }))
+          pts = rows.reduce((s2, r2) => s2 + calcPlayerPoints(r2, entry.position), 0);
       }
       out[entry.player_id] = (out[entry.player_id] || 0) + pts;
     }
@@ -1693,8 +1715,9 @@ function scoringHtml() {
     </table>
     <p class="text-xs"><b>National TEAM pick:</b> cumulative bonus per stage reached —
       ${stages} (a champion banks ${calcTeamPoints("winner")} in total).</p>
-    <p class="text-xs"><b>Subs:</b> a sub only scores on days where a starter in their position
-      had a match but didn't play. Players who don't appear score 0.</p>
+    <p class="text-xs"><b>Subs:</b> a sub only scores in a round where a starter in their position
+      played that round but didn't feature (so the sub covers a no-show starter, even if they
+      play on different days). Players who don't appear score 0.</p>
     <p class="text-xs"><b>Top-rated player (+${SCORING.motm}):</b> awarded automatically to the
       single highest-rated player in each match (by API-Football's match rating, and only if it's
       ≥ 7.5). It's a data-driven "best performer" bonus — a close proxy for, but not always the
@@ -2572,7 +2595,7 @@ function openLineup() {
   const sq = starterQuota();
   $("lineup-rule").textContent = "Starters: " + ["GK", "DEF", "MID", "FWD"]
     .filter((g) => sq[g] > 0).map((g) => `${sq[g]} ${g}`).join(", ")
-    + ". The rest are subs — a sub only scores on days their starter doesn't play.";
+    + ". The rest are subs — a sub only scores in rounds their starter doesn't play.";
   renderLineup();
   $("lineup-sheet").classList.remove("hidden");
 }

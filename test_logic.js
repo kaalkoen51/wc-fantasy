@@ -114,6 +114,25 @@ S.stages = [];
 const teamItem0 = computeScores()[0].items.find((i) => i.pick.slot === "TEAM");
 check("no stage row = group = 0", [teamItem0.pts, teamItem0.note], [0, "group"]);
 
+/* sub activation is by ROUND, not calendar day: a sub covers a no-show starter
+   in the same round of fixtures even when the two play on different dates. */
+S.fixtures = [];
+S.snapshots = [];
+S.stages = [];
+S.managers = [{ id: "m1", name: "M1", draft_position: 1 }];
+S.picks = [
+  { manager_id: "m1", player_id: "fra_5", player_name: "Starter Def", position: "DEF", team: "France", slot: "DEF", is_sub: false, pick_number: 2 },
+  { manager_id: "m1", player_id: "arg_3", player_name: "Sub Def", position: "DEF", team: "Argentina", slot: "SUB_DEF", is_sub: true, pick_number: 12 },
+];
+S.stats = [
+  // Round 1: France played 06-13 (a France player featured) but the starter did
+  // not; the sub's Round 1 game is 06-16 (a different day) -> still activates.
+  row({ player_id: "fra_9", match_label: "France vs Brazil (2026-06-13)", appeared: true, goals: 0 }),
+  row({ player_id: "arg_3", match_label: "Argentina vs Chile (2026-06-16)", appeared: true, goals: 1 }),
+];
+check("sub activates same round on a different day",
+  computeScores()[0].items.find((i) => i.pick.is_sub).pts, 6);
+
 /* lineup locks: each matchday scores against the snapshot in effect */
 S.managers = [{ id: "m1", name: "M1", draft_position: 1 }];
 S.picks = [{ id: "p1", manager_id: "m1", player_id: "bra_2", player_name: "New Def",

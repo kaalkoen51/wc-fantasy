@@ -479,7 +479,7 @@ offered.
 
 ### Sanity tests
 
-`node test_logic.js` — 119 checks on the snake order, position quotas,
+`node test_logic.js` — 120 checks on the snake order, position quotas,
 scoring parity with `daily_pull.py` (incl. defensive actions), sub
 activation, lineup-lock history replay, the per-manager history
 decomposition (current credited + former + per-round split), the
