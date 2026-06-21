@@ -3721,22 +3721,33 @@ async function apiFootball(key, path, params) {
   return data.response || [];
 }
 
-// API player -> players.json id. The FIFA id is <team code>_<shirt number>,
-// so team + shirt is authoritative; name matching is the fallback.
+// API player -> players.json id. Match by NAME first (exact, then surname,
+// trying both ends so Korean/Asian name order works too); the FIFA id's
+// trailing number is the squad-list position, NOT a reliable jersey number,
+// so shirt is only a tiebreaker/last resort. (daily_pull.py matches the same
+// way; matching by shirt first mis-attributed stats to the wrong player.)
 function mapApiPlayer(team, shirt, apiName) {
   const roster = S.players.filter((p) => p.team === team);
   if (!roster.length) return null;
+  const target = foldName(apiName);
+  let hits = roster.filter((p) => foldName(p.name) === target);   // exact name
+  if (hits.length !== 1) {                                        // surname, both ends
+    const t = target.split(" ").filter(Boolean);
+    const ends = [t[0], t[t.length - 1]].filter(Boolean);
+    hits = roster.filter((p) => {
+      const pt = foldName(p.name).split(" ").filter(Boolean);
+      return ends.includes(pt[0]) || ends.includes(pt[pt.length - 1]);
+    });
+  }
+  if (hits.length === 1) return hits[0].player_id;
+  // ambiguous or no name match: fall back to shirt, but only if it agrees
+  // with (or narrows) the name hits — never override a clear name match.
   if (shirt) {
     const pid = roster[0].team_code.toLowerCase() + "_" + shirt;
-    if (S.playerById[pid]) return pid;
+    if (S.playerById[pid] && (hits.length === 0 || hits.some((h) => h.player_id === pid)))
+      return pid;
   }
-  const target = foldName(apiName);
-  let hits = roster.filter((p) => foldName(p.name) === target);
-  if (hits.length !== 1) {
-    const sur = target.split(" ").pop();
-    hits = roster.filter((p) => foldName(p.name).split(" ").pop() === sur);
-  }
-  return hits.length === 1 ? hits[0].player_id : null;
+  return null;
 }
 
 async function pullStatsNow() {
