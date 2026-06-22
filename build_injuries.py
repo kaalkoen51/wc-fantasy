@@ -45,8 +45,13 @@ def main() -> None:
         tid = (t.get("team", {}) or {}).get("id")
         if not tid:
             continue
-        raw += api_get("injuries", {"team": tid, "season": args.season}).get(
-            "response", [])
+        try:
+            raw += api_get("injuries", {"team": tid, "season": args.season}).get(
+                "response", [])
+        except SystemExit:
+            # per-team injuries unsupported on this plan/params — skip, don't
+            # fail the whole feed (league-level result still stands).
+            pass
     print(f"Fetched {len(raw)} raw injury report(s) "
           f"(league-level: {league_n}, +per-team).")
 
