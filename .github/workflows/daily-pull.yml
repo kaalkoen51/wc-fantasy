@@ -5,6 +5,11 @@ on:
     # 04:00 UTC = 06:00 SAST (South Africa, UTC+2)
     - cron: "0 4 * * *"
   workflow_dispatch:
+    inputs:
+      date:
+        description: "Date to re-pull (YYYY-MM-DD, UTC). Blank = yesterday."
+        required: false
+        default: ""
 
 jobs:
   pull:
@@ -25,4 +30,10 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           FANTASY_LEAGUE_ID: ${{ secrets.FANTASY_LEAGUE_ID }}
-        run: python daily_pull.py
+          PULL_DATE: ${{ inputs.date }}
+        run: |
+          if [ -n "$PULL_DATE" ]; then
+            python daily_pull.py --date "$PULL_DATE"
+          else
+            python daily_pull.py
+          fi
