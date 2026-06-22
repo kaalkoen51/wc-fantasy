@@ -536,13 +536,31 @@ def main() -> None:
     for fixture in fixtures:
         fixture_id = fixture["fixture"]["id"]
         teams_data = fetch_fixture_players(fixture_id, args.mock)
-        all_rows.extend(extract_player_rows(fixture, teams_data, matcher))
+        rows_f = extract_player_rows(fixture, teams_data, matcher)
+        # Diagnostic: does the player-stats endpoint actually carry goals? If the
+        # scoreline shows goals but the summed player goals are 0, API-Football
+        # isn't populating goals in fixtures/players for this match (they'd be in
+        # fixtures/events instead) — which looks like "no goal points" in the app.
+        g = fixture.get("goals", {})
+        scoreline = to_int(g.get("home")) + to_int(g.get("away"))
+        captured = sum(r["goals"] for r in rows_f)
+        label = rows_f[0]["match_label"] if rows_f else f"fixture {fixture_id}"
+        scorers = [f'{r["player_name"]}={r["goals"]}(min:{r["minutes"]},id:{r["player_id"]})'
+                   for r in rows_f if r["goals"]]
+        print(f"  {label}: scoreline goals={scoreline}, player-stat goals={captured}"
+              f"{' | ' + ', '.join(scorers) if scorers else ''}")
+        all_rows.extend(rows_f)
 
     appeared = [r for r in all_rows if featured(r)]
     matched = [r for r in appeared if r["player_id"]]
     unmatched = [r for r in appeared if not r["player_id"]]
     for row in matched:
         row["points"] = calculate_points(row)
+    unmatched_scorers = [r for r in all_rows if not r["player_id"] and r["goals"]]
+    if unmatched_scorers:
+        print("UNMATCHED goalscorers (got a goal but no FIFA id):")
+        for r in unmatched_scorers:
+            print(f"  - {r['api_name']} ({r['team']}) goals={r['goals']}: {r['match_note']}")
 
     print(
         f"{len(appeared)} player(s) appeared across all fixtures; "
