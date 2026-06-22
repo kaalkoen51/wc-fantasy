@@ -740,11 +740,14 @@ async function loadExtras() {
   if (S.photos === undefined) S.photos = await get("photos.json", null);
   if (S.injuryByPid === undefined) {
     const list = await get("injuries.json", []);
-    // Entries auto-expire: only keep reports for recent/upcoming fixtures.
-    const cutoff = new Date(Date.now() - 2 * 86400e3).toISOString().slice(0, 10);
+    // Expire by how fresh the feed is (`as_of` = the day it was built), since
+    // the API's fixture_date is often stale. The feed rebuilds daily, so this
+    // stays current; if it stops, badges fade after a few days. Older files
+    // without `as_of` fall back to fixture_date.
+    const cutoff = new Date(Date.now() - 4 * 86400e3).toISOString().slice(0, 10);
     S.injuryByPid = {};
     for (const r of list || []) {
-      if ((r.fixture_date || "") >= cutoff) S.injuryByPid[r.player_id] = r;
+      if ((r.as_of || r.fixture_date || "") >= cutoff) S.injuryByPid[r.player_id] = r;
     }
   }
 }
