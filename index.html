@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WC26 Fantasy</title>
+<title>Rugby Nations Fantasy</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
-  // World Cup 26 host-nation palette: Canada red, gold, Mexico green, USA blue.
+  // Palette: rugby green, gold, navy.
   tailwind.config = { theme: { extend: { colors: {
     wcred: { DEFAULT: "#C8102E", hov: "#E22945" },
     wcgold: "#FFC72C",
@@ -28,10 +28,13 @@
     .ticker { animation: none; }
     .ticker-wrap { overflow-x: auto; }
   }
-  .pos-GK  { background:#7c3aed33; color:#c4b5fd; }
-  .pos-DEF { background:#0ea5e933; color:#7dd3fc; }
-  .pos-MID { background:#22c55e33; color:#86efac; }
-  .pos-FWD { background:#f9731633; color:#fdba74; }
+  .pos-FR  { background:#7c3aed33; color:#c4b5fd; }
+  .pos-SR  { background:#0ea5e933; color:#7dd3fc; }
+  .pos-BR  { background:#22c55e33; color:#86efac; }
+  .pos-HB  { background:#f9731633; color:#fdba74; }
+  .pos-CE  { background:#ec489933; color:#f9a8d4; }
+  .pos-B3  { background:#eab30833; color:#fde047; }
+  .pos-TEAM { background:#64748b33; color:#cbd5e1; }
   .pos-TEAM{ background:#eab30833; color:#fde047; }
 </style>
 </head>
@@ -40,7 +43,7 @@
 <header class="sticky top-0 z-20 bg-slate-900/95 backdrop-blur border-b border-slate-800">
   <div class="h-1" style="background:linear-gradient(90deg,#C8102E 0%,#FFC72C 33%,#00A859 66%,#1A7DC4 100%)"></div>
   <div class="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
-    <h1 class="font-bold text-lg">⚽ WC<span class="text-wcgold">26</span> Fantasy</h1>
+    <h1 class="font-bold text-lg">🏉 Rugby <span class="text-wcgold">Nations</span> Fantasy</h1>
     <div class="flex items-center gap-2 text-xs text-slate-400">
       <span id="hdr-league" class="truncate max-w-[10rem]"></span>
       <span id="conn-dot" title="realtime connection" class="w-2 h-2 rounded-full bg-slate-600"></span>
@@ -234,10 +237,10 @@
       <div class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">Pull stats now</h3>
         <p class="text-xs text-slate-500">Fetches completed matches for the chosen date straight
-          from API-Football and writes everyone's stats — same as the 06:00 automated pull, on
-          demand. Your API key is stored only on this device. In-progress games are skipped;
-          re-pull after the final whistle.</p>
-        <input id="adm-api-key" placeholder="API-Football key" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+          from the stats provider (Draft Sport API) and writes everyone's stats — same as the
+          06:00 automated pull, on demand. Your API key is stored only on this device. In-progress
+          games are skipped; re-pull after the final whistle.</p>
+        <input id="adm-api-key" placeholder="Stats-provider (DS-API) key" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
         <div class="flex gap-2">
           <input id="adm-pull-date" type="date" class="flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
           <button id="adm-pull-now" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-4 py-2 text-sm font-semibold">Pull stats now</button>
@@ -269,18 +272,25 @@
       <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">Stats</h3>
         <div class="grid grid-cols-3 gap-2 text-sm">
-          <label class="text-xs text-slate-400">Goals<input id="adm-goals" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">Assists<input id="adm-assists" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">Saves (GK)<input id="adm-saves" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Tries<input id="adm-tries" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Try assists<input id="adm-tassist" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Conversions<input id="adm-conv" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Penalty goals<input id="adm-pg" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Drop goals<input id="adm-dg" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Metres<input id="adm-metres" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Tackles<input id="adm-tackles" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Missed tackles<input id="adm-mtackles" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Defenders beaten<input id="adm-db" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Clean breaks<input id="adm-cb" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Offloads<input id="adm-offloads" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Turnovers won<input id="adm-tw" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Turnovers conceded<input id="adm-tc" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Penalties conceded<input id="adm-pc" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
           <label class="text-xs text-slate-400">Yellows<input id="adm-yc" type="number" value="0" min="0" max="2" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
           <label class="text-xs text-slate-400">Reds<input id="adm-rc" type="number" value="0" min="0" max="1" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">Pens saved<input id="adm-ps" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">Pens missed<input id="adm-pm" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">Def. actions<input id="adm-da" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
         </div>
         <div class="flex flex-wrap gap-4 text-sm">
           <label class="flex items-center gap-1.5"><input id="adm-appeared" type="checkbox" checked> appeared</label>
-          <label class="flex items-center gap-1.5"><input id="adm-cs" type="checkbox"> clean sheet (≥60min)</label>
           <label class="flex items-center gap-1.5"><input id="adm-motm" type="checkbox"> MOTM</label>
         </div>
         <button id="adm-save" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2 font-semibold">Save stats row</button>
@@ -314,30 +324,36 @@
         <div id="adm-mgr-list" class="space-y-1"></div>
         <div class="text-xs text-slate-400">Keeper rules (saved when you open keeper picks).
           Per-position caps are optional — leave blank for position-independent.</div>
-        <div class="grid grid-cols-5 gap-2 text-sm">
+        <div class="grid grid-cols-4 gap-2 text-sm">
           <label class="text-xs text-slate-400">Max<input id="adm-k-max" type="number" value="1" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">GK<input id="adm-k-gk" type="number" min="0" placeholder="–" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">DEF<input id="adm-k-def" type="number" min="0" placeholder="–" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">MID<input id="adm-k-mid" type="number" min="0" placeholder="–" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">FWD<input id="adm-k-fwd" type="number" min="0" placeholder="–" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">FR<input id="adm-k-fr" type="number" min="0" placeholder="–" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">SR<input id="adm-k-sr" type="number" min="0" placeholder="–" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">BR<input id="adm-k-br" type="number" min="0" placeholder="–" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">HB<input id="adm-k-hb" type="number" min="0" placeholder="–" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">CE<input id="adm-k-ce" type="number" min="0" placeholder="–" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">B3<input id="adm-k-b3" type="number" min="0" placeholder="–" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
         </div>
         <div class="flex items-center justify-between gap-3">
           <span id="adm-keeper-status" class="text-xs text-slate-400"></span>
           <button id="adm-keeper-toggle" class="shrink-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold"></button>
         </div>
         <div class="text-xs text-slate-400">New squad per position (kept players count toward these)</div>
-        <div class="grid grid-cols-4 gap-2 text-sm">
-          <label class="text-xs text-slate-400">GK<input id="adm-q-gk" type="number" value="1" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">DEF<input id="adm-q-def" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">MID<input id="adm-q-mid" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">FWD<input id="adm-q-fwd" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+        <div class="grid grid-cols-3 gap-2 text-sm">
+          <label class="text-xs text-slate-400">FR<input id="adm-q-fr" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">SR<input id="adm-q-sr" type="number" value="1" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">BR<input id="adm-q-br" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">HB<input id="adm-q-hb" type="number" value="1" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">CE<input id="adm-q-ce" type="number" value="1" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">B3<input id="adm-q-b3" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
         </div>
         <div class="text-xs text-slate-400">Starters per position (the rest are subs)</div>
-        <div class="grid grid-cols-4 gap-2 text-sm">
-          <label class="text-xs text-slate-400">GK<input id="adm-s-gk" type="number" value="1" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">DEF<input id="adm-s-def" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">MID<input id="adm-s-mid" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">FWD<input id="adm-s-fwd" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+        <div class="grid grid-cols-3 gap-2 text-sm">
+          <label class="text-xs text-slate-400">FR<input id="adm-s-fr" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">SR<input id="adm-s-sr" type="number" value="1" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">BR<input id="adm-s-br" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">HB<input id="adm-s-hb" type="number" value="1" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">CE<input id="adm-s-ce" type="number" value="1" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">B3<input id="adm-s-b3" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
         </div>
         <button id="adm-redraft" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2 text-sm font-semibold">Start redraft now</button>
         <button id="adm-final" class="w-full bg-slate-800 border border-wcgold/60 text-wcgold rounded-lg py-2 text-sm font-semibold">Start final phase (champion picks, +5)</button>
@@ -345,7 +361,7 @@
       <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-2">
         <h3 class="font-semibold text-sm">Team stages</h3>
         <p class="text-xs text-slate-500">How far each national team has progressed. TEAM picks earn
-          cumulative bonuses (R32 +5, R16 +10, QF +15, SF +20, Final +25, Winner +15).
+          cumulative bonuses (Final +15, Winner +20).
           Tick <b>out</b> when a team is knocked out — their players then can't be drafted or
           swapped in and are badged 🚫 everywhere. Changes save immediately.</p>
         <input id="adm-tsearch" placeholder="Filter teams…" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
@@ -412,36 +428,58 @@
 
 /* ---------- constants ---------- */
 
-// Roster: 14 picks per manager in the initial draft, any order, within
-// position quotas. Redraft phases (2+) use the admin-chosen quota stored
-// on the league row; kept players fill slots inside that quota.
-const PHASE1_QUOTA    = { GK: 2, DEF: 4, MID: 4, FWD: 3, TEAM: 1 };
-const PHASE1_STARTERS = { GK: 1, DEF: 3, MID: 3, FWD: 2 };   // rest are subs
-const GROUPS = ["GK", "DEF", "MID", "FWD", "TEAM"];
-const SLOT_POS = { GK:"GK", DEF:"DEF", MID:"MID", FWD:"FWD", TEAM:"TEAM",
-                   SUB_GK:"GK", SUB_DEF:"DEF", SUB_MID:"MID", SUB_FWD:"FWD" };
-const SLOT_RANK = { GK:0, DEF:1, MID:2, FWD:3, TEAM:4,
-                    SUB_GK:5, SUB_DEF:6, SUB_MID:7, SUB_FWD:8 };
+// Roster: 22 picks per manager in the initial draft (a starting XV of 15
+// plus a 6-player bench, plus 1 TEAM pick), any order, within position
+// quotas. Redraft phases (2+) use the admin-chosen quota stored on the
+// league row; kept players fill slots inside that quota.
+// Position groups: FR front row, SR second row, BR back row, HB half
+// backs, CE centres, B3 back three.
+const PHASE1_QUOTA    = { FR: 4, SR: 3, BR: 4, HB: 3, CE: 3, B3: 4, TEAM: 1 };
+const PHASE1_STARTERS = { FR: 3, SR: 2, BR: 3, HB: 2, CE: 2, B3: 3 }; // XV; rest subs
+const GROUPS = ["FR", "SR", "BR", "HB", "CE", "B3", "TEAM"];
+const SLOT_POS = { FR:"FR", SR:"SR", BR:"BR", HB:"HB", CE:"CE", B3:"B3", TEAM:"TEAM",
+                   SUB_FR:"FR", SUB_SR:"SR", SUB_BR:"BR", SUB_HB:"HB",
+                   SUB_CE:"CE", SUB_B3:"B3" };
+const SLOT_RANK = { FR:0, SR:1, BR:2, HB:3, CE:4, B3:5, TEAM:6,
+                    SUB_FR:7, SUB_SR:8, SUB_BR:9, SUB_HB:10, SUB_CE:11, SUB_B3:12 };
 
-// Mirrors SCORING in daily_pull.py — keep the two in sync.
+// Friendly labels for the six position groups (chips/headers).
+const POS_LABEL = { FR:"Front Row", SR:"Second Row", BR:"Back Row",
+                    HB:"Half Backs", CE:"Centres", B3:"Back Three", TEAM:"Team" };
+
+// Rugby fantasy scoring — mirrors SCORING (and calculate_points) in
+// daily_pull.py. Keep the two in exact sync (integer floor division).
+// Point values follow draftrugby.com's published model; confirm exact
+// numbers against the source once reachable (TODO: verify vs source).
 const SCORING = {
-  goal:        { GK: 8, DEF: 6, MID: 5, FWD: 4 },
-  assist:      3,
-  clean_sheet: { GK: 6, DEF: 4, MID: 1, FWD: 0 },
-  yellow_card: -1,
-  red_card:    -3,
-  save_per_2:  1,
-  // defensive actions = tackles + blocks + interceptions; GK excluded
-  // (they have the saves rule). +1 per 2 = 0.5/action, kept integer.
-  def_action_per_2: 1,
-  motm:        3,
-  penalty_saved:  5,
-  penalty_missed: -2,
+  try:           10,
+  try_assist:    4,
+  conversion:    2,
+  penalty_goal:  3,
+  drop_goal:     3,
+  tackle:        1,
+  missed_tackle: -1,
+  defender_beaten: 2,
+  clean_break:   2,
+  offload:       1,
+  turnover_won:  5,
+  turnover_conceded: -2,
+  penalty_conceded:  -2,
+  yellow_card:   -3,
+  red_card:      -8,
+  motm:          5,
+  // metres made: metres needed per point, by position group
+  metres_div:    { FR: 4, SR: 2, BR: 8, HB: 10, CE: 10, B3: 10 },
+  // performance bonuses (once per match)
+  bonus_metres_100: 3,
+  bonus_tackles_15: 2,
+  bonus_turnovers_3: 2,
 };
 
 // TEAM pick stage bonuses, awarded once per stage reached (cumulative).
-const STAGE_ORDER = ["group", "r32", "r16", "qf", "sf", "final", "winner"];
-const STAGE_BONUS = { r32: 5, r16: 10, qf: 15, sf: 20, final: 25, winner: 15 };
+// Nations Championship: pool rounds -> finals-weekend final -> champion.
+const STAGE_ORDER = ["pool", "final", "winner"];
+const STAGE_BONUS = { final: 15, winner: 20 };
 
 // Final phase: squads dissolve and each surviving manager predicts the
 // champion — paid out when the admin sets a team's stage to "winner".
@@ -663,16 +701,14 @@ function route() {
 }
 
 // fixtures.json is optional (generated by build_fixtures.py).
-// API-Football names some countries differently from the FIFA squad lists
-// players.json uses; normalize to FIFA names so every team finds its
-// fixtures. Same map lives in daily_pull.py for match labels — keep in sync.
+// The stats provider may name some unions differently from the squad
+// lists players.json uses; normalize to the squad-list names so every
+// team finds its fixtures. Same map lives in daily_pull.py for match
+// labels — keep in sync.
 const TEAM_NAME_FIX = {
-  "Bosnia & Herzegovina": "Bosnia And Herzegovina",
-  "Cape Verde Islands": "Cabo Verde",
-  "Czech Republic": "Czechia",
-  "Iran": "IR Iran",
-  "Ivory Coast": "Côte D'Ivoire",
-  "South Korea": "Korea Republic",
+  "USA": "United States",
+  "NZ": "New Zealand",
+  "RSA": "South Africa",
 };
 async function loadFixtures() {
   if (S.fixtures) return;
@@ -1321,21 +1357,33 @@ function renderDraft() {
 
 /* ---------- scoring & leaderboard ---------- */
 
-// Mirrors calculate_points() in daily_pull.py. clean_sheet as stored
-// already encodes the ">=60 min and conceded 0" rule.
+// Mirrors calculate_points() in daily_pull.py — keep in exact step
+// (integer floor division for metres and bonuses).
 function calcPlayerPoints(r, pos) {
   if (!r.appeared) return 0;
+  const n = (k) => r[k] || 0;
   let p = 0;
-  p += (r.goals || 0) * SCORING.goal[pos];
-  p += (r.assists || 0) * SCORING.assist;
-  if (r.clean_sheet) p += SCORING.clean_sheet[pos];
-  p += (r.yellow_cards || 0) * SCORING.yellow_card;
-  p += (r.red_cards || 0) * SCORING.red_card;
-  if (pos === "GK") p += Math.floor((r.saves || 0) / 2) * SCORING.save_per_2;
-  else p += Math.floor((r.defensive_actions || 0) / 2) * SCORING.def_action_per_2;
+  p += n("tries") * SCORING.try;
+  p += n("try_assists") * SCORING.try_assist;
+  p += n("conversions") * SCORING.conversion;
+  p += n("penalty_goals") * SCORING.penalty_goal;
+  p += n("drop_goals") * SCORING.drop_goal;
+  p += n("tackles") * SCORING.tackle;
+  p += n("missed_tackles") * SCORING.missed_tackle;
+  p += n("defenders_beaten") * SCORING.defender_beaten;
+  p += n("clean_breaks") * SCORING.clean_break;
+  p += n("offloads") * SCORING.offload;
+  p += n("turnovers_won") * SCORING.turnover_won;
+  p += n("turnovers_conceded") * SCORING.turnover_conceded;
+  p += n("penalties_conceded") * SCORING.penalty_conceded;
+  p += n("yellow_cards") * SCORING.yellow_card;
+  p += n("red_cards") * SCORING.red_card;
+  const div = SCORING.metres_div[pos] || 10;
+  p += Math.floor(n("metres") / div);
   if (r.motm) p += SCORING.motm;
-  p += (r.penalty_saved || 0) * SCORING.penalty_saved;
-  p += (r.penalty_missed || 0) * SCORING.penalty_missed;
+  if (n("metres") >= 100) p += SCORING.bonus_metres_100;
+  if (n("tackles") >= 15) p += SCORING.bonus_tackles_15;
+  if (n("turnovers_won") >= 3) p += SCORING.bonus_turnovers_3;
   return p;
 }
 
@@ -1359,7 +1407,7 @@ function playerPoints(playerId, position) {
   return (ptsCache[playerId] || []).reduce((s, r) => s + calcPlayerPoints(r, position), 0);
 }
 
-const stageOf = (team) => S.stages.find((s) => s.team === team)?.stage || "group";
+const stageOf = (team) => S.stages.find((s) => s.team === team)?.stage || "pool";
 const isEliminated = (team) => !!S.stages.find((s) => s.team === team)?.eliminated;
 
 // Points badge for any pool entry or pick: TEAM entries show stage bonuses.
@@ -1715,19 +1763,29 @@ function managerHistory(mgrId) {
 // Shared rules content: scoring per position + stage bonuses + sub rule.
 // Built from the SCORING/STAGE_BONUS constants so it can't drift.
 function scoringHtml() {
+  const metres = GROUPS.slice(0, 6)
+    .map((g) => `${g} 1/${SCORING.metres_div[g]}m`).join(" · ");
   const rows = [
-    ["Goal", GROUPS.slice(0, 4).map((g) => `${g} ${SCORING.goal[g]}`).join(" / ")],
-    ["Assist", SCORING.assist],
-    ["Clean sheet (≥60 min, 0 conceded)",
-      GROUPS.slice(0, 4).map((g) => `${g} ${SCORING.clean_sheet[g]}`).join(" / ")],
+    ["Try", `+${SCORING.try}`],
+    ["Try assist", `+${SCORING.try_assist}`],
+    ["Conversion", `+${SCORING.conversion}`],
+    ["Penalty goal", `+${SCORING.penalty_goal}`],
+    ["Drop goal", `+${SCORING.drop_goal}`],
+    ["Tackle", `+${SCORING.tackle}`],
+    ["Missed tackle", SCORING.missed_tackle],
+    ["Defender beaten", `+${SCORING.defender_beaten}`],
+    ["Clean break", `+${SCORING.clean_break}`],
+    ["Offload", `+${SCORING.offload}`],
+    ["Turnover won", `+${SCORING.turnover_won}`],
+    ["Turnover conceded", SCORING.turnover_conceded],
+    ["Penalty conceded", SCORING.penalty_conceded],
     ["Yellow card", SCORING.yellow_card],
     ["Red card", SCORING.red_card],
-    ["Saves (GK)", `+${SCORING.save_per_2} per 2 saves`],
-    ["Defensive actions — tackles, blocks, interceptions (not GK)",
-      `+${SCORING.def_action_per_2} per 2 actions`],
+    ["Metres made (1 pt per X m, by position)", metres],
+    ["Bonus: 100+ metres", `+${SCORING.bonus_metres_100}`],
+    ["Bonus: 15+ tackles", `+${SCORING.bonus_tackles_15}`],
+    ["Bonus: 3+ turnovers won", `+${SCORING.bonus_turnovers_3}`],
     ["Top-rated player (per match)", `+${SCORING.motm}`],
-    ["Penalty saved", `+${SCORING.penalty_saved}`],
-    ["Penalty missed", SCORING.penalty_missed],
     ["Champion pick (final phase only)", `+${FINAL_PICK_BONUS}`],
   ];
   const stages = STAGE_ORDER.slice(1).map((s) =>
@@ -1745,7 +1803,7 @@ function scoringHtml() {
       played that round but didn't feature (so the sub covers a no-show starter, even if they
       play on different days). Players who don't appear score 0.</p>
     <p class="text-xs"><b>Top-rated player (+${SCORING.motm}):</b> awarded automatically to the
-      single highest-rated player in each match (by API-Football's match rating, and only if it's
+      single highest-rated player in each match (by the provider's match rating, and only if it's
       ≥ 7.5). It's a data-driven "best performer" bonus — a close proxy for, but not always the
       same as, the official Player of the Match award.</p>
     <p class="text-xs"><b>Redrafts:</b> as the tournament field narrows the admin runs redrafts
@@ -1759,7 +1817,7 @@ function scoringHtml() {
 
 function draftRulesHtml() {
   const q = posQuota(), sq = starterQuota();
-  const starterLine = ["GK", "DEF", "MID", "FWD"]
+  const starterLine = GROUPS.slice(0, 6)
     .filter((g) => sq[g] > 0).map((g) => `${sq[g]} ${g}`).join(", ");
   return `<div class="space-y-1.5 text-xs text-slate-300 mb-3">
     <p><b>Draft:</b> snake order (reverses every round), ${picksPerManager()} rounds.
@@ -1788,7 +1846,7 @@ function phaseCardsHtml(me) {
     const caps = S.league.keeper_caps || null;
     const sel = new Set(me.keeper_pick_ids || []);
     const mine = managerPicks(me.id).filter((pk) => pk.slot !== "TEAM");
-    const capLine = caps ? " Position caps: " + ["GK", "DEF", "MID", "FWD"]
+    const capLine = caps ? " Position caps: " + GROUPS.slice(0, 6)
       .filter((g) => caps[g] !== undefined).map((g) => `${caps[g]} ${g}`).join(" · ") + "." : "";
     html += `<div class="rounded-xl border border-wcgold bg-wcred/10 p-4 space-y-2">
       <div class="font-semibold text-sm">Redraft coming up — keep up to ${maxK} player${maxK === 1 ? "" : "s"}
@@ -2023,20 +2081,24 @@ const saTime = (iso) => new Date(iso).toLocaleTimeString("en-GB",
 const ET_TZ = "America/New_York";
 const etDay  = (iso) => new Date(iso).toLocaleDateString("en-CA", { timeZone: ET_TZ });
 
-// Score from the official API result stored on each stat row (handles own
-// goals correctly). Falls back to summing player goals for legacy rows
-// written before home_score/away_score were added.
+// Real match score (rugby points) from the official result stored on each
+// stat row. Falls back to summing each team's players' real scoring actions
+// (try 5, conversion 2, penalty/drop goal 3) for legacy rows written before
+// home_score/away_score were added. Note: this is the real scoreboard, not
+// the fantasy try value (10).
 function matchScore(label) {
   const row = S.stats.find((r) => r.match_label === label
     && r.home_score != null && r.away_score != null);
   if (row) return [row.home_score, row.away_score];
   const [home, away] = labelTeams(label);
+  const realPts = (r) => (r.tries || 0) * 5 + (r.conversions || 0) * 2
+    + (r.penalty_goals || 0) * 3 + (r.drop_goals || 0) * 3;
   let h = 0, a = 0;
   for (const r of S.stats) {
     if (r.match_label !== label) continue;
     const t = S.playerById?.[r.player_id]?.team;
-    if (t === home) h += r.goals || 0;
-    else if (t === away) a += r.goals || 0;
+    if (t === home) h += realPts(r);
+    else if (t === away) a += realPts(r);
   }
   return [h, a];
 }
@@ -2304,44 +2366,59 @@ S.plannerShortlistOnly = false; // choice picker: show only shortlisted
 // uses the full fantasy total; the rest are raw counts from existing
 // columns (no schema change — works on the running league immediately).
 const STAT_SORTS = [
-  ["points", "Points"], ["goals", "Goals"], ["assists", "Assists"],
-  ["defensive_actions", "Def. actions"], ["clean_sheet", "Clean sheets"],
-  ["saves", "Saves"], ["motm", "MOTM"], ["yellow_cards", "Yellow cards"],
-  ["red_cards", "Red cards"], ["penalty_saved", "Pens saved"],
-  ["penalty_missed", "Pens missed"],
+  ["points", "Points"], ["tries", "Tries"], ["try_assists", "Try assists"],
+  ["metres", "Metres"], ["tackles", "Tackles"], ["turnovers_won", "Turnovers won"],
+  ["defenders_beaten", "Defenders beaten"], ["clean_breaks", "Clean breaks"],
+  ["offloads", "Offloads"], ["conversions", "Conversions"],
+  ["penalty_goals", "Penalty goals"], ["drop_goals", "Drop goals"],
+  ["motm", "MOTM"], ["yellow_cards", "Yellow cards"], ["red_cards", "Red cards"],
 ];
 
 const statRowsFor = (pid) =>
   (S.stats || []).filter((r) => r.player_id === pid);
 
+// Flat (count x value) scoring categories, key -> SCORING key. Metres,
+// MOTM and the performance bonuses are handled separately below.
+const FLAT_SCORE = {
+  tries: "try", try_assists: "try_assist", conversions: "conversion",
+  penalty_goals: "penalty_goal", drop_goals: "drop_goal", tackles: "tackle",
+  missed_tackles: "missed_tackle", defenders_beaten: "defender_beaten",
+  clean_breaks: "clean_break", offloads: "offload",
+  turnovers_won: "turnover_won", turnovers_conceded: "turnover_conceded",
+  penalties_conceded: "penalty_conceded", yellow_cards: "yellow_card",
+  red_cards: "red_card",
+};
+
 // Per-category breakdown for one player; the pts sum equals
-// playerPoints() because saves/defensive actions floor per match.
+// playerPoints() because metres + bonuses floor per match.
 function playerBreakdown(pid, pos) {
   const cats = [
-    ["goals", "Goals"], ["assists", "Assists"], ["cs", "Clean sheets"],
-    ["saves", "Saves (per 2)"], ["da", "Defensive actions (per 2)"],
-    ["motm", "Top-rated player"], ["ps", "Penalties saved"],
-    ["pm", "Penalties missed"], ["yc", "Yellow cards"], ["rc", "Red cards"],
+    ["tries", "Tries"], ["try_assists", "Try assists"],
+    ["conversions", "Conversions"], ["penalty_goals", "Penalty goals"],
+    ["drop_goals", "Drop goals"], ["metres", "Metres made"],
+    ["tackles", "Tackles"], ["missed_tackles", "Missed tackles"],
+    ["defenders_beaten", "Defenders beaten"], ["clean_breaks", "Clean breaks"],
+    ["offloads", "Offloads"], ["turnovers_won", "Turnovers won"],
+    ["turnovers_conceded", "Turnovers conceded"],
+    ["penalties_conceded", "Penalties conceded"],
+    ["yellow_cards", "Yellow cards"], ["red_cards", "Red cards"],
+    ["motm", "Top-rated player"], ["bonus", "Bonuses"],
   ];
   const n = Object.fromEntries(cats.map(([k]) => [k, 0]));
   const p = Object.fromEntries(cats.map(([k]) => [k, 0]));
+  const div = SCORING.metres_div[pos] || 10;
   for (const r of statRowsFor(pid)) {
     if (!r.appeared) continue;
-    n.goals += r.goals || 0;       p.goals += (r.goals || 0) * SCORING.goal[pos];
-    n.assists += r.assists || 0;   p.assists += (r.assists || 0) * SCORING.assist;
-    if (r.clean_sheet) { n.cs++;   p.cs += SCORING.clean_sheet[pos]; }
-    n.yc += r.yellow_cards || 0;   p.yc += (r.yellow_cards || 0) * SCORING.yellow_card;
-    n.rc += r.red_cards || 0;      p.rc += (r.red_cards || 0) * SCORING.red_card;
-    if (pos === "GK") {
-      n.saves += r.saves || 0;
-      p.saves += Math.floor((r.saves || 0) / 2) * SCORING.save_per_2;
-    } else {
-      n.da += r.defensive_actions || 0;
-      p.da += Math.floor((r.defensive_actions || 0) / 2) * SCORING.def_action_per_2;
+    for (const [k, key] of Object.entries(FLAT_SCORE)) {
+      n[k] += r[k] || 0;  p[k] += (r[k] || 0) * SCORING[key];
     }
-    if (r.motm) { n.motm++;        p.motm += SCORING.motm; }
-    n.ps += r.penalty_saved || 0;  p.ps += (r.penalty_saved || 0) * SCORING.penalty_saved;
-    n.pm += r.penalty_missed || 0; p.pm += (r.penalty_missed || 0) * SCORING.penalty_missed;
+    n.metres += r.metres || 0;  p.metres += Math.floor((r.metres || 0) / div);
+    if (r.motm) { n.motm++; p.motm += SCORING.motm; }
+    let b = 0;
+    if ((r.metres || 0) >= 100) b += SCORING.bonus_metres_100;
+    if ((r.tackles || 0) >= 15) b += SCORING.bonus_tackles_15;
+    if ((r.turnovers_won || 0) >= 3) b += SCORING.bonus_turnovers_3;
+    if (b) { n.bonus++; p.bonus += b; }
   }
   return cats.filter(([k]) => n[k])
     .map(([k, label]) => ({ label, count: n[k], pts: p[k] }));
@@ -2350,16 +2427,20 @@ function playerBreakdown(pid, pos) {
 function statBits(r) {
   const bits = [];
   if (!r.appeared) bits.push("DNP");
-  if (r.goals) bits.push(r.goals + "g");
-  if (r.assists) bits.push(r.assists + "a");
-  if (r.clean_sheet) bits.push("CS");
-  if (r.saves) bits.push(r.saves + "sv");
-  if (r.defensive_actions) bits.push(r.defensive_actions + "da");
+  if (r.tries) bits.push(r.tries + "T");
+  if (r.try_assists) bits.push(r.try_assists + "TA");
+  if (r.conversions) bits.push(r.conversions + "C");
+  if (r.penalty_goals) bits.push(r.penalty_goals + "PG");
+  if (r.drop_goals) bits.push(r.drop_goals + "DG");
+  if (r.metres) bits.push(r.metres + "m");
+  if (r.tackles) bits.push(r.tackles + "tkl");
+  if (r.turnovers_won) bits.push(r.turnovers_won + "TO");
+  if (r.defenders_beaten) bits.push(r.defenders_beaten + "db");
+  if (r.clean_breaks) bits.push(r.clean_breaks + "cb");
+  if (r.offloads) bits.push(r.offloads + "off");
   if (r.yellow_cards) bits.push(r.yellow_cards + "Y");
   if (r.red_cards) bits.push("R");
   if (r.motm) bits.push("MOTM");
-  if (r.penalty_saved) bits.push(r.penalty_saved + "PS");
-  if (r.penalty_missed) bits.push(r.penalty_missed + "PM");
   return bits.join(" ");
 }
 
@@ -2370,15 +2451,13 @@ const ownerOf = (pid) => {
 
 /* ---------- availability (suspensions & injuries) and avatars ---------- */
 
-// FIFA wipes single yellows after the quarter-finals so nobody misses the
-// final on accumulation; this is the first day of the post-wipe window.
-const YELLOW_RESET_DATE = "2026-07-12";
-
-// Best-effort "suspended for their next match" from our own card data:
-// a red in their latest appearance, or an even count of single-yellow
-// matches with the latest appearance booked (2nd/4th yellow triggers a
-// one-match ban; playing again clears the flag, i.e. ban served). Two
-// yellows in one match arrive as a red and don't count toward accumulation.
+// Best-effort "suspended for their next match" from our own card data: a
+// red card (straight or two-yellow) in their latest appearance. Rugby
+// doesn't carry single yellows as an accumulation ban (a yellow is a
+// 10-minute sin-bin), so unlike soccer there's no yellow-count rule; a
+// red triggers a disciplinary process and at least a one-match ban.
+// Playing again clears the flag (ban served). Multi-match bans set by a
+// hearing aren't tracked — they're decided case by case.
 function suspendedNext(pid) {
   const rows = statRowsFor(pid).filter((r) => r.appeared)
     .sort((a, b) => String(labelDate(a.match_label))
@@ -2386,12 +2465,6 @@ function suspendedNext(pid) {
   if (!rows.length) return null;
   const last = rows[rows.length - 1];
   if ((last.red_cards || 0) > 0) return "red card";
-  const lastPreWipe = String(labelDate(last.match_label)) < YELLOW_RESET_DATE;
-  const yellows = rows.filter((r) =>
-    (String(labelDate(r.match_label)) < YELLOW_RESET_DATE) === lastPreWipe
-    && (r.yellow_cards || 0) > 0 && !(r.red_cards || 0)).length;
-  if ((last.yellow_cards || 0) > 0 && !(last.red_cards || 0) && yellows % 2 === 0)
-    return "2 yellows";
   return null;
 }
 
@@ -2440,7 +2513,7 @@ function playerStatTotal(pid, key) {
   let n = 0;
   for (const r of statRowsFor(pid)) {
     if (!r.appeared) continue;
-    if (key === "clean_sheet" || key === "motm") n += r[key] ? 1 : 0;
+    if (key === "motm") n += r[key] ? 1 : 0;
     else n += r[key] || 0;
   }
   return n;
@@ -2549,7 +2622,7 @@ function openPlayerDetail(pid, managerId, perspectiveLabel) {
 }
 
 function renderStatsTab() {
-  const chips = ["ALL", ...GROUPS.slice(0, 4)];
+  const chips = ["ALL", ...GROUPS.slice(0, 6)];
   $("stats-chips").innerHTML = chips.map((c) =>
     `<button data-chip="${c}" class="rounded-full px-3 py-1 border ${
       S.statsPos === c ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"
@@ -2640,7 +2713,7 @@ function openLineup() {
   S.lineupDraft = new Set(managerPicks(me.id)
     .filter((pk) => !pk.is_sub && pk.slot !== "TEAM").map((pk) => pk.id));
   const sq = starterQuota();
-  $("lineup-rule").textContent = "Starters: " + ["GK", "DEF", "MID", "FWD"]
+  $("lineup-rule").textContent = "Starters: " + GROUPS.slice(0, 6)
     .filter((g) => sq[g] > 0).map((g) => `${sq[g]} ${g}`).join(", ")
     + ". The rest are subs — a sub only scores in rounds their starter doesn't play.";
   renderLineup();
@@ -2649,7 +2722,7 @@ function openLineup() {
 
 function lineupCounts() {
   const me = myManager();
-  const counts = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+  const counts = Object.fromEntries(GROUPS.slice(0, 6).map((g) => [g, 0]));
   for (const pk of managerPicks(me.id)) {
     if (S.lineupDraft.has(pk.id)) counts[pk.position]++;
   }
@@ -2658,13 +2731,13 @@ function lineupCounts() {
 
 function lineupValid(counts) {
   const sq = starterQuota();
-  return ["GK", "DEF", "MID", "FWD"].every((g) => counts[g] === (sq[g] || 0));
+  return GROUPS.slice(0, 6).every((g) => counts[g] === (sq[g] || 0));
 }
 
 function renderLineup() {
   const me = myManager();
   const mine = managerPicks(me.id).filter((pk) => pk.slot !== "TEAM");
-  const order = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
+  const order = Object.fromEntries(GROUPS.slice(0, 6).map((g, i) => [g, i]));
   mine.sort((a, b) => order[a.position] - order[b.position] || a.pick_number - b.pick_number);
   let lastPos = "";
   $("lineup-list").innerHTML = mine.map((pk) => {
@@ -2695,7 +2768,7 @@ function renderLineup() {
   });
   const counts = lineupCounts();
   const sq = starterQuota();
-  $("lineup-count").textContent = "Starters: " + ["GK", "DEF", "MID", "FWD"]
+  $("lineup-count").textContent = "Starters: " + GROUPS.slice(0, 6)
     .filter((g) => (sq[g] || 0) > 0 || counts[g] > 0)
     .map((g) => `${counts[g]}/${sq[g] || 0} ${g}`).join(" · ");
   $("lineup-save").disabled = !lineupValid(counts);
@@ -2850,7 +2923,7 @@ function tradeError(pairs) {
   for (const { mine, theirs } of pairs) {
     if (!mine || !theirs) return "Every pair needs a player on both sides.";
     if (!pairValid(mine, theirs))
-      return "Pairs must match position groups (GK↔GK, DEF↔DEF, MID↔MID, FWD↔FWD).";
+      return "Pairs must match position groups (FR↔FR, SR↔SR, BR↔BR, HB↔HB, CE↔CE, B3↔B3).";
     if (offered.has(mine.id) || requested.has(theirs.id))
       return "A player can only appear in one pair.";
     offered.add(mine.id);
@@ -3101,7 +3174,7 @@ function shortlistSectionHtml(me) {
     </li>`;
   }).join("");
 
-  const chips = ["ALL", ...GROUPS.slice(0, 4)];
+  const chips = ["ALL", ...GROUPS.slice(0, 6)];
   return `<div class="mt-4 space-y-2">
     <button id="sl-toggle" class="w-full rounded-xl border border-wcgold/60 bg-wcred/10 px-3 py-2.5 text-sm font-semibold flex items-center justify-between">
       <span>★ My shortlist <span class="text-[10px] text-slate-400 font-normal">· only you can see this</span></span>
@@ -3587,6 +3660,18 @@ function admRenderSelected() {
     : "No player selected.";
 }
 
+// Admin stat-entry fields: input id -> match_stats column.
+const ADM_FIELDS = [
+  ["adm-tries", "tries"], ["adm-tassist", "try_assists"],
+  ["adm-conv", "conversions"], ["adm-pg", "penalty_goals"],
+  ["adm-dg", "drop_goals"], ["adm-metres", "metres"],
+  ["adm-tackles", "tackles"], ["adm-mtackles", "missed_tackles"],
+  ["adm-db", "defenders_beaten"], ["adm-cb", "clean_breaks"],
+  ["adm-offloads", "offloads"], ["adm-tw", "turnovers_won"],
+  ["adm-tc", "turnovers_conceded"], ["adm-pc", "penalties_conceded"],
+  ["adm-yc", "yellow_cards"], ["adm-rc", "red_cards"],
+];
+
 async function admSave() {
   const label = admLabel();
   if (!S.admPlayer) return toast("Select a player first.");
@@ -3597,22 +3682,17 @@ async function admSave() {
     player_id: S.admPlayer.player_id,
     match_label: label,
     appeared: $("adm-appeared").checked,
-    goals: num("adm-goals"), assists: num("adm-assists"),
-    clean_sheet: $("adm-cs").checked,
-    yellow_cards: num("adm-yc"), red_cards: num("adm-rc"),
-    saves: num("adm-saves"), motm: $("adm-motm").checked,
-    penalty_saved: num("adm-ps"), penalty_missed: num("adm-pm"),
-    defensive_actions: num("adm-da"),
+    motm: $("adm-motm").checked,
   };
+  for (const [id, col] of ADM_FIELDS) row[col] = num(id);
   const { error } = await S.sb.from("match_stats")
     .upsert(row, { onConflict: "league_id,player_id,match_label" });
   if (error) return toast("Save failed: " + error.message);
   toast(`Saved: ${S.admPlayer.name} — ${label}`);
   S.admPlayer = null;
   admRenderSelected();
-  ["adm-goals","adm-assists","adm-saves","adm-yc","adm-rc","adm-ps","adm-pm","adm-da"]
-    .forEach((id) => $(id).value = 0);
-  $("adm-cs").checked = false; $("adm-motm").checked = false; $("adm-appeared").checked = true;
+  ADM_FIELDS.forEach(([id]) => $(id).value = 0);
+  $("adm-motm").checked = false; $("adm-appeared").checked = true;
   scheduleRefetch();
 }
 
@@ -3627,12 +3707,8 @@ function admLoadRow(r) {
   S.admPlayer = S.playerById[r.player_id]
     || { player_id: r.player_id, name: r.player_id, position: "?", team: "?" };
   admRenderSelected();
-  $("adm-goals").value = r.goals; $("adm-assists").value = r.assists;
-  $("adm-saves").value = r.saves; $("adm-yc").value = r.yellow_cards;
-  $("adm-rc").value = r.red_cards; $("adm-ps").value = r.penalty_saved;
-  $("adm-pm").value = r.penalty_missed;
-  $("adm-da").value = r.defensive_actions || 0;
-  $("adm-cs").checked = r.clean_sheet; $("adm-motm").checked = r.motm;
+  for (const [id, col] of ADM_FIELDS) $(id).value = r[col] || 0;
+  $("adm-motm").checked = r.motm;
   $("adm-appeared").checked = r.appeared;
   $("adm-label-preview").textContent = admLabel();
   window.scrollTo(0, 0);
@@ -3655,21 +3731,9 @@ function admRenderExisting() {
       <div class="text-xs text-slate-400 mb-1">${esc(label)}</div>
       ${groups[label].map((r) => {
         const p = S.playerById[r.player_id];
-        const bits = [];
-        if (!r.appeared) bits.push("DNP");
-        if (r.goals) bits.push(r.goals + "g");
-        if (r.assists) bits.push(r.assists + "a");
-        if (r.clean_sheet) bits.push("CS");
-        if (r.saves) bits.push(r.saves + "sv");
-        if (r.yellow_cards) bits.push(r.yellow_cards + "Y");
-        if (r.red_cards) bits.push("R");
-        if (r.defensive_actions) bits.push(r.defensive_actions + "da");
-        if (r.motm) bits.push("MOTM");
-        if (r.penalty_saved) bits.push(r.penalty_saved + "PS");
-        if (r.penalty_missed) bits.push(r.penalty_missed + "PM");
         return `<div class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-2 py-1.5 mb-1">
           <span class="truncate flex-1">${esc(p?.name || r.player_id)}</span>
-          <span class="text-xs text-slate-400">${bits.join(" ") || "0"}</span>
+          <span class="text-xs text-slate-400">${statBits(r) || "0"}</span>
           <button data-edit="${r.id}" class="text-xs underline text-wcgold">edit</button>
           <button data-del="${r.id}" class="text-xs underline text-red-400">del</button>
         </div>`;
@@ -3686,7 +3750,7 @@ function admRenderStages() {
   const cur = Object.fromEntries(S.stages.map((s) => [s.team, s.stage]));
   const teams = S.teams.filter((t) => !q || t.toLowerCase().includes(q));
   $("adm-stages").innerHTML = teams.map((t) => {
-    const stage = cur[t] || "group";
+    const stage = cur[t] || "pool";
     return `<div class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-2 py-1.5 text-sm ${
       isEliminated(t) ? "opacity-60" : ""}">
       <span class="truncate flex-1">${esc(t)}</span>
@@ -3731,21 +3795,23 @@ const foldName = (s) => String(s || "").normalize("NFKD")
   .replace(/[̀-ͯ]/g, "").toLowerCase()
   .replace(/[^a-z0-9]+/g, " ").trim();
 
-async function apiFootball(key, path, params) {
-  const url = new URL("https://v3.football.api-sports.io/" + path);
+// Browser-side stats fetch. TODO: point at the Draft Sport API (DS-API)
+// base + endpoints and confirm its auth header and response shape against
+// the source (it is blocked by the network policy in some environments).
+async function providerGet(key, path, params) {
+  const url = new URL("https://api.draftsport.com/" + path);
   for (const k in params) url.searchParams.set(k, params[k]);
-  const resp = await fetch(url, { headers: { "x-apisports-key": key } });
+  const resp = await fetch(url, { headers: { Authorization: "Bearer " + key } });
   const data = await resp.json();
   const errs = data.errors && Object.values(data.errors);
   if (errs && errs.length) throw new Error(errs.join("; "));
   return data.response || [];
 }
 
-// API player -> players.json id. Match by NAME first (exact, then surname,
-// trying both ends so Korean/Asian name order works too); the FIFA id's
-// trailing number is the squad-list position, NOT a reliable jersey number,
-// so shirt is only a tiebreaker/last resort. (daily_pull.py matches the same
-// way; matching by shirt first mis-attributed stats to the wrong player.)
+// Provider player -> players.json id. Match by NAME first (exact, then
+// surname, trying both ends); the squad id's trailing number is the
+// squad-list number, only a tiebreaker/last resort. (daily_pull.py matches
+// the same way; matching by number first mis-attributed stats.)
 function mapApiPlayer(team, shirt, apiName) {
   const roster = S.players.filter((p) => p.team === team);
   if (!roster.length) return null;
@@ -3774,20 +3840,26 @@ async function pullStatsNow() {
   const key = $("adm-api-key").value.trim();
   const date = $("adm-pull-date").value;
   const log = (t) => $("adm-pull-log").textContent = t;
-  if (!key) return toast("Enter your API-Football key first.");
+  if (!key) return toast("Enter your stats-provider key first.");
   if (!date) return toast("Pick a date.");
   localStorage.setItem("wcf_apikey", key);
   const btn = $("adm-pull-now");
   btn.disabled = true;
   try {
     log("Fetching fixtures for " + date + "…");
-    const fixtures = (await apiFootball(key, "fixtures",
+    const fixtures = (await providerGet(key, "fixtures",
       { date, league: 1, season: 2026 }))
-      .filter((f) => ["FT", "AET", "PEN"].includes(f.fixture.status.short));
+      .filter((f) => ["FT", "AET"].includes(f.fixture.status.short));
     if (!fixtures.length) {
       log("No completed fixtures on " + date + " yet — in-progress games are excluded.");
       return;
     }
+    // Counting stats carried straight through from the provider's per-player
+    // block. TODO: confirm the DS-API field names against the source.
+    const COUNTING = ["tries","try_assists","conversions","penalty_goals",
+      "drop_goals","tackles","missed_tackles","metres","defenders_beaten",
+      "clean_breaks","offloads","turnovers_won","turnovers_conceded",
+      "penalties_conceded","yellow_cards","red_cards"];
     const skipped = [];
     let total = 0;
     for (const f of fixtures) {
@@ -3795,42 +3867,29 @@ async function pullStatsNow() {
       const away = TEAM_NAME_FIX[f.teams.away.name] || f.teams.away.name;
       const label = `${home} vs ${away} (${f.fixture.date.slice(0, 10)})`;
       log(`Pulling ${label}…`);
-      const conceded = { [f.teams.home.id]: f.goals.away || 0,
-                         [f.teams.away.id]: f.goals.home || 0 };
       const rows = [];
       let best = null;
-      for (const tb of await apiFootball(key, "fixtures/players",
+      for (const tb of await providerGet(key, "fixtures/players",
                                          { fixture: f.fixture.id })) {
         const team = TEAM_NAME_FIX[tb.team.name] || tb.team.name;
         for (const e of tb.players) {
           const st = (e.statistics || [])[0] || {};
           const games = st.games || {};
           const minutes = +games.minutes || 0;
-          const g = st.goals || {}, cards = st.cards || {},
-                pen = st.penalty || {}, tk = st.tackles || {};
-          const def = (+tk.total || 0) + (+tk.blocks || 0) + (+tk.interceptions || 0);
-          // API-Football sometimes leaves `minutes` null for a just-finished
-          // fixture even for players who featured/scored. Skip only true
-          // non-participants (no minutes AND no recorded stat); keep anyone with
-          // any contribution so a scorer is never dropped for a blank minute.
-          const contributed = (+g.total || 0) || (+g.assists || 0) || (+g.saves || 0)
-            || (+cards.yellow || 0) || (+cards.red || 0)
-            || (+pen.saved || 0) || (+pen.missed || 0) || def;
+          // The provider may leave `minutes` null for a just-finished fixture
+          // even for players who featured/scored. Skip only true non-
+          // participants (no minutes AND no recorded stat).
+          const contributed = COUNTING.some((k) => +st[k] || 0);
           if (!minutes && !contributed) continue;
           const pid = mapApiPlayer(team, +games.number || 0, e.player.name);
           if (!pid) { skipped.push(`${e.player.name} (${team})`); continue; }
           const row = {
             league_id: S.league.id, player_id: pid, match_label: label,
-            appeared: true,
-            goals: +g.total || 0, assists: +g.assists || 0,
-            clean_sheet: minutes >= 60 && !(conceded[tb.team.id] || 0),
-            yellow_cards: +cards.yellow || 0, red_cards: +cards.red || 0,
-            saves: +g.saves || 0, motm: false,
-            penalty_saved: +pen.saved || 0, penalty_missed: +pen.missed || 0,
-            defensive_actions: def,
+            appeared: true, motm: false,
             home_score: +f.goals.home || 0, away_score: +f.goals.away || 0,
             minutes,
           };
+          for (const k of COUNTING) row[k] = +st[k] || 0;
           const rating = parseFloat(games.rating);
           if (!isNaN(rating) && (!best || rating > best.rating))
             best = { row, rating };
@@ -3858,7 +3917,7 @@ async function pullStatsNow() {
 
 function admQuotaInputs(prefix) {
   const v = (g) => Math.max(0, parseInt($(prefix + g.toLowerCase()).value, 10) || 0);
-  return { GK: v("GK"), DEF: v("DEF"), MID: v("MID"), FWD: v("FWD") };
+  return Object.fromEntries(GROUPS.slice(0, 6).map((g) => [g, v(g)]));
 }
 
 // A manager's chosen keepers, in selection order, validated: each must
@@ -3894,7 +3953,7 @@ async function toggleKeeperWindow() {
   if (next) {
     payload.keeper_max = Math.max(0, parseInt($("adm-k-max").value, 10) || 0);
     const caps = {};
-    for (const g of ["GK", "DEF", "MID", "FWD"]) {
+    for (const g of GROUPS.slice(0, 6)) {
       const v = $("adm-k-" + g.toLowerCase()).value.trim();
       if (v !== "") caps[g] = Math.max(0, parseInt(v, 10) || 0);
     }
@@ -3910,16 +3969,16 @@ async function toggleKeeperWindow() {
 
 async function startRedraft() {
   const quota = admQuotaInputs("adm-q-"), starters = admQuotaInputs("adm-s-");
-  const size = quota.GK + quota.DEF + quota.MID + quota.FWD;
+  const size = GROUPS.slice(0, 6).reduce((s, g) => s + (quota[g] || 0), 0);
   if (!size) return toast("Set the squad size first.");
-  for (const g of ["GK", "DEF", "MID", "FWD"]) {
+  for (const g of GROUPS.slice(0, 6)) {
     if (starters[g] > quota[g])
       return toast(`${g}: starters (${starters[g]}) can't exceed the quota (${quota[g]}).`);
   }
   const active = activeManagers();
   // Kept players fill quota slots, so the pool only needs to cover the
   // full quota: quota*managers <= players at that position.
-  for (const g of ["GK", "DEF", "MID", "FWD"]) {
+  for (const g of GROUPS.slice(0, 6)) {
     const pool = S.players.filter((p) => p.position === g).length;
     if (quota[g] * active.length > pool)
       return toast(`Not enough ${g}s in the pool: need ${quota[g] * active.length}, have ${pool}.`);
@@ -3952,7 +4011,7 @@ async function startRedraft() {
   }
   const noKeep = active.filter((m) => !keepersByMgr[m.id].length);
   if (!confirm(`Start redraft for ${active.length} managers — squads of ${size} `
-    + `(${quota.GK} GK, ${quota.DEF} DEF, ${quota.MID} MID, ${quota.FWD} FWD), `
+    + `(${GROUPS.slice(0, 6).map((g) => `${quota[g]} ${g}`).join(", ")}), `
     + "kept players included? Each keeper costs that manager's earliest draft round."
     + (droppedNotes.length ? `\n\nDROPPED keeper picks (won't be kept):\n${droppedNotes.join("\n")}` : "")
     + (noKeep.length ? `\n\nKeeping no one: ${noKeep.map((m) => m.name).join(", ")}` : "")

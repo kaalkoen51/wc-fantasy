@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
 """Build photos.json — player face & team crest ids for the app's avatars.
 
-For every tournament team, pulls API-Football's squad list and maps each
-player to their FIFA squad-list id (shirt number + name via the same
-matcher daily_pull.py uses). The app turns the ids into image URLs:
+For every tournament team, pulls the provider's squad list and maps each
+player to their squad-list id (number + name via the same matcher
+daily_pull.py uses). The app turns the ids into image URLs.
 
-    https://media.api-sports.io/football/players/<id>.png
-    https://media.api-sports.io/football/teams/<id>.png
-
-Output shape: {"players": {"arg_10": 154, ...}, "teams": {"Argentina": 26}}
+Output shape: {"players": {"eng_10": 154, ...}, "teams": {"England": 26}}
 
 photos.json is optional for the app (missing entries fall back to a plain
-circle). Run once and commit; re-run if FIFA publishes squad changes.
-Needs API_FOOTBALL_KEY; ~49 API calls (1 per team + the team list).
+circle). Run once and commit; re-run after squad changes.
+Needs DRAFT_SPORT_KEY. TODO: confirm the DS-API squad/photo endpoints and
+the image CDN URL pattern against the source.
 """
 
 import argparse

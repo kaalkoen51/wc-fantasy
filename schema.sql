@@ -1,4 +1,4 @@
--- World Cup fantasy league schema
+-- Rugby Nations Championship fantasy league schema
 -- Run this in the Supabase SQL editor (Database -> SQL Editor -> New query).
 
 create table if not exists leagues (
@@ -31,15 +31,24 @@ create table if not exists match_stats (
     player_id text,
     match_label text,
     appeared bool default true,
-    goals int default 0,
-    assists int default 0,
-    clean_sheet bool default false,
+    -- rugby counting stats (scored in daily_pull.py / index.html SCORING)
+    tries int default 0,
+    try_assists int default 0,
+    conversions int default 0,
+    penalty_goals int default 0,
+    drop_goals int default 0,
+    tackles int default 0,
+    missed_tackles int default 0,
+    metres int default 0,
+    defenders_beaten int default 0,
+    clean_breaks int default 0,
+    offloads int default 0,
+    turnovers_won int default 0,
+    turnovers_conceded int default 0,
+    penalties_conceded int default 0,
     yellow_cards int default 0,
     red_cards int default 0,
-    saves int default 0,
     motm bool default false,
-    penalty_saved int default 0,
-    penalty_missed int default 0,
     created_at timestamptz default now(),
     unique (league_id, player_id, match_label)
 );
@@ -55,7 +64,7 @@ create table if not exists team_stages (
 -- Draft app additions (index.html). Purely additive: nothing daily_pull.py
 -- reads or writes changes. Safe to run on an existing database.
 -- picks.player_id for the TEAM slot uses the convention "team:<TeamName>",
--- e.g. "team:Argentina"; regular slots use players.json ids like "arg_10".
+-- e.g. "team:Ireland"; regular slots use players.json ids like "eng_10".
 alter table leagues add column if not exists invite_code text;
 alter table leagues add column if not exists trading_open boolean not null default false;
 alter table leagues add column if not exists admin_token text;
@@ -64,15 +73,9 @@ alter table leagues add column if not exists pick_duration_seconds int default 6
 alter table leagues add column if not exists current_pick int default 0;
 alter table leagues add column if not exists pick_started_at timestamptz;
 
--- Defensive contributions: tackles + blocks + interceptions per match,
--- scored as +1 per 2 actions (GK excluded). Additive; older rows stay 0.
-alter table match_stats add column if not exists defensive_actions int default 0;
-
--- Official match score stored alongside player rows so the banner can
--- display the correct result even when own goals are involved (own goals
--- don't appear in any individual player's goals tally). Nullable so
--- existing rows are unaffected; the app falls back to summing player goals
--- for any row written before this column was added.
+-- Official match score (points) stored alongside player rows so the banner
+-- can display the result regardless of which players are rostered.
+-- Nullable so existing rows are unaffected.
 alter table match_stats add column if not exists home_score int;
 alter table match_stats add column if not exists away_score int;
 
@@ -131,7 +134,8 @@ create unique index if not exists picks_league_player_key
     on picks (league_id, player_id);
 
 -- One stage row per team per league, so the app can upsert. stage holds
--- one of: group, r32, r16, qf, sf, final, winner.
+-- one of: pool, final, winner (Nations Championship: pool rounds -> the
+-- final-weekend ranking match -> champion).
 create unique index if not exists team_stages_league_team_key
     on team_stages (league_id, team);
 
@@ -143,7 +147,7 @@ alter table team_stages add column if not exists eliminated boolean not null def
 
 -- Manager-to-manager trades. Each trade_items row pairs one of the
 -- proposer's picks with one of the target's picks; the app enforces that
--- both sides of a pair are in the same position group (GK/DEF/MID/FWD,
+-- both sides of a pair are in the same position group (FR/SR/BR/HB/CE/B3,
 -- subs included; TEAM picks are not tradable).
 create table if not exists trades (
     id uuid primary key default gen_random_uuid(),

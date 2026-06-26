@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live in-match scoring loop for the World Cup fantasy league.
+"""Live in-match scoring loop for the Rugby Nations Championship league.
 
 Designed to run from the "Live stats pull" GitHub Actions workflow,
 which wakes it every 15 minutes (see .github/workflows/live-pull.yml):
@@ -11,7 +11,7 @@ which wakes it every 15 minutes (see .github/workflows/live-pull.yml):
   gaps in GitHub Actions cron scheduling so nearby games are not missed.
 - Kickoff time just passed but API hasn't flagged the fixture live yet ->
   stays alive for --kickoff-grace minutes (default 15) to absorb the
-  typical 3-10 min lag before API-Football marks a fixture as "1H".
+  typical lag before the provider marks a fixture as in-play.
 - Otherwise it polls every --poll seconds: upserts player stats for
   every live fixture, gives each fixture one final pull when it goes
   full-time, and exits once nothing is live or imminent.
@@ -20,10 +20,10 @@ Every pull is a full cumulative upsert on (league, player, match), so
 restarts, overlaps with the manual "Pull stats now" button, and the
 06:00 daily sweep are all safe — the last write simply wins.
 
-Environment variables: same as daily_pull.py (API_FOOTBALL_KEY,
+Environment variables: same as daily_pull.py (DRAFT_SPORT_KEY,
 SUPABASE_URL, SUPABASE_SERVICE_KEY, FANTASY_LEAGUE_ID — one league uuid
 or a comma-separated allowlist; every listed league gets the same rows,
-at no extra API-Football cost).
+at no extra provider cost).
 """
 
 import argparse
@@ -107,9 +107,8 @@ def main() -> None:
                         "minutes (bridges cron scheduling gaps; default: 90)")
     parser.add_argument("--kickoff-grace", type=int, default=15,
                         help="stay alive this many minutes past scheduled "
-                        "kickoff while waiting for the API to flag the "
-                        "fixture as live (API-Football typically lags "
-                        "3-10 min; default: 15)")
+                        "kickoff while waiting for the provider to flag the "
+                        "fixture as live (default: 15)")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 

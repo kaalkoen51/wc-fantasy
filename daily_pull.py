@@ -1,26 +1,33 @@
 #!/usr/bin/env python3
-"""Daily stats pull for the World Cup fantasy league.
+"""Daily stats pull for the Rugby Nations Championship fantasy league.
 
-Fetches completed-match player statistics from API-Football, calculates
-fantasy points, and upserts them to the Supabase `match_stats` table.
+Fetches completed-match player statistics from a rugby stats provider,
+calculates fantasy points, and upserts them to the Supabase `match_stats`
+table.
 
-Upserted rows use the FIFA squad-list player ids from players.json
-("arg_10" = <team code>_<shirt number>) — the ids the app keys all rosters
-and scoring by — not API-Football's numeric ids. Each API player is mapped
-by team + name (exact, then surname, then fuzzy), with the shirt number as
-a tie-breaker / fallback when the API provides one. Players that cannot be
-mapped are skipped and listed in the output so the admin can enter them
-manually; use --dry-run to verify the mapping without writing.
+The intended source is draftrugby.com's Draft Sport API (DS-API). The
+network policy in some environments blocks that host, and the DS-API field
+names are finalised against the `draft-sport` client library, so the fetch
+layer (`fetch_fixtures` / `fetch_fixture_players`) is the documented
+adapter to repoint at the DS-API; everything downstream (scoring, the
+player-id matcher, the upsert) is provider-independent and fully tested.
+
+Upserted rows use the squad-list player ids from players.json
+("eng_10" = <team code>_<squad number>) — the ids the app keys all rosters
+and scoring by — not the provider's numeric ids. Each provider player is
+mapped by team + name (exact, then surname, then fuzzy), with the squad
+number as a tie-breaker / fallback when the provider supplies one. Players
+that cannot be mapped are skipped and listed in the output so the admin can
+enter them manually; use --dry-run to verify the mapping without writing.
 
 Usage:
-    python daily_pull.py                       # yesterday's World Cup fixtures
-    python daily_pull.py --date 2026-06-15     # a specific date
-    python daily_pull.py --league 10           # friendlies
+    python daily_pull.py                       # yesterday's fixtures
+    python daily_pull.py --date 2026-07-04     # a specific date
     python daily_pull.py --dry-run             # fetch + calculate, no writes
     python daily_pull.py --mock --dry-run      # bundled sample data, no network
 
 Environment variables:
-    API_FOOTBALL_KEY      required for any non-mock run
+    DRAFT_SPORT_KEY       required for any non-mock run (stats provider key)
     SUPABASE_URL          required for writes (non-dry-run)
     SUPABASE_SERVICE_KEY  required for writes (non-dry-run)
     FANTASY_LEAGUE_ID     Supabase leagues.id uuid — or a comma-separated
@@ -41,45 +48,72 @@ from pathlib import Path
 
 import requests
 
-API_BASE = "https://v3.football.api-sports.io"
+# Repoint at the Draft Sport API (DS-API) base when wiring the live source.
+API_BASE = "https://api.draftsport.com"
 MOCK_DIR = Path(__file__).parent / "mock_data"
 PLAYERS_JSON = Path(__file__).parent / "players.json"
 
+# Rugby fantasy scoring — mirrors draftrugby.com's published system. The
+# JS copy in index.html (SCORING) must stay identical. Point values follow
+# Draft Rugby's documented model; confirm the exact numbers against
+# draftrugby.com once the host is reachable (TODO: verify vs source).
 SCORING = {
-    "goal": {"GK": 8, "DEF": 6, "MID": 5, "FWD": 4},
-    "assist": 3,
-    "clean_sheet": {"GK": 6, "DEF": 4, "MID": 1, "FWD": 0},
-    "yellow_card": -1,
-    "red_card": -3,
-    "save_per_2": 1,
-    # defensive actions = tackles + blocks + interceptions; GK excluded
-    # (they have the saves rule). +1 per 2 actions = 0.5/action, kept integer.
-    "def_action_per_2": 1,
-    "motm": 3,
-    "penalty_saved": 5,
-    "penalty_missed": -2,
+    "try": 10,
+    "try_assist": 4,
+    "conversion": 2,
+    "penalty_goal": 3,
+    "drop_goal": 3,
+    "tackle": 1,
+    "missed_tackle": -1,
+    "defender_beaten": 2,
+    "clean_break": 2,
+    "offload": 1,
+    "turnover_won": 5,
+    "turnover_conceded": -2,
+    "penalty_conceded": -2,
+    "yellow_card": -3,
+    "red_card": -8,
+    "motm": 5,
+    # Metres made: points per metre vary by position group (Draft Rugby
+    # rewards forwards more per metre than backs). Value = metres needed
+    # for one point (integer floor division, kept in sync with the JS).
+    "metres_div": {"FR": 4, "SR": 2, "BR": 8, "HB": 10, "CE": 10, "B3": 10},
+    # Performance bonuses (Draft Rugby thresholds), awarded once per match.
+    "bonus_metres_100": 3,
+    "bonus_tackles_15": 2,
+    "bonus_turnovers_3": 2,
 }
 
-# fixtures/players reports single letters; other endpoints use full words.
+# Position groups (rugby). The provider's position string maps to one of
+# the six XV groups: Front Row, Second Row, Back Row, Half Backs, Centres,
+# Back Three. Same six groups drive the draft quota in index.html.
 POSITION_MAP = {
-    "G": "GK", "D": "DEF", "M": "MID", "F": "FWD",
-    "Goalkeeper": "GK",
-    "Defender": "DEF",
-    "Midfielder": "MID",
-    "Attacker": "FWD",
+    # front row
+    "Prop": "FR", "Loosehead Prop": "FR", "Tighthead Prop": "FR",
+    "Hooker": "FR", "FR": "FR",
+    # second row
+    "Lock": "SR", "Second Row": "SR", "SR": "SR",
+    # back row
+    "Flanker": "BR", "Openside Flanker": "BR", "Blindside Flanker": "BR",
+    "Number 8": "BR", "No. 8": "BR", "No.8": "BR", "Back Row": "BR", "BR": "BR",
+    # half backs
+    "Scrum-half": "HB", "Scrum Half": "HB", "Fly-half": "HB",
+    "Fly Half": "HB", "Half Back": "HB", "HB": "HB",
+    # centres
+    "Centre": "CE", "Inside Centre": "CE", "Outside Centre": "CE", "CE": "CE",
+    # back three
+    "Wing": "B3", "Winger": "B3", "Fullback": "B3", "Full-back": "B3",
+    "Back Three": "B3", "B3": "B3",
 }
 
-# API-Football names some countries differently from the FIFA squad lists
-# (players.json). Match labels must use the FIFA names: the app's sub-
-# activation rule compares label team names against squad team names.
+# The provider may name some unions differently from the squad lists
+# (players.json). Match labels must use the squad-list names: the app's
+# sub-activation rule compares label team names against squad team names.
 # Same map lives in index.html (TEAM_NAME_FIX) — keep in sync.
 TEAM_NAME_FIX = {
-    "Bosnia & Herzegovina": "Bosnia And Herzegovina",
-    "Cape Verde Islands": "Cabo Verde",
-    "Czech Republic": "Czechia",
-    "Iran": "IR Iran",
-    "Ivory Coast": "Côte D'Ivoire",
-    "South Korea": "Korea Republic",
+    "USA": "United States",
+    "NZ": "New Zealand",
+    "RSA": "South Africa",
 }
 
 
@@ -104,11 +138,11 @@ def surname_key(name: str) -> str:
 
 
 class PlayerMatcher:
-    """Maps API-Football players to FIFA squad-list entries from players.json.
+    """Maps provider players to squad-list entries from players.json.
 
-    FIFA ids are <team code>_<shirt number> ("arg_10"), so the shirt number
-    can be recovered from the id itself. API names are often abbreviated
-    ("S. McTominay" for "Scott McTominay"), hence the surname/fuzzy tiers.
+    Squad ids are <team code>_<squad number> ("eng_10"), so the number can
+    be recovered from the id itself. Provider names are often abbreviated
+    ("M. Smith" for "Marcus Smith"), hence the surname/fuzzy tiers.
     """
 
     def __init__(self, players: list):
@@ -193,17 +227,17 @@ def require_env(name: str, why: str) -> str:
 
 
 def api_get(path: str, params: dict) -> dict:
-    key = require_env("API_FOOTBALL_KEY", "needed to call API-Football")
+    key = require_env("DRAFT_SPORT_KEY", "needed to call the rugby stats provider")
     resp = requests.get(
         f"{API_BASE}/{path}",
-        headers={"x-apisports-key": key},
+        headers={"Authorization": f"Bearer {key}"},
         params=params,
         timeout=30,
     )
     resp.raise_for_status()
     data = resp.json()
     if data.get("errors"):
-        sys.exit(f"API-Football error on /{path}: {data['errors']}")
+        sys.exit(f"Stats provider error on /{path}: {data['errors']}")
     return data
 
 
@@ -252,12 +286,21 @@ def to_float(value):
         return None
 
 
-# API-Football sometimes returns minutes:null for a just-finished fixture's
-# players even when they featured/scored. Treat a player as having featured if
-# they have minutes OR any recorded stat, so a scorer is never dropped for a
-# blank minute. True non-participants (no minutes, no stats) are still excluded.
-STAT_FIELDS = ("goals", "assists", "saves", "yellow_cards", "red_cards",
-               "penalty_saved", "penalty_missed", "defensive_actions")
+# A provider may return minutes:null for a just-finished fixture's players
+# even when they featured/scored. Treat a player as having featured if they
+# have minutes OR any recorded counting stat, so a scorer is never dropped
+# for a blank minute. True non-participants (no minutes, no stats) are
+# still excluded.
+STAT_FIELDS = (
+    "tries", "try_assists", "conversions", "penalty_goals", "drop_goals",
+    "tackles", "missed_tackles", "metres", "defenders_beaten", "clean_breaks",
+    "offloads", "turnovers_won", "turnovers_conceded", "penalties_conceded",
+    "yellow_cards", "red_cards",
+)
+
+# Counting stats carried straight through from the provider's per-player
+# stat block to the match_stats row (and on to calculate_points).
+COUNTING_STATS = STAT_FIELDS
 
 
 def featured(row: dict) -> bool:
@@ -265,11 +308,14 @@ def featured(row: dict) -> bool:
 
 
 def extract_player_rows(fixture: dict, teams_data: list, matcher: PlayerMatcher) -> list:
-    """Flatten API-Football fixture-player stats into per-player dicts.
+    """Flatten provider fixture-player stats into per-player dicts.
 
-    `player_id` is the FIFA squad-list id from players.json (the id the app
+    `player_id` is the squad-list id from players.json (the id the app
     scores by), or None when the player could not be mapped — those rows
-    must not be upserted.
+    must not be upserted. The provider's per-player entry carries a `games`
+    block (minutes/position/number/rating) and the rugby counting stats as
+    flat keys under `statistics[0]`; the DS-API adapter maps its fields onto
+    this shape (TODO: confirm DS-API field names against the source).
     """
     home = fixture["teams"]["home"]
     away = fixture["teams"]["away"]
@@ -279,64 +325,41 @@ def extract_player_rows(fixture: dict, teams_data: list, matcher: PlayerMatcher)
         f"({fixture['fixture']['date'][:10]})"
     )
 
-    conceded_by_team = {
-        home["id"]: to_int(goals.get("away")),
-        away["id"]: to_int(goals.get("home")),
-    }
-
     rows = []
     for team_block in teams_data:
-        team_id = team_block.get("team", {}).get("id")
         team_name = team_block.get("team", {}).get("name", "")
         for entry in team_block.get("players", []):
             player = entry.get("player", {})
             stats_list = entry.get("statistics", [])
             stats = stats_list[0] if stats_list else {}
             games = stats.get("games", {}) or {}
-            stat_goals = stats.get("goals", {}) or {}
-            cards = stats.get("cards", {}) or {}
-            penalty = stats.get("penalty", {}) or {}
-            tackles = stats.get("tackles", {}) or {}
 
             minutes = to_int(games.get("minutes"))
-            position = POSITION_MAP.get(games.get("position"), "MID")
-            team_conceded = conceded_by_team.get(team_id, 0)
+            position = POSITION_MAP.get(games.get("position"), "B3")
 
             api_name = player.get("name", "Unknown")
             shirt = to_int(games.get("number")) or None
             matched, match_note = matcher.match(api_name, team_name, shirt)
 
-            rows.append(
-                {
-                    "player_id": matched["player_id"] if matched else None,
-                    "player_name": matched["name"] if matched else api_name,
-                    "api_player_id": str(player.get("id")),
-                    "api_name": api_name,
-                    "team": fix_team_name(team_name),
-                    "match_note": match_note,
-                    # the app scores by the squad-list position, so prefer it
-                    "position": matched["position"] if matched else position,
-                    "match_label": match_label,
-                    "minutes": minutes,
-                    "rating": to_float(games.get("rating")),
-                    "goals": to_int(stat_goals.get("total")),
-                    "assists": to_int(stat_goals.get("assists")),
-                    "saves": to_int(stat_goals.get("saves")),
-                    "conceded": team_conceded,
-                    "home_score": to_int(goals.get("home")),
-                    "away_score": to_int(goals.get("away")),
-                    "yellow_cards": to_int(cards.get("yellow")),
-                    "red_cards": to_int(cards.get("red")),
-                    "penalty_saved": to_int(penalty.get("saved")),
-                    "penalty_missed": to_int(penalty.get("missed")),
-                    "defensive_actions": (
-                        to_int(tackles.get("total"))
-                        + to_int(tackles.get("blocks"))
-                        + to_int(tackles.get("interceptions"))
-                    ),
-                    "motm": False,  # assigned per fixture below
-                }
-            )
+            row = {
+                "player_id": matched["player_id"] if matched else None,
+                "player_name": matched["name"] if matched else api_name,
+                "api_player_id": str(player.get("id")),
+                "api_name": api_name,
+                "team": fix_team_name(team_name),
+                "match_note": match_note,
+                # the app scores by the squad-list position, so prefer it
+                "position": matched["position"] if matched else position,
+                "match_label": match_label,
+                "minutes": minutes,
+                "rating": to_float(games.get("rating")),
+                "home_score": to_int(goals.get("home")),
+                "away_score": to_int(goals.get("away")),
+                "motm": False,  # assigned per fixture below
+            }
+            for key in COUNTING_STATS:
+                row[key] = to_int(stats.get(key))
+            rows.append(row)
 
     assign_motm(rows)
     return rows
@@ -353,25 +376,41 @@ def assign_motm(rows: list) -> None:
 
 
 def calculate_points(row: dict) -> int:
+    """Rugby fantasy points for one match row. Mirrors scoringRow() in
+    index.html — keep the two in exact step (integer floor division)."""
     if row["minutes"] == 0:
         return 0
 
     pos = row["position"]
+    g = lambda k: to_int(row.get(k))
     points = 0
-    points += row["goals"] * SCORING["goal"][pos]
-    points += row["assists"] * SCORING["assist"]
-    if row["minutes"] >= 60 and row["conceded"] == 0:
-        points += SCORING["clean_sheet"][pos]
-    points += row["yellow_cards"] * SCORING["yellow_card"]
-    points += row["red_cards"] * SCORING["red_card"]
-    if pos == "GK":
-        points += (row["saves"] // 2) * SCORING["save_per_2"]
-    else:
-        points += (row.get("defensive_actions", 0) // 2) * SCORING["def_action_per_2"]
+    points += g("tries") * SCORING["try"]
+    points += g("try_assists") * SCORING["try_assist"]
+    points += g("conversions") * SCORING["conversion"]
+    points += g("penalty_goals") * SCORING["penalty_goal"]
+    points += g("drop_goals") * SCORING["drop_goal"]
+    points += g("tackles") * SCORING["tackle"]
+    points += g("missed_tackles") * SCORING["missed_tackle"]
+    points += g("defenders_beaten") * SCORING["defender_beaten"]
+    points += g("clean_breaks") * SCORING["clean_break"]
+    points += g("offloads") * SCORING["offload"]
+    points += g("turnovers_won") * SCORING["turnover_won"]
+    points += g("turnovers_conceded") * SCORING["turnover_conceded"]
+    points += g("penalties_conceded") * SCORING["penalty_conceded"]
+    points += g("yellow_cards") * SCORING["yellow_card"]
+    points += g("red_cards") * SCORING["red_card"]
+    # metres made, points per metre by position group
+    div = SCORING["metres_div"].get(pos, 10)
+    points += g("metres") // div
     if row["motm"]:
         points += SCORING["motm"]
-    points += row["penalty_saved"] * SCORING["penalty_saved"]
-    points += row["penalty_missed"] * SCORING["penalty_missed"]
+    # performance bonuses (Draft Rugby thresholds)
+    if g("metres") >= 100:
+        points += SCORING["bonus_metres_100"]
+    if g("tackles") >= 15:
+        points += SCORING["bonus_tackles_15"]
+    if g("turnovers_won") >= 3:
+        points += SCORING["bonus_turnovers_3"]
     return points
 
 
@@ -386,7 +425,7 @@ def parse_league_ids(value) -> list:
 def build_stats_payload(rows: list, league_ids) -> list:
     """One match_stats upsert entry per (row, league). The API fetching
     is league-independent — fan-out across leagues only multiplies the
-    free Supabase writes, never the API-Football calls."""
+    free Supabase writes, never the provider API calls."""
     if isinstance(league_ids, str):
         league_ids = parse_league_ids(league_ids)
     return [
@@ -395,19 +434,11 @@ def build_stats_payload(rows: list, league_ids) -> list:
             "player_id": row["player_id"],
             "match_label": row["match_label"],
             "appeared": True,
-            "goals": row["goals"],
-            "assists": row["assists"],
-            "clean_sheet": row["minutes"] >= 60 and row["conceded"] == 0,
-            "yellow_cards": row["yellow_cards"],
-            "red_cards": row["red_cards"],
-            "saves": row["saves"],
             "motm": row["motm"],
-            "penalty_saved": row["penalty_saved"],
-            "penalty_missed": row["penalty_missed"],
-            "defensive_actions": row["defensive_actions"],
             "home_score": row.get("home_score"),
             "away_score": row.get("away_score"),
             "minutes": row.get("minutes"),
+            **{key: to_int(row.get(key)) for key in COUNTING_STATS},
         }
         for league_id in league_ids
         for row in rows
@@ -419,7 +450,7 @@ def build_stats_payload(rows: list, league_ids) -> list:
 # whole write with PGRST204; we drop the offending column and retry so an
 # unapplied migration degrades gracefully (these are display-only — they
 # never affect scoring) instead of silently killing every pull.
-OPTIONAL_COLUMNS = ("home_score", "away_score", "defensive_actions", "minutes")
+OPTIONAL_COLUMNS = ("home_score", "away_score", "minutes")
 
 MISSING_COLUMN_RE = re.compile(r"Could not find the '(\w+)' column")
 
@@ -489,7 +520,7 @@ def main() -> None:
         "--league",
         type=int,
         default=1,
-        help="API-Football league id (default 1 = World Cup; 10 = friendlies)",
+        help="Stats-provider competition id (default 1 = Nations Championship)",
     )
     parser.add_argument("--season", type=int, default=2026)
     parser.add_argument(
@@ -537,17 +568,15 @@ def main() -> None:
         fixture_id = fixture["fixture"]["id"]
         teams_data = fetch_fixture_players(fixture_id, args.mock)
         rows_f = extract_player_rows(fixture, teams_data, matcher)
-        # Diagnostic: does the player-stats endpoint actually carry goals? If the
-        # scoreline shows goals but the summed player goals are 0, API-Football
-        # isn't populating goals in fixtures/players for this match (they'd be in
-        # fixtures/events instead) — which looks like "no goal points" in the app.
-        g = fixture.get("goals", {})
-        scoreline = to_int(g.get("home")) + to_int(g.get("away"))
-        captured = sum(r["goals"] for r in rows_f)
+        # Diagnostic: does the player-stats endpoint actually carry tries? If
+        # the scoreline implies tries but the summed player tries are 0, the
+        # provider isn't populating tries in the per-player feed for this
+        # match — which looks like "no try points" in the app.
+        captured = sum(r["tries"] for r in rows_f)
         label = rows_f[0]["match_label"] if rows_f else f"fixture {fixture_id}"
-        scorers = [f'{r["player_name"]}={r["goals"]}(min:{r["minutes"]},id:{r["player_id"]})'
-                   for r in rows_f if r["goals"]]
-        print(f"  {label}: scoreline goals={scoreline}, player-stat goals={captured}"
+        scorers = [f'{r["player_name"]}={r["tries"]}(min:{r["minutes"]},id:{r["player_id"]})'
+                   for r in rows_f if r["tries"]]
+        print(f"  {label}: player-stat tries={captured}"
               f"{' | ' + ', '.join(scorers) if scorers else ''}")
         all_rows.extend(rows_f)
 
@@ -556,15 +585,15 @@ def main() -> None:
     unmatched = [r for r in appeared if not r["player_id"]]
     for row in matched:
         row["points"] = calculate_points(row)
-    unmatched_scorers = [r for r in all_rows if not r["player_id"] and r["goals"]]
+    unmatched_scorers = [r for r in all_rows if not r["player_id"] and r["tries"]]
     if unmatched_scorers:
-        print("UNMATCHED goalscorers (got a goal but no FIFA id):")
+        print("UNMATCHED try-scorers (scored but no squad id):")
         for r in unmatched_scorers:
-            print(f"  - {r['api_name']} ({r['team']}) goals={r['goals']}: {r['match_note']}")
+            print(f"  - {r['api_name']} ({r['team']}) tries={r['tries']}: {r['match_note']}")
 
     print(
         f"{len(appeared)} player(s) appeared across all fixtures; "
-        f"{len(matched)} mapped to FIFA squad-list ids."
+        f"{len(matched)} mapped to squad-list ids."
     )
 
     loose = [

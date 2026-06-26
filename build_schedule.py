@@ -67,7 +67,7 @@ jobs:
 
       - name: Watch / pull live stats
         env:
-          API_FOOTBALL_KEY: ${{{{ secrets.API_FOOTBALL_KEY }}}}
+          DRAFT_SPORT_KEY: ${{{{ secrets.DRAFT_SPORT_KEY }}}}
           SUPABASE_URL: ${{{{ secrets.SUPABASE_URL }}}}
           SUPABASE_SERVICE_KEY: ${{{{ secrets.SUPABASE_SERVICE_KEY }}}}
           FANTASY_LEAGUE_ID: ${{{{ secrets.FANTASY_LEAGUE_ID }}}}

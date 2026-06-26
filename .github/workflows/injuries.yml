@@ -31,7 +31,7 @@ jobs:
 
       - name: Build injuries.json
         env:
-          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          DRAFT_SPORT_KEY: ${{ secrets.DRAFT_SPORT_KEY }}
         run: python build_injuries.py
 
       - name: Commit if changed

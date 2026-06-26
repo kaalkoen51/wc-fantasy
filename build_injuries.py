@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """Build injuries.json — availability hints shown as badges in the app.
 
-Fetches API-Football's injury reports for the tournament, maps each player
-to their FIFA squad-list id via the same matcher daily_pull.py uses, and
+Fetches the stats provider's injury reports for the tournament, maps each
+player to their squad-list id via the same matcher daily_pull.py uses, and
 writes a small JSON the app loads optionally (like fixtures.json):
 
-    [{"player_id": "mex_9", "status": "out", "reason": "Knee Injury",
-      "fixture_date": "2026-06-18"}, ...]
+    [{"player_id": "eng_9", "status": "out", "reason": "Knee Injury",
+      "fixture_date": "2026-07-04"}, ...]
 
 "out" = reported missing a fixture; "doubtful" = questionable. The app
 auto-expires entries whose fixture_date has passed, so a stale file fails
 soft (no badges) and never affects scoring or league data.
 
-Run by .github/workflows/injuries.yml daily; needs API_FOOTBALL_KEY.
+Run by .github/workflows/injuries.yml daily; needs DRAFT_SPORT_KEY.
+TODO: confirm the DS-API injury endpoint/fields against the source.
 """
 
 import argparse

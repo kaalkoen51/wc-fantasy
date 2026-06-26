@@ -1,7 +1,7 @@
 name: Build photos
 
 # Manual one-shot: regenerates photos.json (player faces / team crests)
-# and commits it. Run it once, and again after FIFA squad changes.
+# and commits it. Run it once, and again after squad changes.
 on:
   workflow_dispatch:
 
@@ -24,7 +24,7 @@ jobs:
 
       - name: Build photos.json
         env:
-          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          DRAFT_SPORT_KEY: ${{ secrets.DRAFT_SPORT_KEY }}
         run: python build_photos.py
 
       - name: Commit if changed
