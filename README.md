@@ -21,6 +21,7 @@ match stats from API-Football every morning and scores everyone's players.
 | `build_schedule.py` | Regenerates `live-pull.yml` cron triggers from `fixtures.json` |
 | `build_injuries.py` | Generates `injuries.json` (🤕/⚠️ availability badges) |
 | `build_photos.py` | Generates `photos.json` (player faces & team crests) |
+| `.github/workflows/fixtures.yml` | Rebuilds + commits `fixtures.json` daily at 06:15 SAST (keeps knockout pairings current) |
 | `.github/workflows/injuries.yml` | Rebuilds + commits `injuries.json` daily at 06:30 SAST |
 | `.github/workflows/photos.yml` | Manual: rebuilds + commits `photos.json` (run after squad changes) |
 | `backtest.py` | Scores a past World Cup to sanity-check position balance (Actions → "Scoring backtest") |

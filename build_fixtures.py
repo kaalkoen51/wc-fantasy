@@ -16,7 +16,7 @@ from pathlib import Path
 
 import requests
 
-from daily_pull import fix_team_name
+from daily_pull import fix_team_name, load_players
 
 API_BASE = "https://v3.football.api-sports.io"
 
@@ -39,23 +39,34 @@ def main() -> None:
     if data.get("errors"):
         sys.exit(f"API-Football error: {data['errors']}")
 
-    fixtures = [
-        {
-            "home": fix_team_name(f["teams"]["home"]["name"]),
-            "away": fix_team_name(f["teams"]["away"]["name"]),
+    # Knockout fixtures exist before their teams are decided, with placeholder
+    # names ("Winner Group A", null, etc.) that match no real squad. Keep only
+    # fixtures between two actual tournament teams; undecided rounds drop out and
+    # reappear automatically once the pairing is set and the feed rebuilds.
+    valid = {p["team"] for p in load_players()}
+    fixtures = []
+    dropped = 0
+    for f in data.get("response", []):
+        home = fix_team_name((f["teams"]["home"] or {}).get("name") or "")
+        away = fix_team_name((f["teams"]["away"] or {}).get("name") or "")
+        if home not in valid or away not in valid:
+            dropped += 1
+            continue
+        fixtures.append({
+            "home": home,
+            "away": away,
             "kickoff_utc": f["fixture"]["date"],
             "date": f["fixture"]["date"][:10],
             "status": f["fixture"]["status"]["short"],
-        }
-        for f in data.get("response", [])
-    ]
+        })
     fixtures.sort(key=lambda f: f["kickoff_utc"])
 
     out = Path(__file__).parent / "fixtures.json"
     out.write_text(
         json.dumps(fixtures, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    print(f"Wrote {len(fixtures)} fixtures to {out}")
+    print(f"Wrote {len(fixtures)} fixtures to {out} "
+          f"({dropped} skipped — undecided pairings / non-tournament teams).")
 
 
 if __name__ == "__main__":
