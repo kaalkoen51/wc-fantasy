@@ -1,0 +1,43 @@
+name: Fixtures feed
+
+# Rebuilds fixtures.json daily and commits it when it changed, so the app's
+# next-fixture info stays correct as the schedule fills in (knockout pairings
+# are confirmed round by round). Its own workflow — it never touches Supabase
+# or the stats pulls; a failure here just means stale fixture hints.
+on:
+  schedule:
+    - cron: "15 4 * * *"   # 06:15 SAST, just after the daily stats pull
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fixtures
+  cancel-in-progress: false
+
+jobs:
+  fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build fixtures.json
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+        run: python build_fixtures.py
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add fixtures.json
+          git diff --cached --quiet || { git commit -m "fixtures: daily update"; git pull --rebase origin master; git push; }
