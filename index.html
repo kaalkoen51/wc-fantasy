@@ -564,7 +564,16 @@ function toast(msg) {
   toastTimer = setTimeout(() => t.classList.add("hidden"), 3500);
 }
 
-const getConfig  = () => JSON.parse(localStorage.getItem("wcf_config") || "null");
+// Baked-in default connection so managers don't enter it on every device.
+// The anon key is public by design (it only allows what the open RLS
+// policies allow); never put the service_role key here. A manager can still
+// override this via "change Supabase connection" on the home screen.
+const DEFAULT_CONFIG = {
+  url: "https://qwgadcviksybfliosfet.supabase.co",
+  key: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF3Z2FkY3Zpa3N5YmZsaW9zZmV0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI4MzIyNTQsImV4cCI6MjA5ODQwODI1NH0.TQ0ThU2GmoggIBiApD3Rn4SAnZX7sYzhF3W6wEjdDhA",
+};
+const getConfig  = () => JSON.parse(localStorage.getItem("wcf_config") || "null")
+  || (DEFAULT_CONFIG.url ? DEFAULT_CONFIG : null);
 const setConfig  = (c) => localStorage.setItem("wcf_config", JSON.stringify(c));
 const getSession = () => JSON.parse(localStorage.getItem("wcf_session") || "null");
 const setSession = (s) => s ? localStorage.setItem("wcf_session", JSON.stringify(s))
