@@ -515,21 +515,21 @@
     "away": "Japan",
     "kickoff_utc": "2026-06-29T17:00:00+00:00",
     "date": "2026-06-29",
-    "status": "NS"
+    "status": "FT"
   },
   {
     "home": "Germany",
     "away": "Paraguay",
     "kickoff_utc": "2026-06-29T20:30:00+00:00",
     "date": "2026-06-29",
-    "status": "NS"
+    "status": "PEN"
   },
   {
     "home": "Netherlands",
     "away": "Morocco",
     "kickoff_utc": "2026-06-30T01:00:00+00:00",
     "date": "2026-06-30",
-    "status": "NS"
+    "status": "PEN"
   },
   {
     "home": "Côte D'Ivoire",
@@ -612,6 +612,13 @@
     "home": "Colombia",
     "away": "Ghana",
     "kickoff_utc": "2026-07-04T01:30:00+00:00",
+    "date": "2026-07-04",
+    "status": "NS"
+  },
+  {
+    "home": "Canada",
+    "away": "Morocco",
+    "kickoff_utc": "2026-07-04T17:00:00+00:00",
     "date": "2026-07-04",
     "status": "NS"
   }
