@@ -130,10 +130,16 @@ by log points**:
   (default **450**, win *or* lose), and
 - **+1 losing bonus** for losing within the margin (default **50**).
 
-The Table tab shows the log (W-D-L, points-for, bonus, log points) and the
-current round's matchups with **live scores**; the Home tab shows your
-current opponent and who you face next. Cumulative fantasy points remain the
-"points for" (PF) column. (Can be turned off in Admin to rank by PF instead.)
+The Table tab shows the log (**P** games played, W-D-L, points-for, bonus, log
+points) and the current round's matchups with **live scores**; the Home tab
+shows your current opponent and who you face next. Cumulative fantasy points
+remain the "points for" (PF) column. (Can be turned off in Admin to rank by PF
+instead.)
+
+**Odd number of managers?** The round-robin adds a bye each round, so one
+manager sits out per round (rotating fairly — everyone byes once per cycle). A
+bye scores no log points and isn't a played game; the table shows **P** (played)
+and a **"N byes"** note so an uneven `P` is obvious until the byes even out.
 
 ### Trade-window limits & waivers (waiver mode on by default)
 In **Admin → Trading window**, blank/0 = unlimited (or switch off the

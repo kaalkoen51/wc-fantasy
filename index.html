@@ -1908,10 +1908,15 @@ function roundRobin(ids) {
 function h2hTable(mgrIds, scoresByMgr, fixtures, cfg) {
   const t = {};
   for (const id of mgrIds)
-    t[id] = { mgrId: id, P: 0, W: 0, D: 0, L: 0, PF: 0, PA: 0, bonus: 0, logPts: 0 };
+    t[id] = { mgrId: id, P: 0, W: 0, D: 0, L: 0, PF: 0, PA: 0, bonus: 0, logPts: 0, byes: 0 };
   for (const fx of fixtures) {
     const { round, home: a, away: b } = fx;
-    if (!a || !b || !t[a] || !t[b]) continue;            // bye / unknown
+    if ((a && !b) || (b && !a)) {                        // bye: one side only
+      const solo = a || b;                               // count it once the round is reached
+      if (t[solo] && scoresByMgr[solo]?.[round - 1] !== undefined) t[solo].byes++;
+      continue;
+    }
+    if (!a || !b || !t[a] || !t[b]) continue;            // unknown / empty
     const sa = scoresByMgr[a]?.[round - 1], sb = scoresByMgr[b]?.[round - 1];
     if (sa === undefined || sb === undefined) continue;  // round not played yet
     const res = h2hResult(sa, sb, cfg);
@@ -2013,7 +2018,9 @@ function h2hFixturesHtml(round, scoresByMgr) {
     <p class="text-[10px] text-slate-500 pt-1">Round-robin fixtures — everyone plays everyone. Your
       score each round is your lineup's fantasy points. Win ${cfg.win} / draw ${cfg.draw} / loss ${cfg.loss}
       log points, +1 for scoring ${cfg.score_bonus}+, +1 for losing within ${cfg.losing_margin}.
-      Table ranks by <b>log points (Pts)</b>; PF = your fantasy points.</p></div>`;
+      Table ranks by <b>log points (Pts)</b>; PF = your fantasy points. <b>P</b> = games played;
+      with an odd number of managers one sits out each round (a <b>bye</b>, no points), so P can
+      differ by one until byes even out.</p></div>`;
 }
 
 // Standings order (manager ids, best first) — H2H log when enabled, else
@@ -2562,7 +2569,7 @@ function renderBoard() {
     const ytp = yetByMgr[s.manager.id];
     const r = h2hByMgr[s.manager.id];
     const subLine = h2hOn && r
-      ? `<span class="block text-[10px] font-normal text-slate-400">${r.W}W-${r.D}D-${r.L}L · ${s.total} PF${r.bonus ? ` · ${r.bonus} bonus` : ""}</span>`
+      ? `<span class="block text-[10px] font-normal text-slate-400">${r.P}P · ${r.W}W-${r.D}D-${r.L}L · ${s.total} PF${r.bonus ? ` · ${r.bonus} bonus` : ""}${r.byes ? ` · ${r.byes} bye${r.byes === 1 ? "" : "s"}` : ""}</span>`
       : (ytp?.hasSnapshot && ytp.total > 0
         ? `<span class="block text-[10px] font-normal text-slate-400">${ytp.yet}/${ytp.total} starters yet to play</span>`
         : "");

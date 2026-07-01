@@ -136,6 +136,20 @@ const tbl = h2hTable(["a", "b"], { a: [460, 100], b: [100, 200] }, h2hFx, H);
 check("leader by log points", tbl[0].mgrId, "a");
 check("leader logPts (win+bonus, then loss)", tbl[0].logPts, 5);   // R1 win+score bonus, R2 loss
 check("leader record 1W 1L", [tbl[0].W, tbl[0].L], [1, 1]);
+check("no byes when both play", [tbl[0].P, tbl[0].byes], [2, 0]);
+
+// Odd manager count -> one bye per round. R1: a plays b, c has a bye. R2: a
+// plays c, b has a bye. Each played manager counts P; the bye counts once the
+// round is reached (a score exists), and never awards points.
+const oddFx = [
+  { round: 1, home: "a", away: "b" }, { round: 1, home: "c", away: null },
+  { round: 2, home: "a", away: "c" }, { round: 2, home: "b", away: null },
+];
+const oddTbl = h2hTable(["a", "b", "c"], { a: [100, 100], b: [50, 50], c: [70, 40] }, oddFx, H);
+const byId = (id) => oddTbl.find((r) => r.mgrId === id);
+check("bye manager has fewer played games", [byId("c").P, byId("a").P], [1, 2]);
+check("bye is counted and scoreless", [byId("c").byes, byId("b").byes], [1, 1]);
+check("bye awards no log points", byId("c").logPts, byId("c").W * H.win);
 
 /* ---------- free-agent waivers (ordered preference lists) ---------- */
 // claim(id, mgr, in, pick, out, rank, t): trade OUT `out` (held by `pick`) for
