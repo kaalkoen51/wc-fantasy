@@ -536,21 +536,21 @@
     "away": "Norway",
     "kickoff_utc": "2026-06-30T17:00:00+00:00",
     "date": "2026-06-30",
-    "status": "NS"
+    "status": "FT"
   },
   {
     "home": "France",
     "away": "Sweden",
     "kickoff_utc": "2026-06-30T21:00:00+00:00",
     "date": "2026-06-30",
-    "status": "NS"
+    "status": "FT"
   },
   {
     "home": "Mexico",
     "away": "Ecuador",
     "kickoff_utc": "2026-07-01T01:00:00+00:00",
     "date": "2026-07-01",
-    "status": "NS"
+    "status": "FT"
   },
   {
     "home": "England",
@@ -620,6 +620,20 @@
     "away": "Morocco",
     "kickoff_utc": "2026-07-04T17:00:00+00:00",
     "date": "2026-07-04",
+    "status": "NS"
+  },
+  {
+    "home": "Paraguay",
+    "away": "France",
+    "kickoff_utc": "2026-07-04T21:00:00+00:00",
+    "date": "2026-07-04",
+    "status": "NS"
+  },
+  {
+    "home": "Brazil",
+    "away": "Norway",
+    "kickoff_utc": "2026-07-05T20:00:00+00:00",
+    "date": "2026-07-05",
     "status": "NS"
   }
 ]
