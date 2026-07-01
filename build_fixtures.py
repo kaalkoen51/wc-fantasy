@@ -32,53 +32,56 @@ API_BASE = "https://api.draftsport.com"
 EUROPE = [name for name, _code, pool in TEAMS if pool == "Europe"]
 REST = [name for name, _code, pool in TEAMS if pool == "Rest of World"]
 
-# Confirmed 2026 Nations Championship schedule — (date, home, away) per round.
-# July: Rest-of-World host; November: Europe host. Home team listed first.
+# Confirmed 2026 Nations Championship schedule — (kickoff_utc, home, away) per
+# round, with precise per-match kickoff times. July window is BST (UTC+1) at
+# source, November is GMT (UTC+0); both are stored here already converted to
+# UTC. July: Rest-of-World host; November: Europe host (home listed first).
 # Finals weekend (27–29 Nov, Allianz Stadium, London) is ranked by pool
 # standings, so team pairings aren't known yet and are omitted here.
+# Source: union/broadcaster announcements collated by ruck.co.uk & Yahoo Sport.
 REAL_SCHEDULE = [
-    # Round 1 — 4 July
-    ("2026-07-04", "New Zealand", "France"),
-    ("2026-07-04", "Japan", "Italy"),
-    ("2026-07-04", "Australia", "Ireland"),
-    ("2026-07-04", "Fiji", "Wales"),
-    ("2026-07-04", "South Africa", "England"),
-    ("2026-07-04", "Argentina", "Scotland"),
-    # Round 2 — 11 July
-    ("2026-07-11", "New Zealand", "Italy"),
-    ("2026-07-11", "Australia", "France"),
-    ("2026-07-11", "Japan", "Ireland"),
-    ("2026-07-11", "Fiji", "England"),
-    ("2026-07-11", "South Africa", "Scotland"),
-    ("2026-07-11", "Argentina", "Wales"),
-    # Round 3 — 18 July
-    ("2026-07-18", "New Zealand", "Ireland"),
-    ("2026-07-18", "Japan", "France"),
-    ("2026-07-18", "Australia", "Italy"),
-    ("2026-07-18", "Fiji", "Scotland"),
-    ("2026-07-18", "South Africa", "Wales"),
-    ("2026-07-18", "Argentina", "England"),
-    # Round 4 — 7 November (England v Australia on Sun 8 Nov)
-    ("2026-11-07", "Italy", "South Africa"),
-    ("2026-11-07", "Scotland", "New Zealand"),
-    ("2026-11-07", "Wales", "Japan"),
-    ("2026-11-07", "France", "Fiji"),
-    ("2026-11-07", "Ireland", "Argentina"),
-    ("2026-11-08", "England", "Australia"),
-    # Round 5 — 14 November (Scotland v Australia on Sun 15 Nov)
-    ("2026-11-14", "Italy", "Argentina"),
-    ("2026-11-14", "Wales", "New Zealand"),
-    ("2026-11-14", "England", "Japan"),
-    ("2026-11-14", "Ireland", "Fiji"),
-    ("2026-11-14", "France", "South Africa"),
-    ("2026-11-15", "Scotland", "Australia"),
-    # Round 6 — 21 November
-    ("2026-11-21", "England", "New Zealand"),
-    ("2026-11-21", "Scotland", "Japan"),
-    ("2026-11-21", "Ireland", "South Africa"),
-    ("2026-11-21", "Italy", "Fiji"),
-    ("2026-11-21", "Wales", "Australia"),
-    ("2026-11-21", "France", "Argentina"),
+    # Round 1 — Sat 4 July
+    ("2026-07-04T07:10:00+00:00", "New Zealand", "France"),
+    ("2026-07-04T08:40:00+00:00", "Japan", "Italy"),
+    ("2026-07-04T10:10:00+00:00", "Australia", "Ireland"),
+    ("2026-07-04T13:10:00+00:00", "Fiji", "Wales"),
+    ("2026-07-04T15:40:00+00:00", "South Africa", "England"),
+    ("2026-07-04T19:10:00+00:00", "Argentina", "Scotland"),
+    # Round 2 — Sat 11 July
+    ("2026-07-11T05:10:00+00:00", "New Zealand", "Italy"),
+    ("2026-07-11T07:40:00+00:00", "Australia", "France"),
+    ("2026-07-11T10:00:00+00:00", "Japan", "Ireland"),
+    ("2026-07-11T13:10:00+00:00", "Fiji", "England"),
+    ("2026-07-11T15:40:00+00:00", "South Africa", "Scotland"),
+    ("2026-07-11T19:00:00+00:00", "Argentina", "Wales"),
+    # Round 3 — Sat 18 July
+    ("2026-07-18T07:10:00+00:00", "New Zealand", "Ireland"),
+    ("2026-07-18T07:10:00+00:00", "Japan", "France"),
+    ("2026-07-18T10:10:00+00:00", "Australia", "Italy"),
+    ("2026-07-18T13:10:00+00:00", "Fiji", "Scotland"),
+    ("2026-07-18T15:40:00+00:00", "South Africa", "Wales"),
+    ("2026-07-18T19:00:00+00:00", "Argentina", "England"),
+    # Round 4 — Fri 6 to Sun 8 November
+    ("2026-11-06T22:10:00+00:00", "Ireland", "Argentina"),
+    ("2026-11-07T13:40:00+00:00", "Italy", "South Africa"),
+    ("2026-11-07T16:10:00+00:00", "Scotland", "New Zealand"),
+    ("2026-11-07T18:40:00+00:00", "Wales", "Japan"),
+    ("2026-11-07T22:10:00+00:00", "France", "Fiji"),
+    ("2026-11-08T17:10:00+00:00", "England", "Australia"),
+    # Round 5 — Fri 13 to Sun 15 November
+    ("2026-11-13T22:10:00+00:00", "France", "South Africa"),
+    ("2026-11-14T13:40:00+00:00", "Italy", "Argentina"),
+    ("2026-11-14T16:10:00+00:00", "Wales", "New Zealand"),
+    ("2026-11-14T18:40:00+00:00", "England", "Japan"),
+    ("2026-11-14T22:10:00+00:00", "Ireland", "Fiji"),
+    ("2026-11-15T17:10:00+00:00", "Scotland", "Australia"),
+    # Round 6 — Sat 21 November
+    ("2026-11-21T16:10:00+00:00", "England", "New Zealand"),
+    ("2026-11-21T16:10:00+00:00", "Scotland", "Japan"),
+    ("2026-11-21T18:40:00+00:00", "Ireland", "South Africa"),
+    ("2026-11-21T18:40:00+00:00", "Italy", "Fiji"),
+    ("2026-11-21T21:10:00+00:00", "Wales", "Australia"),
+    ("2026-11-21T21:10:00+00:00", "France", "Argentina"),
 ]
 
 # Representative kickoff dates for the synthetic --placeholder schedule only.
@@ -90,14 +93,14 @@ FINAL_DATE = "2026-11-28"
 
 
 def build_real() -> list:
-    """The confirmed 2026 fixture list."""
+    """The confirmed 2026 fixture list with precise per-match kickoffs."""
     fixtures = []
-    for date, home, away in REAL_SCHEDULE:
+    for kickoff_utc, home, away in REAL_SCHEDULE:
         fixtures.append({
             "home": home,
             "away": away,
-            "kickoff_utc": f"{date}T14:00:00+00:00",
-            "date": date,
+            "kickoff_utc": kickoff_utc,
+            "date": kickoff_utc[:10],
             "status": "NS",
         })
     fixtures.sort(key=lambda f: f["kickoff_utc"])

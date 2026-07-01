@@ -2,252 +2,252 @@
   {
     "home": "New Zealand",
     "away": "France",
-    "kickoff_utc": "2026-07-04T14:00:00+00:00",
+    "kickoff_utc": "2026-07-04T07:10:00+00:00",
     "date": "2026-07-04",
     "status": "NS"
   },
   {
     "home": "Japan",
     "away": "Italy",
-    "kickoff_utc": "2026-07-04T14:00:00+00:00",
+    "kickoff_utc": "2026-07-04T08:40:00+00:00",
     "date": "2026-07-04",
     "status": "NS"
   },
   {
     "home": "Australia",
     "away": "Ireland",
-    "kickoff_utc": "2026-07-04T14:00:00+00:00",
+    "kickoff_utc": "2026-07-04T10:10:00+00:00",
     "date": "2026-07-04",
     "status": "NS"
   },
   {
     "home": "Fiji",
     "away": "Wales",
-    "kickoff_utc": "2026-07-04T14:00:00+00:00",
+    "kickoff_utc": "2026-07-04T13:10:00+00:00",
     "date": "2026-07-04",
     "status": "NS"
   },
   {
     "home": "South Africa",
     "away": "England",
-    "kickoff_utc": "2026-07-04T14:00:00+00:00",
+    "kickoff_utc": "2026-07-04T15:40:00+00:00",
     "date": "2026-07-04",
     "status": "NS"
   },
   {
     "home": "Argentina",
     "away": "Scotland",
-    "kickoff_utc": "2026-07-04T14:00:00+00:00",
+    "kickoff_utc": "2026-07-04T19:10:00+00:00",
     "date": "2026-07-04",
     "status": "NS"
   },
   {
     "home": "New Zealand",
     "away": "Italy",
-    "kickoff_utc": "2026-07-11T14:00:00+00:00",
+    "kickoff_utc": "2026-07-11T05:10:00+00:00",
     "date": "2026-07-11",
     "status": "NS"
   },
   {
     "home": "Australia",
     "away": "France",
-    "kickoff_utc": "2026-07-11T14:00:00+00:00",
+    "kickoff_utc": "2026-07-11T07:40:00+00:00",
     "date": "2026-07-11",
     "status": "NS"
   },
   {
     "home": "Japan",
     "away": "Ireland",
-    "kickoff_utc": "2026-07-11T14:00:00+00:00",
+    "kickoff_utc": "2026-07-11T10:00:00+00:00",
     "date": "2026-07-11",
     "status": "NS"
   },
   {
     "home": "Fiji",
     "away": "England",
-    "kickoff_utc": "2026-07-11T14:00:00+00:00",
+    "kickoff_utc": "2026-07-11T13:10:00+00:00",
     "date": "2026-07-11",
     "status": "NS"
   },
   {
     "home": "South Africa",
     "away": "Scotland",
-    "kickoff_utc": "2026-07-11T14:00:00+00:00",
+    "kickoff_utc": "2026-07-11T15:40:00+00:00",
     "date": "2026-07-11",
     "status": "NS"
   },
   {
     "home": "Argentina",
     "away": "Wales",
-    "kickoff_utc": "2026-07-11T14:00:00+00:00",
+    "kickoff_utc": "2026-07-11T19:00:00+00:00",
     "date": "2026-07-11",
     "status": "NS"
   },
   {
     "home": "New Zealand",
     "away": "Ireland",
-    "kickoff_utc": "2026-07-18T14:00:00+00:00",
+    "kickoff_utc": "2026-07-18T07:10:00+00:00",
     "date": "2026-07-18",
     "status": "NS"
   },
   {
     "home": "Japan",
     "away": "France",
-    "kickoff_utc": "2026-07-18T14:00:00+00:00",
+    "kickoff_utc": "2026-07-18T07:10:00+00:00",
     "date": "2026-07-18",
     "status": "NS"
   },
   {
     "home": "Australia",
     "away": "Italy",
-    "kickoff_utc": "2026-07-18T14:00:00+00:00",
+    "kickoff_utc": "2026-07-18T10:10:00+00:00",
     "date": "2026-07-18",
     "status": "NS"
   },
   {
     "home": "Fiji",
     "away": "Scotland",
-    "kickoff_utc": "2026-07-18T14:00:00+00:00",
+    "kickoff_utc": "2026-07-18T13:10:00+00:00",
     "date": "2026-07-18",
     "status": "NS"
   },
   {
     "home": "South Africa",
     "away": "Wales",
-    "kickoff_utc": "2026-07-18T14:00:00+00:00",
+    "kickoff_utc": "2026-07-18T15:40:00+00:00",
     "date": "2026-07-18",
     "status": "NS"
   },
   {
     "home": "Argentina",
     "away": "England",
-    "kickoff_utc": "2026-07-18T14:00:00+00:00",
+    "kickoff_utc": "2026-07-18T19:00:00+00:00",
     "date": "2026-07-18",
+    "status": "NS"
+  },
+  {
+    "home": "Ireland",
+    "away": "Argentina",
+    "kickoff_utc": "2026-11-06T22:10:00+00:00",
+    "date": "2026-11-06",
     "status": "NS"
   },
   {
     "home": "Italy",
     "away": "South Africa",
-    "kickoff_utc": "2026-11-07T14:00:00+00:00",
+    "kickoff_utc": "2026-11-07T13:40:00+00:00",
     "date": "2026-11-07",
     "status": "NS"
   },
   {
     "home": "Scotland",
     "away": "New Zealand",
-    "kickoff_utc": "2026-11-07T14:00:00+00:00",
+    "kickoff_utc": "2026-11-07T16:10:00+00:00",
     "date": "2026-11-07",
     "status": "NS"
   },
   {
     "home": "Wales",
     "away": "Japan",
-    "kickoff_utc": "2026-11-07T14:00:00+00:00",
+    "kickoff_utc": "2026-11-07T18:40:00+00:00",
     "date": "2026-11-07",
     "status": "NS"
   },
   {
     "home": "France",
     "away": "Fiji",
-    "kickoff_utc": "2026-11-07T14:00:00+00:00",
-    "date": "2026-11-07",
-    "status": "NS"
-  },
-  {
-    "home": "Ireland",
-    "away": "Argentina",
-    "kickoff_utc": "2026-11-07T14:00:00+00:00",
+    "kickoff_utc": "2026-11-07T22:10:00+00:00",
     "date": "2026-11-07",
     "status": "NS"
   },
   {
     "home": "England",
     "away": "Australia",
-    "kickoff_utc": "2026-11-08T14:00:00+00:00",
+    "kickoff_utc": "2026-11-08T17:10:00+00:00",
     "date": "2026-11-08",
     "status": "NS"
   },
   {
+    "home": "France",
+    "away": "South Africa",
+    "kickoff_utc": "2026-11-13T22:10:00+00:00",
+    "date": "2026-11-13",
+    "status": "NS"
+  },
+  {
     "home": "Italy",
     "away": "Argentina",
-    "kickoff_utc": "2026-11-14T14:00:00+00:00",
+    "kickoff_utc": "2026-11-14T13:40:00+00:00",
     "date": "2026-11-14",
     "status": "NS"
   },
   {
     "home": "Wales",
     "away": "New Zealand",
-    "kickoff_utc": "2026-11-14T14:00:00+00:00",
+    "kickoff_utc": "2026-11-14T16:10:00+00:00",
     "date": "2026-11-14",
     "status": "NS"
   },
   {
     "home": "England",
     "away": "Japan",
-    "kickoff_utc": "2026-11-14T14:00:00+00:00",
+    "kickoff_utc": "2026-11-14T18:40:00+00:00",
     "date": "2026-11-14",
     "status": "NS"
   },
   {
     "home": "Ireland",
     "away": "Fiji",
-    "kickoff_utc": "2026-11-14T14:00:00+00:00",
-    "date": "2026-11-14",
-    "status": "NS"
-  },
-  {
-    "home": "France",
-    "away": "South Africa",
-    "kickoff_utc": "2026-11-14T14:00:00+00:00",
+    "kickoff_utc": "2026-11-14T22:10:00+00:00",
     "date": "2026-11-14",
     "status": "NS"
   },
   {
     "home": "Scotland",
     "away": "Australia",
-    "kickoff_utc": "2026-11-15T14:00:00+00:00",
+    "kickoff_utc": "2026-11-15T17:10:00+00:00",
     "date": "2026-11-15",
     "status": "NS"
   },
   {
     "home": "England",
     "away": "New Zealand",
-    "kickoff_utc": "2026-11-21T14:00:00+00:00",
+    "kickoff_utc": "2026-11-21T16:10:00+00:00",
     "date": "2026-11-21",
     "status": "NS"
   },
   {
     "home": "Scotland",
     "away": "Japan",
-    "kickoff_utc": "2026-11-21T14:00:00+00:00",
+    "kickoff_utc": "2026-11-21T16:10:00+00:00",
     "date": "2026-11-21",
     "status": "NS"
   },
   {
     "home": "Ireland",
     "away": "South Africa",
-    "kickoff_utc": "2026-11-21T14:00:00+00:00",
+    "kickoff_utc": "2026-11-21T18:40:00+00:00",
     "date": "2026-11-21",
     "status": "NS"
   },
   {
     "home": "Italy",
     "away": "Fiji",
-    "kickoff_utc": "2026-11-21T14:00:00+00:00",
+    "kickoff_utc": "2026-11-21T18:40:00+00:00",
     "date": "2026-11-21",
     "status": "NS"
   },
   {
     "home": "Wales",
     "away": "Australia",
-    "kickoff_utc": "2026-11-21T14:00:00+00:00",
+    "kickoff_utc": "2026-11-21T21:10:00+00:00",
     "date": "2026-11-21",
     "status": "NS"
   },
   {
     "home": "France",
     "away": "Argentina",
-    "kickoff_utc": "2026-11-21T14:00:00+00:00",
+    "kickoff_utc": "2026-11-21T21:10:00+00:00",
     "date": "2026-11-21",
     "status": "NS"
   }
