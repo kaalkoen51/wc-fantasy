@@ -557,21 +557,21 @@
     "away": "Congo DR",
     "kickoff_utc": "2026-07-01T16:00:00+00:00",
     "date": "2026-07-01",
-    "status": "NS"
+    "status": "FT"
   },
   {
     "home": "Belgium",
     "away": "Senegal",
     "kickoff_utc": "2026-07-01T20:00:00+00:00",
     "date": "2026-07-01",
-    "status": "NS"
+    "status": "AET"
   },
   {
     "home": "USA",
     "away": "Bosnia And Herzegovina",
     "kickoff_utc": "2026-07-02T00:00:00+00:00",
     "date": "2026-07-02",
-    "status": "NS"
+    "status": "FT"
   },
   {
     "home": "Spain",
@@ -634,6 +634,20 @@
     "away": "Norway",
     "kickoff_utc": "2026-07-05T20:00:00+00:00",
     "date": "2026-07-05",
+    "status": "NS"
+  },
+  {
+    "home": "Mexico",
+    "away": "England",
+    "kickoff_utc": "2026-07-06T00:00:00+00:00",
+    "date": "2026-07-06",
+    "status": "NS"
+  },
+  {
+    "home": "USA",
+    "away": "Belgium",
+    "kickoff_utc": "2026-07-07T00:00:00+00:00",
+    "date": "2026-07-07",
     "status": "NS"
   }
 ]
