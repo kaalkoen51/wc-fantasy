@@ -2099,7 +2099,9 @@ function renderBanner() {
     const isOver = over(f);
     const isLive = !isOver && Date.parse(f.kickoff_utc) < Date.now();
     const l = fxLabel(f);
-    const score = isOver && hasStats(l) ? matchScore(l) : null;
+    // Show the score for live games too (from the latest live_pull), not just
+    // finished ones — so a live match reads "LIVE  Home 1–0 Away".
+    const score = (isOver || isLive) && hasStats(l) ? matchScore(l) : null;
     return `<div class="flex items-center gap-1.5 text-sm ${score ? "cursor-pointer" : ""}"
       ${score ? `data-ftgame="${esc(l)}" role="button"` : ""}>
       <span class="font-mono text-xs w-11 shrink-0 ${
