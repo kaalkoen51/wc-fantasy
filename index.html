@@ -178,9 +178,10 @@
     </div>
     <div id="draft-mybanner" class="hidden rounded-xl border border-wcgold bg-wcred/15 p-3 text-center font-semibold"></div>
     <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
+      <input id="pool-search" placeholder="Search player…" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
       <div class="flex gap-2">
-        <input id="pool-search" placeholder="Search player…" class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
-        <select id="pool-team" class="w-32 shrink-0 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm"></select>
+        <select id="pool-team" class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm"></select>
+        <select id="pool-sort" class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm"></select>
       </div>
       <div id="pool-chips" class="flex gap-1.5 flex-wrap text-xs"></div>
       <ul id="pool-list" class="divide-y divide-slate-800 max-h-[50vh] overflow-y-auto"></ul>
@@ -912,6 +913,7 @@ async function startDraft() {
 
 S.poolFilter = "ALL";
 S.poolSearch = "";
+S.poolSort = "";            // draft pool: sort by a stat ("" = default order)
 S.poolShortlistOnly = false;
 let autoPickedFor = 0;
 
@@ -1220,10 +1222,21 @@ function renderPool() {
     S.poolPlannerOnly = !S.poolPlannerOnly; renderPool();
   };
 
-  if (!$("pool-team").options.length) {
-    $("pool-team").innerHTML = '<option value="">All teams</option>' +
-      S.teams.map((t) => `<option>${esc(t)}</option>`).join("");
+  // Team dropdown, rebuilt each render (preserving the selection) so knocked-out
+  // countries drop out of the list as the tournament narrows — their players
+  // aren't draftable anyway.
+  const teamSel = $("pool-team");
+  const curTeam = teamSel.value;
+  const teamOpts = S.teams.filter((t) => !isEliminated(t));
+  teamSel.innerHTML = '<option value="">All teams</option>' + teamOpts.map((t) =>
+    `<option ${t === curTeam ? "selected" : ""}>${esc(t)}</option>`).join("");
+
+  // Sort-by-stat dropdown (same options as the Stats tab). Static, so build once.
+  if (!$("pool-sort").options.length) {
+    $("pool-sort").innerHTML = '<option value="">Sort: default</option>' +
+      STAT_SORTS.map(([k, lbl]) => `<option value="${k}">Sort: ${lbl}</option>`).join("");
   }
+  $("pool-sort").value = S.poolSort;
 
   // Owner name per picked player, so taken players show who grabbed them.
   const mgrName = Object.fromEntries(S.managers.map((m) => [m.id, m.name]));
@@ -1240,6 +1253,13 @@ function renderPool() {
     e.name.toLowerCase().includes(q) || e.team.toLowerCase().includes(q));
   if (S.poolShortlistOnly) entries = entries.filter((e) => isShortlisted(e.player_id));
   if (S.poolPlannerOnly) entries = entries.filter((e) => plannerChoiceRank(e.player_id));
+  if (S.poolSort) {
+    const valOf = (e) => S.poolSort === "points"
+      ? entryPoints(e.player_id, e.position, e.team)     // TEAM = stage bonus
+      : playerStatTotal(e.player_id, S.poolSort);
+    entries = entries.slice().sort((a, b) =>
+      valOf(b) - valOf(a) || a.name.localeCompare(b.name));
+  }
   const shown = entries.slice(0, 80);
 
   $("pool-list").innerHTML = shown.map((e) => {
@@ -4176,6 +4196,7 @@ function wire() {
   $("lobby-join-go").onclick = () => joinFromLobby().catch((e) => toast(e.message));
   $("pool-search").oninput = (e) => { S.poolSearch = e.target.value; renderPool(); };
   $("pool-team").onchange = () => renderPool();
+  $("pool-sort").onchange = (e) => { S.poolSort = e.target.value; renderPool(); };
   $("stats-search").oninput = (e) => { S.statsSearch = e.target.value; renderStatsTab(); };
   $("stats-sort").onchange = (e) => { S.statsSort = e.target.value; renderStatsTab(); };
   $("player-sheet").onclick = (e) => {
