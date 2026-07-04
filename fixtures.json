@@ -599,21 +599,21 @@
     "away": "Egypt",
     "kickoff_utc": "2026-07-03T18:00:00+00:00",
     "date": "2026-07-03",
-    "status": "NS"
+    "status": "PEN"
   },
   {
     "home": "Argentina",
     "away": "Cabo Verde",
     "kickoff_utc": "2026-07-03T22:00:00+00:00",
     "date": "2026-07-03",
-    "status": "NS"
+    "status": "AET"
   },
   {
     "home": "Colombia",
     "away": "Ghana",
     "kickoff_utc": "2026-07-04T01:30:00+00:00",
     "date": "2026-07-04",
-    "status": "NS"
+    "status": "FT"
   },
   {
     "home": "Canada",
@@ -654,6 +654,20 @@
     "home": "USA",
     "away": "Belgium",
     "kickoff_utc": "2026-07-07T00:00:00+00:00",
+    "date": "2026-07-07",
+    "status": "NS"
+  },
+  {
+    "home": "Argentina",
+    "away": "Egypt",
+    "kickoff_utc": "2026-07-07T16:00:00+00:00",
+    "date": "2026-07-07",
+    "status": "NS"
+  },
+  {
+    "home": "Switzerland",
+    "away": "Colombia",
+    "kickoff_utc": "2026-07-07T20:00:00+00:00",
     "date": "2026-07-07",
     "status": "NS"
   }
