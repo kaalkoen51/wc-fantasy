@@ -2050,6 +2050,16 @@ function matchScore(label) {
   return [h, a];
 }
 
+// Current match minute for a live game: the largest `minutes` among its stat
+// rows (a player on since kickoff reads the elapsed minute). Comes from the
+// last live_pull, so it's ~5-min granular. null when not yet available.
+function liveMinute(label) {
+  let m = 0;
+  for (const r of S.stats)
+    if (r.match_label === label && r.minutes) m = Math.max(m, r.minutes);
+  return m || null;
+}
+
 function topScorers(label, n) {
   return S.stats.filter((r) => r.match_label === label)
     .map((r) => {
@@ -2100,13 +2110,16 @@ function renderBanner() {
     const isLive = !isOver && Date.parse(f.kickoff_utc) < Date.now();
     const l = fxLabel(f);
     // Show the score for live games too (from the latest live_pull), not just
-    // finished ones — so a live match reads "LIVE  Home 1–0 Away".
+    // finished ones — so a live match reads "63'  Home 1–0 Away".
     const score = (isOver || isLive) && hasStats(l) ? matchScore(l) : null;
+    // Live match minute (from the last pull); shown in place of the kickoff
+    // time, falling back to "LIVE" until the first pull lands.
+    const liveMin = isLive ? liveMinute(l) : null;
     return `<div class="flex items-center gap-1.5 text-sm ${score ? "cursor-pointer" : ""}"
       ${score ? `data-ftgame="${esc(l)}" role="button"` : ""}>
       <span class="font-mono text-xs w-11 shrink-0 ${
         isLive ? "text-red-400 font-bold" : isOver ? "text-slate-600" : "text-wcgold"
-      }">${isLive ? "LIVE" : isOver ? "FT" : saTime(f.kickoff_utc)}</span>
+      }">${isLive ? (liveMin ? liveMin + "'" : "LIVE") : isOver ? "FT" : saTime(f.kickoff_utc)}</span>
       ${avatarHtml("team:" + f.home, f.home, "w-4 h-4")}
       <span class="truncate ${isOver ? "text-slate-500" : ""}">${esc(f.home)}${
         score ? ` <b class="text-slate-300">${score[0]} – ${score[1]}</b> ` : " – "}${esc(f.away)}</span>
