@@ -44,6 +44,8 @@
     <div class="flex items-center gap-2 text-xs text-slate-400">
       <span id="hdr-league" class="truncate max-w-[10rem]"></span>
       <span id="conn-dot" title="realtime connection" class="w-2 h-2 rounded-full bg-slate-600"></span>
+      <button id="hdr-exit" title="Exit league"
+        class="hidden shrink-0 rounded-lg border border-slate-700 px-2 py-1 text-slate-300 hover:bg-slate-800">Exit</button>
     </div>
   </div>
 </header>
@@ -497,6 +499,10 @@ let _shownView = null;
 function showView(name) {
   document.querySelectorAll("[data-view]").forEach(
     (el) => el.classList.toggle("hidden", el.dataset.view !== name));
+  // The header "Exit league" button only makes sense once you're in a league.
+  const exit = $("hdr-exit");
+  if (exit) exit.classList.toggle("hidden",
+    !["board", "lobby", "draft", "admin"].includes(name));
   // Only jump to top when the view actually changes — a re-render of the
   // same view (e.g. the refetch after starring a player) must preserve
   // the current scroll position.
@@ -4151,6 +4157,12 @@ function wire() {
   };
   $("home-create").onclick = () => showView("create");
   $("home-join").onclick = () => showView("join");
+  $("hdr-exit").onclick = () => {
+    if (!confirm("Exit this league? You'll go back to the join screen — rejoin any time with your invite code."))
+      return;
+    leaveLeague();
+    showView("join");
+  };
   // Built-in creds mean the config screen is never auto-shown; let
   // "Reconfigure" open it on demand to override with a different project.
   $("home-reconfig").onclick = () => { localStorage.removeItem("wcf_config"); showView("config"); };
