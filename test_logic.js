@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -27,7 +27,8 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt,
         slotLabel, managerHistory, poolEntries, availableForGroup,
         isEliminated, computeYetToPlay, showView,
-        plannerChoiceRank, choiceStatus, plannerPickPool } = api;
+        plannerChoiceRank, choiceStatus, plannerPickPool,
+        autoPickCandidates, entryForId } = api;
 let fails = 0;
 const check = (label, got, want) => {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -510,6 +511,46 @@ check("picker keeps an already-chosen player", pickIds({}).includes("arg_8"), tr
 check("picker shortlist-only filter", pickIds({ shortlistOnly: true }).sort(), ["arg_8", "bra_5"]);
 check("picker search filters by team", pickIds({ q: "Spain" }), ["esp_2"]);
 S.managers = []; S.picks = []; S.playerById = {}; S.players = []; S.stats = [];
+
+/* auto-pick on a timeout: shortlist first (valid only), else the full pool,
+   never a knocked-out team. Phase-1 quota GK2/DEF4/MID4/FWD3/TEAM1. */
+S.league = { id: "L1", phase: 1 };
+S.stages = [{ team: "Brazil", eliminated: true }];
+S.players = [
+  { player_id: "fra_1", name: "Fwd A", position: "FWD", team: "France" },
+  { player_id: "esp_1", name: "Fwd B", position: "FWD", team: "Spain" },
+  { player_id: "bra_1", name: "Fwd KO", position: "FWD", team: "Brazil" },   // knocked out
+  { player_id: "arg_1", name: "Gk A", position: "GK", team: "Argentina" },
+];
+S.playerById = Object.fromEntries(S.players.map((p) => [p.player_id, p]));
+const apMgr = { id: "m1", name: "Koen",
+  shortlist: ["bra_1", "esp_1", "arg_1"] };   // bra_1 is KO, arg_1 is a GK
+S.managers = [apMgr];
+// GK and TEAM quotas already filled (closed); only FWD/DEF/MID open, and only
+// FWD has any players defined here.
+S.picks = [
+  { manager_id: "m1", player_id: "gk_x", position: "GK", slot: "GK", is_sub: false },
+  { manager_id: "m1", player_id: "gk_y", position: "GK", slot: "SUB_GK", is_sub: true },
+  { manager_id: "m1", player_id: "team:Germany", position: "TEAM", slot: "TEAM", is_sub: false },
+];
+const apc = autoPickCandidates(apMgr);
+check("entryForId resolves a player", entryForId("fra_1").team, "France");
+check("entryForId resolves a TEAM id", entryForId("team:Spain"),
+  { player_id: "team:Spain", name: "Spain", position: "TEAM", team: "Spain" });
+check("auto-pick shortlist excludes KO + closed-quota position",
+  apc.shortlist.map((e) => e.player_id), ["esp_1"]);
+check("auto-pick pool excludes KO and already-picked",
+  apc.pool.some((e) => e.team === "Brazil"), false);
+check("auto-pick pool has the open-position players",
+  apc.pool.map((e) => e.player_id).sort(), ["esp_1", "fra_1"]);
+// No valid shortlist entries -> falls back to the pool (still no KO).
+apMgr.shortlist = ["bra_1"];
+const apc2 = autoPickCandidates(apMgr);
+check("empty valid shortlist -> use pool", apc2.shortlist.length, 0);
+check("fallback pool still non-empty and KO-free",
+  [apc2.pool.length > 0, apc2.pool.some((e) => e.team === "Brazil")], [true, false]);
+S.league = null; S.stages = []; S.managers = []; S.picks = [];
+S.playerById = {}; S.players = [];
 
 /* showView only scrolls to top on an actual view change, so a re-render
    of the current view (e.g. the refetch after starring) doesn't jump. */

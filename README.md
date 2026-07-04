@@ -158,8 +158,11 @@ guarantee eventual correctness regardless.
 4. Everyone joins with the invite code on their phones; when the lobby is
    full, the admin hits **Start draft**. Random snake order, 14 rounds;
    on your turn you draft **any position you still need** (quota:
-   2 GK, 4 DEF, 4 MID, 3 FWD, 1 TEAM), with team/position filters and
-   auto-pick if your timer runs out.
+   2 GK, 4 DEF, 4 MID, 3 FWD, 1 TEAM), with team/position filters. If your
+   timer runs out you're **auto-picked** — a random *valid* player from your
+   **shortlist** first (fills an open slot, still available, team not knocked
+   out), falling back to a random available player if none of your shortlist
+   fits.
 5. After the draft (and before each round), set your lineup via
    **Home → Pick my team**: starters are 1 GK, 3 DEF, 3 MID, 2 FWD;
    the other four are subs. Lineups aren't fixed at the draft, but they
@@ -489,7 +492,7 @@ empty rather than erroring).
 
 ### Sanity tests
 
-`node test_logic.js` — 120 checks on the snake order, position quotas,
+`node test_logic.js` — 127 checks on the snake order, position quotas,
 scoring parity with `daily_pull.py` (incl. defensive actions), sub
 activation, lineup-lock history replay, the per-manager history
 decomposition (current credited + former + per-round split), the
