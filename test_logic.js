@@ -328,14 +328,20 @@ S.stats = [
   row({ player_id: "x5", match_label: "A vs C (2026-07-14)", yellow_cards: 1 }),
   row({ player_id: "x6", match_label: "A vs B (2026-06-15)", yellow_cards: 2, red_cards: 1 }),
   row({ player_id: "x6", match_label: "A vs C (2026-06-20)", yellow_cards: 1 }),
+  // group-stage yellow + Round-of-32 yellow: wiped at the group boundary, so
+  // they don't combine (the Casemiro case — plays the R16).
+  row({ player_id: "x8", match_label: "A vs B (2026-06-20)", yellow_cards: 1 }),
+  row({ player_id: "x8", match_label: "A vs C (2026-06-30)", yellow_cards: 1 }),
 ];
 check("red card -> suspended next match", suspendedNext("x1"), "red card");
-check("2nd yellow -> suspended next match", suspendedNext("x2"), "2 yellows");
+check("2nd group yellow -> suspended (banned for R32)", suspendedNext("x2"), "2 yellows");
 check("single yellow -> fine", suspendedNext("x3"), null);
 check("ban cleared after playing again", suspendedNext("x4"), null);
 check("yellow slate wiped after the QFs", suspendedNext("x5"), null);
 check("two-yellow red doesn't count toward accumulation", suspendedNext("x6"), null);
 check("no stats -> no flag", suspendedNext("x7"), null);
+check("group + knockout yellow don't combine (wiped after group stage)",
+  suspendedNext("x8"), null);
 
 /* player detail: per-match lineup status, owner, team matches, category totals */
 S.fixtures = [

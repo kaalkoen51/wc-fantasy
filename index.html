@@ -2447,13 +2447,24 @@ const ownerOf = (pid) => {
 
 // FIFA wipes single yellows after the quarter-finals so nobody misses the
 // final on accumulation; this is the first day of the post-wipe window.
-const YELLOW_RESET_DATE = "2026-07-12";
+// Yellow-card accumulation resets (UTC dates): after the group stage — the
+// Round of 32 starts 2026-06-28 — and after the quarter-finals — the semis
+// start after 2026-07-12. Adjust if FIFA's schedule/rule differs.
+const YELLOW_RESET_DATES = ["2026-06-28", "2026-07-12"];
+
+// Which accumulation window a match date falls in. FIFA wipes accumulated
+// single yellows at stage boundaries so they don't carry across: after the
+// GROUP STAGE (a group booking doesn't follow you into the knockouts) and after
+// the QUARTER-FINALS (not carried to the semis). Yellows only combine within
+// the same window. (YELLOW_RESET_DATES = R32 start; semis start.)
+const yellowWindow = (d) => YELLOW_RESET_DATES.filter((r) => String(d) >= r).length;
 
 // Best-effort "suspended for their next match" from our own card data:
 // a red in their latest appearance, or an even count of single-yellow
-// matches with the latest appearance booked (2nd/4th yellow triggers a
-// one-match ban; playing again clears the flag, i.e. ban served). Two
-// yellows in one match arrive as a red and don't count toward accumulation.
+// matches *in the current window* with the latest appearance booked (2nd/4th
+// yellow triggers a one-match ban; playing again clears the flag, i.e. ban
+// served). Two yellows in one match arrive as a red and don't count toward
+// accumulation.
 function suspendedNext(pid) {
   const rows = statRowsFor(pid).filter((r) => r.appeared)
     .sort((a, b) => String(labelDate(a.match_label))
@@ -2461,9 +2472,9 @@ function suspendedNext(pid) {
   if (!rows.length) return null;
   const last = rows[rows.length - 1];
   if ((last.red_cards || 0) > 0) return "red card";
-  const lastPreWipe = String(labelDate(last.match_label)) < YELLOW_RESET_DATE;
+  const lastWin = yellowWindow(labelDate(last.match_label));
   const yellows = rows.filter((r) =>
-    (String(labelDate(r.match_label)) < YELLOW_RESET_DATE) === lastPreWipe
+    yellowWindow(labelDate(r.match_label)) === lastWin
     && (r.yellow_cards || 0) > 0 && !(r.red_cards || 0)).length;
   if ((last.yellow_cards || 0) > 0 && !(last.red_cards || 0) && yellows % 2 === 0)
     return "2 yellows";
