@@ -306,6 +306,15 @@
         <button id="adm-snapshot" class="w-full bg-slate-800 border border-slate-700 rounded-lg py-1.5 text-xs font-semibold">Re-lock current lineups now (fallback)</button>
       </div>
       <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
+        <h3 class="font-semibold text-sm">Draft settings</h3>
+        <p class="text-xs text-slate-500">The draft pool can be sorted by any stat (goals, points, etc.).
+          Switch this <b>off</b> for a blind draft where nobody can rank the pool by numbers.</p>
+        <div class="flex items-center justify-between gap-3">
+          <span id="adm-sort-status" class="text-sm font-semibold"></span>
+          <button id="adm-sort-toggle" class="rounded-lg px-4 py-2 text-sm font-semibold bg-wcred hover:bg-wcred-hov"></button>
+        </div>
+      </div>
+      <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">Redrafts &amp; final phase</h3>
         <p class="text-xs text-slate-500">As the field narrows: (1) optionally remove trailing
           managers — their points freeze and their players return to the pool; (2) set the keeper
@@ -960,11 +969,14 @@ function availableForGroup(group) {
 }
 
 // All players in a group (picked or not) for the draft pool display — picked
-// players stay visible with an owner badge rather than vanishing.
+// players stay visible with an owner badge rather than vanishing. Knocked-out
+// teams drop out entirely: their players aren't draftable, so they'd only be
+// dead weight in the list (redrafts especially).
 function poolEntries(group) {
   if (group === "TEAM")
-    return S.teams.map((t) => ({ player_id: "team:" + t, name: t, position: "TEAM", team: t }));
-  return S.players.filter((pl) => pl.position === group);
+    return S.teams.filter((t) => !isEliminated(t))
+      .map((t) => ({ player_id: "team:" + t, name: t, position: "TEAM", team: t }));
+  return S.players.filter((pl) => pl.position === group && !isEliminated(pl.team));
 }
 
 const managerPicks = (mgrId) => S.picks.filter((pk) => pk.manager_id === mgrId);
@@ -1233,6 +1245,10 @@ function renderPool() {
     `<option ${t === curTeam ? "selected" : ""}>${esc(t)}</option>`).join("");
 
   // Sort-by-stat dropdown (same options as the Stats tab). Static, so build once.
+  // The admin can switch it off (leagues.draft_stat_sort) for a blind draft.
+  const sortOn = S.league.draft_stat_sort !== false;
+  if (!sortOn) S.poolSort = "";
+  $("pool-sort").classList.toggle("hidden", !sortOn);
   if (!$("pool-sort").options.length) {
     $("pool-sort").innerHTML = '<option value="">Sort: default</option>' +
       STAT_SORTS.map(([k, lbl]) => `<option value="${k}">Sort: ${lbl}</option>`).join("");
@@ -4153,6 +4169,11 @@ function renderAdmin() {
   $("adm-trading-status").className =
     "text-sm font-semibold " + (open ? "text-wcgold" : "text-slate-400");
   $("adm-trading-toggle").textContent = open ? "Close trading" : "Open trading";
+  const sortOn = S.league.draft_stat_sort !== false;
+  $("adm-sort-status").textContent = sortOn ? "Draft sort is ON" : "Draft sort is OFF";
+  $("adm-sort-status").className =
+    "text-sm font-semibold " + (sortOn ? "text-wcgold" : "text-slate-400");
+  $("adm-sort-toggle").textContent = sortOn ? "Turn off draft sort" : "Turn on draft sort";
   const active = activeManagers();
   $("adm-phase-info").textContent = `Phase ${S.league.phase || 1}`
     + (S.league.final_phase ? " · final phase (champion picks)" : "")
@@ -4180,6 +4201,16 @@ function renderAdmin() {
   admRenderSelected();
   admRenderExisting();
   admRenderStages();
+}
+
+async function toggleDraftSort() {
+  const next = S.league.draft_stat_sort === false;   // false -> on, else off
+  const { error } = await S.sb.from("leagues")
+    .update({ draft_stat_sort: next }).eq("id", S.league.id);
+  if (error) return toast(/draft_stat_sort/.test(error.message)
+    ? "Draft-sort toggle needs a schema update — run schema.sql." : error.message);
+  toast(next ? "Draft sort turned on." : "Draft sort turned off — blind draft.");
+  scheduleRefetch();
 }
 
 async function toggleTrading() {
@@ -4263,6 +4294,7 @@ function wire() {
   $("adm-drafted").onchange = admRenderPlayerSearch;
   $("adm-tsearch").oninput = admRenderStages;
   $("adm-trading-toggle").onclick = () => toggleTrading().catch((e) => toast(e.message));
+  $("adm-sort-toggle").onclick = () => toggleDraftSort().catch((e) => toast(e.message));
   $("adm-keeper-toggle").onclick = () => toggleKeeperWindow().catch((e) => toast(e.message));
   $("adm-redraft").onclick = () => startRedraft().catch((e) => toast(e.message));
   $("adm-final").onclick = () => startFinalPhase().catch((e) => toast(e.message));
