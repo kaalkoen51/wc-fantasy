@@ -914,6 +914,7 @@ async function startDraft() {
 S.poolFilter = "ALL";
 S.poolSearch = "";
 S.poolSort = "";            // draft pool: sort by a stat ("" = default order)
+S.bannerDayOffset = 0;      // matchday banner: 0 = default day, -1 = prev, etc.
 S.poolShortlistOnly = false;
 let autoPickedFor = 0;
 
@@ -2139,19 +2140,28 @@ function renderBanner() {
   const over = (f) => ["FT", "AET", "PEN"].includes(f.status)
     || Date.parse(f.kickoff_utc) < Date.now() - 2.5 * 3600e3;
   const todayET = etDay(new Date().toISOString());
-  const day = [...new Set(fx
-    .filter((f) => !over(f) && etDay(f.kickoff_utc) >= todayET)
-    .map((f) => etDay(f.kickoff_utc)))].sort()[0];
-  if (!day) {
+  if (!fx.length) {
     if (bannerCache !== "") { bannerCache = ""; box.innerHTML = ""; }
     return;
   }
+  // Every matchday in order; default to the earliest upcoming/live day (else the
+  // most recent past day). S.bannerDayOffset steps to neighbouring days — ‹ to
+  // see the previous day's results and top scorers, › back toward today.
+  const allDays = [...new Set(fx.map((f) => etDay(f.kickoff_utc)))].sort();
+  let defIdx = allDays.findIndex((d) => d >= todayET
+    && fx.some((f) => etDay(f.kickoff_utc) === d && !over(f)));
+  if (defIdx < 0) defIdx = allDays.length - 1;
+  const idx = Math.min(allDays.length - 1, Math.max(0, defIdx + (S.bannerDayOffset || 0)));
+  S.bannerDayOffset = idx - defIdx;                    // normalise (stay in range)
+  const day = allDays[idx];
   const games = fx.filter((f) => etDay(f.kickoff_utc) === day)
     .sort((a, b) => String(a.kickoff_utc).localeCompare(String(b.kickoff_utc)));
   const label = day === todayET ? "Today"
     : day === etDay(new Date(Date.now() + 86400e3).toISOString()) ? "Tomorrow"
+    : day === etDay(new Date(Date.now() - 86400e3).toISOString()) ? "Yesterday"
     : new Date(day).toLocaleDateString("en-GB",
         { weekday: "short", day: "numeric", month: "short" });
+  const atStart = idx <= 0, atEnd = idx >= allDays.length - 1;
   const fxLabel = (f) =>
     `${f.home} vs ${f.away} (${String(f.kickoff_utc).slice(0, 10)})`;
   const hasStats = (l) => S.stats.some((r) => r.match_label === l);
@@ -2205,8 +2215,15 @@ function renderBanner() {
     </div>` : "";
 
   const html = `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-1.5">
-    <div class="text-[10px] uppercase tracking-wide text-slate-500">${label} · SA time</div>
+    <div class="flex items-center gap-1">
+      <button data-bannernav="-1" ${atStart ? "disabled" : ""} class="px-1.5 rounded text-sm ${
+        atStart ? "text-slate-700" : "text-wcgold hover:bg-slate-800"}" title="Previous day">‹</button>
+      <div class="flex-1 text-center text-[10px] uppercase tracking-wide text-slate-500">${label} · SA time</div>
+      <button data-bannernav="1" ${atEnd ? "disabled" : ""} class="px-1.5 rounded text-sm ${
+        atEnd ? "text-slate-700" : "text-wcgold hover:bg-slate-800"}" title="Next day">›</button>
+    </div>
     ${rows}<div id="banner-detail"></div>${ticker}
+    ${S.bannerDayOffset ? '<button data-bannerback class="w-full text-[10px] text-slate-400 underline pt-0.5">↩ back to today</button>' : ""}
   </div>`;
   if (html !== bannerCache) {
     bannerCache = html;
@@ -2220,6 +2237,13 @@ function renderBanner() {
       S.bannerGame = S.bannerGame === el.dataset.ftgame ? null : el.dataset.ftgame;
       renderBannerDetail();
     });
+    box.querySelectorAll("[data-bannernav]").forEach((el) => el.onclick = () => {
+      S.bannerDayOffset = (S.bannerDayOffset || 0) + Number(el.dataset.bannernav);
+      S.bannerGame = null;                    // close any open detail on day change
+      renderBanner();
+    });
+    const back = box.querySelector("[data-bannerback]");
+    if (back) back.onclick = () => { S.bannerDayOffset = 0; S.bannerGame = null; renderBanner(); };
   }
   renderBannerDetail();
 }
