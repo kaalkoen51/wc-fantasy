@@ -109,6 +109,10 @@ alter table leagues add column if not exists keeper_max int not null default 1;
 alter table leagues add column if not exists keeper_caps jsonb;
 alter table managers add column if not exists keeper_pick_ids jsonb;
 
+-- Admin toggle: show the "sort the draft pool by a stat" dropdown during the
+-- draft. On by default; the admin can switch it off for a blind/luck draft.
+alter table leagues add column if not exists draft_stat_sort boolean not null default true;
+
 alter table managers add column if not exists join_token text;
 alter table managers add column if not exists draft_position int;
 -- Per-manager shortlist of player ids (jsonb array). Synced so it follows
