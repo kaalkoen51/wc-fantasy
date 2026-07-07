@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formPoints, formLog };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -28,7 +28,8 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         slotLabel, managerHistory, poolEntries, availableForGroup,
         isEliminated, computeYetToPlay, showView,
         plannerChoiceRank, choiceStatus, plannerPickPool,
-        autoPickCandidates, entryForId } = api;
+        autoPickCandidates, entryForId,
+        statsScopedRows, sumStatKey, sumMinutes, formPoints, formLog } = api;
 let fails = 0;
 const check = (label, got, want) => {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -568,6 +569,39 @@ showView("board");
 check("re-showing the same view does not scroll", scrollCalls, 1);
 showView("draft");
 check("changing view scrolls again", scrollCalls, 2);
+
+/* Stats-tab depth: round scoping, per-90 rates, recent form. */
+S.stages = []; S.managers = []; S.picks = []; S.fixtures = [];
+S.playerById = {
+  gk_1: { player_id: "gk_1", name: "Keeper", position: "GK", team: "Alpha" },
+};
+S.stats = [
+  // Alpha's three matches (rounds 1-3) for gk_1.
+  { player_id: "gk_1", match_label: "Alpha vs Beta (2026-06-10)", appeared: true, goals: 1, minutes: 90, clean_sheet: true },
+  { player_id: "gk_1", match_label: "Alpha vs Gamma (2026-06-14)", appeared: true, goals: 0, minutes: 45 },
+  { player_id: "gk_1", match_label: "Delta vs Alpha (2026-06-18)", appeared: true, goals: 2, minutes: 90, red_cards: 1 },
+];
+// Round scoping: round 1 = each team's first match (by date).
+check("statsScopedRows round 0 = all", statsScopedRows("gk_1", "Alpha", 0).length, 3);
+check("statsScopedRows round 1 = first match",
+  statsScopedRows("gk_1", "Alpha", 1).map((r) => r.goals), [1]);
+check("statsScopedRows round 3 = third match",
+  statsScopedRows("gk_1", "Alpha", 3).map((r) => r.goals), [2]);
+check("statsScopedRows out-of-range round = empty",
+  statsScopedRows("gk_1", "Alpha", 9).length, 0);
+// Stat totals and minutes over a row set.
+const allRows = statsScopedRows("gk_1", "Alpha", 0);
+check("sumStatKey goals over all rounds", sumStatKey(allRows, "goals"), 3);
+check("sumStatKey clean_sheet counts booleans", sumStatKey(allRows, "clean_sheet"), 1);
+check("sumMinutes totals played minutes", sumMinutes(allRows), 225);
+check("sumMinutes treats null minutes as a full 90",
+  sumMinutes([{ appeared: true, minutes: null }]), 90);
+// Form: last-3 appearances' points, newest last; GK goal = 8, red = -3.
+check("formLog is chronological newest-last",
+  formLog("gk_1", "GK", 3).map((f) => f.pts), [8 + 6, 0, 16 - 3]);
+check("formPoints sums the last 3 appearances", formPoints("gk_1", "GK", 3), 14 + 0 + 13);
+check("formPoints window of 1 = latest only", formPoints("gk_1", "GK", 1), 13);
+S.stats = []; S.playerById = {};
 
 /* resilientWrite: an unapplied additive migration (missing optional
    column) is dropped and retried instead of failing the whole write. */
