@@ -208,9 +208,13 @@
     <div id="board-home" class="space-y-3"></div>
     <div id="board-lb" class="hidden space-y-2"></div>
     <div id="board-stats" class="hidden space-y-3">
+      <div id="stats-view" class="flex gap-1 rounded-lg bg-slate-900 border border-slate-700 p-1 text-sm">
+        <button data-statsview="list" class="flex-1 rounded-md py-1.5 font-semibold">Leaderboard</button>
+        <button data-statsview="dream" class="flex-1 rounded-md py-1.5 font-semibold">Dream XI</button>
+      </div>
       <input id="stats-search" placeholder="Search any player or country…"
              class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm">
-      <div class="flex items-center gap-2 flex-wrap">
+      <div id="stats-listctl" class="flex items-center gap-2 flex-wrap">
         <div id="stats-chips" class="flex gap-1.5 flex-wrap text-xs"></div>
         <select id="stats-sort" class="ml-auto rounded-lg bg-slate-900 border border-slate-700 px-2 py-1 text-xs"></select>
       </div>
@@ -220,6 +224,7 @@
         <span class="text-[10px] text-slate-600">Round = each team's Nth game · per 90 needs ≥90′</span>
       </div>
       <ol id="stats-list" class="rounded-xl border border-slate-700 bg-slate-900 px-4 divide-y divide-slate-800"></ol>
+      <div id="stats-dream" class="hidden space-y-4"></div>
     </div>
     <div id="board-rosters" class="hidden space-y-2"></div>
     <div id="board-trades" class="hidden"></div>
@@ -2411,6 +2416,7 @@ S.statsSearch = "";
 S.statsSort = "points";
 S.statsPer90 = false;   // Stats tab: show per-90 rates instead of totals
 S.statsRound = 0;       // Stats tab: scope to a round (0 = whole tournament)
+S.statsView = "list";   // Stats tab: "list" leaderboard or "dream" best XI
 S.histIdxByMgr = {};   // manager id -> history pager index (0 = current)
 S.admOpenLabels = null; // admin stats history: which match groups are expanded
 S.showShortlist = false;   // Trades tab: shortlist collapsed until opened
@@ -2740,7 +2746,92 @@ function openPlayerDetail(pid, managerId, perspectiveLabel) {
   wireStars($("player-sheet-body"), () => openPlayerDetail(pid, managerId, perspectiveLabel));
 }
 
+// Best starting XI by scoped points (per-90 optional), grouped by position.
+// round 0 = cumulative; round k = each team's k-th match. Only players who
+// appeared in scope are eligible. Returns { GK:[…],DEF,MID,FWD, total }.
+function dreamTeam(round, per90) {
+  const quota = starterQuota();
+  const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+  for (const id of new Set((S.stats || []).map((r) => r.player_id))) {
+    const p = S.playerById[id];
+    if (!p || !byPos[p.position]) continue;
+    const rows = statsScopedRows(id, p.team, round);
+    if (!rows.length) continue;                         // didn't play in scope
+    const pts = rows.reduce((s, r) => s + calcPlayerPoints(r, p.position), 0);
+    const mins = sumMinutes(rows);
+    if (per90 && mins < 90) continue;                   // too little to rate
+    const val = per90 ? Math.round((pts / mins) * 90 * 10) / 10 : pts;
+    byPos[p.position].push({ p, pts, mins, val });
+  }
+  const out = { total: 0 };
+  for (const pos of ["GK", "DEF", "MID", "FWD"]) {
+    out[pos] = byPos[pos]
+      .sort((a, b) => b.val - a.val || b.pts - a.pts || a.p.name.localeCompare(b.p.name))
+      .slice(0, quota[pos] || 0);
+    out.total += out[pos].reduce((s, x) => s + x.pts, 0);
+  }
+  return out;
+}
+
+function renderDreamTeam(round, per90) {
+  const dt = dreamTeam(round, per90);
+  const quota = starterQuota();
+  const mgrByPid = {};
+  for (const pk of S.picks) {
+    const m = S.managers.find((x) => x.id === pk.manager_id);
+    if (m) mgrByPid[pk.player_id] = m.name;
+  }
+  const posName = { GK: "Goalkeeper", DEF: "Defenders", MID: "Midfielders", FWD: "Forwards" };
+  const card = (x) => {
+    const owner = mgrByPid[x.p.player_id];
+    return `<button data-sp="${esc(x.p.player_id)}" class="w-[30%] max-w-[7.5rem] shrink-0 rounded-xl border border-slate-700 bg-slate-900 p-2 text-center flex flex-col items-center gap-1">
+      ${avatarHtml(x.p.player_id, x.p.team, "w-10 h-10")}
+      <span class="text-xs font-medium leading-tight">${esc(x.p.name)} ${availBadges(x.p.player_id)}</span>
+      <span class="text-[10px] text-slate-500 truncate w-full">${esc(x.p.team)}</span>
+      <span class="text-[10px] truncate w-full ${owner ? "text-wcgold" : "text-slate-500"}">${
+        owner ? "👤 " + esc(owner) : "free agent"}</span>
+      <span class="font-mono font-bold text-wcgold">${x.val}${per90 ? "" : "p"}</span>
+    </button>`;
+  };
+  const emptyCard = `<div class="w-[30%] max-w-[7.5rem] shrink-0 rounded-xl border border-dashed border-slate-800 p-2 flex items-center justify-center text-slate-600 text-sm min-h-[6rem]">—</div>`;
+  const rowFor = (pos) => {
+    const cards = dt[pos].map(card);
+    while (cards.length < (quota[pos] || 0)) cards.push(emptyCard);
+    return `<div>
+      <div class="text-[10px] uppercase tracking-wide text-slate-500 mb-1 text-center">${posName[pos]}</div>
+      <div class="flex flex-wrap justify-center gap-2">${cards.join("")}</div>
+    </div>`;
+  };
+  const scope = round ? `Round ${round}` : "Cumulative";
+  $("stats-dream").innerHTML = `
+    <div class="flex items-center justify-between">
+      <div class="text-sm font-semibold">Dream XI · ${scope}${per90 ? " · per 90" : ""}</div>
+      <div class="text-sm font-mono text-wcgold">${dt.total}p</div>
+    </div>
+    <p class="text-[10px] text-slate-500">Best starters (${quota.GK}-${quota.DEF}-${quota.MID}-${quota.FWD}) by ${
+      per90 ? "points per 90" : "total points"}. 👤 shows who drafted them. Updates after every game.</p>
+    <div class="rounded-xl border border-slate-800 bg-emerald-950/20 p-3 space-y-3">
+      ${["FWD", "MID", "DEF", "GK"].map(rowFor).join("")}
+    </div>`;
+  $("stats-dream").querySelectorAll("[data-sp]").forEach((b) => b.onclick = () =>
+    openPlayerDetail(b.dataset.sp));
+}
+
 function renderStatsTab() {
+  const dream = S.statsView === "dream";
+  // View toggle (Leaderboard / Dream XI): active-state visuals + wiring.
+  $("stats-view").querySelectorAll("[data-statsview]").forEach((b) => {
+    const on = b.dataset.statsview === S.statsView;
+    b.className = "flex-1 rounded-md py-1.5 font-semibold " +
+      (on ? "bg-wcred text-white" : "text-slate-400");
+    b.onclick = () => { S.statsView = b.dataset.statsview; renderStatsTab(); };
+  });
+  // Leaderboard-only controls are hidden in Dream XI mode (round/per-90 shared).
+  $("stats-search").classList.toggle("hidden", dream);
+  $("stats-listctl").classList.toggle("hidden", dream);
+  $("stats-list").classList.toggle("hidden", dream);
+  $("stats-dream").classList.toggle("hidden", !dream);
+
   const chips = ["ALL", ...GROUPS.slice(0, 4)];
   $("stats-chips").innerHTML = chips.map((c) =>
     `<button data-chip="${c}" class="rounded-full px-3 py-1 border ${
@@ -2754,8 +2845,8 @@ function renderStatsTab() {
     `<option value="${k}" ${S.statsSort === k ? "selected" : ""}>${lbl}</option>`).join("");
 
   const sortKey = S.statsSort || "points";
-  const isForm = sortKey === "form";
-  const per90 = S.statsPer90 && !isForm;      // form is inherently recent
+  const isForm = !dream && sortKey === "form";  // form is inherently recent
+  const per90 = S.statsPer90 && !isForm;
   const round = isForm ? 0 : (S.statsRound || 0);
 
   // Round selector: each team's k-th match = "round k" (group MD1-3, then the
@@ -2770,6 +2861,8 @@ function renderStatsTab() {
   $("stats-per90").className = "rounded-full px-3 py-1 border " +
     (per90 ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400") +
     (isForm ? " opacity-40 pointer-events-none" : "");
+
+  if (dream) { renderDreamTeam(round, per90); return; }
 
   const q = S.statsSearch.trim().toLowerCase();
   let pool;

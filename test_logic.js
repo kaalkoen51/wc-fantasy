@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formPoints, formLog };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formPoints, formLog, dreamTeam };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -29,7 +29,8 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         isEliminated, computeYetToPlay, showView,
         plannerChoiceRank, choiceStatus, plannerPickPool,
         autoPickCandidates, entryForId,
-        statsScopedRows, sumStatKey, sumMinutes, formPoints, formLog } = api;
+        statsScopedRows, sumStatKey, sumMinutes, formPoints, formLog,
+        dreamTeam } = api;
 let fails = 0;
 const check = (label, got, want) => {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -602,6 +603,42 @@ check("formLog is chronological newest-last",
 check("formPoints sums the last 3 appearances", formPoints("gk_1", "GK", 3), 14 + 0 + 13);
 check("formPoints window of 1 = latest only", formPoints("gk_1", "GK", 1), 13);
 S.stats = []; S.playerById = {};
+
+/* Dream XI: best starters per position (GK1/DEF3/MID3/FWD2 in phase 1),
+   cumulative and per-round, with per-90 scoping. SCORING: FWD goal 4,
+   GK clean sheet 6, GK saves +1 per 2. */
+S.stages = []; S.managers = [{ id: "m1", name: "Ann" }];
+S.picks = [{ manager_id: "m1", player_id: "fwd_a" }]; S.fixtures = [];
+S.league = { phase: 1 };
+S.playerById = {
+  gk_a: { player_id: "gk_a", name: "GA", position: "GK", team: "A" },
+  gk_b: { player_id: "gk_b", name: "GB", position: "GK", team: "B" },
+  fwd_a: { player_id: "fwd_a", name: "FA", position: "FWD", team: "A" },
+  fwd_b: { player_id: "fwd_b", name: "FB", position: "FWD", team: "B" },
+  fwd_c: { player_id: "fwd_c", name: "FC", position: "FWD", team: "C" },
+};
+S.stats = [
+  { player_id: "gk_a", match_label: "A vs X (2026-06-10)", appeared: true, clean_sheet: true, minutes: 90 }, // 6
+  { player_id: "gk_b", match_label: "B vs Y (2026-06-10)", appeared: true, saves: 4, minutes: 90 },          // 2
+  { player_id: "fwd_a", match_label: "A vs X (2026-06-10)", appeared: true, goals: 1, minutes: 90 },         // 4
+  { player_id: "fwd_b", match_label: "B vs Y (2026-06-10)", appeared: true, goals: 2, minutes: 90 },         // 8
+  { player_id: "fwd_c", match_label: "C vs Z (2026-06-11)", appeared: true, goals: 0, minutes: 90 },         // 0
+  { player_id: "fwd_a", match_label: "A vs P (2026-06-14)", appeared: true, goals: 3, minutes: 90 },         // 12
+];
+const dtc = dreamTeam(0, false);   // cumulative
+check("dream GK cumulative = top keeper", dtc.GK.map((x) => x.p.player_id), ["gk_a"]);
+check("dream FWD cumulative order (best first)", dtc.FWD.map((x) => x.p.player_id), ["fwd_a", "fwd_b"]);
+check("dream FWD capped at 2 starter slots", dtc.FWD.length, 2);
+check("dream unfilled positions stay empty", [dtc.DEF.length, dtc.MID.length], [0, 0]);
+check("dream cumulative total = sum of chosen pts", dtc.total, 30);   // 6 + 16 + 8
+const dtr = dreamTeam(1, false);   // round 1 = each team's first match
+check("dream FWD round-1 order (fwd_b leads that round)",
+  dtr.FWD.map((x) => x.p.player_id), ["fwd_b", "fwd_a"]);
+check("dream round-1 total", dtr.total, 18);   // gk_a 6 + fwd_b 8 + fwd_a 4
+S.stats.push({ player_id: "gk_b", match_label: "B vs W (2026-06-14)", appeared: true, saves: 2, minutes: 20 });
+const dtp = dreamTeam(0, true);    // per-90
+check("dream per-90 keeps the better rate", dtp.GK.map((x) => x.p.player_id), ["gk_a"]);
+S.stats = []; S.picks = []; S.managers = []; S.playerById = {}; S.league = {};
 
 /* resilientWrite: an unapplied additive migration (missing optional
    column) is dropped and retried instead of failing the whole write. */
