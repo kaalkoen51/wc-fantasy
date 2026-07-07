@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -32,7 +32,8 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog,
         dreamTeam, formDotColor, shortlistCleaned, standingsMovement,
         currentRoundNo, currentRoundDreamIds,
-        chatThreads, messagesForThread, threadUnread, markThreadSeen } = api;
+        chatThreads, messagesForThread, threadUnread, markThreadSeen,
+        koRoundOf, knockoutBracket } = api;
 let fails = 0;
 const check = (label, got, want) => {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -716,6 +717,31 @@ check("unread ignores my own messages", threadUnread("m2", "m1"), 1);   // "yo" 
 markThreadSeen("m2", "m1");
 check("marking a thread seen clears its unread", threadUnread("m2", "m1"), 0);
 S.managers = []; S.messages = []; S.chatSeen = {};
+
+// Knockout bracket: round classification, structure, scores, winner detection.
+check("koRoundOf maps the feed's round labels",
+  ["Round of 32", "Round of 16", "Quarter-finals", "Semi-finals", "Final", "3rd Place Final", "Group Stage - 1"]
+    .map(koRoundOf), ["R32", "R16", "QF", "SF", "F", "3rd", null]);
+S.stats = []; S.playerById = {};
+S.fixtures = [
+  { home: "A", away: "B", date: "2026-06-28", kickoff_utc: "2026-06-28T18:00:00Z", round: "Round of 32", home_score: 2, away_score: 1 },
+  { home: "C", away: "D", date: "2026-06-29", kickoff_utc: "2026-06-29T18:00:00Z", round: "Round of 32", home_score: 1, away_score: 1 }, // pens; C advances
+  { home: "A", away: "C", date: "2026-07-03", kickoff_utc: "2026-07-03T18:00:00Z", round: "Round of 16", home_score: null, away_score: null },
+  { home: "E", away: "F", date: "2026-07-10", kickoff_utc: "2026-07-10T18:00:00Z", round: "3rd Place Final", home_score: null, away_score: null },
+];
+const bk = knockoutBracket();
+check("bracket groups rounds in order", bk.rounds.map((r) => r.key), ["R32", "R16"]);
+check("third-place match split out", bk.third && bk.third.home, "E");
+const r32 = bk.rounds[0].matches;
+check("decided match: higher score wins", [r32[0].winner, r32[0].score], ["A", [2, 1]]);
+check("penalty draw: winner is who advanced to the next round",
+  [r32[1].winner, r32[1].score], ["C", [1, 1]]);
+check("unplayed match has no winner yet", bk.rounds[1].matches[0].winner, null);
+// match_stats result overrides the fixture's stored score (live/pulled)
+S.stats = [{ match_label: "A vs B (2026-06-28)", home_score: 3, away_score: 0, player_id: "x" }];
+check("live/pulled score overrides fixture score",
+  knockoutBracket().rounds[0].matches[0].score, [3, 0]);
+S.fixtures = []; S.stats = []; S.playerById = {};
 
 /* Dream XI: best starters per position (GK1/DEF3/MID3/FWD2 in phase 1),
    cumulative and per-round, with per-90 scoping. SCORING: FWD goal 4,
