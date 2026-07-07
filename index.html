@@ -2620,16 +2620,25 @@ function formLog(pid, pos, n = 5) {
 const formPoints = (pid, pos, n = 3) =>
   formLog(pid, pos, n).reduce((s, f) => s + f.pts, 0);
 
+// Form-dot color by a match's fantasy points: red (negative), grey (blank),
+// then a green ramp that darkens with the haul, topping out purple for a
+// standout game. Thresholds: >2 light green, >5 darker green, >10 purple.
+function formDotColor(pts) {
+  if (pts < 0) return "bg-red-500";
+  if (pts === 0) return "bg-slate-600";
+  if (pts > 10) return "bg-purple-500";
+  if (pts > 5) return "bg-emerald-700";
+  if (pts > 2) return "bg-emerald-500";
+  return "bg-emerald-300";            // 1–2 pts: faint green
+}
+
 // Compact form sparkline: a dot per recent appearance, colored by its points.
 function formDots(pid, pos) {
   const log = formLog(pid, pos, 5);
   if (!log.length) return "";
   return `<span class="inline-flex items-center gap-0.5 align-middle">${
-    log.map((f) => {
-      const c = f.pts > 0 ? "bg-wcgold" : f.pts < 0 ? "bg-red-500" : "bg-slate-600";
-      return `<span class="w-1.5 h-1.5 rounded-full ${c}" title="${esc(f.label)}: ${
-        f.pts >= 0 ? "+" : ""}${f.pts}"></span>`;
-    }).join("")}</span>`;
+    log.map((f) => `<span class="w-1.5 h-1.5 rounded-full ${formDotColor(f.pts)}" title="${
+      esc(f.label)}: ${f.pts >= 0 ? "+" : ""}${f.pts}"></span>`).join("")}</span>`;
 }
 
 // Match-by-match log: every game the player's team has played that we have
@@ -2781,9 +2790,17 @@ function renderDreamTeam(round, per90) {
     const m = S.managers.find((x) => x.id === pk.manager_id);
     if (m) mgrByPid[pk.player_id] = m.name;
   }
+  const teamMatches = statsDerived().teamMatches;
+  // Owner shown per scope: cumulative = who holds them now; a specific round =
+  // who had them in their locked roster for that round's match (history).
+  const ownerName = (p) => {
+    if (!round) return mgrByPid[p.player_id] || null;
+    const label = (teamMatches[p.team] || [])[round - 1];
+    return label ? (ownerEntryAt(p.player_id, label)?.manager.name || null) : null;
+  };
   const posName = { GK: "Goalkeeper", DEF: "Defenders", MID: "Midfielders", FWD: "Forwards" };
   const card = (x) => {
-    const owner = mgrByPid[x.p.player_id];
+    const owner = ownerName(x.p);
     return `<button data-sp="${esc(x.p.player_id)}" class="w-[30%] max-w-[7.5rem] shrink-0 rounded-xl border border-slate-700 bg-slate-900 p-2 text-center flex flex-col items-center gap-1">
       ${avatarHtml(x.p.player_id, x.p.team, "w-10 h-10")}
       <span class="text-xs font-medium leading-tight">${esc(x.p.name)} ${availBadges(x.p.player_id)}</span>
@@ -2809,7 +2826,8 @@ function renderDreamTeam(round, per90) {
       <div class="text-sm font-mono text-wcgold">${dt.total}p</div>
     </div>
     <p class="text-[10px] text-slate-500">Best starters (${quota.GK}-${quota.DEF}-${quota.MID}-${quota.FWD}) by ${
-      per90 ? "points per 90" : "total points"}. 👤 shows who drafted them. Updates after every game.</p>
+      per90 ? "points per 90" : "total points"}. 👤 ${
+      round ? "= who owned them that round" : "= who drafted them"}. Updates after every game.</p>
     <div class="rounded-xl border border-slate-800 bg-emerald-950/20 p-3 space-y-3">
       ${["FWD", "MID", "DEF", "GK"].map(rowFor).join("")}
     </div>`;

@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formPoints, formLog, dreamTeam };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formPoints, formLog, dreamTeam, formDotColor };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -30,7 +30,7 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         plannerChoiceRank, choiceStatus, plannerPickPool,
         autoPickCandidates, entryForId,
         statsScopedRows, sumStatKey, sumMinutes, formPoints, formLog,
-        dreamTeam } = api;
+        dreamTeam, formDotColor } = api;
 let fails = 0;
 const check = (label, got, want) => {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -602,6 +602,15 @@ check("formLog is chronological newest-last",
   formLog("gk_1", "GK", 3).map((f) => f.pts), [8 + 6, 0, 16 - 3]);
 check("formPoints sums the last 3 appearances", formPoints("gk_1", "GK", 3), 14 + 0 + 13);
 check("formPoints window of 1 = latest only", formPoints("gk_1", "GK", 1), 13);
+// Form-dot color ramp: negative red, blank grey, faint→light→dark green, purple.
+check("formDotColor negative = red", formDotColor(-3), "bg-red-500");
+check("formDotColor zero = grey", formDotColor(0), "bg-slate-600");
+check("formDotColor 1-2 = faint green", formDotColor(2), "bg-emerald-300");
+check("formDotColor >2 = light green", formDotColor(3), "bg-emerald-500");
+check("formDotColor 5 boundary stays light green", formDotColor(5), "bg-emerald-500");
+check("formDotColor >5 = darker green", formDotColor(6), "bg-emerald-700");
+check("formDotColor 10 boundary stays green", formDotColor(10), "bg-emerald-700");
+check("formDotColor >10 = purple", formDotColor(11), "bg-purple-500");
 S.stats = []; S.playerById = {};
 
 /* Dream XI: best starters per position (GK1/DEF3/MID3/FWD2 in phase 1),
