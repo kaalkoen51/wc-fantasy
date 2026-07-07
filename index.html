@@ -214,6 +214,11 @@
         <div id="stats-chips" class="flex gap-1.5 flex-wrap text-xs"></div>
         <select id="stats-sort" class="ml-auto rounded-lg bg-slate-900 border border-slate-700 px-2 py-1 text-xs"></select>
       </div>
+      <div class="flex items-center gap-2 flex-wrap text-xs">
+        <select id="stats-round" class="rounded-lg bg-slate-900 border border-slate-700 px-2 py-1 text-xs"></select>
+        <button id="stats-per90" class="rounded-full px-3 py-1 border border-slate-700 text-slate-400">⏱ per 90</button>
+        <span class="text-[10px] text-slate-600">Round = each team's Nth game · per 90 needs ≥90′</span>
+      </div>
       <ol id="stats-list" class="rounded-xl border border-slate-700 bg-slate-900 px-4 divide-y divide-slate-800"></ol>
     </div>
     <div id="board-rosters" class="hidden space-y-2"></div>
@@ -2404,7 +2409,10 @@ function renderBoard() {
 S.statsPos = "ALL";
 S.statsSearch = "";
 S.statsSort = "points";
+S.statsPer90 = false;   // Stats tab: show per-90 rates instead of totals
+S.statsRound = 0;       // Stats tab: scope to a round (0 = whole tournament)
 S.histIdxByMgr = {};   // manager id -> history pager index (0 = current)
+S.admOpenLabels = null; // admin stats history: which match groups are expanded
 S.showShortlist = false;   // Trades tab: shortlist collapsed until opened
 S.slPos = "ALL";           // shortlist position filter
 S.slSort = "points";       // shortlist sort key
@@ -2572,6 +2580,52 @@ function playerStatTotal(pid, key) {
   return n;
 }
 
+/* ---------- Stats-tab depth: round scoping, per-90 rates, recent form ---------- */
+
+// A player's appearance rows, optionally scoped to their team's Nth match
+// (round 1..N); round 0/undefined = the whole tournament.
+function statsScopedRows(pid, team, round) {
+  const rows = statRowsFor(pid).filter((r) => r.appeared);
+  if (!round) return rows;
+  const label = (statsDerived().teamMatches[team] || [])[round - 1];
+  return label ? rows.filter((r) => r.match_label === label) : [];
+}
+
+// Sum one stat key over rows (clean_sheet/motm count as per-match booleans).
+function sumStatKey(rows, key) {
+  let n = 0;
+  for (const r of rows)
+    n += (key === "clean_sheet" || key === "motm") ? (r[key] ? 1 : 0) : (r[key] || 0);
+  return n;
+}
+
+// Minutes over rows; a played row with unknown minutes counts as a full 90.
+const sumMinutes = (rows) =>
+  rows.reduce((m, r) => m + (r.minutes != null ? r.minutes : 90), 0);
+
+// Recent form: the player's last n appearances (oldest→newest) with points.
+function formLog(pid, pos, n = 5) {
+  return statRowsFor(pid).filter((r) => r.appeared)
+    .sort((a, b) => String(labelDate(a.match_label))
+      .localeCompare(String(labelDate(b.match_label))))
+    .slice(-n)
+    .map((r) => ({ pts: calcPlayerPoints(r, pos), label: r.match_label }));
+}
+const formPoints = (pid, pos, n = 3) =>
+  formLog(pid, pos, n).reduce((s, f) => s + f.pts, 0);
+
+// Compact form sparkline: a dot per recent appearance, colored by its points.
+function formDots(pid, pos) {
+  const log = formLog(pid, pos, 5);
+  if (!log.length) return "";
+  return `<span class="inline-flex items-center gap-0.5 align-middle">${
+    log.map((f) => {
+      const c = f.pts > 0 ? "bg-wcgold" : f.pts < 0 ? "bg-red-500" : "bg-slate-600";
+      return `<span class="w-1.5 h-1.5 rounded-full ${c}" title="${esc(f.label)}: ${
+        f.pts >= 0 ? "+" : ""}${f.pts}"></span>`;
+    }).join("")}</span>`;
+}
+
 // Match-by-match log: every game the player's team has played that we have
 // data for — minutes/DNP, stat line, points, and lineup status. With
 // managerId the status is relative to that manager (Starter/Sub/not in
@@ -2633,6 +2687,17 @@ function playerDetailHtml(p, opts = {}) {
   const fx = fixtureCrestHtml(p.team);
   const fxLine = fx ? `<div class="flex items-center gap-1.5 text-xs text-slate-400">
       <span class="text-slate-500">Next:</span> ${fx}</div>` : "";
+  // Depth line: appearances, minutes, points-per-90 and a recent-form sparkline.
+  const appRows = statRowsFor(p.player_id).filter((r) => r.appeared);
+  const mins = sumMinutes(appRows);
+  const per90pts = mins > 0 ? Math.round((total / mins) * 90 * 10) / 10 : 0;
+  const dots = formDots(p.player_id, p.position);
+  const statLine = appRows.length ? `<div class="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
+      <span>${appRows.length} app${appRows.length === 1 ? "" : "s"}</span>
+      <span class="text-slate-600">·</span><span>${mins}′</span>
+      <span class="text-slate-600">·</span><span>${per90pts} pts/90</span>${
+        dots ? `<span class="text-slate-600">·</span><span class="flex items-center gap-1">Form ${dots}</span>` : ""}
+    </div>` : "";
   return `
     <div class="flex items-start gap-2">
       ${avatarHtml(p.player_id, p.team, "w-12 h-12")}
@@ -2648,6 +2713,7 @@ function playerDetailHtml(p, opts = {}) {
       ${opts.closeId ? `<button id="${opts.closeId}" class="text-slate-400 px-1 -mt-1 shrink-0">✕</button>` : ""}
     </div>
     ${fxLine}
+    ${statLine}
     ${breakdown.length ? `<table class="w-full text-xs"><tbody>
       ${breakdown.map((r) => `<tr class="border-b border-slate-800">
         <td class="py-1 text-slate-400">${r.label}</td>
@@ -2682,13 +2748,28 @@ function renderStatsTab() {
     }">${c}</button>`).join("");
   $("stats-chips").querySelectorAll("[data-chip]").forEach((b) =>
     b.onclick = () => { S.statsPos = b.dataset.chip; renderStatsTab(); });
-  $("stats-sort").innerHTML = STAT_SORTS.map(([k, lbl]) =>
+  // Sort dropdown = the shared stat options plus a Stats-tab-only "Form".
+  const sortOpts = [...STAT_SORTS, ["form", "Form (recent)"]];
+  $("stats-sort").innerHTML = sortOpts.map(([k, lbl]) =>
     `<option value="${k}" ${S.statsSort === k ? "selected" : ""}>${lbl}</option>`).join("");
 
   const sortKey = S.statsSort || "points";
-  const byPoints = sortKey === "points";
-  const valOf = (p) => byPoints ? playerPoints(p.player_id, p.position)
-    : playerStatTotal(p.player_id, sortKey);
+  const isForm = sortKey === "form";
+  const per90 = S.statsPer90 && !isForm;      // form is inherently recent
+  const round = isForm ? 0 : (S.statsRound || 0);
+
+  // Round selector: each team's k-th match = "round k" (group MD1-3, then the
+  // knockouts). Rebuilt each render as more rounds are played.
+  const teamMatches = statsDerived().teamMatches;
+  const maxRounds = Object.values(teamMatches).reduce((m, a) => Math.max(m, a.length), 0);
+  $("stats-round").innerHTML = '<option value="0">All rounds</option>' +
+    Array.from({ length: maxRounds }, (_, i) =>
+      `<option value="${i + 1}" ${(S.statsRound || 0) === i + 1 ? "selected" : ""}>Round ${i + 1}</option>`).join("");
+  $("stats-round").disabled = isForm;
+  $("stats-round").classList.toggle("opacity-40", isForm);
+  $("stats-per90").className = "rounded-full px-3 py-1 border " +
+    (per90 ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400") +
+    (isForm ? " opacity-40 pointer-events-none" : "");
 
   const q = S.statsSearch.trim().toLowerCase();
   let pool;
@@ -2701,17 +2782,35 @@ function renderStatsTab() {
     pool = [...ids].map((id) => S.playerById[id]).filter(Boolean);
   }
   if (S.statsPos !== "ALL") pool = pool.filter((p) => p.position === S.statsPos);
-  let ranked = pool.map((p) => ({
-    p, pts: playerPoints(p.player_id, p.position), val: valOf(p),
-  }));
-  // For a category leaderboard, only list players who have some of it.
-  if (!byPoints && !q) ranked = ranked.filter((x) => x.val > 0);
+
+  const rawVal = (p, rows) => sortKey === "points"
+    ? rows.reduce((s, r) => s + calcPlayerPoints(r, p.position), 0)
+    : sumStatKey(rows, sortKey);
+  let ranked = pool.map((p) => {
+    const rows = statsScopedRows(p.player_id, p.team, round);
+    const mins = sumMinutes(rows);
+    const raw = isForm ? formPoints(p.player_id, p.position) : rawVal(p, rows);
+    const val = isForm ? raw
+      : per90 ? (mins > 0 ? Math.round((raw / mins) * 90 * 10) / 10 : 0)
+      : raw;
+    return { p, pts: rows.reduce((s, r) => s + calcPlayerPoints(r, p.position), 0), mins, val };
+  });
+  // Leaderboards (not free-text search) hide players with nothing to show.
+  // The default all-tournament points board keeps everyone (incl. 0/negatives).
+  const defaultBoard = sortKey === "points" && !per90 && !isForm && !round;
+  if (!q) {
+    if (per90) ranked = ranked.filter((x) => x.mins >= 90 && x.val > 0);
+    else if (!defaultBoard) ranked = ranked.filter((x) => x.val > 0);
+  }
   ranked = ranked
     .sort((a, b) => b.val - a.val || b.pts - a.pts || a.p.name.localeCompare(b.p.name))
     .slice(0, 30);
 
-  $("stats-list").innerHTML = ranked.map(({ p, pts, val }, i) => {
+  $("stats-list").innerHTML = ranked.map(({ p, pts, mins, val }, i) => {
     const owner = ownerOf(p.player_id);
+    const dots = formDots(p.player_id, p.position);
+    const sub = isForm ? "form" : per90 ? "/90" : `${pts}p`;
+    const showSub = !(sortKey === "points" && !per90);
     return `<li class="flex items-center gap-1">
       ${starHtml(p.player_id)}
       <button data-sp="${esc(p.player_id)}" class="flex-1 min-w-0 flex items-center gap-2 py-2 text-left">
@@ -2720,16 +2819,21 @@ function renderStatsTab() {
         <span class="min-w-0 flex-1">
           <span class="block truncate text-sm">${esc(p.name)} ${availBadges(p.player_id)}${
             owner ? ` <span class="rounded bg-slate-700 px-1 py-0.5 text-[10px] text-wcgold">👤 ${esc(owner)}</span>` : ""}</span>
-          <span class="block truncate text-[10px] text-slate-500">${esc(p.team)}</span>
+          <span class="flex items-center gap-1 text-[10px] text-slate-500">
+            <span class="truncate">${esc(p.team)}</span>${dots}${
+              per90 ? `<span class="shrink-0">· ${mins}′</span>` : ""}</span>
         </span>
         <span class="pos-${p.position} rounded px-1.5 py-0.5 text-[10px] font-semibold shrink-0">${p.position}</span>
         <span class="shrink-0 w-10 text-right">
-          <span class="block font-mono font-bold ${val > 0 ? "text-wcgold" : "text-slate-500"}">${val}</span>
-          ${byPoints ? "" : `<span class="block text-[10px] text-slate-500">${pts}p</span>`}
+          <span class="block font-mono font-bold ${val > 0 ? "text-wcgold" : val < 0 ? "text-red-400" : "text-slate-500"}">${val}</span>
+          ${showSub ? `<span class="block text-[10px] text-slate-500">${sub}</span>` : ""}
         </span>
       </button></li>`;
   }).join("") || `<li class="py-4 text-sm text-slate-500">${
-    q ? "No players match." : "No stats yet — the list fills up once matches are pulled. Search to look anyone up."}</li>`;
+    q ? "No players match."
+      : per90 ? "No one has ≥90′ logged yet for a per-90 rate."
+      : round ? "No stats for that round yet."
+      : "No stats yet — the list fills up once matches are pulled. Search to look anyone up."}</li>`;
   // Open the detail in the bottom sheet (a fixed overlay) so the page
   // doesn't jump — same as tapping a player on the Home tab.
   $("stats-list").querySelectorAll("[data-sp]").forEach((b) => b.onclick = () =>
@@ -3776,9 +3880,18 @@ function admRenderExisting() {
   for (const r of S.stats) (groups[r.match_label] ||= []).push(r);
   const labels = Object.keys(groups).sort((a, b) =>
     String(labelDate(b)).localeCompare(String(labelDate(a))) || a.localeCompare(b));
+  // Each match is a collapsible section (long history stays scannable). Open
+  // state is remembered across refetches; the most recent match opens first run.
+  if (S.admOpenLabels === null)
+    S.admOpenLabels = new Set(labels.slice(0, 1));
   $("adm-existing").innerHTML = labels.map((label) => `
-    <div>
-      <div class="text-xs text-slate-400 mb-1">${esc(label)}</div>
+    <details data-lbl="${esc(label)}" class="rounded-lg border border-slate-800 bg-slate-900/40" ${
+      S.admOpenLabels.has(label) ? "open" : ""}>
+      <summary class="cursor-pointer select-none px-2 py-1.5 text-xs text-slate-300 flex items-center gap-2">
+        <span class="truncate flex-1">${esc(label)}</span>
+        <span class="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400 shrink-0">${groups[label].length}</span>
+      </summary>
+      <div class="px-2 pb-2 pt-1">
       ${groups[label].map((r) => {
         const p = S.playerById[r.player_id];
         const bits = [];
@@ -3800,7 +3913,13 @@ function admRenderExisting() {
           <button data-del="${r.id}" class="text-xs underline text-red-400">del</button>
         </div>`;
       }).join("")}
-    </div>`).join("") || '<p class="text-slate-500">No stats rows yet.</p>';
+      </div>
+    </details>`).join("") || '<p class="text-slate-500">No stats rows yet.</p>';
+  $("adm-existing").querySelectorAll("details[data-lbl]").forEach((d) =>
+    d.ontoggle = () => {
+      if (d.open) S.admOpenLabels.add(d.dataset.lbl);
+      else S.admOpenLabels.delete(d.dataset.lbl);
+    });
   $("adm-existing").querySelectorAll("[data-edit]").forEach((b) =>
     b.onclick = () => admLoadRow(S.stats.find((r) => r.id === b.dataset.edit)));
   $("adm-existing").querySelectorAll("[data-del]").forEach((b) =>
@@ -4265,6 +4384,8 @@ function wire() {
   $("pool-sort").onchange = (e) => { S.poolSort = e.target.value; renderPool(); };
   $("stats-search").oninput = (e) => { S.statsSearch = e.target.value; renderStatsTab(); };
   $("stats-sort").onchange = (e) => { S.statsSort = e.target.value; renderStatsTab(); };
+  $("stats-round").onchange = (e) => { S.statsRound = Number(e.target.value); renderStatsTab(); };
+  $("stats-per90").onclick = () => { S.statsPer90 = !S.statsPer90; renderStatsTab(); };
   $("player-sheet").onclick = (e) => {
     if (e.target.id === "player-sheet") $("player-sheet").classList.add("hidden");
   };
