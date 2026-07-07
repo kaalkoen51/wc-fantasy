@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, currentRoundNo, currentRoundDreamIds };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -31,7 +31,8 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         autoPickCandidates, entryForId,
         statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog,
         dreamTeam, formDotColor, shortlistCleaned, standingsMovement,
-        currentRoundNo, currentRoundDreamIds } = api;
+        currentRoundNo, currentRoundDreamIds,
+        chatThreads, messagesForThread, threadUnread, markThreadSeen } = api;
 let fails = 0;
 const check = (label, got, want) => {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -692,6 +693,29 @@ const dreamIds = currentRoundDreamIds();
 check("Dream XI badge set holds this round's best, not last round's",
   [dreamIds.has("fwd_a"), dreamIds.has("mid_b")], [true, false]);
 S.league = {}; S.managers = []; S.picks = []; S.stats = []; S.playerById = {};
+
+// Chat: league group room + 1:1 DM threads (session manager is "m1").
+S.managers = [{ id: "m1", name: "Me" }, { id: "m2", name: "Bob" }, { id: "m3", name: "Cat" }];
+S.messages = [
+  { sender_id: "m2", recipient_id: null, body: "hi all", created_at: "2026-06-01T00:00:01Z" },
+  { sender_id: "m2", recipient_id: "m1", body: "yo", created_at: "2026-06-01T00:00:02Z" },
+  { sender_id: "m1", recipient_id: "m2", body: "sup", created_at: "2026-06-01T00:00:03Z" },
+  { sender_id: "m2", recipient_id: "m3", body: "not yours", created_at: "2026-06-01T00:00:04Z" },
+];
+S.chatSeen = {};
+check("chatThreads = league + other managers (not me)",
+  chatThreads().map((t) => t.id), ["league", "m2", "m3"]);
+check("league thread = only group messages",
+  messagesForThread("league", "m1").map((m) => m.body), ["hi all"]);
+check("DM thread = both directions between me and them",
+  messagesForThread("m2", "m1").map((m) => m.body), ["yo", "sup"]);
+check("DM thread excludes others' private messages",
+  messagesForThread("m2", "m1").some((m) => m.body === "not yours"), false);
+check("unread counts others' messages I haven't seen", threadUnread("league", "m1"), 1);
+check("unread ignores my own messages", threadUnread("m2", "m1"), 1);   // "yo" only, not my "sup"
+markThreadSeen("m2", "m1");
+check("marking a thread seen clears its unread", threadUnread("m2", "m1"), 0);
+S.managers = []; S.messages = []; S.chatSeen = {};
 
 /* Dream XI: best starters per position (GK1/DEF3/MID3/FWD2 in phase 1),
    cumulative and per-round, with per-90 scoping. SCORING: FWD goal 4,
