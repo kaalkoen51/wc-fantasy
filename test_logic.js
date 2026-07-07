@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -30,7 +30,7 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         plannerChoiceRank, choiceStatus, plannerPickPool,
         autoPickCandidates, entryForId,
         statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog,
-        dreamTeam, formDotColor, shortlistCleaned } = api;
+        dreamTeam, formDotColor, shortlistCleaned, standingsMovement } = api;
 let fails = 0;
 const check = (label, got, want) => {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -625,6 +625,41 @@ check("shortlistCleaned drops KO, keeps alive + unknown ids",
 check("shortlistCleaned no-op when nobody is out",
   shortlistCleaned(["ok1"]), ["ok1"]);
 S.stages = []; S.stats = []; S.playerById = {};
+
+// Standings movement: computeScores buckets player-match points by round, so
+// the board can diff rank now vs. before the current round.
+S.managers = [{ id: "m1", name: "Ann" }]; S.stages = []; S.fixtures = []; S.snapshots = [];
+S.picks = [{ manager_id: "m1", player_id: "fwd_a", position: "FWD", is_sub: false,
+            slot: "FWD", pick_number: 1, player_name: "Ace", team: "A" }];
+S.playerById = { fwd_a: { player_id: "fwd_a", name: "Ace", position: "FWD", team: "A" } };
+S.stats = [
+  { player_id: "fwd_a", match_label: "A vs B (2026-06-10)", appeared: true, goals: 1, minutes: 90 },
+  { player_id: "fwd_a", match_label: "A vs C (2026-06-14)", appeared: true, goals: 1, minutes: 90 },
+];
+const rpsc = computeScores()[0];   // FWD goal = 4
+check("roundPts buckets player points by round", [rpsc.roundPts[1], rpsc.roundPts[2]], [4, 4]);
+check("roundPts sum equals total", rpsc.total, 8);
+S.picks = []; S.managers = []; S.stats = []; S.playerById = {};
+
+// standingsMovement: after round 2, a manager who out-scored the leader that
+// round jumps them → ▲ for the climber, ▼ for the overtaken, level otherwise.
+{
+  const scores = [
+    { manager: { id: "b" }, total: 20, roundPts: { 1: 10, 2: 10 } },  // was 10 (2nd), now 20 (1st)
+    { manager: { id: "a" }, total: 18, roundPts: { 1: 15, 2: 3 } },   // was 15 (1st), now 18 (2nd)
+    { manager: { id: "c" }, total: 5, roundPts: { 1: 3, 2: 2 } },     // stays 3rd
+  ];
+  const mv = standingsMovement(scores);
+  check("movement current round = round 2", mv.maxRound, 2);
+  check("movement shown once 2 rounds exist", mv.showMovement, true);
+  check("climber moved up (+1)", mv.byId.b.delta, 1);
+  check("overtaken moved down (-1)", mv.byId.a.delta, -1);
+  check("unchanged manager is level (0)", mv.byId.c.delta, 0);
+  check("this-round tally surfaced", [mv.byId.b.roundPts, mv.byId.a.roundPts], [10, 3]);
+}
+// One round only → no movement yet.
+check("single round hides movement",
+  standingsMovement([{ manager: { id: "x" }, total: 4, roundPts: { 1: 4 } }]).showMovement, false);
 
 /* Dream XI: best starters per position (GK1/DEF3/MID3/FWD2 in phase 1),
    cumulative and per-round, with per-90 scoping. SCORING: FWD goal 4,
