@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formPoints, formLog, dreamTeam, formDotColor, shortlistCleaned };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -29,7 +29,7 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         isEliminated, computeYetToPlay, showView,
         plannerChoiceRank, choiceStatus, plannerPickPool,
         autoPickCandidates, entryForId,
-        statsScopedRows, sumStatKey, sumMinutes, formPoints, formLog,
+        statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog,
         dreamTeam, formDotColor, shortlistCleaned } = api;
 let fails = 0;
 const check = (label, got, want) => {
@@ -597,11 +597,14 @@ check("sumStatKey clean_sheet counts booleans", sumStatKey(allRows, "clean_sheet
 check("sumMinutes totals played minutes", sumMinutes(allRows), 225);
 check("sumMinutes treats null minutes as a full 90",
   sumMinutes([{ appeared: true, minutes: null }]), 90);
-// Form: last-3 appearances' points, newest last; GK goal = 8, red = -3.
+// Form: appearance points, newest last; GK goal = 8, cs = 6, red = -3.
 check("formLog is chronological newest-last",
   formLog("gk_1", "GK", 3).map((f) => f.pts), [8 + 6, 0, 16 - 3]);
-check("formPoints sums the last 3 appearances", formPoints("gk_1", "GK", 3), 14 + 0 + 13);
-check("formPoints window of 1 = latest only", formPoints("gk_1", "GK", 1), 13);
+// Form metric = average points over the last 5 appearances (here only 3).
+check("formAvg averages the last 5 (only 3) appearances",
+  formAvg("gk_1", "GK", 5), 9);            // (14 + 0 + 13) / 3 = 9
+check("formAvg window of 1 = latest only", formAvg("gk_1", "GK", 1), 13);
+check("formAvg no appearances = 0", formAvg("nobody", "GK", 5), 0);
 // Form-dot color ramp: brighter green = better game (dim→bright), then purple.
 check("formDotColor negative = red", formDotColor(-3), "bg-red-500");
 check("formDotColor zero = grey", formDotColor(0), "bg-slate-600");
