@@ -1634,8 +1634,10 @@ function computeScores() {
                                items: [], eliminated: true };
     let total = 0;
     const earnedByPlayer = {};
+    const roundPts = {};   // labelRound -> player-match points that round
     for (const label of statLabels) {
       const d = labelDate(label);
+      const rnd = roundOf(labelTeams(label)[0], label) + 1;   // 1-based round
       const roster = rosterAtFor(m.id, matchTime(label), d, snapsByMgr[m.id] || []);
       const starters = roster.filter((e) => !e.is_sub && e.position !== "TEAM");
       for (const entry of roster) {
@@ -1659,6 +1661,7 @@ function computeScores() {
             (s2, r2) => s2 + calcPlayerPoints(r2, entry.position), 0);
         }
         earnedByPlayer[entry.player_id] = (earnedByPlayer[entry.player_id] || 0) + pts;
+        if (rnd >= 1) roundPts[rnd] = (roundPts[rnd] || 0) + pts;
         total += pts;
       }
     }
@@ -1694,7 +1697,7 @@ function computeScores() {
         pts, note: champion ? (pts ? "correct" : champion + " won") : "pending",
       });
     }
-    return { manager: m, total, items };
+    return { manager: m, total, items, roundPts };
   });
 }
 
@@ -2398,6 +2401,33 @@ function computeYetToPlay() {
   return result;
 }
 
+// Standings movement: ▲ up / ▼ down / – level, by rank change over the last round.
+function movementIcon(delta) {
+  if (delta > 0) return `<span class="text-emerald-400" title="up ${delta} since last round">▲</span>`;
+  if (delta < 0) return `<span class="text-red-400" title="down ${-delta} since last round">▼</span>`;
+  return `<span class="text-slate-500" title="no change since last round">–</span>`;
+}
+
+// Round-over-round movement for the standings. The current round is the
+// furthest anyone has stats for; each manager's rank now vs. their rank before
+// that round's points gives the arrow. Ranks use "1 + #strictly ahead" so
+// equal totals share a rank and don't fake movement. Movement is only
+// meaningful once a 2nd round exists (before that, everyone starts level).
+function standingsMovement(scores) {
+  const roundNums = scores.flatMap((s) => Object.keys(s.roundPts || {}).map(Number));
+  const maxRound = roundNums.length ? Math.max(...roundNums) : 0;
+  const roundPtsOf = (s) => (s.roundPts || {})[maxRound] || 0;
+  const rankBy = (val) => Object.fromEntries(scores.map((s) =>
+    [s.manager.id, 1 + scores.filter((o) => val(o) > val(s)).length]));
+  const curRank = rankBy((s) => s.total);
+  const prevRank = rankBy((s) => s.total - roundPtsOf(s));
+  const byId = Object.fromEntries(scores.map((s) => [s.manager.id, {
+    delta: prevRank[s.manager.id] - curRank[s.manager.id],
+    roundPts: roundPtsOf(s),
+  }]));
+  return { maxRound, showMovement: maxRound >= 2, byId };
+}
+
 function renderBoard() {
   setBoardTab(S.boardTab || "home");
   renderBanner();
@@ -2407,10 +2437,19 @@ function renderBoard() {
   const me = myManager();
   const scores = computeScores().sort((a, b) => b.total - a.total);
   const yetByMgr = computeYetToPlay();
+  const mv = standingsMovement(scores);
   $("board-lb").innerHTML = scores.map((s, i) => {
     const ytp = yetByMgr[s.manager.id];
     const ytpLine = ytp?.hasSnapshot && ytp.total > 0
       ? `<span class="block text-[10px] font-normal text-slate-400">${ytp.yet}/${ytp.total} starters yet to play</span>`
+      : "";
+    const mvi = mv.byId[s.manager.id];
+    const icon = (mv.showMovement && !s.eliminated) ? movementIcon(mvi.delta) : "";
+    const rp = mvi.roundPts;
+    const tallyLine = (mv.maxRound >= 1 && !s.eliminated)
+      ? `<span class="block text-[10px] font-normal ${
+          rp > 0 ? "text-emerald-400" : rp < 0 ? "text-red-400" : "text-slate-500"
+        }">${rp >= 0 ? "+" : "−"}${Math.abs(rp)} this round</span>`
       : "";
     return `
     <details data-mgr="${s.manager.id}" class="rounded-xl border border-slate-700 ${
@@ -2418,13 +2457,17 @@ function renderBoard() {
              ${open.has(s.manager.id) ? "open" : ""}>
       <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3">
         <span class="text-slate-500 font-mono w-6">${i + 1}.</span>
+        ${mv.showMovement ? `<span class="w-3 text-center text-xs shrink-0">${icon}</span>` : ""}
         <span class="flex-1 min-w-0">
           <span class="block font-semibold truncate">${esc(s.manager.name)}${
             s.manager.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}${
             s.eliminated ? ' <span class="text-[10px] text-red-400">eliminated</span>' : ""}</span>
           ${ytpLine}
         </span>
-        <span class="font-bold text-wcgold shrink-0">${s.total} pts</span>
+        <span class="shrink-0 text-right">
+          <span class="block font-bold text-wcgold">${s.total} pts</span>
+          ${tallyLine}
+        </span>
       </summary>
       <div id="hist-lb-${s.manager.id}" class="px-4 pb-3"></div>
     </details>`;
