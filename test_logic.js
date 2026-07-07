@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formPoints, formLog, dreamTeam, formDotColor };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formPoints, formLog, dreamTeam, formDotColor, shortlistCleaned };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -30,7 +30,7 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         plannerChoiceRank, choiceStatus, plannerPickPool,
         autoPickCandidates, entryForId,
         statsScopedRows, sumStatKey, sumMinutes, formPoints, formLog,
-        dreamTeam, formDotColor } = api;
+        dreamTeam, formDotColor, shortlistCleaned } = api;
 let fails = 0;
 const check = (label, got, want) => {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -611,7 +611,17 @@ check("formDotColor 5 boundary stays mid green", formDotColor(5), "bg-emerald-60
 check("formDotColor >5 = bright green", formDotColor(6), "bg-emerald-400");
 check("formDotColor 10 boundary stays bright green", formDotColor(10), "bg-emerald-400");
 check("formDotColor >10 = purple", formDotColor(11), "bg-purple-500");
-S.stats = []; S.playerById = {};
+// Shortlist "Clean": drop knocked-out players, keep alive and unknown ids.
+S.stages = [{ team: "OutLand", eliminated: true }, { team: "AliveLand", eliminated: false }];
+S.playerById = {
+  ko1: { player_id: "ko1", team: "OutLand", position: "FWD", name: "KO" },
+  ok1: { player_id: "ok1", team: "AliveLand", position: "MID", name: "OK" },
+};
+check("shortlistCleaned drops KO, keeps alive + unknown ids",
+  shortlistCleaned(["ko1", "ok1", "stale9"]), ["ok1", "stale9"]);
+check("shortlistCleaned no-op when nobody is out",
+  shortlistCleaned(["ok1"]), ["ok1"]);
+S.stages = []; S.stats = []; S.playerById = {};
 
 /* Dream XI: best starters per position (GK1/DEF3/MID3/FWD2 in phase 1),
    cumulative and per-round, with per-90 scoping. SCORING: FWD goal 4,
