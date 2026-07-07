@@ -2621,24 +2621,38 @@ const formPoints = (pid, pos, n = 3) =>
   formLog(pid, pos, n).reduce((s, f) => s + f.pts, 0);
 
 // Form-dot color by a match's fantasy points: red (negative), grey (blank),
-// then a green ramp that darkens with the haul, topping out purple for a
-// standout game. Thresholds: >2 light green, >5 darker green, >10 purple.
+// then a green ramp that BRIGHTENS with the haul (brighter = better game),
+// topping out purple for a standout. Thresholds: >2, >5, >10.
 function formDotColor(pts) {
   if (pts < 0) return "bg-red-500";
   if (pts === 0) return "bg-slate-600";
   if (pts > 10) return "bg-purple-500";
-  if (pts > 5) return "bg-emerald-700";
-  if (pts > 2) return "bg-emerald-500";
-  return "bg-emerald-300";            // 1–2 pts: faint green
+  if (pts > 5) return "bg-emerald-400";   // brightest green = best
+  if (pts > 2) return "bg-emerald-600";
+  return "bg-emerald-800";                // 1–2 pts: dim green
 }
 
-// Compact form sparkline: a dot per recent appearance, colored by its points.
+// Compact form sparkline over the team's last 5 matches (oldest→newest). Each
+// dot is colored by the player's points that game; matches they didn't feature
+// in show as a black "did not play" dot.
 function formDots(pid, pos) {
-  const log = formLog(pid, pos, 5);
-  if (!log.length) return "";
+  const p = S.playerById?.[pid];
+  if (!p) return "";
+  const labels = teamMatchLabels(p.team);   // newest first
+  if (!labels.length) return "";
+  const rowByLabel = {};
+  for (const r of statRowsFor(pid)) rowByLabel[r.match_label] = r;
+  const recent = labels.slice(0, 5).reverse();
   return `<span class="inline-flex items-center gap-0.5 align-middle">${
-    log.map((f) => `<span class="w-1.5 h-1.5 rounded-full ${formDotColor(f.pts)}" title="${
-      esc(f.label)}: ${f.pts >= 0 ? "+" : ""}${f.pts}"></span>`).join("")}</span>`;
+    recent.map((label) => {
+      const r = rowByLabel[label];
+      const played = !!(r && r.appeared);
+      const pts = played ? calcPlayerPoints(r, pos) : 0;
+      const cls = played ? formDotColor(pts) : "bg-black ring-1 ring-slate-500";
+      const title = played ? `${esc(label)}: ${pts >= 0 ? "+" : ""}${pts}`
+        : `${esc(label)}: did not play`;
+      return `<span class="w-1.5 h-1.5 rounded-full ${cls}" title="${title}"></span>`;
+    }).join("")}</span>`;
 }
 
 // Match-by-match log: every game the player's team has played that we have

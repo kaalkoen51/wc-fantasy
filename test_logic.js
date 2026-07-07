@@ -602,14 +602,14 @@ check("formLog is chronological newest-last",
   formLog("gk_1", "GK", 3).map((f) => f.pts), [8 + 6, 0, 16 - 3]);
 check("formPoints sums the last 3 appearances", formPoints("gk_1", "GK", 3), 14 + 0 + 13);
 check("formPoints window of 1 = latest only", formPoints("gk_1", "GK", 1), 13);
-// Form-dot color ramp: negative red, blank grey, faint→light→dark green, purple.
+// Form-dot color ramp: brighter green = better game (dim→bright), then purple.
 check("formDotColor negative = red", formDotColor(-3), "bg-red-500");
 check("formDotColor zero = grey", formDotColor(0), "bg-slate-600");
-check("formDotColor 1-2 = faint green", formDotColor(2), "bg-emerald-300");
-check("formDotColor >2 = light green", formDotColor(3), "bg-emerald-500");
-check("formDotColor 5 boundary stays light green", formDotColor(5), "bg-emerald-500");
-check("formDotColor >5 = darker green", formDotColor(6), "bg-emerald-700");
-check("formDotColor 10 boundary stays green", formDotColor(10), "bg-emerald-700");
+check("formDotColor 1-2 = dim green", formDotColor(2), "bg-emerald-800");
+check("formDotColor >2 = mid green", formDotColor(3), "bg-emerald-600");
+check("formDotColor 5 boundary stays mid green", formDotColor(5), "bg-emerald-600");
+check("formDotColor >5 = bright green", formDotColor(6), "bg-emerald-400");
+check("formDotColor 10 boundary stays bright green", formDotColor(10), "bg-emerald-400");
 check("formDotColor >10 = purple", formDotColor(11), "bg-purple-500");
 S.stats = []; S.playerById = {};
 
