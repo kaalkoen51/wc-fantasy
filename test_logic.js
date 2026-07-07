@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, currentRoundNo, currentRoundDreamIds };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -30,7 +30,8 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         plannerChoiceRank, choiceStatus, plannerPickPool,
         autoPickCandidates, entryForId,
         statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog,
-        dreamTeam, formDotColor, shortlistCleaned, standingsMovement } = api;
+        dreamTeam, formDotColor, shortlistCleaned, standingsMovement,
+        currentRoundNo, currentRoundDreamIds } = api;
 let fails = 0;
 const check = (label, got, want) => {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -660,6 +661,37 @@ S.picks = []; S.managers = []; S.stats = []; S.playerById = {};
 // One round only → no movement yet.
 check("single round hides movement",
   standingsMovement([{ manager: { id: "x" }, total: 4, roundPts: { 1: 4 } }]).showMovement, false);
+
+// Home current-team view: per-round points, "played this round" flag, and the
+// Dream XI badge all key off the current round (each team's Nth match).
+S.league = { phase: 1 }; S.managers = [{ id: "m1", name: "Me" }];
+S.stages = []; S.snapshots = []; S.fixtures = [];
+S.playerById = {
+  fwd_a: { player_id: "fwd_a", name: "Ace", position: "FWD", team: "A" },
+  mid_b: { player_id: "mid_b", name: "Boe", position: "MID", team: "B" },
+};
+S.picks = [
+  { id: "pa", manager_id: "m1", player_id: "fwd_a", player_name: "Ace", position: "FWD", team: "A", slot: "FWD", is_sub: false, pick_number: 1 },
+  { id: "pb", manager_id: "m1", player_id: "mid_b", player_name: "Boe", position: "MID", team: "B", slot: "MID", is_sub: false, pick_number: 2 },
+];
+S.stats = [
+  { player_id: "fwd_a", match_label: "A vs X (2026-06-10)", appeared: true, goals: 1, minutes: 90 },  // round 1
+  { player_id: "fwd_a", match_label: "A vs Y (2026-06-14)", appeared: true, goals: 2, minutes: 90 },  // round 2
+  { player_id: "mid_b", match_label: "B vs Z (2026-06-10)", appeared: true, goals: 1, minutes: 90 },  // round 1 only
+];
+check("currentRoundNo = furthest team round", currentRoundNo(), 2);
+const mh2 = managerHistory("m1");
+check("managerHistory exposes current round", mh2.curRound, 2);
+const byPid = Object.fromEntries(mh2.current.items.map((i) => [i.entry.player_id, i]));
+check("roundPts counts only the current round", byPid.fwd_a.roundPts, 8);   // FWD 2 goals ×4
+check("player who skipped this round scores 0 this round", byPid.mid_b.roundPts, 0);
+check("playedRound true only if featured this round",
+  [byPid.fwd_a.playedRound, byPid.mid_b.playedRound], [true, false]);
+check("cumulative pts still span all rounds", byPid.fwd_a.pts, 12);         // 4 + 8
+const dreamIds = currentRoundDreamIds();
+check("Dream XI badge set holds this round's best, not last round's",
+  [dreamIds.has("fwd_a"), dreamIds.has("mid_b")], [true, false]);
+S.league = {}; S.managers = []; S.picks = []; S.stats = []; S.playerById = {};
 
 /* Dream XI: best starters per position (GK1/DEF3/MID3/FWD2 in phase 1),
    cumulative and per-round, with per-90 scoping. SCORING: FWD goal 4,

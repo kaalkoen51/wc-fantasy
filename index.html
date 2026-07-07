@@ -1783,12 +1783,27 @@ function managerHistory(mgrId) {
   // Current view: live roster (credited-for-you) + TEAM/champion + former.
   const picks = managerPicks(mgrId);
   const pickIds = new Set(picks.map((pk) => pk.player_id));
+  // Current round = the furthest round anyone has stats for (each team's Nth
+  // match). Its per-player points and appearances feed the home round toggle
+  // and the "played this round" highlight; credited to the live roster.
+  const roundOfLabel = (l) => roundOf(labelTeams(l)[0], l) + 1;
+  const curRound = statLabels.reduce((m, l) => Math.max(m, roundOfLabel(l)), 0);
+  const curRoundLabels = statLabels.filter((l) => roundOfLabel(l) === curRound);
+  const roundByPlayer = {};
+  const playedRoundSet = new Set();
+  for (const label of curRoundLabels) {
+    const mp = matchPoints(picks, label);
+    for (const pid in mp) roundByPlayer[pid] = (roundByPlayer[pid] || 0) + mp[pid];
+    for (const pk of picks) if (appearedIn(pk.player_id, label)) playedRoundSet.add(pk.player_id);
+  }
   // "played in this snapshot" = has stats since the most recent lineup lock.
   const snapshotStart = snaps.length ? Date.parse(snaps[snaps.length - 1].effective_from) : 0;
   const nowMs = Date.now();
   const items = picks.map((pk) => ({
     entry: pk,
     pts: pk.slot === "TEAM" ? calcTeamPoints(stageOf(pk.team)) : (earnedByPlayer[pk.player_id] || 0),
+    roundPts: pk.slot === "TEAM" ? null : (roundByPlayer[pk.player_id] || 0),
+    playedRound: pk.position !== "TEAM" && playedRoundSet.has(pk.player_id),
     played: snaps.length > 0 && pk.position !== "TEAM"
       && (statsByPlayer[pk.player_id] || []).some(r => {
         const t = matchTimeFor(r.match_label);
@@ -1807,7 +1822,8 @@ function managerHistory(mgrId) {
     .map((pid) => {
       const p = S.playerById[pid] || { player_id: pid, name: pid, position: "", team: "" };
       return { entry: { player_id: pid, player_name: p.name, position: p.position,
-        team: p.team, slot: "—", is_sub: false }, pts: earnedByPlayer[pid] };
+        team: p.team, slot: "—", is_sub: false }, pts: earnedByPlayer[pid],
+        roundPts: roundByPlayer[pid] || 0 };
     })
     .filter((f) => f.pts).sort((a, b) => b.pts - a.pts);
   const computedTotal = items.reduce((s, i) => s + i.pts, 0)
@@ -1826,6 +1842,7 @@ function managerHistory(mgrId) {
   return {
     eliminated: !!mgr?.eliminated,
     total: mgr?.eliminated ? (mgr.frozen_points || 0) : computedTotal,
+    curRound,
     current: { items, former }, rounds,
   };
 }
@@ -1995,12 +2012,18 @@ async function setFinalPick(team) {
 // One roster row in a history view. Tappable (data-hp) unless it's a
 // TEAM/champion bonus line. `former` marks a banked traded-out player.
 // it.played (set by managerHistory for current items) drives yellow highlight.
-function lineupRowHtml(it, mgrId, former) {
+function lineupRowHtml(it, mgrId, former, opts = {}) {
+  const { roundMode = false, curView = false } = opts;
   const e = it.entry;
   const bonus = e.slot === "TEAM" || e.slot === "WIN";
   const tap = !bonus;
-  const ptsStr = it.pts == null ? "—" : `${it.pts}p`;
-  const played = !former && it.played;
+  const shownPts = roundMode ? it.roundPts : it.pts;
+  const ptsStr = shownPts == null ? "—" : `${shownPts}p`;
+  // Name goes gold only once the player has actually featured in the current
+  // round (their team's latest match), not merely since the last lineup lock.
+  const played = !former && !!it.playedRound;
+  const inDream = curView && !former && !bonus && currentRoundDreamIds().has(e.player_id);
+  const dreamBadge = inDream ? ` <span class="rounded bg-amber-400/20 text-amber-300 px-1 py-0.5 text-[9px] font-semibold align-middle" title="In this round's Dream XI">★ XI</span>` : "";
   const fxt = tap && !former ? fixtureText(e.team) : "";
   return `<div class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-2 py-2${
       tap ? " cursor-pointer hover:bg-slate-800" : ""}"${
@@ -2010,12 +2033,12 @@ function lineupRowHtml(it, mgrId, former) {
       former ? "former" : e.slot}${e.kept ? " ⭐" : ""}</span>
     ${avatarHtml(e.player_id, e.team)}
     <span class="min-w-0 flex-1">
-      <span class="block truncate text-sm ${played ? "text-wcgold" : ""}">${esc(e.player_name)} ${tap ? availBadges(e.player_id) : ""}</span>
+      <span class="block truncate text-sm ${played ? "text-wcgold" : ""}">${esc(e.player_name)}${dreamBadge} ${tap ? availBadges(e.player_id) : ""}</span>
       <span class="block truncate text-[10px] text-slate-500">${esc(e.team)}${fxt ? ` · ${esc(fxt)}` : ""}</span>
     </span>
     ${bonus ? "" : `<span class="pos-${e.position} rounded px-1.5 py-0.5 text-[10px] font-semibold shrink-0">${e.position}</span>`}
     <span class="shrink-0 w-10 text-right text-xs font-mono ${
-      played || it.pts > 0 ? "text-wcgold" : "text-slate-400"}">${ptsStr}</span>
+      played || shownPts > 0 ? "text-wcgold" : "text-slate-400"}">${ptsStr}</span>
     ${tap ? '<span class="shrink-0 text-slate-600 text-xs">›</span>' : ""}
   </div>`;
 }
@@ -2030,6 +2053,10 @@ function historyViewHtml(mgrId) {
   const onCurrent = idx === 0;
   const round = onCurrent ? null : h.rounds[h.rounds.length - idx];
 
+  // Current-lineup view can toggle between cumulative and this-round points.
+  const roundMode = onCurrent && !h.eliminated && S.homeScoreMode === "round";
+  const hasRound = onCurrent && !h.eliminated && (h.curRound || 0) >= 1;
+
   let body;
   if (onCurrent && h.eliminated) {
     body = `<p class="text-sm text-slate-400 px-1 py-3">Eliminated — points frozen at
@@ -2037,22 +2064,38 @@ function historyViewHtml(mgrId) {
   } else if (onCurrent) {
     const items = [...h.current.items].sort((a, b) =>
       (SLOT_RANK[a.entry.slot] ?? 9) - (SLOT_RANK[b.entry.slot] ?? 9));
-    body = (items.map((it) => lineupRowHtml(it, mgrId)).join("")
+    const rowOpts = { roundMode, curView: true };
+    body = (items.map((it) => lineupRowHtml(it, mgrId, false, rowOpts)).join("")
       || '<p class="text-sm text-slate-500 py-2">No players.</p>')
       + (h.current.former.length ? `
-        <div class="text-[10px] uppercase tracking-wide text-slate-500 pt-2 pb-1">Former players (traded out) — banked, tap for games</div>
-        ${h.current.former.map((it) => lineupRowHtml(it, mgrId, true)).join("")}` : "");
+        <details class="mt-2" data-former="${mgrId}" ${S.formerOpen[mgrId] ? "open" : ""}>
+          <summary class="cursor-pointer select-none text-[10px] uppercase tracking-wide text-slate-500 py-1">
+            Former players (traded out) · ${h.current.former.length} — banked, tap for games</summary>
+          <div class="space-y-1 pt-1">${h.current.former.map((it) =>
+            lineupRowHtml(it, mgrId, true, rowOpts)).join("")}</div>
+        </details>` : "");
   } else {
     const items = [...round.items].sort((a, b) =>
       (SLOT_RANK[a.entry.slot] ?? 9) - (SLOT_RANK[b.entry.slot] ?? 9));
     body = items.map((it) => lineupRowHtml(it, mgrId)).join("");
   }
 
+  const roundSubtotal = h.eliminated ? 0
+    : h.current.items.reduce((s, it) => s + (it.roundPts || 0), 0)
+      + h.current.former.reduce((s, it) => s + (it.roundPts || 0), 0);
   const label = onCurrent ? "Current lineup" : `Round ${round.n} · ${fmtDateRange(round.dates)}`;
-  const sub = onCurrent ? (h.eliminated ? "" : "credited to you · tap a player for their games")
+  const sub = onCurrent
+    ? (h.eliminated ? "" : roundMode ? `round ${h.curRound} · your live lineup`
+        : "credited to you · tap a player for their games")
     : "points scored this round";
-  const subtotal = onCurrent ? h.total : round.subtotal;
+  const subtotal = onCurrent ? (roundMode ? roundSubtotal : h.total) : round.subtotal;
   const olderOff = idx >= views - 1, newerOff = idx <= 0;
+  const toggle = hasRound ? `<div class="flex gap-1 rounded-lg bg-slate-800 p-0.5 text-[11px]">
+      <button data-scoremode="total" class="flex-1 rounded-md py-1 font-semibold ${
+        !roundMode ? "bg-slate-700 text-wcgold" : "text-slate-400"}">Total</button>
+      <button data-scoremode="round" class="flex-1 rounded-md py-1 font-semibold ${
+        roundMode ? "bg-slate-700 text-wcgold" : "text-slate-400"}">This round</button>
+    </div>` : "";
   return `<div class="space-y-2">
     <div class="flex items-center gap-1">
       <button data-hist="older" ${olderOff ? "disabled" : ""} class="px-2 py-1 rounded text-lg ${
@@ -2066,6 +2109,7 @@ function historyViewHtml(mgrId) {
       <span class="shrink-0 w-12 text-right font-bold text-wcgold">${subtotal}</span>
     </div>
     ${onCurrent ? "" : '<button data-hist="current" class="w-full text-[10px] text-slate-400 underline pb-1">↩ back to current lineup</button>'}
+    ${toggle}
     <div class="space-y-1">${body}</div>
   </div>`;
 }
@@ -2084,6 +2128,12 @@ function renderHistInto(elId, mgrId, perspectiveLabel) {
       : b.dataset.hist === "older" ? cur + 1 : Math.max(0, cur - 1);
     renderHistInto(elId, mgrId, perspectiveLabel);
   });
+  el.querySelectorAll("[data-scoremode]").forEach((b) => b.onclick = () => {
+    S.homeScoreMode = b.dataset.scoremode;
+    renderHistInto(elId, mgrId, perspectiveLabel);
+  });
+  const former = el.querySelector("[data-former]");
+  if (former) former.ontoggle = () => { S.formerOpen[former.dataset.former] = former.open; };
   el.querySelectorAll("[data-hp]").forEach((b) => b.onclick = () =>
     openPlayerDetail(b.dataset.hp, mgrId, perspectiveLabel));
 }
@@ -2489,6 +2539,8 @@ S.statsPer90 = false;   // Stats tab: show per-90 rates instead of totals
 S.statsRound = 0;       // Stats tab: scope to a round (0 = whole tournament)
 S.statsView = "list";   // Stats tab: "list" leaderboard or "dream" best XI
 S.histIdxByMgr = {};   // manager id -> history pager index (0 = current)
+S.homeScoreMode = "total"; // current-lineup view: "total" or "round" points
+S.formerOpen = {};     // manager id -> former-players section expanded?
 S.admOpenLabels = null; // admin stats history: which match groups are expanded
 S.showShortlist = false;   // Trades tab: shortlist collapsed until opened
 S.slPos = "ALL";           // shortlist position filter
@@ -2871,6 +2923,31 @@ function dreamTeam(round, per90) {
     out.total += out[pos].reduce((s, x) => s + x.pts, 0);
   }
   return out;
+}
+
+// The furthest round anyone has stats for (each team's Nth match). Shared by
+// the home round-toggle highlight and the Dream XI lineup badge.
+function currentRoundNo() {
+  const { teamMatches } = statsDerived();
+  let mx = 0;
+  for (const label of new Set((S.stats || []).map((r) => r.match_label))) {
+    if (!labelDate(label)) continue;
+    const idx = (teamMatches[labelTeams(label)[0]] || []).indexOf(label);
+    if (idx + 1 > mx) mx = idx + 1;
+  }
+  return mx;
+}
+
+// Player ids in the current round's Dream XI (memoized on the stats array).
+let _dreamIds = null, _dreamIdsFor = null, _dreamIdsRound = null;
+function currentRoundDreamIds() {
+  const round = currentRoundNo();
+  if (_dreamIdsFor === S.stats && _dreamIdsRound === round && _dreamIds) return _dreamIds;
+  const dt = dreamTeam(round, false);
+  const ids = new Set();
+  for (const pos of ["GK", "DEF", "MID", "FWD"]) for (const x of dt[pos]) ids.add(x.p.player_id);
+  _dreamIdsFor = S.stats; _dreamIdsRound = round; _dreamIds = ids;
+  return ids;
 }
 
 function renderDreamTeam(round, per90) {
