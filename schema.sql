@@ -269,6 +269,21 @@ begin
 end
 $fn$;
 
+-- In-app chat. recipient_id null = league group chat; otherwise a direct
+-- message to that manager. Open like everything else here — DMs are private in
+-- the UI but readable in the DB (see the RLS note below); they become truly
+-- private only with real auth/RLS. Additive: the app degrades to no chat if
+-- this migration hasn't been run.
+create table if not exists messages (
+    id uuid primary key default gen_random_uuid(),
+    league_id uuid references leagues(id) on delete cascade,
+    sender_id uuid references managers(id) on delete cascade,
+    recipient_id uuid references managers(id) on delete cascade,
+    body text not null,
+    created_at timestamptz default now()
+);
+create index if not exists messages_league_idx on messages (league_id, created_at);
+
 -- Realtime: stream changes to connected clients.
 -- (wrapped so re-running this file never errors on already-added tables)
 do $$
@@ -276,7 +291,7 @@ declare t text;
 begin
     foreach t in array array['leagues','managers','picks','match_stats',
                              'team_stages','trades','trade_items',
-                             'lineup_snapshots','transactions'] loop
+                             'lineup_snapshots','transactions','messages'] loop
         begin
             execute format('alter publication supabase_realtime add table %I', t);
         exception when duplicate_object then null;
@@ -292,7 +307,7 @@ declare t text;
 begin
     foreach t in array array['leagues','managers','picks','match_stats',
                              'team_stages','trades','trade_items',
-                             'lineup_snapshots','transactions'] loop
+                             'lineup_snapshots','transactions','messages'] loop
         execute format('alter table %I enable row level security', t);
         execute format('drop policy if exists "open access" on %I', t);
         execute format(

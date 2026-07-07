@@ -203,6 +203,7 @@
       <button id="tab-stats" class="board-tab rounded-lg py-2 font-semibold" data-tab="stats">Stats</button>
       <button id="tab-rosters" class="board-tab rounded-lg py-2 font-semibold" data-tab="rosters">Rosters</button>
       <button id="tab-trades" class="board-tab rounded-lg py-2 font-semibold" data-tab="trades">Trades</button>
+      <button id="tab-chat" class="board-tab rounded-lg py-2 font-semibold" data-tab="chat">Chat</button>
       <button id="tab-admin" class="rounded-lg py-2 font-semibold bg-slate-800 border border-slate-700">Admin</button>
     </div>
     <div id="board-home" class="space-y-3"></div>
@@ -228,6 +229,16 @@
     </div>
     <div id="board-rosters" class="hidden space-y-2"></div>
     <div id="board-trades" class="hidden"></div>
+    <div id="board-chat" class="hidden space-y-2">
+      <div id="chat-threads" class="flex gap-1.5 overflow-x-auto pb-1 text-xs"></div>
+      <div id="chat-msgs" class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2 h-[55vh] overflow-y-auto"></div>
+      <div id="chat-note" class="text-[10px] text-slate-500 min-h-[1em]"></div>
+      <form id="chat-form" class="flex gap-2">
+        <input id="chat-input" maxlength="1000" autocomplete="off" placeholder="Message…"
+               class="flex-1 min-w-0 rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm">
+        <button type="submit" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-4 py-2 text-sm font-semibold">Send</button>
+      </form>
+    </div>
     <p class="text-xs text-slate-500 text-center">Subs score only for rounds where a starter in their
       position played that round but didn't feature. TEAM picks earn cumulative stage bonuses
       (R32 +5, R16 +10, QF +15, SF +20, Final +25, Winner +15) and carry through every
@@ -601,7 +612,7 @@ async function refetchAll() {
     }
     return { data: all, error: null };
   };
-  const [l, m, p, st, tg, tr, sn, tx] = await Promise.all([
+  const [l, m, p, st, tg, tr, sn, tx, msg] = await Promise.all([
     S.sb.from("leagues").select("*").eq("id", id).maybeSingle(),
     S.sb.from("managers").select("*").eq("league_id", id).order("created_at"),
     S.sb.from("picks").select("*").eq("league_id", id).order("pick_number"),
@@ -613,6 +624,8 @@ async function refetchAll() {
       .order("effective_from"),
     S.sb.from("transactions").select("*").eq("league_id", id)
       .order("created_at", { ascending: false }),
+    S.sb.from("messages").select("*").eq("league_id", id)
+      .order("created_at"),
   ]);
   const err = l.error || m.error || p.error || st.error || tg.error || tr.error;
   if (err) { toast("Load failed: " + err.message); return; }
@@ -627,6 +640,8 @@ async function refetchAll() {
   // transactions is an optional, additive table; if the migration hasn't been
   // run yet, degrade to an empty log rather than failing the whole load.
   S.transactions = tx && !tx.error ? (tx.data || []) : [];
+  // messages likewise degrade to no chat if the migration hasn't been run.
+  S.messages = msg && !msg.error ? (msg.data || []) : [];
   ptsCache = null;
   route();
 }
@@ -648,6 +663,7 @@ function subscribeRealtime() {
     .on("postgres_changes", { event: "*", schema: "public", table: "trade_items" }, scheduleRefetch)
     .on("postgres_changes", { event: "*", schema: "public", table: "lineup_snapshots", filter: "league_id=eq." + id }, scheduleRefetch)
     .on("postgres_changes", { event: "*", schema: "public", table: "transactions", filter: "league_id=eq." + id }, scheduleRefetch)
+    .on("postgres_changes", { event: "*", schema: "public", table: "messages",     filter: "league_id=eq." + id }, scheduleRefetch)
     .subscribe((status) => {
       $("conn-dot").className = "w-2 h-2 rounded-full " +
         (status === "SUBSCRIBED" ? "bg-wcgreen" : "bg-amber-400");
@@ -658,6 +674,7 @@ function leaveLeague() {
   if (S.channel) { S.sb.removeChannel(S.channel); S.channel = null; }
   setSession(null);
   S.league = null; S.managers = []; S.picks = []; S.stats = [];
+  S.messages = []; S.chatThread = "league"; S._chatSeenLoaded = false;
   $("hdr-league").textContent = "";
   renderHome();
   showView("home");
@@ -2398,12 +2415,15 @@ function setBoardTab(tab) {
   $("board-stats").classList.toggle("hidden", tab !== "stats");
   $("board-rosters").classList.toggle("hidden", tab !== "rosters");
   $("board-trades").classList.toggle("hidden", tab !== "trades");
+  $("board-chat").classList.toggle("hidden", tab !== "chat");
   document.querySelectorAll(".board-tab").forEach((b) => {
     const on = b.dataset.tab === tab;
     b.className = "board-tab flex-1 rounded-lg py-2 font-semibold " +
       (on ? "bg-wcred" : "bg-slate-800 border border-slate-700");
   });
   updateTradeBadge();
+  if (tab === "chat" && myManager()) markThreadSeen(S.chatThread, myManager().id);
+  updateChatBadge();
 }
 
 // Count badge on the Trades tab for pending incoming requests, so a manager
@@ -2424,6 +2444,148 @@ function updateTradeBadge() {
     + "bg-wcgold text-slate-900 text-[10px] font-bold w-4 h-4 align-middle";
   b.textContent = String(n);
   btn.appendChild(b);
+}
+
+/* ---------- in-app chat: league group room + 1:1 direct messages ---------- */
+
+const mgrNameById = () => Object.fromEntries(S.managers.map((m) => [m.id, m.name]));
+
+// Threads: the league room first, then a DM thread per other manager.
+function chatThreads() {
+  const me = myManager();
+  return [{ id: "league", name: "League chat" },
+    ...S.managers.filter((m) => m.id !== me?.id).map((m) => ({ id: m.id, name: m.name }))];
+}
+
+// Messages in a thread, oldest first. "league" = group (no recipient); a
+// manager id = the 1:1 thread between me and them (either direction).
+function messagesForThread(threadId, meId) {
+  return (S.messages || []).filter((msg) => {
+    if (threadId === "league") return !msg.recipient_id;
+    if (!msg.recipient_id) return false;
+    return (msg.sender_id === meId && msg.recipient_id === threadId)
+        || (msg.sender_id === threadId && msg.recipient_id === meId);
+  }).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+}
+
+// Unread = messages in a thread newer than the last time I viewed it, not mine.
+const chatSeenKey = () => "wcf_chatseen_" + (getSession()?.leagueId || "");
+function loadChatSeen() {
+  try { S.chatSeen = JSON.parse(localStorage.getItem(chatSeenKey()) || "{}"); }
+  catch { S.chatSeen = {}; }
+}
+function markThreadSeen(threadId, meId) {
+  const msgs = messagesForThread(threadId, meId);
+  S.chatSeen[threadId] = msgs.length ? msgs[msgs.length - 1].created_at
+    : (S.chatSeen[threadId] || new Date().toISOString());
+  try { localStorage.setItem(chatSeenKey(), JSON.stringify(S.chatSeen)); } catch {}
+}
+function threadUnread(threadId, meId) {
+  const seen = S.chatSeen?.[threadId] || "";
+  return messagesForThread(threadId, meId).filter((m) =>
+    String(m.created_at) > String(seen) && m.sender_id !== meId).length;
+}
+const totalUnread = (meId) =>
+  chatThreads().reduce((n, t) => n + threadUnread(t.id, meId), 0);
+
+function updateChatBadge() {
+  const btn = $("tab-chat");
+  if (!btn) return;
+  btn.querySelector("#chat-badge")?.remove();
+  const me = myManager();
+  const n = me ? totalUnread(me.id) : 0;
+  if (!n) return;
+  const b = document.createElement("span");
+  b.id = "chat-badge";
+  b.className = "ml-1 inline-flex items-center justify-center rounded-full "
+    + "bg-wcgold text-slate-900 text-[10px] font-bold w-4 h-4 align-middle";
+  b.textContent = n > 9 ? "9+" : String(n);
+  btn.appendChild(b);
+}
+
+async function sendChat(body) {
+  const me = myManager();
+  if (!me) return toast("Join as a manager to chat.");
+  body = (body || "").trim();
+  if (!body) return;
+  const recipient = S.chatThread === "league" ? null : S.chatThread;
+  const { error } = await S.sb.from("messages").insert({
+    league_id: S.league.id, sender_id: me.id, recipient_id: recipient,
+    body: body.slice(0, 1000),
+  });
+  if (error) return toast(/messages|relation|schema cache/.test(error.message)
+    ? "Chat needs a schema update — run schema.sql." : error.message);
+  S._chatForceScroll = true;   // jump to my new message when it lands
+}
+
+function fmtChatTime(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  const sameDay = d.toDateString() === new Date().toDateString();
+  const t = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return sameDay ? t
+    : d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " + t;
+}
+
+function renderChat() {
+  if (!S._chatSeenLoaded) { loadChatSeen(); S._chatSeenLoaded = true; }
+  const me = myManager();
+  if (!me) {
+    $("chat-threads").innerHTML = "";
+    $("chat-msgs").innerHTML = '<p class="text-sm text-slate-500">Join as a manager to chat.</p>';
+    $("chat-note").textContent = "";
+    return;
+  }
+  // Selected DM partner removed? fall back to the league room.
+  if (S.chatThread !== "league" && !S.managers.some((m) => m.id === S.chatThread))
+    S.chatThread = "league";
+
+  $("chat-threads").innerHTML = chatThreads().map((t) => {
+    const on = S.chatThread === t.id;
+    const unread = threadUnread(t.id, me.id);
+    return `<button data-chatthread="${esc(t.id)}" class="shrink-0 rounded-full px-3 py-1 border ${
+      on ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"}">${
+      t.id === "league" ? "🏟 " : "✉ "}${esc(t.name)}${
+      unread ? ` <span class="ml-0.5 inline-flex items-center justify-center rounded-full bg-wcgold text-slate-900 text-[9px] font-bold w-4 h-4 align-middle">${
+        unread > 9 ? "9+" : unread}</span>` : ""}</button>`;
+  }).join("");
+  $("chat-threads").querySelectorAll("[data-chatthread]").forEach((b) => b.onclick = () => {
+    S.chatThread = b.dataset.chatthread; S._chatForceScroll = true;
+    markThreadSeen(S.chatThread, me.id); renderChat(); updateChatBadge();
+  });
+
+  const nameBy = mgrNameById();
+  const msgs = messagesForThread(S.chatThread, me.id);
+  const box = $("chat-msgs");
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+  box.innerHTML = msgs.map((m) => {
+    const mine = m.sender_id === me.id;
+    const sender = mine ? "You" : (nameBy[m.sender_id] || "unknown");
+    return `<div class="flex ${mine ? "justify-end" : "justify-start"}">
+      <div class="max-w-[80%] rounded-2xl px-3 py-1.5 ${
+        mine ? "bg-wcred text-white" : "bg-slate-800 text-slate-100"}">
+        ${mine ? "" : `<div class="text-[10px] font-semibold text-wcgold">${esc(sender)}</div>`}
+        <div class="text-sm whitespace-pre-wrap break-words">${esc(m.body)}</div>
+        <div class="text-[9px] opacity-60 text-right mt-0.5">${fmtChatTime(m.created_at)}</div>
+      </div></div>`;
+  }).join("") || `<p class="text-sm text-slate-500">${
+    S.chatThread === "league" ? "No messages yet — say hi to the league!"
+      : "No messages yet — start the conversation."}</p>`;
+  if (atBottom || S._chatForceScroll) { box.scrollTop = box.scrollHeight; S._chatForceScroll = false; }
+
+  $("chat-note").textContent = S.chatThread === "league"
+    ? "Everyone in the league can see this room."
+    : "🔓 Direct message — private in the app, but not encrypted in the database.";
+
+  $("chat-form").onsubmit = (e) => {
+    e.preventDefault();
+    const input = $("chat-input");
+    const v = input.value; input.value = "";
+    sendChat(v).catch((err) => toast(err.message));
+  };
+
+  // Actively viewing a thread clears its unread.
+  if (S.boardTab === "chat") { markThreadSeen(S.chatThread, me.id); updateChatBadge(); }
 }
 
 // How many of each manager's current starters have already played a match
@@ -2528,6 +2690,7 @@ function renderBoard() {
   renderRosters("board-rosters");
   renderStatsTab();
   renderTrades();
+  renderChat();
 }
 
 /* ---------- player stats tab ---------- */
@@ -2541,6 +2704,9 @@ S.statsView = "list";   // Stats tab: "list" leaderboard or "dream" best XI
 S.histIdxByMgr = {};   // manager id -> history pager index (0 = current)
 S.homeScoreMode = "total"; // current-lineup view: "total" or "round" points
 S.formerOpen = {};     // manager id -> former-players section expanded?
+S.messages = [];       // chat messages (group + DMs) for this league
+S.chatThread = "league"; // active chat thread: "league" or a manager id (DM)
+S.chatSeen = {};       // thread id -> last-seen message timestamp (unread calc)
 S.admOpenLabels = null; // admin stats history: which match groups are expanded
 S.showShortlist = false;   // Trades tab: shortlist collapsed until opened
 S.slPos = "ALL";           // shortlist position filter
