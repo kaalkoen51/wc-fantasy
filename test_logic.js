@@ -737,10 +737,22 @@ check("decided match: higher score wins", [r32[0].winner, r32[0].score], ["A", [
 check("penalty draw: winner is who advanced to the next round",
   [r32[1].winner, r32[1].score], ["C", [1, 1]]);
 check("unplayed match has no winner yet", bk.rounds[1].matches[0].winner, null);
+check("tree links each tie to its two feeder matches",
+  bk.rounds[1].matches[0].feeders.map((x) => x.home), ["A", "C"]);
 // match_stats result overrides the fixture's stored score (live/pulled)
 S.stats = [{ match_label: "A vs B (2026-06-28)", home_score: 3, away_score: 0, player_id: "x" }];
 check("live/pulled score overrides fixture score",
   knockoutBracket().rounds[0].matches[0].score, [3, 0]);
+// Finished games must NOT show as live (the reported bug).
+S.stats = [];
+S.fixtures = [
+  { home: "X", away: "Y", date: "2000-01-01", kickoff_utc: "2000-01-01T00:00:00Z", round: "Round of 32", status: "FT", home_score: 1, away_score: 0 },
+  { home: "P", away: "Q", date: "2000-01-02", kickoff_utc: "2000-01-02T00:00:00Z", round: "Round of 32", status: "NS", home_score: null, away_score: null },
+];
+const koLive = knockoutBracket().rounds[0].matches;
+check("finished game (FT) is not flagged live", koLive.find((m) => m.home === "X").live, false);
+check("long-past game not live even without an FT status",
+  koLive.find((m) => m.home === "P").live, false);
 S.fixtures = []; S.stats = []; S.playerById = {};
 
 /* Dream XI: best starters per position (GK1/DEF3/MID3/FWD2 in phase 1),

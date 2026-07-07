@@ -33,6 +33,16 @@
   .pos-MID { background:#22c55e33; color:#86efac; }
   .pos-FWD { background:#f9731633; color:#fdba74; }
   .pos-TEAM{ background:#eab30833; color:#fde047; }
+  /* Knockout bracket tree: columns per round; each pair wrapper's right border
+     is the connector joining the two feeder matches into their next-round tie. */
+  .kb { display: inline-flex; align-items: stretch; }
+  .kb-col { display: flex; flex-direction: column; }
+  .kb-round { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: space-around; }
+  .kb-pair { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: space-around; position: relative; }
+  .kb-col:not(.kb-last) .kb-pair { margin-right: 18px; border-right: 2px solid #475569; }
+  .kb-col:not(.kb-last) .kb-pair::after { content: ""; position: absolute; right: -18px; top: 50%;
+                                          width: 18px; height: 2px; background: #475569; }
+  .kb-card { margin: 5px 0; }
 </style>
 </head>
 <body class="bg-wcnavy text-slate-100 min-h-screen">
@@ -2281,10 +2291,14 @@ function fixtureScore(f) {
 
 // Build the knockout bracket from fixtures that carry a knockout round label.
 // Winner = higher score, or (for a draw settled on penalties, or before the
-// score syncs) whichever side advanced to a deeper round. Returns rounds in
-// order plus the third-place match, or empty when no knockout fixtures exist.
+// score syncs) whichever side advanced to a deeper round. Rounds are ordered
+// into a real tree: starting from the latest round, each match's two feeders
+// (the earlier-round ties whose winners it contains) are placed adjacently so
+// the columns line up and connect. Returns rounds + the third-place match.
 function knockoutBracket() {
   const ORD = { R32: 0, R16: 1, QF: 2, SF: 3, F: 4 };
+  const LABELS = { R32: "Round of 32", R16: "Round of 16", QF: "Quarter-finals",
+    SF: "Semi-finals", F: "Final" };
   const items = (S.fixtures || [])
     .map((f) => ({ f, r: koRoundOf(f.round) })).filter((x) => x.r);
   const deepest = {};
@@ -2295,6 +2309,12 @@ function knockoutBracket() {
   const mk = (f, r) => {
     const label = fixtureLabel(f);
     const score = fixtureScore(f);
+    // Finished / live mirror the Home banner: FT/AET/PEN or kicked off >2.5h ago
+    // counts as done, so a completed game never shows as LIVE (its stat rows
+    // still carry minutes). Live = kicked off and not yet done.
+    const koMs = Date.parse(f.kickoff_utc);
+    const finished = ["FT", "AET", "PEN"].includes(f.status) || koMs < Date.now() - 2.5 * 3600e3;
+    const live = !finished && koMs < Date.now();
     let winner = null;
     if (score && score[0] !== score[1]) winner = score[0] > score[1] ? f.home : f.away;
     else if (r !== "3rd") {
@@ -2303,32 +2323,51 @@ function knockoutBracket() {
       else if (da > o && dh <= o) winner = f.away;
     }
     return { home: f.home, away: f.away, score, winner, label,
-             kickoff: f.kickoff_utc, live: !!liveMinute(label) };
+             kickoff: f.kickoff_utc, live, feeders: [] };
   };
   const byRound = {};
   for (const { f, r } of items) (byRound[r] ||= []).push(mk(f, r));
-  for (const r in byRound)
-    byRound[r].sort((a, b) => String(a.kickoff).localeCompare(String(b.kickoff)));
-  const rounds = [["R32", "Round of 32"], ["R16", "Round of 16"], ["QF", "Quarter-finals"],
-      ["SF", "Semi-finals"], ["F", "Final"]]
-    .filter(([k]) => byRound[k]).map(([k, label]) => ({ key: k, label, matches: byRound[k] }));
+  const order = ["R32", "R16", "QF", "SF", "F"].filter((k) => byRound[k]);
+  const rounds = order.map((k) => ({ key: k, label: LABELS[k], matches: byRound[k].slice() }));
+
+  // Position matches into tree order, back from the latest round. The anchor
+  // round is laid out by kickoff; each earlier round is reordered so a tie's
+  // two feeders sit directly before its slot. Unlinked ties trail by kickoff.
+  const byKick = (a, b) => String(a.kickoff).localeCompare(String(b.kickoff));
+  if (rounds.length) {
+    rounds[rounds.length - 1].matches.sort(byKick);
+    for (let ri = rounds.length - 2; ri >= 0; ri--) {
+      const cur = rounds[ri].matches, next = rounds[ri + 1].matches;
+      const used = new Set(), ordered = [];
+      for (const nm of next) {
+        const fds = cur.filter((cm) => !used.has(cm) && cm.winner
+          && (cm.winner === nm.home || cm.winner === nm.away));
+        fds.sort((x, y) => (x.winner === nm.home ? 0 : 1) - (y.winner === nm.home ? 0 : 1));
+        for (const cm of fds) { used.add(cm); ordered.push(cm); }
+        nm.feeders = fds;
+      }
+      for (const cm of cur.slice().sort(byKick)) if (!used.has(cm)) ordered.push(cm);
+      rounds[ri].matches = ordered;
+    }
+  }
   return { rounds, third: byRound["3rd"] ? byRound["3rd"][0] : null };
 }
 
 function bracketMatchHtml(m) {
-  const teamRow = (team, sc, isWinner, decided) => `
+  const decided = !!m.winner && !m.live;   // don't crown a live leader mid-game
+  const teamRow = (team, sc, isWinner) => `
     <div class="flex items-center gap-1.5 ${decided && !isWinner ? "opacity-45" : ""}">
       ${avatarHtml("team:" + team, team, "w-4 h-4")}
       <span class="truncate text-xs flex-1 ${isWinner ? "font-bold text-wcgold" : ""}">${esc(team)}</span>
       <span class="text-xs font-mono ${isWinner ? "text-wcgold" : "text-slate-400"}">${sc}</span>
     </div>`;
-  const sc = m.score, decided = !!m.winner;
+  const sc = m.score;
   const hs = sc ? sc[0] : "", as = sc ? sc[1] : "";
   const foot = m.live ? '<span class="text-[9px] text-red-400 font-semibold">● LIVE</span>'
     : sc ? "" : `<span class="text-[9px] text-slate-500">${fmtKickoff(m.kickoff)}</span>`;
-  return `<div class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 space-y-1 w-40 shrink-0">
-    ${teamRow(m.home, hs, m.winner === m.home, decided)}
-    ${teamRow(m.away, as, m.winner === m.away, decided)}
+  return `<div class="rounded-lg border ${m.live ? "border-red-500/50" : "border-slate-700"} bg-slate-900 px-2 py-1.5 space-y-1 w-36">
+    ${teamRow(m.home, hs, decided && m.winner === m.home)}
+    ${teamRow(m.away, as, decided && m.winner === m.away)}
     ${foot ? `<div class="text-center">${foot}</div>` : ""}
   </div>`;
 }
@@ -2350,14 +2389,26 @@ function renderBracket() {
       Group-stage results show on the Home banner.</div>`;
     return;
   }
-  const cols = rounds.map((rd) => `<div class="shrink-0 space-y-2">
-    <div class="text-[10px] uppercase tracking-wide text-slate-500 font-semibold text-center">${rd.label}</div>
-    ${rd.matches.map(bracketMatchHtml).join("")}
-  </div>`).join("");
+  const col = (rd, isLast) => {
+    let body;
+    if (isLast) {
+      body = rd.matches.map((m) => `<div class="kb-card">${bracketMatchHtml(m)}</div>`).join("");
+    } else {
+      const pairs = [];
+      for (let i = 0; i < rd.matches.length; i += 2) pairs.push(rd.matches.slice(i, i + 2));
+      body = pairs.map((p) => `<div class="kb-pair">${
+        p.map((m) => `<div class="kb-card">${bracketMatchHtml(m)}</div>`).join("")}</div>`).join("");
+    }
+    return `<div class="kb-col${isLast ? " kb-last" : ""}">
+      <div class="text-[10px] uppercase tracking-wide text-slate-500 font-semibold text-center mb-1 px-1">${rd.label}</div>
+      <div class="kb-round">${body}</div></div>`;
+  };
   box.innerHTML = `
-    <p class="text-[10px] text-slate-500">Scores update live during games and after the daily fixtures sync. Scroll sideways for later rounds.</p>
-    <div class="flex gap-3 overflow-x-auto pb-2">${cols}</div>
-    ${third ? `<div class="rounded-xl border border-slate-800 bg-slate-900/50 p-2">
+    <p class="text-[10px] text-slate-500">Winners flow left → right; the lines join the two ties that feed each
+      next-round match. Scores update live during games and after the daily fixtures sync. Scroll sideways.</p>
+    <div class="overflow-x-auto pb-2"><div class="kb">${
+      rounds.map((rd, i) => col(rd, i === rounds.length - 1)).join("")}</div></div>
+    ${third ? `<div class="rounded-xl border border-slate-800 bg-slate-900/50 p-2 mt-1">
       <div class="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mb-1">Third place</div>
       ${bracketMatchHtml(third)}
     </div>` : ""}`;
