@@ -52,12 +52,18 @@ def main() -> None:
         if home not in valid or away not in valid:
             dropped += 1
             continue
+        goals = f.get("goals") or {}
         fixtures.append({
             "home": home,
             "away": away,
             "kickoff_utc": f["fixture"]["date"],
             "date": f["fixture"]["date"][:10],
             "status": f["fixture"]["status"]["short"],
+            # round + score power the knockout bracket view (built into the app).
+            # "round" is API-Football's stage label, e.g. "Round of 16", "Final".
+            "round": (f.get("league") or {}).get("round") or "",
+            "home_score": goals.get("home"),
+            "away_score": goals.get("away"),
         })
     fixtures.sort(key=lambda f: f["kickoff_utc"])
 

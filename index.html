@@ -200,6 +200,7 @@
     <div class="grid grid-cols-3 gap-2 text-sm">
       <button id="tab-home" class="board-tab rounded-lg py-2 font-semibold" data-tab="home">Home</button>
       <button id="tab-lb" class="board-tab rounded-lg py-2 font-semibold" data-tab="lb">Table</button>
+      <button id="tab-bracket" class="board-tab rounded-lg py-2 font-semibold" data-tab="bracket">Bracket</button>
       <button id="tab-stats" class="board-tab rounded-lg py-2 font-semibold" data-tab="stats">Stats</button>
       <button id="tab-rosters" class="board-tab rounded-lg py-2 font-semibold" data-tab="rosters">Rosters</button>
       <button id="tab-trades" class="board-tab rounded-lg py-2 font-semibold" data-tab="trades">Trades</button>
@@ -208,6 +209,7 @@
     </div>
     <div id="board-home" class="space-y-3"></div>
     <div id="board-lb" class="hidden space-y-2"></div>
+    <div id="board-bracket" class="hidden space-y-2"></div>
     <div id="board-stats" class="hidden space-y-3">
       <div id="stats-view" class="flex gap-1 rounded-lg bg-slate-900 border border-slate-700 p-1 text-sm">
         <button data-statsview="list" class="flex-1 rounded-md py-1.5 font-semibold">Leaderboard</button>
@@ -2247,6 +2249,117 @@ function topScorers(label, n) {
     .slice(0, n);
 }
 
+/* ---------- knockout bracket ---------- */
+
+// Classify a fixture's API round label into a knockout stage key (or null for
+// group stage / unknown). Tolerant of wording variants across the feed.
+function koRoundOf(roundStr) {
+  const s = String(roundStr || "").toLowerCase();
+  if (s.includes("round of 32")) return "R32";
+  if (s.includes("round of 16")) return "R16";
+  if (s.includes("quarter")) return "QF";
+  if (s.includes("semi")) return "SF";
+  if (s.includes("3rd") || s.includes("third")) return "3rd";
+  if (s.includes("final")) return "F";     // after the 3rd-place check above
+  return null;
+}
+
+// The label a fixture would have in match_stats ("Home vs Away (date)").
+const fixtureLabel = (f) => `${f.home} vs ${f.away} (${f.date})`;
+
+// Score for a fixture: live/pulled result from match_stats if we have it,
+// otherwise the score stored on the fixture itself (daily feed). null = unplayed.
+function fixtureScore(f) {
+  const label = fixtureLabel(f);
+  if (S.stats.some((r) => r.match_label === label)) return matchScore(label);
+  if (f.home_score != null && f.away_score != null) return [f.home_score, f.away_score];
+  return null;
+}
+
+// Build the knockout bracket from fixtures that carry a knockout round label.
+// Winner = higher score, or (for a draw settled on penalties, or before the
+// score syncs) whichever side advanced to a deeper round. Returns rounds in
+// order plus the third-place match, or empty when no knockout fixtures exist.
+function knockoutBracket() {
+  const ORD = { R32: 0, R16: 1, QF: 2, SF: 3, F: 4 };
+  const items = (S.fixtures || [])
+    .map((f) => ({ f, r: koRoundOf(f.round) })).filter((x) => x.r);
+  const deepest = {};
+  for (const { f, r } of items) {
+    if (r === "3rd") continue;
+    for (const t of [f.home, f.away]) deepest[t] = Math.max(deepest[t] ?? -1, ORD[r]);
+  }
+  const mk = (f, r) => {
+    const label = fixtureLabel(f);
+    const score = fixtureScore(f);
+    let winner = null;
+    if (score && score[0] !== score[1]) winner = score[0] > score[1] ? f.home : f.away;
+    else if (r !== "3rd") {
+      const o = ORD[r], dh = deepest[f.home] ?? -1, da = deepest[f.away] ?? -1;
+      if (dh > o && da <= o) winner = f.home;
+      else if (da > o && dh <= o) winner = f.away;
+    }
+    return { home: f.home, away: f.away, score, winner, label,
+             kickoff: f.kickoff_utc, live: !!liveMinute(label) };
+  };
+  const byRound = {};
+  for (const { f, r } of items) (byRound[r] ||= []).push(mk(f, r));
+  for (const r in byRound)
+    byRound[r].sort((a, b) => String(a.kickoff).localeCompare(String(b.kickoff)));
+  const rounds = [["R32", "Round of 32"], ["R16", "Round of 16"], ["QF", "Quarter-finals"],
+      ["SF", "Semi-finals"], ["F", "Final"]]
+    .filter(([k]) => byRound[k]).map(([k, label]) => ({ key: k, label, matches: byRound[k] }));
+  return { rounds, third: byRound["3rd"] ? byRound["3rd"][0] : null };
+}
+
+function bracketMatchHtml(m) {
+  const teamRow = (team, sc, isWinner, decided) => `
+    <div class="flex items-center gap-1.5 ${decided && !isWinner ? "opacity-45" : ""}">
+      ${avatarHtml("team:" + team, team, "w-4 h-4")}
+      <span class="truncate text-xs flex-1 ${isWinner ? "font-bold text-wcgold" : ""}">${esc(team)}</span>
+      <span class="text-xs font-mono ${isWinner ? "text-wcgold" : "text-slate-400"}">${sc}</span>
+    </div>`;
+  const sc = m.score, decided = !!m.winner;
+  const hs = sc ? sc[0] : "", as = sc ? sc[1] : "";
+  const foot = m.live ? '<span class="text-[9px] text-red-400 font-semibold">● LIVE</span>'
+    : sc ? "" : `<span class="text-[9px] text-slate-500">${fmtKickoff(m.kickoff)}</span>`;
+  return `<div class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 space-y-1 w-40 shrink-0">
+    ${teamRow(m.home, hs, m.winner === m.home, decided)}
+    ${teamRow(m.away, as, m.winner === m.away, decided)}
+    ${foot ? `<div class="text-center">${foot}</div>` : ""}
+  </div>`;
+}
+
+// Short kickoff label for an unplayed bracket match (e.g. "Jul 5, 21:00").
+function fmtKickoff(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  return d.toLocaleDateString([], { month: "short", day: "numeric" }) + ", "
+    + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function renderBracket() {
+  const { rounds, third } = knockoutBracket();
+  const box = $("board-bracket");
+  if (!rounds.length) {
+    box.innerHTML = `<div class="rounded-xl border border-slate-700 bg-slate-900 p-6 text-center text-sm text-slate-400">
+      The knockout bracket appears here once knockout fixtures are confirmed (Round of 32 onward).
+      Group-stage results show on the Home banner.</div>`;
+    return;
+  }
+  const cols = rounds.map((rd) => `<div class="shrink-0 space-y-2">
+    <div class="text-[10px] uppercase tracking-wide text-slate-500 font-semibold text-center">${rd.label}</div>
+    ${rd.matches.map(bracketMatchHtml).join("")}
+  </div>`).join("");
+  box.innerHTML = `
+    <p class="text-[10px] text-slate-500">Scores update live during games and after the daily fixtures sync. Scroll sideways for later rounds.</p>
+    <div class="flex gap-3 overflow-x-auto pb-2">${cols}</div>
+    ${third ? `<div class="rounded-xl border border-slate-800 bg-slate-900/50 p-2">
+      <div class="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mb-1">Third place</div>
+      ${bracketMatchHtml(third)}
+    </div>` : ""}`;
+}
+
 // Today's (or the next matchday's) fixtures with SA kickoff times, plus an
 // auto-scrolling ticker of games still to play: each manager's involved
 // players (team crests instead of country names keep it short). Finished
@@ -2412,6 +2525,7 @@ function setBoardTab(tab) {
   S.boardTab = tab;
   $("board-home").classList.toggle("hidden", tab !== "home");
   $("board-lb").classList.toggle("hidden", tab !== "lb");
+  $("board-bracket").classList.toggle("hidden", tab !== "bracket");
   $("board-stats").classList.toggle("hidden", tab !== "stats");
   $("board-rosters").classList.toggle("hidden", tab !== "rosters");
   $("board-trades").classList.toggle("hidden", tab !== "trades");
@@ -2691,6 +2805,7 @@ function renderBoard() {
   renderStatsTab();
   renderTrades();
   renderChat();
+  renderBracket();
 }
 
 /* ---------- player stats tab ---------- */
