@@ -2645,8 +2645,14 @@ function formLog(pid, pos, n = 5) {
     .slice(-n)
     .map((r) => ({ pts: calcPlayerPoints(r, pos), label: r.match_label }));
 }
-const formPoints = (pid, pos, n = 3) =>
-  formLog(pid, pos, n).reduce((s, f) => s + f.pts, 0);
+// Form metric: average fantasy points over the last n appearances (0 if the
+// player has none), rounded to one decimal.
+function formAvg(pid, pos, n = 5) {
+  const log = formLog(pid, pos, n);
+  if (!log.length) return 0;
+  const sum = log.reduce((s, f) => s + f.pts, 0);
+  return Math.round((sum / log.length) * 10) / 10;
+}
 
 // Form-dot color by a match's fantasy points: red (negative), grey (blank),
 // then a green ramp that BRIGHTENS with the haul (brighter = better game),
@@ -2900,7 +2906,7 @@ function renderStatsTab() {
   $("stats-chips").querySelectorAll("[data-chip]").forEach((b) =>
     b.onclick = () => { S.statsPos = b.dataset.chip; renderStatsTab(); });
   // Sort dropdown = the shared stat options plus a Stats-tab-only "Form".
-  const sortOpts = [...STAT_SORTS, ["form", "Form (recent)"]];
+  const sortOpts = [...STAT_SORTS, ["form", "Form · avg last 5"]];
   $("stats-sort").innerHTML = sortOpts.map(([k, lbl]) =>
     `<option value="${k}" ${S.statsSort === k ? "selected" : ""}>${lbl}</option>`).join("");
 
@@ -2942,7 +2948,7 @@ function renderStatsTab() {
   let ranked = pool.map((p) => {
     const rows = statsScopedRows(p.player_id, p.team, round);
     const mins = sumMinutes(rows);
-    const raw = isForm ? formPoints(p.player_id, p.position) : rawVal(p, rows);
+    const raw = isForm ? formAvg(p.player_id, p.position) : rawVal(p, rows);
     const val = isForm ? raw
       : per90 ? (mins > 0 ? Math.round((raw / mins) * 90 * 10) / 10 : 0)
       : raw;
@@ -2962,7 +2968,7 @@ function renderStatsTab() {
   $("stats-list").innerHTML = ranked.map(({ p, pts, mins, val }, i) => {
     const owner = ownerOf(p.player_id);
     const dots = formDots(p.player_id, p.position);
-    const sub = isForm ? "form" : per90 ? "/90" : `${pts}p`;
+    const sub = isForm ? "avg/gm" : per90 ? "/90" : `${pts}p`;
     const showSub = !(sortKey === "points" && !per90);
     return `<li class="flex items-center gap-1">
       ${starHtml(p.player_id)}
