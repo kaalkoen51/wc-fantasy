@@ -731,7 +731,10 @@ const TEAM_NAME_FIX = {
 async function loadFixtures() {
   if (S.fixtures) return;
   try {
-    const resp = await fetch("fixtures.json");
+    // no-store: fixtures.json is rebuilt daily (and scores change during games).
+    // GitHub Pages caches static files ~10 min, so without this a stale copy
+    // can hide new knockout fixtures / results (e.g. an empty bracket).
+    const resp = await fetch("fixtures.json", { cache: "no-store" });
     S.fixtures = resp.ok ? await resp.json() : [];
   } catch { S.fixtures = []; }
   for (const f of S.fixtures) {
@@ -788,7 +791,7 @@ function upNextHtml(team, size = "w-4 h-4") {
 // optional, like fixtures.json — the app degrades gracefully without them.
 async function loadExtras() {
   const get = async (file, fallback) => {
-    try { const r = await fetch(file); return r.ok ? await r.json() : fallback; }
+    try { const r = await fetch(file, { cache: "no-store" }); return r.ok ? await r.json() : fallback; }
     catch { return fallback; }
   };
   if (S.photos === undefined) S.photos = await get("photos.json", null);
