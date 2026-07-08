@@ -766,6 +766,25 @@ check("chat: league first, then DMs by recent activity",
   chatThreads().map((t) => t.id), ["league", "m3", "m2"]);
 S.managers = []; S.messages = []; S.chatSeen = {};
 
+/* unpicked / hide-KO filters (planner pool; same predicates power stats & shortlist) */
+S.managers = [{ id: "m1", name: "Me" }];
+S.players = [
+  { player_id: "a", position: "MID", team: "Alive", name: "A" },   // free agent, alive
+  { player_id: "b", position: "MID", team: "Alive", name: "B" },   // owned by m2
+  { player_id: "c", position: "MID", team: "OutLand", name: "C" }, // free agent, knocked out
+  { player_id: "d", position: "MID", team: "Alive", name: "D" },   // on my roster
+];
+S.playerById = Object.fromEntries(S.players.map((p) => [p.player_id, p]));
+S.picks = [{ manager_id: "m2", player_id: "b" }, { manager_id: "m1", player_id: "d" }];
+S.stages = [{ team: "OutLand", eliminated: true }];
+check("planner: unpicked filter = free agents only",
+  plannerPickPool("MID", { unpicked: true }).map((x) => x.p.player_id), ["a", "c"]);
+check("planner: hide-KO filter drops eliminated teams",
+  plannerPickPool("MID", { hideKO: true }).map((x) => x.p.player_id), ["a", "b"]);
+check("planner: both filters = available and alive",
+  plannerPickPool("MID", { unpicked: true, hideKO: true }).map((x) => x.p.player_id), ["a"]);
+S.managers = []; S.players = []; S.playerById = {}; S.picks = []; S.stages = [];
+
 // Knockout bracket: round classification, structure, scores, winner detection.
 check("koRoundOf maps the feed's round labels",
   ["Round of 32", "Round of 16", "Quarter-finals", "Semi-finals", "Final", "3rd Place Final", "Group Stage - 1"]
