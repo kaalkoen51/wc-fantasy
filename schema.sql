@@ -113,6 +113,12 @@ alter table managers add column if not exists keeper_pick_ids jsonb;
 -- draft. On by default; the admin can switch it off for a blind/luck draft.
 alter table leagues add column if not exists draft_stat_sort boolean not null default true;
 
+-- Redraft "flex" slots: fluid squad places that can be filled by ANY outfield
+-- position (DEF/MID/FWD, never GK). With this the per-position phase_quota is a
+-- minimum and flex fills the rest (e.g. min 1 of each + 1 flex = a 5-player
+-- squad whose 5th is any outfielder). 0 = the old fixed-quota model.
+alter table leagues add column if not exists phase_flex int not null default 0;
+
 alter table managers add column if not exists join_token text;
 alter table managers add column if not exists draft_position int;
 -- Per-manager shortlist of player ids (jsonb array). Synced so it follows

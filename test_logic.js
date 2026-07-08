@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -33,7 +33,7 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         dreamTeam, formDotColor, shortlistCleaned, standingsMovement,
         currentRoundNo, currentRoundDreamIds,
         chatThreads, messagesForThread, threadUnread, markThreadSeen,
-        koRoundOf, knockoutBracket } = api;
+        koRoundOf, knockoutBracket, needsSummary, lineupValid } = api;
 let fails = 0;
 const check = (label, got, want) => {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -229,6 +229,37 @@ check("kept player still fills a starter slot",
 check("draft order skips eliminated managers",
   [pickInfo(1).manager.name, pickInfo(2).manager.name, pickInfo(3).manager.name],
   ["M1", "M2", "M2"]);
+
+/* redraft "flex": min 1 per position + 1 fluid outfield slot = 5-player squad */
+S.league = { phase: 2, phase_quota: { GK: 1, DEF: 1, MID: 1, FWD: 1 },
+  phase_starters: { GK: 1, DEF: 1, MID: 1, FWD: 1 }, phase_flex: 1 };
+check("flex: 5 picks per manager", picksPerManager(), 5);
+check("flex: GK capped at its minimum", quotaLeft([{ position: "GK" }], "GK"), 0);
+check("flex: an empty roster can take up to min+flex of an outfield",
+  quotaLeft([], "DEF"), 2);
+const fbase = [{ position: "GK", slot: "GK" }, { position: "DEF", slot: "DEF" },
+  { position: "MID", slot: "MID" }, { position: "FWD", slot: "FWD" }];
+check("flex: one fluid slot left after the minimums (outfield only)",
+  ["DEF", "MID", "FWD", "GK"].map((g) => quotaLeft(fbase, g)), [1, 1, 1, 0]);
+check("flex: needs-summary names the flex", needsSummary(fbase),
+  "Still needs: 1 flex (DEF/MID/FWD)");
+const fflex = [...fbase, { position: "MID", slot: "MID" }];
+check("flex: squad full once the flex is used",
+  ["DEF", "MID"].map((g) => quotaLeft(fflex, g)), [0, 0]);
+check("flex: full roster reads complete", needsSummary(fflex), "Roster complete");
+// the flex fills a starter slot too, so all five start
+const fr = [];
+const fpick = (pos) => { const s = slotForNewPick(fr, pos); fr.push({ position: pos, slot: s }); return s; };
+check("flex: all five picks are starters",
+  [fpick("GK"), fpick("DEF"), fpick("MID"), fpick("FWD"), fpick("MID")],
+  ["GK", "DEF", "MID", "FWD", "MID"]);
+check("flex: valid lineup with 2 MID (flex used)", lineupValid({ GK: 1, DEF: 1, MID: 2, FWD: 1 }), true);
+check("flex: invalid lineup missing a FWD", lineupValid({ GK: 1, DEF: 2, MID: 2, FWD: 0 }), false);
+check("flex: invalid lineup with 2 GK", lineupValid({ GK: 2, DEF: 1, MID: 1, FWD: 1 }), false);
+// Restore the phase-2 config the following keeper tests expect.
+S.league = { phase: 2, phase_quota: { GK: 1, DEF: 2, MID: 2, FWD: 2 },
+  phase_starters: { GK: 1, DEF: 2, MID: 2, FWD: 1 } };
+S.picks = [];
 
 /* keepers consume the earliest rounds and shrink the draft */
 S.picks = [
@@ -716,6 +747,13 @@ check("unread counts others' messages I haven't seen", threadUnread("league", "m
 check("unread ignores my own messages", threadUnread("m2", "m1"), 1);   // "yo" only, not my "sup"
 markThreadSeen("m2", "m1");
 check("marking a thread seen clears its unread", threadUnread("m2", "m1"), 0);
+// Active DMs sort to the front (by most recent message); league stays first.
+S.messages = [
+  { sender_id: "m3", recipient_id: "m1", body: "hey", created_at: "2026-06-02T00:00:05Z" },
+  { sender_id: "m2", recipient_id: "m1", body: "yo", created_at: "2026-06-02T00:00:02Z" },
+];
+check("chat: league first, then DMs by recent activity",
+  chatThreads().map((t) => t.id), ["league", "m3", "m2"]);
 S.managers = []; S.messages = []; S.chatSeen = {};
 
 // Knockout bracket: round classification, structure, scores, winner detection.
