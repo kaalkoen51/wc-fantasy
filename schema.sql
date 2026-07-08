@@ -289,6 +289,9 @@ create table if not exists messages (
     created_at timestamptz default now()
 );
 create index if not exists messages_league_idx on messages (league_id, created_at);
+-- Emoji reactions: { "👍": ["<manager id>", ...], "🔥": [...] }. Additive; the
+-- app degrades to no reactions if this column hasn't been added yet.
+alter table messages add column if not exists reactions jsonb;
 
 -- Realtime: stream changes to connected clients.
 -- (wrapped so re-running this file never errors on already-added tables)

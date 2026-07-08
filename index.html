@@ -2860,16 +2860,40 @@ function renderChat() {
   box.innerHTML = msgs.map((m) => {
     const mine = m.sender_id === me.id;
     const sender = mine ? "You" : (nameBy[m.sender_id] || "unknown");
-    return `<div class="flex ${mine ? "justify-end" : "justify-start"}">
+    const reactions = Object.entries(m.reactions || {}).filter(([, ids]) => ids && ids.length);
+    const pills = reactions.map(([e, ids]) => {
+      const reacted = ids.includes(me.id);
+      return `<button data-react="${m.id}|${e}" class="rounded-full px-1.5 py-0.5 text-[11px] border ${
+        reacted ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 bg-slate-800 text-slate-300"}">${e} ${ids.length}</button>`;
+    }).join("");
+    const picking = S.reactPickerFor === m.id;
+    const tail = picking
+      ? REACT_EMOJIS.map((e) => `<button data-reactpick="${m.id}|${e}" class="text-base leading-none px-0.5">${e}</button>`).join("")
+      : `<button data-reactadd="${m.id}" title="React" class="rounded-full px-1.5 py-0.5 text-[11px] border border-slate-700 bg-slate-800/50 text-slate-500">＋</button>`;
+    return `<div class="flex flex-col ${mine ? "items-end" : "items-start"}">
       <div class="max-w-[80%] rounded-2xl px-3 py-1.5 ${
         mine ? "bg-wcred text-white" : "bg-slate-800 text-slate-100"}">
         ${mine ? "" : `<div class="text-[10px] font-semibold text-wcgold">${esc(sender)}</div>`}
         <div class="text-sm whitespace-pre-wrap break-words">${esc(m.body)}</div>
         <div class="text-[9px] opacity-60 text-right mt-0.5">${fmtChatTime(m.created_at)}</div>
-      </div></div>`;
+      </div>
+      <div class="flex items-center gap-1 mt-0.5 flex-wrap ${mine ? "justify-end" : ""}">${pills}${tail}</div>
+    </div>`;
   }).join("") || `<p class="text-sm text-slate-500">${
     S.chatThread === "league" ? "No messages yet — say hi to the league!"
       : "No messages yet — start the conversation."}</p>`;
+  box.querySelectorAll("[data-react]").forEach((b) => b.onclick = () => {
+    const i = b.dataset.react.indexOf("|");
+    toggleReaction(b.dataset.react.slice(0, i), b.dataset.react.slice(i + 1));
+  });
+  box.querySelectorAll("[data-reactpick]").forEach((b) => b.onclick = () => {
+    const i = b.dataset.reactpick.indexOf("|");
+    toggleReaction(b.dataset.reactpick.slice(0, i), b.dataset.reactpick.slice(i + 1));
+  });
+  box.querySelectorAll("[data-reactadd]").forEach((b) => b.onclick = () => {
+    S.reactPickerFor = S.reactPickerFor === b.dataset.reactadd ? null : b.dataset.reactadd;
+    renderChat();
+  });
   if (atBottom || S._chatForceScroll) { box.scrollTop = box.scrollHeight; S._chatForceScroll = false; }
 
   $("chat-note").textContent = S.chatThread === "league"
@@ -3129,6 +3153,28 @@ S.formerOpen = {};     // manager id -> former-players section expanded?
 S.messages = [];       // chat messages (group + DMs) for this league
 S.chatThread = "league"; // active chat thread: "league" or a manager id (DM)
 S.chatSeen = {};       // thread id -> last-seen message timestamp (unread calc)
+S.reactPickerFor = null; // chat: message id whose emoji picker is open
+const REACT_EMOJIS = ["👍", "❤️", "😂", "🔥", "😮", "😢"];
+
+// Toggle my emoji reaction on a chat message (read-modify-write the jsonb;
+// optimistic, realtime syncs the rest). At friend-group scale the rare
+// simultaneous-write race is acceptable.
+async function toggleReaction(msgId, emoji) {
+  const me = myManager();
+  if (!me) return;
+  const msg = (S.messages || []).find((m) => m.id === msgId);
+  if (!msg) return;
+  const reactions = { ...(msg.reactions || {}) };
+  const set = new Set(reactions[emoji] || []);
+  set.has(me.id) ? set.delete(me.id) : set.add(me.id);
+  if (set.size) reactions[emoji] = [...set]; else delete reactions[emoji];
+  msg.reactions = reactions;                 // optimistic
+  S.reactPickerFor = null;
+  renderChat();
+  const { error } = await S.sb.from("messages").update({ reactions }).eq("id", msgId);
+  if (error) toast(/reaction|column|schema cache/.test(error.message)
+    ? "Reactions need a schema update — run schema.sql." : error.message);
+}
 S.admOpenLabels = null; // admin stats history: which match groups are expanded
 S.showShortlist = false;   // Trades tab: shortlist collapsed until opened
 S.slPos = "ALL";           // shortlist position filter
