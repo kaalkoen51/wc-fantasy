@@ -954,7 +954,7 @@
     "away": "Colombia",
     "kickoff_utc": "2026-07-07T20:00:00+00:00",
     "date": "2026-07-07",
-    "status": "1H",
+    "status": "PEN",
     "round": "Round of 16",
     "home_score": 0,
     "away_score": 0
@@ -984,6 +984,16 @@
     "away": "England",
     "kickoff_utc": "2026-07-11T21:00:00+00:00",
     "date": "2026-07-11",
+    "status": "NS",
+    "round": "Quarter-finals",
+    "home_score": null,
+    "away_score": null
+  },
+  {
+    "home": "Argentina",
+    "away": "Switzerland",
+    "kickoff_utc": "2026-07-12T01:00:00+00:00",
+    "date": "2026-07-12",
     "status": "NS",
     "round": "Quarter-finals",
     "home_score": null,
