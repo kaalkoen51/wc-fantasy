@@ -1557,6 +1557,14 @@ function playerPoints(playerId, position) {
 const stageOf = (team) => S.stages.find((s) => s.team === team)?.stage || "group";
 const isEliminated = (team) => !!S.stages.find((s) => s.team === team)?.eliminated;
 
+// A manager's live TEAM-pick bonus (kept even after they're cut, so their
+// national team keeps earning stage points). The kept TEAM pick + this value
+// are what make a cut manager's total tick up as their country advances.
+function managerTeamBonus(mgrId) {
+  const tp = managerPicks(mgrId).find((pk) => pk.slot === "TEAM");
+  return tp ? { pick: tp, pts: calcTeamPoints(stageOf(tp.team)) } : null;
+}
+
 // Points badge for any pool entry or pick: TEAM entries show stage bonuses.
 function entryPoints(playerId, position, team) {
   return position === "TEAM" ? calcTeamPoints(stageOf(team)) : playerPoints(playerId, position);
@@ -1709,9 +1717,14 @@ function computeScores() {
   const snapsByMgr = snapshotsByManager();
 
   return S.managers.map((m) => {
-    // Removed managers: total frozen at removal time, no live items.
-    if (m.eliminated) return { manager: m, total: m.frozen_points || 0,
-                               items: [], eliminated: true };
+    // Removed managers: player points frozen at removal, but their kept TEAM
+    // pick keeps scoring live as the country advances.
+    if (m.eliminated) {
+      const tb = managerTeamBonus(m.id);
+      const items = tb ? [{ pick: tb.pick, pts: tb.pts, note: stageOf(tb.pick.team) }] : [];
+      return { manager: m, total: (m.frozen_points || 0) + (tb ? tb.pts : 0),
+               items, eliminated: true };
+    }
     let total = 0;
     const earnedByPlayer = {};
     const roundPts = {};   // labelRound -> player-match points that round
@@ -1921,7 +1934,9 @@ function managerHistory(mgrId) {
 
   return {
     eliminated: !!mgr?.eliminated,
-    total: mgr?.eliminated ? (mgr.frozen_points || 0) : computedTotal,
+    total: mgr?.eliminated
+      ? (mgr.frozen_points || 0) + (managerTeamBonus(mgrId)?.pts || 0)
+      : computedTotal,
     curRound,
     current: { items, former }, rounds,
   };
@@ -1993,9 +2008,12 @@ function draftRulesHtml() {
 // Keeper-window and final-phase prompts shown at the top of the Home tab.
 function phaseCardsHtml(me) {
   if (me.eliminated) {
+    const tb = managerTeamBonus(me.id);
+    const elimTotal = (me.frozen_points || 0) + (tb ? tb.pts : 0);
     return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-4 text-sm text-slate-400">
-      You're out of the redrafts — your points are frozen on the table at
-      <b class="text-slate-200">${me.frozen_points || 0} pts</b>. Spectator glory from here.</div>`;
+      You're out of the redrafts — player points frozen${
+        tb ? `, but your TEAM pick (${esc(tb.pick.team)}) keeps scoring as they advance` : ""}.
+      Total on the table: <b class="text-slate-200">${elimTotal} pts</b>.</div>`;
   }
   let html = "";
   if (S.league.keeper_window) {
@@ -2139,8 +2157,11 @@ function historyViewHtml(mgrId) {
 
   let body;
   if (onCurrent && h.eliminated) {
-    body = `<p class="text-sm text-slate-400 px-1 py-3">Eliminated — points frozen at
-      <b class="text-slate-200">${h.total} pts</b>.</p>`;
+    const teamItem = h.current.items.find((it) => it.entry.slot === "TEAM");
+    body = `<p class="text-sm text-slate-400 px-1 py-2">Out of the redrafts — player points frozen${
+        teamItem ? ", but your TEAM pick keeps scoring as they advance" : ""}.
+      Total <b class="text-slate-200">${h.total} pts</b>.</p>`
+      + (teamItem ? lineupRowHtml(teamItem, mgrId, false, { curView: false }) : "");
   } else if (onCurrent) {
     const items = [...h.current.items].sort((a, b) =>
       (SLOT_RANK[a.entry.slot] ?? 9) - (SLOT_RANK[b.entry.slot] ?? 9));
@@ -4883,16 +4904,23 @@ function keepersOf(m) {
 
 async function removeManager(m) {
   const total = computeScores().find((s) => s.manager.id === m.id)?.total || 0;
-  if (!confirm(`Remove ${m.name}? Their points freeze at ${total} and all their players (TEAM pick included) go back to the pool. This can't be undone.`))
+  // The TEAM pick is kept and keeps scoring, so freeze only the non-TEAM
+  // points; managerTeamBonus() is added back live on top of frozen_points.
+  const tb = managerTeamBonus(m.id);
+  const frozen = total - (tb ? tb.pts : 0);
+  if (!confirm(`Remove ${m.name}? Their players go back to the pool, but they KEEP their TEAM pick`
+      + `${tb ? ` (${tb.pick.team})` : ""} and it keeps scoring as that team advances. `
+      + `Player points freeze at ${frozen}. This can't be undone.`))
     return;
   const { error } = await S.sb.from("managers")
-    .update({ eliminated: true, frozen_points: total,
+    .update({ eliminated: true, frozen_points: frozen,
               eliminated_at: new Date().toISOString() }).eq("id", m.id);
   if (error) return toast(error.message);
+  // Delete their players; the TEAM pick stays so it keeps earning stage points.
   const { error: e2 } = await S.sb.from("picks")
-    .delete().eq("league_id", S.league.id).eq("manager_id", m.id);
+    .delete().eq("league_id", S.league.id).eq("manager_id", m.id).neq("slot", "TEAM");
   if (e2) return toast(e2.message);
-  toast(`${m.name} removed — frozen at ${total} pts.`);
+  toast(`${m.name} removed — frozen at ${frozen} pts + their TEAM pick keeps scoring.`);
   scheduleRefetch();
 }
 
@@ -5087,7 +5115,8 @@ function renderAdmin() {
   $("adm-mgr-list").innerHTML = S.managers.map((m) => m.eliminated
     ? `<div class="flex items-center gap-2 rounded-lg bg-slate-800/40 px-2 py-1.5 text-sm text-slate-500">
         <span class="truncate flex-1 line-through">${esc(m.name)}</span>
-        <span class="text-xs">frozen at ${m.frozen_points || 0} pts</span></div>`
+        <span class="text-xs">${(m.frozen_points || 0) + (managerTeamBonus(m.id)?.pts || 0)} pts${
+          managerTeamBonus(m.id) ? " · TEAM live" : ""}</span></div>`
     : `<div class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-2 py-1.5 text-sm">
         <span class="truncate flex-1">${esc(m.name)}</span>${
         S.league.keeper_window ? `<span class="text-[10px] text-slate-500 truncate max-w-[50%]">${

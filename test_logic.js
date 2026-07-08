@@ -292,6 +292,16 @@ check("eliminated manager shows frozen points",
 S.stages = [];
 check("champion pick pending = 0", computeScores()[0].total, 0);
 
+/* a cut manager keeps their TEAM pick and it keeps scoring as the team advances */
+S.stages = [{ team: "Brazil", stage: "qf" }];
+S.managers = [{ id: "e1", name: "Cut", eliminated: true, frozen_points: 42 }];
+S.picks = [{ manager_id: "e1", player_id: "team:Brazil", slot: "TEAM", position: "TEAM", team: "Brazil" }];
+const cut = computeScores()[0];
+check("cut manager: frozen player pts + live TEAM bonus",
+  cut.total, 42 + calcTeamPoints("qf"));
+check("cut manager still lists the TEAM item", cut.items.length, 1);
+S.stages = []; S.managers = []; S.picks = [];
+
 /* same-day trade boundary: kickoff times decide which lock applies.
    Round-1 finale at 10:00, trade locked at 14:00, so the morning goal
    stays with the old owner and only later games credit the new one. */
