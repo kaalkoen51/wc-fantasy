@@ -4601,9 +4601,12 @@ const foldName = (s) => String(s || "").normalize("NFKD")
 async function apiFootball(key, path, params) {
   const url = new URL("https://v3.football.api-sports.io/" + path);
   for (const k in params) url.searchParams.set(k, params[k]);
-  // no-store: a pull during a live game caches that fixture's in-play player
-  // stats (partial minutes); without this the browser can serve that stale
-  // response on a later pull, so a finished game's minutes never update.
+  // Cache elimination, belt-and-suspenders: `no-store` stops the browser from
+  // reusing a response (a pull during a live game otherwise caches that
+  // fixture's in-play 49' snapshot). The `_cb` param additionally makes each
+  // request a unique URL so any edge/CDN cache in front of the API can't serve
+  // a stale copy either — API-Football ignores unknown query params.
+  url.searchParams.set("_cb", Date.now().toString(36) + Math.random().toString(36).slice(2, 8));
   const resp = await fetch(url, { headers: { "x-apisports-key": key }, cache: "no-store" });
   const data = await resp.json();
   const errs = data.errors && Object.values(data.errors);
