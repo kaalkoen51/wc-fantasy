@@ -4647,10 +4647,21 @@ async function pullStatsNow() {
   const btn = $("adm-pull-now");
   btn.disabled = true;
   try {
-    log("Fetching fixtures for " + date + "…");
+    // Also sweep the previous UTC day: the API filters `date` by UTC, so an
+    // evening game (e.g. 20:00Z) is on that UTC date — but a pull the "next
+    // day" (the date box defaults to today) would miss it. Fetching both days
+    // and deduping by fixture id means a game is caught whichever day you pull.
+    const prev = new Date(date + "T00:00:00Z");
+    prev.setUTCDate(prev.getUTCDate() - 1);
+    const prevDate = prev.toISOString().slice(0, 10);
+    log(`Fetching fixtures for ${prevDate} & ${date}…`);
     const done = ["FT", "AET", "PEN"];
     const notStarted = ["NS", "TBD", "PST", "CANC", "SUSP"];
-    const all = await apiFootball(key, "fixtures", { date, league: 1, season: 2026 });
+    const seen = new Set();
+    const all = [
+      ...await apiFootball(key, "fixtures", { date, league: 1, season: 2026 }),
+      ...await apiFootball(key, "fixtures", { date: prevDate, league: 1, season: 2026 }),
+    ].filter((f) => !seen.has(f.fixture.id) && seen.add(f.fixture.id));
     const fixtures = all.filter((f) => done.includes(f.fixture.status.short));
     // Games still being played are excluded (their stats aren't final) — call
     // them out so a "nothing changed" pull is never a mystery.
@@ -4661,7 +4672,7 @@ async function pullStatsNow() {
           `${f.teams.home.name} v ${f.teams.away.name} [${f.fixture.status.short}]`).join(", ")}`
       : "";
     if (!fixtures.length) {
-      log("No completed fixtures on " + date + " yet — in-progress games are excluded." + inPlayNote);
+      log(`No completed fixtures on ${prevDate} or ${date} yet — in-progress games are excluded.` + inPlayNote);
       return;
     }
     const skipped = [];
