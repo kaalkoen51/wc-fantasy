@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -30,7 +30,7 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         plannerChoiceRank, choiceStatus, plannerPickPool,
         autoPickCandidates, entryForId,
         statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog,
-        dreamTeam, formDotColor, shortlistCleaned, standingsMovement,
+        dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs,
         currentRoundNo, currentRoundDreamIds,
         chatThreads, messagesForThread, threadUnread, markThreadSeen,
         koRoundOf, knockoutBracket, needsSummary, lineupValid } = api;
@@ -700,10 +700,17 @@ S.picks = []; S.managers = []; S.stats = []; S.playerById = {};
   check("overtaken moved down (-1)", mv.byId.a.delta, -1);
   check("unchanged manager is level (0)", mv.byId.c.delta, 0);
   check("this-round tally surfaced", [mv.byId.b.roundPts, mv.byId.a.roundPts], [10, 3]);
+  check("round MVP = top scorer of the current round", [...roundMVPs(scores)], ["b"]);
 }
 // One round only → no movement yet.
 check("single round hides movement",
   standingsMovement([{ manager: { id: "x" }, total: 4, roundPts: { 1: 4 } }]).showMovement, false);
+// Round MVP: ties shared, none before any scoring, eliminated excluded.
+check("round MVP ties are shared", [...roundMVPs([
+  { manager: { id: "a" }, total: 5, roundPts: { 1: 5 } },
+  { manager: { id: "b" }, total: 5, roundPts: { 1: 5 } }])].sort(), ["a", "b"]);
+check("no round MVP before any scoring",
+  roundMVPs([{ manager: { id: "x" }, total: 0, roundPts: {} }]).size, 0);
 
 // Home current-team view: per-round points, "played this round" flag, and the
 // Dream XI badge all key off the current round (each team's Nth match).

@@ -2939,6 +2939,22 @@ function standingsMovement(scores) {
   return { maxRound, showMovement: maxRound >= 2, byId };
 }
 
+// Manager id(s) with the most points in the current round (must be > 0), for
+// the table's "round MVP" badge. Ties share it; empty before any round scores.
+function roundMVPs(scores) {
+  const mv = standingsMovement(scores);
+  if (mv.maxRound < 1) return new Set();
+  let best = 0;
+  const winners = new Set();
+  for (const s of scores) {
+    if (s.eliminated) continue;
+    const rp = mv.byId[s.manager.id].roundPts;
+    if (rp > best) { best = rp; winners.clear(); winners.add(s.manager.id); }
+    else if (rp === best && rp > 0) winners.add(s.manager.id);
+  }
+  return best > 0 ? winners : new Set();
+}
+
 function renderBoard() {
   setBoardTab(S.boardTab || "home");
   renderBanner();
@@ -2949,6 +2965,7 @@ function renderBoard() {
   const scores = computeScores().sort((a, b) => b.total - a.total);
   const yetByMgr = computeYetToPlay();
   const mv = standingsMovement(scores);
+  const mvps = roundMVPs(scores);
   $("board-lb").innerHTML = scores.map((s, i) => {
     const ytp = yetByMgr[s.manager.id];
     const ytpLine = ytp?.hasSnapshot && ytp.total > 0
@@ -2972,6 +2989,7 @@ function renderBoard() {
         <span class="flex-1 min-w-0">
           <span class="block font-semibold truncate">${esc(s.manager.name)}${
             s.manager.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}${
+            mvps.has(s.manager.id) ? ` <span class="rounded bg-wcgold/20 text-wcgold px-1 py-0.5 text-[9px] font-bold align-middle" title="Top scorer of round ${mv.maxRound}">🏅 MVP</span>` : ""}${
             s.eliminated ? ' <span class="text-[10px] text-red-400">eliminated</span>' : ""}</span>
           ${ytpLine}
         </span>
@@ -3136,10 +3154,20 @@ function suspendedNext(pid) {
 
 const injuryOf = (pid) => (S.injuryByPid || {})[pid] || null;
 
-// 🚫 team knocked out · 🟥 suspended next match · 🤕 out injured · ⚠️ doubtful
+// Is this team in a match that's kicked off and not yet finished? (Same live
+// window as the Home banner: started, not FT/AET/PEN, within ~2.5h.)
+function teamPlayingNow(team) {
+  const now = Date.now();
+  return (S.fixtures || []).some((f) => (f.home === team || f.away === team)
+    && !["FT", "AET", "PEN"].includes(f.status)
+    && Date.parse(f.kickoff_utc) <= now && Date.parse(f.kickoff_utc) > now - 2.5 * 3600e3);
+}
+
+// ⚡ playing now · 🚫 team knocked out · 🟥 suspended next · 🤕 out · ⚠️ doubtful
 function availBadges(pid) {
   let out = "";
   const team = S.playerById?.[pid]?.team;
+  if (team && teamPlayingNow(team)) out += `<span title="playing now" class="text-emerald-400">⚡</span>`;
   if (team && isEliminated(team)) out += `<span title="team knocked out">🚫</span>`;
   const susp = suspendedNext(pid);
   if (susp) out += `<span title="suspended next match (${susp})">🟥</span>`;
