@@ -4601,7 +4601,10 @@ const foldName = (s) => String(s || "").normalize("NFKD")
 async function apiFootball(key, path, params) {
   const url = new URL("https://v3.football.api-sports.io/" + path);
   for (const k in params) url.searchParams.set(k, params[k]);
-  const resp = await fetch(url, { headers: { "x-apisports-key": key } });
+  // no-store: a pull during a live game caches that fixture's in-play player
+  // stats (partial minutes); without this the browser can serve that stale
+  // response on a later pull, so a finished game's minutes never update.
+  const resp = await fetch(url, { headers: { "x-apisports-key": key }, cache: "no-store" });
   const data = await resp.json();
   const errs = data.errors && Object.values(data.errors);
   if (errs && errs.length) throw new Error(errs.join("; "));
