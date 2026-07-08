@@ -2329,7 +2329,24 @@ function knockoutBracket() {
   };
   const byRound = {};
   for (const { f, r } of items) (byRound[r] ||= []).push(mk(f, r));
-  const order = ["R32", "R16", "QF", "SF", "F"].filter((k) => byRound[k]);
+  // API-Football often doesn't publish the semi/final/third-place fixtures
+  // until late, but the tree shape is fixed. Synthesize the missing later
+  // rounds as TBC placeholders (no date) so the whole bracket shows; a real
+  // fixture takes over automatically once the feed carries it.
+  const KEYS = ["R32", "R16", "QF", "SF", "F"];
+  const synth = () => ({ home: "TBC", away: "TBC", score: null, winner: null,
+    label: "", kickoff: "", live: false, feeders: [] });
+  const deepestPresent = KEYS.filter((k) => byRound[k]).pop();
+  if (deepestPresent) {
+    let di = KEYS.indexOf(deepestPresent), count = byRound[deepestPresent].length;
+    while (di < KEYS.length - 1 && count > 1) {
+      di++;
+      if (!byRound[KEYS[di]]) byRound[KEYS[di]] = Array.from({ length: Math.ceil(count / 2) }, synth);
+      count = byRound[KEYS[di]].length;
+    }
+    if (byRound.SF && !byRound["3rd"]) byRound["3rd"] = [synth()];
+  }
+  const order = KEYS.filter((k) => byRound[k]);
   const rounds = order.map((k) => ({ key: k, label: LABELS[k], matches: byRound[k].slice() }));
 
   // Order the tree around the deepest round that still has real (non-TBC)

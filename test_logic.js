@@ -771,6 +771,21 @@ check("third-place TBC match included", tb.third && [tb.third.home, tb.third.awa
 check("SF links to the correct QF pairs by position",
   tb.rounds[1].matches.map((m) => m.feeders.map((x) => x.home)), [["A", "C"], ["E", "G"]]);
 check("Final links to both semi-finals", tb.rounds[2].matches[0].feeders.length, 2);
+// When the feed stops at the QFs (API hasn't published SF/final yet), the app
+// synthesizes the rest of the tree from the QF count.
+S.fixtures = [
+  { home: "A", away: "B", date: "2026-07-09", kickoff_utc: "2026-07-09T18:00:00Z", round: "Quarter-finals", home_score: 2, away_score: 0 },
+  { home: "C", away: "D", date: "2026-07-09", kickoff_utc: "2026-07-09T21:00:00Z", round: "Quarter-finals", home_score: 1, away_score: 0 },
+  { home: "E", away: "F", date: "2026-07-10", kickoff_utc: "2026-07-10T18:00:00Z", round: "Quarter-finals", home_score: 3, away_score: 1 },
+  { home: "G", away: "H", date: "2026-07-10", kickoff_utc: "2026-07-10T21:00:00Z", round: "Quarter-finals", home_score: 2, away_score: 1 },
+];
+const syn = knockoutBracket();
+check("synthesizes SF + Final from the QFs", syn.rounds.map((r) => r.key), ["QF", "SF", "F"]);
+check("synthesized SF has two slots", syn.rounds[1].matches.length, 2);
+check("synthesized final has one slot", syn.rounds[2].matches.length, 1);
+check("synthesized third-place present", !!syn.third, true);
+check("synthesized SF still links to the right QF pairs",
+  syn.rounds[1].matches.map((m) => m.feeders.map((x) => x.home)), [["A", "C"], ["E", "G"]]);
 S.fixtures = []; S.stats = []; S.playerById = {};
 
 /* Dream XI: best starters per position (GK1/DEF3/MID3/FWD2 in phase 1),
