@@ -370,14 +370,19 @@
           <span id="adm-keeper-status" class="text-xs text-slate-400"></span>
           <button id="adm-keeper-toggle" class="shrink-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold"></button>
         </div>
-        <div class="text-xs text-slate-400">New squad per position (kept players count toward these)</div>
+        <div class="text-xs text-slate-400">Minimum squad per position (kept players count toward these)</div>
         <div class="grid grid-cols-4 gap-2 text-sm">
           <label class="text-xs text-slate-400">GK<input id="adm-q-gk" type="number" value="1" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">DEF<input id="adm-q-def" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">MID<input id="adm-q-mid" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">FWD<input id="adm-q-fwd" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">DEF<input id="adm-q-def" type="number" value="1" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">MID<input id="adm-q-mid" type="number" value="1" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">FWD<input id="adm-q-fwd" type="number" value="1" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
         </div>
-        <div class="text-xs text-slate-400">Starters per position (the rest are subs)</div>
+        <div class="grid grid-cols-2 gap-2 text-sm items-end">
+          <label class="text-xs text-slate-400">Fluid / flex slots (any outfield — DEF/MID/FWD, not GK)
+            <input id="adm-q-flex" type="number" value="1" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <span id="adm-q-size" class="text-[10px] text-slate-500 pb-1"></span>
+        </div>
+        <div class="text-xs text-slate-400">Starters per position (the rest are subs; the flex adds a starter too)</div>
         <div class="grid grid-cols-4 gap-2 text-sm">
           <label class="text-xs text-slate-400">GK<input id="adm-s-gk" type="number" value="1" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
           <label class="text-xs text-slate-400">DEF<input id="adm-s-def" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
@@ -704,8 +709,39 @@ const posQuota = () => leaguePhase() === 1 ? PHASE1_QUOTA
   : { TEAM: 0, ...(S.league.phase_quota || {}) };
 const starterQuota = () => leaguePhase() === 1 ? PHASE1_STARTERS
   : (S.league.phase_starters || S.league.phase_quota || PHASE1_STARTERS);
+
+// Fluid ("flex") squad slots for a redraft: extra places that can go to ANY
+// outfield position (DEF/MID/FWD, never GK). The per-position quota is then a
+// MINIMUM; flex fills the rest. 0 in phase 1 / when unset = the old fixed model.
+const OUTFIELD = ["DEF", "MID", "FWD"];
+const leagueFlex = () => leaguePhase() === 1 ? 0 : (S.league.phase_flex || 0);
+const posCounts = (picks) => {
+  const c = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+  for (const pk of picks) if (c[pk.position] != null) c[pk.position]++;
+  return c;
+};
+const notSub = (pk) => pk.slot ? !String(pk.slot).startsWith("SUB_") : !pk.is_sub;
+// Slots left for `group` under minimums + a shared outfield flex pool. GK is
+// capped at its minimum; each outfield may take up to its minimum plus flex,
+// but never so many that another position's minimum can't be met.
+function flexLeft(counts, group, mins, flex) {
+  if (group === "GK") return Math.max(0, (mins.GK || 0) - (counts.GK || 0));
+  const size = (mins.GK || 0) + (mins.DEF || 0) + (mins.MID || 0) + (mins.FWD || 0) + (flex || 0);
+  const cur = (counts.GK || 0) + (counts.DEF || 0) + (counts.MID || 0) + (counts.FWD || 0);
+  let reserved = Math.max(0, (mins.GK || 0) - (counts.GK || 0));
+  for (const p of OUTFIELD) if (p !== group) reserved += Math.max(0, (mins[p] || 0) - (counts[p] || 0));
+  return Math.max(0, size - cur - reserved);
+}
+// A squad/lineup is complete when every slot is filled, the GK count is exact,
+// and each outfield minimum is met (the flex sits on top, in any outfield).
+function flexComplete(counts, mins, flex) {
+  const size = (mins.GK || 0) + (mins.DEF || 0) + (mins.MID || 0) + (mins.FWD || 0) + (flex || 0);
+  const cur = (counts.GK || 0) + (counts.DEF || 0) + (counts.MID || 0) + (counts.FWD || 0);
+  return cur === size && (counts.GK || 0) === (mins.GK || 0)
+    && OUTFIELD.every((p) => (counts[p] || 0) >= (mins[p] || 0));
+}
 const picksPerManager = () =>
-  GROUPS.reduce((s, g) => s + (posQuota()[g] || 0), 0);
+  GROUPS.reduce((s, g) => s + (posQuota()[g] || 0), 0) + leagueFlex();
 const totalPicks = () => draftSequence().length;
 
 function route() {
@@ -1167,24 +1203,35 @@ function plannerBadge(pid) {
 }
 
 // Kept players (redraft keepers) fill quota slots like any other pick.
+// Flex-aware: the per-position quota is a minimum and the flex pool is shared
+// across the outfield (see flexLeft). TEAM is a plain fixed count.
 function quotaLeft(mgrPicks, group) {
-  return (posQuota()[group] || 0)
-    - mgrPicks.filter((pk) => pk.position === group).length;
+  if (group === "TEAM")
+    return (posQuota().TEAM || 0) - mgrPicks.filter((pk) => pk.position === "TEAM").length;
+  return flexLeft(posCounts(mgrPicks), group, posQuota(), leagueFlex());
 }
 
-// First picks in a group fill the starter spots, the rest start as subs;
-// the lineup picker can rearrange later.
+// First picks in a group fill the starter spots (minimums + flex), the rest
+// start as subs; the lineup picker can rearrange later.
 function slotForNewPick(mgrPicks, group) {
   if (group === "TEAM") return "TEAM";
-  const have = mgrPicks.filter((pk) => pk.position === group).length;
-  return have < (starterQuota()[group] || 0) ? group : "SUB_" + group;
+  const starters = posCounts(mgrPicks.filter(notSub));
+  return flexLeft(starters, group, starterQuota(), leagueFlex()) > 0 ? group : "SUB_" + group;
 }
 
 function needsSummary(mgrPicks) {
-  const parts = GROUPS.map((g) => {
-    const left = quotaLeft(mgrPicks, g);
-    return left > 0 ? `${left} ${g}` : null;
-  }).filter(Boolean);
+  const counts = posCounts(mgrPicks);
+  const mins = posQuota(), flex = leagueFlex();
+  const parts = [];
+  const teamLeft = quotaLeft(mgrPicks, "TEAM");
+  if (teamLeft > 0) parts.push(`${teamLeft} TEAM`);
+  let slots = (mins.GK || 0) + (mins.DEF || 0) + (mins.MID || 0) + (mins.FWD || 0) + flex
+    - (counts.GK + counts.DEF + counts.MID + counts.FWD);
+  for (const g of ["GK", "DEF", "MID", "FWD"]) {
+    const need = Math.max(0, (mins[g] || 0) - (counts[g] || 0));
+    if (need > 0) { parts.push(`${need} ${g}`); slots -= need; }
+  }
+  if (slots > 0) parts.push(`${slots} flex (DEF/MID/FWD)`);
   return parts.length ? "Still needs: " + parts.join(" · ") : "Roster complete";
 }
 
@@ -1442,8 +1489,9 @@ function renderDraft() {
   $("draft-progress").textContent =
     `Pick ${L.current_pick} of ${totalPicks()} · Round ${info.round} of ${picksPerManager()}` +
     (leaguePhase() > 1 ? ` · Redraft (phase ${leaguePhase()})` : "");
-  $("draft-onclock").textContent =
-    myTurn ? "You're on the clock!" : `${info.manager.name} is on the clock`;
+  $("draft-onclock").textContent = myTurn ? "You're on the clock!"
+    : `${info.manager.name} is on the clock`
+      + (me?.eliminated ? " · 👀 you're spectating" : "");
   $("draft-slotline").textContent = needsSummary(managerPicks(info.manager.id));
   $("draft-order").innerHTML = draftOrderManagers().map((m) =>
     `<span class="rounded-full px-2.5 py-1 whitespace-nowrap border ${
@@ -2658,11 +2706,18 @@ function updateTradeBadge() {
 
 const mgrNameById = () => Object.fromEntries(S.managers.map((m) => [m.id, m.name]));
 
-// Threads: the league room first, then a DM thread per other manager.
+// Threads: the league room is always first; the DM threads follow, most
+// recently active first (a fresh message jumps that chat to the front).
 function chatThreads() {
   const me = myManager();
-  return [{ id: "league", name: "League chat" },
-    ...S.managers.filter((m) => m.id !== me?.id).map((m) => ({ id: m.id, name: m.name }))];
+  const lastAt = (tid) => {
+    const msgs = messagesForThread(tid, me?.id);
+    return msgs.length ? String(msgs[msgs.length - 1].created_at) : "";
+  };
+  const dms = S.managers.filter((m) => m.id !== me?.id)
+    .map((m) => ({ id: m.id, name: m.name, lastAt: lastAt(m.id) }));
+  dms.sort((a, b) => b.lastAt.localeCompare(a.lastAt) || a.name.localeCompare(b.name));
+  return [{ id: "league", name: "League chat" }, ...dms];
 }
 
 // Messages in a thread, oldest first. "league" = group (no recipient); a
@@ -2751,8 +2806,12 @@ function renderChat() {
   $("chat-threads").innerHTML = chatThreads().map((t) => {
     const on = S.chatThread === t.id;
     const unread = threadUnread(t.id, me.id);
-    return `<button data-chatthread="${esc(t.id)}" class="shrink-0 rounded-full px-3 py-1 border ${
-      on ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"}">${
+    // Unread threads get a red dot + a highlighted (gold) chip so they stand
+    // out even when not selected; the count badge shows how many.
+    const cls = on ? "border-wcgold text-wcgold bg-wcred/10"
+      : unread ? "border-wcgold/70 text-slate-100" : "border-slate-700 text-slate-400";
+    return `<button data-chatthread="${esc(t.id)}" class="shrink-0 rounded-full px-3 py-1 border ${cls}">${
+      unread ? '<span class="text-red-400 mr-0.5">●</span>' : ""}${
       t.id === "league" ? "🏟 " : "✉ "}${esc(t.name)}${
       unread ? ` <span class="ml-0.5 inline-flex items-center justify-center rounded-full bg-wcgold text-slate-900 text-[9px] font-bold w-4 h-4 align-middle">${
         unread > 9 ? "9+" : unread}</span>` : ""}</button>`;
@@ -3523,9 +3582,10 @@ function openLineup() {
   // Draft of the new lineup: set of pick ids that will be starters.
   S.lineupDraft = new Set(managerPicks(me.id)
     .filter((pk) => !pk.is_sub && pk.slot !== "TEAM").map((pk) => pk.id));
-  const sq = starterQuota();
+  const sq = starterQuota(), flex = leagueFlex();
   $("lineup-rule").textContent = "Starters: " + ["GK", "DEF", "MID", "FWD"]
     .filter((g) => sq[g] > 0).map((g) => `${sq[g]} ${g}`).join(", ")
+    + (flex ? ` + ${flex} flex (any of DEF/MID/FWD)` : "")
     + ". The rest are subs — a sub only scores in rounds their starter doesn't play.";
   renderLineup();
   $("lineup-sheet").classList.remove("hidden");
@@ -3541,8 +3601,7 @@ function lineupCounts() {
 }
 
 function lineupValid(counts) {
-  const sq = starterQuota();
-  return ["GK", "DEF", "MID", "FWD"].every((g) => counts[g] === (sq[g] || 0));
+  return flexComplete(counts, starterQuota(), leagueFlex());
 }
 
 function renderLineup() {
@@ -3578,10 +3637,12 @@ function renderLineup() {
     renderLineup();
   });
   const counts = lineupCounts();
-  const sq = starterQuota();
-  $("lineup-count").textContent = "Starters: " + ["GK", "DEF", "MID", "FWD"]
+  const sq = starterQuota(), flex = leagueFlex();
+  const total = counts.GK + counts.DEF + counts.MID + counts.FWD;
+  const need = (sq.GK || 0) + (sq.DEF || 0) + (sq.MID || 0) + (sq.FWD || 0) + flex;
+  $("lineup-count").textContent = `Starters ${total}/${need}: ` + ["GK", "DEF", "MID", "FWD"]
     .filter((g) => (sq[g] || 0) > 0 || counts[g] > 0)
-    .map((g) => `${counts[g]}/${sq[g] || 0} ${g}`).join(" · ");
+    .map((g) => `${counts[g]} ${g}`).join(" · ") + (flex ? " · +flex outfield" : "");
   $("lineup-save").disabled = !lineupValid(counts);
 }
 
@@ -4802,6 +4863,15 @@ function admQuotaInputs(prefix) {
   return { GK: v("GK"), DEF: v("DEF"), MID: v("MID"), FWD: v("FWD") };
 }
 
+// Live "= N-player squad" hint under the redraft quota inputs.
+function admQuotaSizePreview() {
+  const el = $("adm-q-size");
+  if (!el) return;
+  const q = admQuotaInputs("adm-q-");
+  const flex = Math.max(0, parseInt($("adm-q-flex").value, 10) || 0);
+  el.textContent = `= ${q.GK + q.DEF + q.MID + q.FWD + flex}-player squad`;
+}
+
 // A manager's chosen keepers, in selection order, validated: each must
 // still exist, be theirs, and not be the TEAM pick (which carries
 // through automatically). Count/cap/quota limits are enforced elsewhere.
@@ -4851,12 +4921,18 @@ async function toggleKeeperWindow() {
 
 async function startRedraft() {
   const quota = admQuotaInputs("adm-q-"), starters = admQuotaInputs("adm-s-");
-  const size = quota.GK + quota.DEF + quota.MID + quota.FWD;
+  const flex = Math.max(0, parseInt($("adm-q-flex").value, 10) || 0);
+  const size = quota.GK + quota.DEF + quota.MID + quota.FWD + flex;
   if (!size) return toast("Set the squad size first.");
+  // Starter minimums can't exceed the position minimum; the flex sits on top
+  // of both the squad and the starting XI, so the starter total gets it too.
   for (const g of ["GK", "DEF", "MID", "FWD"]) {
     if (starters[g] > quota[g])
-      return toast(`${g}: starters (${starters[g]}) can't exceed the quota (${quota[g]}).`);
+      return toast(`${g}: starter minimum (${starters[g]}) can't exceed the squad minimum (${quota[g]}).`);
   }
+  const starterTotal = starters.GK + starters.DEF + starters.MID + starters.FWD + flex;
+  if (starterTotal > size)
+    return toast(`Starters (${starterTotal}) can't exceed the squad size (${size}).`);
   const active = activeManagers();
   // Kept players fill quota slots, so the pool only needs to cover the
   // full quota: quota*managers <= players at that position.
@@ -4893,7 +4969,8 @@ async function startRedraft() {
   }
   const noKeep = active.filter((m) => !keepersByMgr[m.id].length);
   if (!confirm(`Start redraft for ${active.length} managers — squads of ${size} `
-    + `(${quota.GK} GK, ${quota.DEF} DEF, ${quota.MID} MID, ${quota.FWD} FWD), `
+    + `(min ${quota.GK} GK, ${quota.DEF} DEF, ${quota.MID} MID, ${quota.FWD} FWD`
+    + (flex ? ` + ${flex} flex outfield` : "") + "), "
     + "kept players included? Each keeper costs that manager's earliest draft round."
     + (droppedNotes.length ? `\n\nDROPPED keeper picks (won't be kept):\n${droppedNotes.join("\n")}` : "")
     + (noKeep.length ? `\n\nKeeping no one: ${noKeep.map((m) => m.name).join(", ")}` : "")
@@ -4933,12 +5010,19 @@ async function startRedraft() {
   // Open proposals reference deleted picks — clear them out.
   await S.sb.from("trades").update({ status: "cancelled" })
     .eq("league_id", S.league.id).eq("status", "proposed");
-  const { error } = await S.sb.from("leagues").update({
+  const payload = {
     phase: (S.league.phase || 1) + 1,
-    phase_quota: quota, phase_starters: starters,
+    phase_quota: quota, phase_starters: starters, phase_flex: flex,
     keeper_window: false, trading_open: false,
     current_pick: 1, pick_started_at: new Date().toISOString(),
-  }).eq("id", S.league.id);
+  };
+  let { error } = await S.sb.from("leagues").update(payload).eq("id", S.league.id);
+  if (error && /phase_flex/.test(error.message)) {
+    // Column not migrated yet: fall back so the redraft still starts (no flex).
+    if (flex) toast("Flex needs a schema update — run schema.sql. Starting without it.");
+    delete payload.phase_flex;
+    ({ error } = await S.sb.from("leagues").update(payload).eq("id", S.league.id));
+  }
   if (error) return toast(error.message);
   toast("Redraft started!");
   await refetchAll();
@@ -4968,6 +5052,7 @@ function renderAdmin() {
   $("admin-gate").classList.toggle("hidden", ok);
   $("admin-panel").classList.toggle("hidden", !ok);
   if (!ok) return;
+  admQuotaSizePreview();
   if (!$("adm-home").options.length) {
     const opts = (sel) => $(sel).innerHTML =
       S.teams.map((t) => `<option>${esc(t)}</option>`).join("");
@@ -5115,6 +5200,8 @@ function wire() {
   $("adm-keeper-toggle").onclick = () => toggleKeeperWindow().catch((e) => toast(e.message));
   $("adm-redraft").onclick = () => startRedraft().catch((e) => toast(e.message));
   $("adm-final").onclick = () => startFinalPhase().catch((e) => toast(e.message));
+  ["adm-q-gk", "adm-q-def", "adm-q-mid", "adm-q-fwd", "adm-q-flex"].forEach((id) =>
+    $(id).oninput = admQuotaSizePreview);
   $("adm-pull-now").onclick = () => pullStatsNow().catch((e) => toast(e.message));
   $("adm-snapshot").onclick = () => {
     if (confirm("Snapshot every manager's current lineup as the locked state from today?"))
