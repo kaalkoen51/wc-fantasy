@@ -4679,6 +4679,7 @@ async function pullStatsNow() {
       return;
     }
     const skipped = [];
+    const summary = [];
     let total = 0;
     for (const f of fixtures) {
       const home = TEAM_NAME_FIX[f.teams.home.name] || f.teams.home.name;
@@ -4731,8 +4732,14 @@ async function pullStatsNow() {
       await resilientWrite("match_stats", rows,
         { upsert: true, onConflict: "league_id,player_id,match_label" });
       total += rows.length;
+      // Diagnostic: the API's max minutes + clean sheets for this match, so a
+      // stuck-at-49 game is obviously an upstream (API) issue, not the write.
+      const maxMin = rows.reduce((mx, r) => Math.max(mx, r.minutes || 0), 0);
+      const cs = rows.filter((r) => r.clean_sheet).length;
+      summary.push(`${label}: ${rows.length} rows · API max ${maxMin}′ · ${cs} clean sheets`);
     }
     log(`Done — ${total} player rows from ${fixtures.length} match(es).`
+      + "\n" + summary.join("\n")
       + (skipped.length
         ? `\nCould not map (enter manually): ${[...new Set(skipped)].join(", ")}`
         : "")
