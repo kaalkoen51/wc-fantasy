@@ -2939,6 +2939,36 @@ function standingsMovement(scores) {
   return { maxRound, showMovement: maxRound >= 2, byId };
 }
 
+// Cumulative points-by-round per manager, for the season progression chart.
+// Uses the same per-round player scoring as the movement arrows. Active
+// managers only (eliminated have no round history). r=0 seeds each line at 0.
+function seasonSeries(scores) {
+  const maxR = scores.reduce((m, s) =>
+    Math.max(m, ...Object.keys(s.roundPts || {}).map(Number)), 0);
+  const series = scores.filter((s) => s.roundPts).map((s) => {
+    let cum = 0;
+    const pts = [0];
+    for (let r = 1; r <= maxR; r++) { cum += (s.roundPts[r] || 0); pts.push(cum); }
+    return { id: s.manager.id, name: s.manager.name, pts, total: cum };
+  });
+  return { maxR, series };
+}
+
+// Round-by-round head-to-head from A's perspective: rounds A out-scored B (w),
+// lost (l), or tied (t). null if either manager has no round history.
+function headToHead(scores, aId, bId) {
+  const a = scores.find((s) => s.manager.id === aId);
+  const b = scores.find((s) => s.manager.id === bId);
+  if (!a?.roundPts || !b?.roundPts) return null;
+  const maxR = Math.max(0, ...[...Object.keys(a.roundPts), ...Object.keys(b.roundPts)].map(Number));
+  let w = 0, l = 0, t = 0;
+  for (let r = 1; r <= maxR; r++) {
+    const ap = a.roundPts[r] || 0, bp = b.roundPts[r] || 0;
+    if (ap > bp) w++; else if (ap < bp) l++; else t++;
+  }
+  return { w, l, t };
+}
+
 // Manager id(s) with the most points in the current round (must be > 0), for
 // the table's "round MVP" badge. Ties share it; empty before any round scores.
 function roundMVPs(scores) {
@@ -2955,6 +2985,76 @@ function roundMVPs(scores) {
   return best > 0 ? winners : new Set();
 }
 
+// Season progression: a multi-line chart of cumulative points by round. All
+// managers are faint context lines; YOU are gold and, when a compare manager
+// is picked, they're sky — the two emphasized, everyone else dimmed, with a
+// round-by-round head-to-head under it. Colours pass CVD + contrast; the two
+// bright lines carry direct end-labels so identity is never colour-alone.
+function seasonChartHtml(scores, meId) {
+  const { maxR, series } = seasonSeries(scores);
+  if (maxR < 2 || series.length < 2)
+    return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 text-xs text-slate-500 text-center">
+      The season chart appears once a couple of rounds have been scored.</div>`;
+  const cmp = S.chartCompare && series.some((s) => s.id === S.chartCompare) ? S.chartCompare : null;
+  const meS = series.find((s) => s.id === meId) || null;
+  const cmpS = cmp ? series.find((s) => s.id === cmp) : null;
+  const maxY = Math.max(1, ...series.map((s) => s.pts[maxR])) * 1.08;
+  const W = 640, H = 240, L = 34, Rp = 62, T = 14, Bt = 24;
+  const pw = W - L - Rp, ph = H - T - Bt;
+  const X = (r) => (L + (maxR ? r / maxR * pw : 0)).toFixed(1);
+  const Y = (v) => (T + (1 - v / maxY) * ph).toFixed(1);
+  let svg = [0, 0.25, 0.5, 0.75, 1].map((f) => {
+    const v = maxY * f, yy = Y(v);
+    return `<line x1="${L}" y1="${yy}" x2="${L + pw}" y2="${yy}" stroke="#1e293b" stroke-width="1"/>`
+      + `<text x="${L - 4}" y="${(+yy + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#64748b">${Math.round(v)}</text>`;
+  }).join("");
+  const step = maxR > 8 ? 2 : 1;
+  for (let r = step; r <= maxR; r += step)
+    svg += `<text x="${X(r)}" y="${H - 8}" text-anchor="middle" font-size="9" fill="#64748b">${r}</text>`;
+  const poly = (s, stroke, w, op) =>
+    `<polyline fill="none" stroke="${stroke}" stroke-width="${w}" opacity="${op}" stroke-linejoin="round"
+       stroke-linecap="round" points="${s.pts.map((v, r) => `${X(r)},${Y(v)}`).join(" ")}"/>`;
+  const hasEmph = !!(meS || cmpS);
+  const dimOp = !hasEmph ? 0.5 : (cmp ? 0.12 : 0.32);
+  for (const s of series) if (s.id !== meId && s.id !== cmp) svg += poly(s, "#64748b", 1.2, dimOp);
+  const emph = (s, color) => poly(s, color, 2.6, 1)
+    + s.pts.map((v, r) => `<circle cx="${X(r)}" cy="${Y(v)}" r="2.6" fill="${color}"><title>${
+        esc(s.name)} · after round ${r}: ${v} pts</title></circle>`).join("")
+    + `<text x="${(+X(maxR) + 4).toFixed(1)}" y="${(+Y(s.pts[maxR]) + 3).toFixed(1)}" font-size="10" fill="${
+        color}" font-weight="700">${esc(s.name.slice(0, 9))}</text>`;
+  if (cmpS) svg += emph(cmpS, "#38bdf8");
+  if (meS) svg += emph(meS, "#eab308");
+
+  const others = series.filter((s) => s.id !== meId);
+  const selector = `<select id="chart-compare" class="rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-xs max-w-[45%]">
+    <option value="">Compare to…</option>
+    ${others.map((s) => `<option value="${esc(s.id)}" ${cmp === s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("")}
+  </select>`;
+  let h2h = "";
+  if (cmpS && meS) {
+    const hh = headToHead(scores, meId, cmp);
+    if (hh) {
+      const lead = hh.w > hh.l ? '<span class="text-wcgold">You lead ' + hh.w + "–" + hh.l + "</span>"
+        : hh.w < hh.l ? `<span class="text-sky-400">${esc(cmpS.name)} leads ${hh.l}–${hh.w}</span>`
+        : `<span class="text-slate-300">Dead even ${hh.w}–${hh.l}</span>`;
+      h2h = `<div class="rounded-lg bg-slate-800/60 px-3 py-2 text-xs">
+        <span class="font-semibold text-slate-200">H2H vs ${esc(cmpS.name)}:</span> ${lead}${
+          hh.t ? ` <span class="text-slate-500">· ${hh.t} tie${hh.t === 1 ? "" : "s"}</span>` : ""}
+        <span class="block text-[10px] text-slate-500 mt-0.5">Rounds each of you out-scored the other.</span>
+      </div>`;
+    }
+  }
+  return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2">
+    <div class="flex items-center justify-between gap-2">
+      <span class="text-sm font-semibold">Season progression <span class="text-[10px] text-slate-500 font-normal">· points by round</span></span>
+      ${selector}
+    </div>
+    <svg viewBox="0 0 ${W} ${H}" width="100%" style="height:auto" preserveAspectRatio="xMidYMid meet">${svg}</svg>
+    ${h2h}
+    ${cmp ? "" : `<p class="text-[10px] text-slate-500">${meS ? "Your line is gold." : ""} Pick a manager above to highlight your two lines and see the head-to-head.</p>`}
+  </div>`;
+}
+
 function renderBoard() {
   setBoardTab(S.boardTab || "home");
   renderBanner();
@@ -2966,7 +3066,8 @@ function renderBoard() {
   const yetByMgr = computeYetToPlay();
   const mv = standingsMovement(scores);
   const mvps = roundMVPs(scores);
-  $("board-lb").innerHTML = scores.map((s, i) => {
+  const chartHtml = seasonChartHtml(scores, me?.id);
+  $("board-lb").innerHTML = chartHtml + scores.map((s, i) => {
     const ytp = yetByMgr[s.manager.id];
     const ytpLine = ytp?.hasSnapshot && ytp.total > 0
       ? `<span class="block text-[10px] font-normal text-slate-400">${ytp.yet}/${ytp.total} starters yet to play</span>`
@@ -3001,6 +3102,8 @@ function renderBoard() {
       <div id="hist-lb-${s.manager.id}" class="px-4 pb-3"></div>
     </details>`;
   }).join("") || '<p class="text-sm text-slate-500">No managers.</p>';
+  const cc = document.getElementById("chart-compare");
+  if (cc) cc.onchange = () => { S.chartCompare = cc.value || null; renderBoard(); };
   // Fill each manager's history pager (current lineup + past rounds).
   for (const s of scores)
     renderHistInto("hist-lb-" + s.manager.id, s.manager.id, `${s.manager.name}'s lineup`);
@@ -3020,6 +3123,7 @@ S.statsPer90 = false;   // Stats tab: show per-90 rates instead of totals
 S.statsRound = 0;       // Stats tab: scope to a round (0 = whole tournament)
 S.statsView = "list";   // Stats tab: "list" leaderboard or "dream" best XI
 S.histIdxByMgr = {};   // manager id -> history pager index (0 = current)
+S.chartCompare = null; // Table season chart: manager id to compare against (H2H)
 S.homeScoreMode = "total"; // current-lineup view: "total" or "round" points
 S.formerOpen = {};     // manager id -> former-players section expanded?
 S.messages = [];       // chat messages (group + DMs) for this league

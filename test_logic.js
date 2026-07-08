@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -31,6 +31,7 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         autoPickCandidates, entryForId,
         statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog,
         dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs,
+        seasonSeries, headToHead,
         currentRoundNo, currentRoundDreamIds,
         chatThreads, messagesForThread, threadUnread, markThreadSeen,
         koRoundOf, knockoutBracket, needsSummary, lineupValid } = api;
@@ -711,6 +712,23 @@ check("round MVP ties are shared", [...roundMVPs([
   { manager: { id: "b" }, total: 5, roundPts: { 1: 5 } }])].sort(), ["a", "b"]);
 check("no round MVP before any scoring",
   roundMVPs([{ manager: { id: "x" }, total: 0, roundPts: {} }]).size, 0);
+// Season chart series = cumulative points by round (seeded at 0); H2H per round.
+{
+  const scores = [
+    { manager: { id: "a", name: "A" }, total: 20, roundPts: { 1: 10, 2: 10 } },
+    { manager: { id: "b", name: "B" }, total: 18, roundPts: { 1: 15, 2: 3 } },
+    { manager: { id: "c", name: "C" }, total: 5, eliminated: true, frozen_points: 5 },
+  ];
+  const ss = seasonSeries(scores);
+  check("season chart spans the played rounds", ss.maxR, 2);
+  check("cumulative series seeded at 0 then adds each round",
+    ss.series.find((s) => s.id === "a").pts, [0, 10, 20]);
+  check("eliminated managers (no round history) are left off the chart",
+    ss.series.map((s) => s.id), ["a", "b"]);
+  const hh = headToHead(scores, "a", "b");
+  check("head-to-head counts round wins/losses from A's view",
+    [hh.w, hh.l, hh.t], [1, 1, 0]);   // R1: B 15>10 (A loss); R2: A 10>3 (A win)
+}
 
 // Home current-team view: per-round points, "played this round" flag, and the
 // Dream XI badge all key off the current round (each team's Nth match).
