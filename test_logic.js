@@ -753,6 +753,24 @@ const koLive = knockoutBracket().rounds[0].matches;
 check("finished game (FT) is not flagged live", koLive.find((m) => m.home === "X").live, false);
 check("long-past game not live even without an FT status",
   koLive.find((m) => m.home === "P").live, false);
+// Unconfirmed rounds (semis/final/3rd) appear as TBC and link forward by
+// position: each next-round slot is fed by the adjacent pair below it.
+S.fixtures = [
+  { home: "A", away: "B", date: "2026-07-09", kickoff_utc: "2026-07-09T18:00:00Z", round: "Quarter-finals", home_score: 2, away_score: 0 },
+  { home: "C", away: "D", date: "2026-07-09", kickoff_utc: "2026-07-09T21:00:00Z", round: "Quarter-finals", home_score: 1, away_score: 0 },
+  { home: "E", away: "F", date: "2026-07-10", kickoff_utc: "2026-07-10T18:00:00Z", round: "Quarter-finals", home_score: 3, away_score: 1 },
+  { home: "G", away: "H", date: "2026-07-10", kickoff_utc: "2026-07-10T21:00:00Z", round: "Quarter-finals", home_score: 2, away_score: 1 },
+  { home: "TBC", away: "TBC", date: "2026-07-14", kickoff_utc: "2026-07-14T20:00:00Z", round: "Semi-finals", home_score: null, away_score: null },
+  { home: "TBC", away: "TBC", date: "2026-07-15", kickoff_utc: "2026-07-15T20:00:00Z", round: "Semi-finals", home_score: null, away_score: null },
+  { home: "TBC", away: "TBC", date: "2026-07-18", kickoff_utc: "2026-07-18T20:00:00Z", round: "Final", home_score: null, away_score: null },
+  { home: "TBC", away: "TBC", date: "2026-07-17", kickoff_utc: "2026-07-17T20:00:00Z", round: "3rd Place Final", home_score: null, away_score: null },
+];
+const tb = knockoutBracket();
+check("bracket extends to SF + Final", tb.rounds.map((r) => r.key), ["QF", "SF", "F"]);
+check("third-place TBC match included", tb.third && [tb.third.home, tb.third.away], ["TBC", "TBC"]);
+check("SF links to the correct QF pairs by position",
+  tb.rounds[1].matches.map((m) => m.feeders.map((x) => x.home)), [["A", "C"], ["E", "G"]]);
+check("Final links to both semi-finals", tb.rounds[2].matches[0].feeders.length, 2);
 S.fixtures = []; S.stats = []; S.playerById = {};
 
 /* Dream XI: best starters per position (GK1/DEF3/MID3/FWD2 in phase 1),
