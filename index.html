@@ -389,6 +389,11 @@
           <label class="text-xs text-slate-400">MID<input id="adm-s-mid" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
           <label class="text-xs text-slate-400">FWD<input id="adm-s-fwd" type="number" value="2" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
         </div>
+        <div class="text-xs text-slate-400">Draft order</div>
+        <select id="adm-redraft-order" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm">
+          <option value="reverse">Reverse standings — last place picks first (snake)</option>
+          <option value="random">Random order (snake)</option>
+        </select>
         <button id="adm-redraft" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2 text-sm font-semibold">Start redraft now</button>
         <button id="adm-final" class="w-full bg-slate-800 border border-wcgold/60 text-wcgold rounded-lg py-2 text-sm font-semibold">Start final phase (champion picks, +5)</button>
       </div>
@@ -4996,18 +5001,30 @@ async function startRedraft() {
     keepersByMgr[m.id] = valid;
   }
   const noKeep = active.filter((m) => !keepersByMgr[m.id].length);
+  const orderMode = $("adm-redraft-order").value === "random" ? "random" : "reverse";
+  const orderText = orderMode === "random"
+    ? "in a random snake order" : "last place picking first (reverse standings)";
   if (!confirm(`Start redraft for ${active.length} managers — squads of ${size} `
     + `(min ${quota.GK} GK, ${quota.DEF} DEF, ${quota.MID} MID, ${quota.FWD} FWD`
     + (flex ? ` + ${flex} flex outfield` : "") + "), "
     + "kept players included? Each keeper costs that manager's earliest draft round."
     + (droppedNotes.length ? `\n\nDROPPED keeper picks (won't be kept):\n${droppedNotes.join("\n")}` : "")
     + (noKeep.length ? `\n\nKeeping no one: ${noKeep.map((m) => m.name).join(", ")}` : "")
-    + "\n\nEveryone else returns to the pool and the draft starts immediately, last place picking first."))
+    + `\n\nEveryone else returns to the pool and the draft starts immediately, ${orderText}.`))
     return;
-  // Bank the outgoing rosters, then reseed the order: reverse standings.
+  // Bank the outgoing rosters, then reseed the draft order.
   await snapshotRosters();
-  const order = computeScores().filter((s) => !s.eliminated)
-    .sort((a, b) => a.total - b.total);
+  let order;
+  if (orderMode === "random") {
+    order = active.map((m) => ({ manager: m }));
+    for (let i = order.length - 1; i > 0; i--) {   // Fisher–Yates shuffle
+      const j = Math.floor(Math.random() * (i + 1));
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+  } else {
+    order = computeScores().filter((s) => !s.eliminated)
+      .sort((a, b) => a.total - b.total);
+  }
   await Promise.all(order.map((s, i) => S.sb.from("managers")
     .update({ draft_position: i + 1 }).eq("id", s.manager.id)));
   // Keepers stay, slotted against the NEW starter quota (first keeper in
