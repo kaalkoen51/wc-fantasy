@@ -236,6 +236,10 @@
         <button id="stats-per90" class="rounded-full px-3 py-1 border border-slate-700 text-slate-400">⏱ per 90</button>
         <span class="text-[10px] text-slate-600">Round = each team's Nth game · per 90 needs ≥90′</span>
       </div>
+      <div id="stats-filters" class="flex items-center gap-1.5 flex-wrap text-xs">
+        <button id="stats-unpicked" class="rounded-full px-3 py-1 border border-slate-700 text-slate-400">🟢 Unpicked only</button>
+        <button id="stats-hideko" class="rounded-full px-3 py-1 border border-slate-700 text-slate-400">🚫 Hide knocked-out</button>
+      </div>
       <ol id="stats-list" class="rounded-xl border border-slate-700 bg-slate-900 px-4 divide-y divide-slate-800"></ol>
       <div id="stats-dream" class="hidden space-y-4"></div>
     </div>
@@ -451,8 +455,10 @@
   <div class="absolute bottom-0 inset-x-0 max-h-[80vh] bg-slate-900 border-t border-slate-700 rounded-t-2xl p-4 flex flex-col">
     <div id="planner-title" class="font-semibold mb-2 text-sm"></div>
     <input id="planner-search" placeholder="Search players…" class="mb-2 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
-    <div class="flex items-center gap-2 mb-2 flex-wrap text-xs">
+    <div class="flex items-center gap-1.5 mb-2 flex-wrap text-xs">
       <button id="planner-slfilter" class="rounded-full px-3 py-1 border"></button>
+      <button id="planner-unpicked" class="rounded-full px-3 py-1 border"></button>
+      <button id="planner-hideko" class="rounded-full px-3 py-1 border"></button>
       <select id="planner-sort" class="ml-auto rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-xs"></select>
     </div>
     <ul id="planner-list" class="overflow-y-auto overscroll-contain divide-y divide-slate-800 flex-1 min-h-0"></ul>
@@ -3005,12 +3011,22 @@ S.admOpenLabels = null; // admin stats history: which match groups are expanded
 S.showShortlist = false;   // Trades tab: shortlist collapsed until opened
 S.slPos = "ALL";           // shortlist position filter
 S.slSort = "points";       // shortlist sort key
+S.slUnpicked = false;      // shortlist: show only unpicked (free agents)
+S.slHideKO = false;        // shortlist: hide knocked-out players
 S.showPlanner = false;     // Trades tab: squad planner collapsed until opened
 S.poolPlannerOnly = false; // draft pool: filter to planner choices
 S.plannerPickFor = null;   // out pick id the choice picker is adding to
 S.plannerSearch = "";      // choice picker search
 S.plannerSort = "points";  // choice picker stat sort/leaderboard
 S.plannerShortlistOnly = false; // choice picker: show only shortlisted
+S.plannerUnpicked = false; // choice picker: show only unpicked (free agents)
+S.plannerHideKO = false;   // choice picker: hide knocked-out players
+S.statsUnpicked = false;   // Stats tab: show only unpicked (free agents)
+S.statsHideKO = false;     // Stats tab: hide knocked-out players
+
+// Set of every player_id currently on a roster (owned). Rebuilt per call;
+// cheap at this scale. Used by the "unpicked only" filters.
+const pickedIdSet = () => new Set(S.picks.map((pk) => pk.player_id));
 
 // Stats-tab ranking options: label + the match_stats key to total. "points"
 // uses the full fantasy total; the rest are raw counts from existing
@@ -3507,6 +3523,11 @@ function renderStatsTab() {
   $("stats-per90").className = "rounded-full px-3 py-1 border " +
     (per90 ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400") +
     (isForm ? " opacity-40 pointer-events-none" : "");
+  $("stats-filters").classList.toggle("hidden", dream);
+  $("stats-unpicked").className = "rounded-full px-3 py-1 border " +
+    (S.statsUnpicked ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400");
+  $("stats-hideko").className = "rounded-full px-3 py-1 border " +
+    (S.statsHideKO ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400");
 
   if (dream) { renderDreamTeam(round, per90); return; }
 
@@ -3521,6 +3542,11 @@ function renderStatsTab() {
     pool = [...ids].map((id) => S.playerById[id]).filter(Boolean);
   }
   if (S.statsPos !== "ALL") pool = pool.filter((p) => p.position === S.statsPos);
+  if (S.statsHideKO) pool = pool.filter((p) => !isEliminated(p.team));
+  if (S.statsUnpicked) {
+    const owned = pickedIdSet();
+    pool = pool.filter((p) => !owned.has(p.player_id));
+  }
 
   const rawVal = (p, rows) => sortKey === "points"
     ? rows.reduce((s, r) => s + calcPlayerPoints(r, p.position), 0)
@@ -4040,6 +4066,11 @@ function shortlistSectionHtml(me) {
 
   let players = allIds.map((pid) => S.playerById[pid]).filter(Boolean);
   if (S.slPos !== "ALL") players = players.filter((p) => p.position === S.slPos);
+  if (S.slHideKO) players = players.filter((p) => !isEliminated(p.team));
+  if (S.slUnpicked) {
+    const owned = pickedIdSet();
+    players = players.filter((p) => !owned.has(p.player_id));
+  }
   const ranked = players
     .map((p) => ({ p, pts: playerPoints(p.player_id, p.position), val: valOf(p) }))
     .sort((a, b) => b.val - a.val || b.pts - a.pts || a.p.name.localeCompare(b.p.name));
@@ -4091,10 +4122,16 @@ function shortlistSectionHtml(me) {
         ${STAT_SORTS.map(([k, lbl]) => `<option value="${k}" ${sortKey === k ? "selected" : ""}>${lbl}</option>`).join("")}
       </select>
     </div>
+    <div class="flex gap-1.5 flex-wrap text-xs">
+      <button id="sl-unpicked" class="rounded-full px-3 py-1 border ${
+        S.slUnpicked ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"}">🟢 Unpicked</button>
+      <button id="sl-hideko" class="rounded-full px-3 py-1 border ${
+        S.slHideKO ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"}">🚫 Hide KO</button>
+    </div>
     ${ranked.length
       ? `<ul class="rounded-xl border border-slate-700 bg-slate-900 px-3 divide-y divide-slate-800">${rows}</ul>`
       : `<p class="text-xs text-slate-500">${allIds.length
-          ? "No shortlisted players in this position."
+          ? "No shortlisted players match the current filters."
           : "No players shortlisted yet — tap ☆ on a player in the Stats tab."}</p>`}
   </div>`;
 }
@@ -4241,8 +4278,9 @@ function plannerExec(outPickId, pid) {
 // nation / search and ranked by the chosen stat (points by default). Players
 // already chosen for this move are NOT dropped — they stay so the picker can
 // highlight them. Pure (DOM-free) so it's unit-tested.
-function plannerPickPool(group, { shortlistOnly, q, sortKey } = {}) {
+function plannerPickPool(group, { shortlistOnly, q, sortKey, unpicked, hideKO } = {}) {
   const myIds = new Set(managerPicks(myManager()?.id).map((pk) => pk.player_id));
+  const owned = unpicked ? pickedIdSet() : null;
   const sl = new Set(myShortlist());
   const key = sortKey || "points";
   const byPoints = key === "points";
@@ -4252,6 +4290,8 @@ function plannerPickPool(group, { shortlistOnly, q, sortKey } = {}) {
   return S.players
     .filter((p) => p.position === group && !myIds.has(p.player_id)
       && (!shortlistOnly || sl.has(p.player_id))
+      && (!hideKO || !isEliminated(p.team))
+      && (!unpicked || !owned.has(p.player_id))
       && (!t || p.name.toLowerCase().includes(t) || p.team.toLowerCase().includes(t)))
     .map((p) => ({ p, val: valOf(p), pts: playerPoints(p.player_id, p.position) }))
     .sort((a, b) => b.val - a.val || b.pts - a.pts || a.p.name.localeCompare(b.p.name))
@@ -4285,9 +4325,14 @@ function renderPlannerPick() {
 
   // Filter controls: shortlist toggle + stat leaderboard (team search covers
   // nation). The right column mirrors the Stats tab — stat tally + points.
-  $("planner-slfilter").className = `rounded-full px-3 py-1 border ${
-    S.plannerShortlistOnly ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"}`;
+  const chipCls = (on) => `rounded-full px-3 py-1 border ${
+    on ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"}`;
+  $("planner-slfilter").className = chipCls(S.plannerShortlistOnly);
   $("planner-slfilter").textContent = "★ shortlist";
+  $("planner-unpicked").className = chipCls(S.plannerUnpicked);
+  $("planner-unpicked").textContent = "🟢 Unpicked";
+  $("planner-hideko").className = chipCls(S.plannerHideKO);
+  $("planner-hideko").textContent = "🚫 Hide KO";
   $("planner-sort").innerHTML = STAT_SORTS.map(([k, lbl]) =>
     `<option value="${k}" ${S.plannerSort === k ? "selected" : ""}>${lbl}</option>`).join("");
 
@@ -4298,6 +4343,7 @@ function renderPlannerPick() {
 
   let list = plannerPickPool(group, {
     shortlistOnly: S.plannerShortlistOnly, q: S.plannerSearch, sortKey,
+    unpicked: S.plannerUnpicked, hideKO: S.plannerHideKO,
   });
   // Keep already-chosen players visible even if a filter would hide them.
   const present = new Set(list.map((x) => x.p.player_id));
@@ -4392,6 +4438,10 @@ function wireTrades(me) {
   box.querySelectorAll("[data-slchip]").forEach((b) => b.onclick = () => {
     S.slPos = b.dataset.slchip; renderTrades();
   });
+  const slUnpicked = box.querySelector("#sl-unpicked");
+  if (slUnpicked) slUnpicked.onclick = () => { S.slUnpicked = !S.slUnpicked; renderTrades(); };
+  const slHideKO = box.querySelector("#sl-hideko");
+  if (slHideKO) slHideKO.onclick = () => { S.slHideKO = !S.slHideKO; renderTrades(); };
   const slSort = box.querySelector("#sl-sort");
   if (slSort) slSort.onchange = () => { S.slSort = slSort.value; renderTrades(); };
   box.querySelectorAll("[data-sldetail]").forEach((b) => b.onclick = () =>
@@ -5213,12 +5263,16 @@ function wire() {
   $("stats-sort").onchange = (e) => { S.statsSort = e.target.value; renderStatsTab(); };
   $("stats-round").onchange = (e) => { S.statsRound = Number(e.target.value); renderStatsTab(); };
   $("stats-per90").onclick = () => { S.statsPer90 = !S.statsPer90; renderStatsTab(); };
+  $("stats-unpicked").onclick = () => { S.statsUnpicked = !S.statsUnpicked; renderStatsTab(); };
+  $("stats-hideko").onclick = () => { S.statsHideKO = !S.statsHideKO; renderStatsTab(); };
   $("player-sheet").onclick = (e) => {
     if (e.target.id === "player-sheet") $("player-sheet").classList.add("hidden");
   };
   $("planner-search").oninput = (e) => { S.plannerSearch = e.target.value; renderPlannerPick(); };
   $("planner-sort").onchange = (e) => { S.plannerSort = e.target.value; renderPlannerPick(); };
   $("planner-slfilter").onclick = () => { S.plannerShortlistOnly = !S.plannerShortlistOnly; renderPlannerPick(); };
+  $("planner-unpicked").onclick = () => { S.plannerUnpicked = !S.plannerUnpicked; renderPlannerPick(); };
+  $("planner-hideko").onclick = () => { S.plannerHideKO = !S.plannerHideKO; renderPlannerPick(); };
   $("planner-done").onclick = () => $("planner-sheet").classList.add("hidden");
   $("planner-sheet").onclick = (e) => {
     if (e.target.id === "planner-sheet") $("planner-sheet").classList.add("hidden");
