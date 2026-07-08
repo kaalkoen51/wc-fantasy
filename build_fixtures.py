@@ -39,19 +39,26 @@ def main() -> None:
     if data.get("errors"):
         sys.exit(f"API-Football error: {data['errors']}")
 
-    # Knockout fixtures exist before their teams are decided, with placeholder
-    # names ("Winner Group A", null, etc.) that match no real squad. Keep only
-    # fixtures between two actual tournament teams; undecided rounds drop out and
-    # reappear automatically once the pairing is set and the feed rebuilds.
+    # Group-stage fixtures with a placeholder/non-tournament team are dropped.
+    # Knockout fixtures, though, are KEPT even before their teams are decided
+    # (placeholder names like "Winner Group A" / null): an undecided side becomes
+    # "TBC" so the app can show the full bracket tree — semis, final and the
+    # third-place playoff included — and fill the names in as rounds resolve.
     valid = {p["team"] for p in load_players()}
+    ko_hints = ("round of", "quarter", "semi", "final", "3rd", "third")
     fixtures = []
     dropped = 0
     for f in data.get("response", []):
+        round_str = (f.get("league") or {}).get("round") or ""
+        is_ko = any(h in round_str.lower() for h in ko_hints)
         home = fix_team_name((f["teams"]["home"] or {}).get("name") or "")
         away = fix_team_name((f["teams"]["away"] or {}).get("name") or "")
-        if home not in valid or away not in valid:
+        if not is_ko and (home not in valid or away not in valid):
             dropped += 1
             continue
+        if is_ko:
+            home = home if home in valid else "TBC"
+            away = away if away in valid else "TBC"
         goals = f.get("goals") or {}
         fixtures.append({
             "home": home,
@@ -61,7 +68,7 @@ def main() -> None:
             "status": f["fixture"]["status"]["short"],
             # round + score power the knockout bracket view (built into the app).
             # "round" is API-Football's stage label, e.g. "Round of 16", "Final".
-            "round": (f.get("league") or {}).get("round") or "",
+            "round": round_str,
             "home_score": goals.get("home"),
             "away_score": goals.get("away"),
         })

@@ -2301,10 +2301,12 @@ function knockoutBracket() {
     SF: "Semi-finals", F: "Final" };
   const items = (S.fixtures || [])
     .map((f) => ({ f, r: koRoundOf(f.round) })).filter((x) => x.r);
+  const isTBC = (t) => !t || t === "TBC";
   const deepest = {};
   for (const { f, r } of items) {
     if (r === "3rd") continue;
-    for (const t of [f.home, f.away]) deepest[t] = Math.max(deepest[t] ?? -1, ORD[r]);
+    for (const t of [f.home, f.away])
+      if (!isTBC(t)) deepest[t] = Math.max(deepest[t] ?? -1, ORD[r]);
   }
   const mk = (f, r) => {
     const label = fixtureLabel(f);
@@ -2330,13 +2332,22 @@ function knockoutBracket() {
   const order = ["R32", "R16", "QF", "SF", "F"].filter((k) => byRound[k]);
   const rounds = order.map((k) => ({ key: k, label: LABELS[k], matches: byRound[k].slice() }));
 
-  // Position matches into tree order, back from the latest round. The anchor
-  // round is laid out by kickoff; each earlier round is reordered so a tie's
-  // two feeders sit directly before its slot. Unlinked ties trail by kickoff.
+  // Order the tree around the deepest round that still has real (non-TBC)
+  // teams. Earlier rounds are threaded back to it by team continuity (each
+  // tie's two feeders sit before its slot). Later, still-unconfirmed rounds
+  // (semis / final) are extended forward by position — each match fed by the
+  // adjacent pair of the previous round — so the tree links correctly and the
+  // TBC slots fill in as results come through.
   const byKick = (a, b) => String(a.kickoff).localeCompare(String(b.kickoff));
+  const confirmed = (m) => !isTBC(m.home) && !isTBC(m.away);
   if (rounds.length) {
-    rounds[rounds.length - 1].matches.sort(byKick);
-    for (let ri = rounds.length - 2; ri >= 0; ri--) {
+    let anchor = -1;
+    for (let i = 0; i < rounds.length; i++)
+      if (rounds[i].matches.some(confirmed)) anchor = i;
+    if (anchor < 0) anchor = 0;
+    rounds[anchor].matches.sort(byKick);
+    // Backward: order by team continuity into the anchor.
+    for (let ri = anchor - 1; ri >= 0; ri--) {
       const cur = rounds[ri].matches, next = rounds[ri + 1].matches;
       const used = new Set(), ordered = [];
       for (const nm of next) {
@@ -2349,18 +2360,30 @@ function knockoutBracket() {
       for (const cm of cur.slice().sort(byKick)) if (!used.has(cm)) ordered.push(cm);
       rounds[ri].matches = ordered;
     }
+    // Forward: extend into later rounds by position (pairs feed the next slot).
+    for (let ri = anchor + 1; ri < rounds.length; ri++) {
+      const prev = rounds[ri - 1].matches;
+      const cur = rounds[ri].matches.slice().sort(byKick);
+      cur.forEach((m, i) => { m.feeders = [prev[2 * i], prev[2 * i + 1]].filter(Boolean); });
+      rounds[ri].matches = cur;
+    }
   }
   return { rounds, third: byRound["3rd"] ? byRound["3rd"][0] : null };
 }
 
 function bracketMatchHtml(m) {
   const decided = !!m.winner && !m.live;   // don't crown a live leader mid-game
-  const teamRow = (team, sc, isWinner) => `
-    <div class="flex items-center gap-1.5 ${decided && !isWinner ? "opacity-45" : ""}">
-      ${avatarHtml("team:" + team, team, "w-4 h-4")}
-      <span class="truncate text-xs flex-1 ${isWinner ? "font-bold text-wcgold" : ""}">${esc(team)}</span>
+  const teamRow = (team, sc, isWinner) => {
+    const tbc = !team || team === "TBC";
+    return `<div class="flex items-center gap-1.5 ${decided && !isWinner ? "opacity-45" : ""}">
+      ${tbc ? '<span class="w-4 h-4 rounded-full bg-slate-800 shrink-0"></span>'
+            : avatarHtml("team:" + team, team, "w-4 h-4")}
+      <span class="truncate text-xs flex-1 ${
+        isWinner ? "font-bold text-wcgold" : tbc ? "text-slate-500 italic" : ""}">${
+        tbc ? "TBC" : esc(team)}</span>
       <span class="text-xs font-mono ${isWinner ? "text-wcgold" : "text-slate-400"}">${sc}</span>
     </div>`;
+  };
   const sc = m.score;
   const hs = sc ? sc[0] : "", as = sc ? sc[1] : "";
   const foot = m.live ? '<span class="text-[9px] text-red-400 font-semibold">● LIVE</span>'
