@@ -390,6 +390,23 @@ check("no stats -> no flag", suspendedNext("x7"), null);
 check("group + knockout yellow don't combine (wiped after group stage)",
   suspendedNext("x8"), null);
 
+/* QF/semi boundary: a 2nd yellow IN the quarter-final still bans you for the
+   semi (bookings reset only AFTER the QFs). The reset date is derived from the
+   fixtures, so the last QF date (2026-07-12) must NOT fall in the semi window. */
+S.fixtures = [
+  { home: "A", away: "B", date: "2026-06-28", round: "Round of 32" },
+  { home: "X", away: "Y", date: "2026-07-09", round: "Quarter-finals" },
+  { home: "Argentina", away: "Switzerland", date: "2026-07-12", round: "Quarter-finals" },
+];
+S.stats = [
+  row({ player_id: "q1", match_label: "Team vs Foe (2026-07-06)", yellow_cards: 1 }),      // R16 booking
+  row({ player_id: "q1", match_label: "Argentina vs Switzerland (2026-07-12)", yellow_cards: 1 }), // 2nd, in the QF (last QF day)
+  row({ player_id: "q2", match_label: "Argentina vs Switzerland (2026-07-12)", yellow_cards: 1 }), // a single QF yellow
+];
+check("2nd yellow in the QF (last QF date) bans for the semi", suspendedNext("q1"), "2 yellows");
+check("a single QF yellow is not yet a suspension", suspendedNext("q2"), null);
+S.fixtures = []; S.stats = [];
+
 /* player detail: per-match lineup status, owner, team matches, category totals */
 S.fixtures = [
   { home: "Brazil", away: "Chile", kickoff_utc: "2026-06-22T19:00:00+00:00", status: "FT" },
