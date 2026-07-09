@@ -931,7 +931,35 @@ check("dream round-1 total", dtr.total, 18);   // gk_a 6 + fwd_b 8 + fwd_a 4
 S.stats.push({ player_id: "gk_b", match_label: "B vs W (2026-06-14)", appeared: true, saves: 2, minutes: 20 });
 const dtp = dreamTeam(0, true);    // per-90
 check("dream per-90 keeps the better rate", dtp.GK.map((x) => x.p.player_id), ["gk_a"]);
+check("no flex slot when the league grants none", dtc.FLEX.length, 0);
 S.stats = []; S.picks = []; S.managers = []; S.playerById = {}; S.league = {};
+
+/* Dream XI flex: a redraft with phase_flex adds the best remaining outfielder
+   (any of DEF/MID/FWD not already in the XI). starters GK1/DEF1/MID1/FWD1 +1 flex. */
+S.stages = []; S.managers = []; S.picks = []; S.fixtures = [];
+S.league = { phase: 2, phase_starters: { GK: 1, DEF: 1, MID: 1, FWD: 1 }, phase_flex: 1 };
+S.playerById = {
+  gk: { player_id: "gk", name: "K", position: "GK", team: "A" },
+  def_a: { player_id: "def_a", name: "DA", position: "DEF", team: "A" },
+  def_b: { player_id: "def_b", name: "DB", position: "DEF", team: "B" },
+  mid_a: { player_id: "mid_a", name: "MA", position: "MID", team: "C" },
+  mid_b: { player_id: "mid_b", name: "MB", position: "MID", team: "D" },
+  fwd_a: { player_id: "fwd_a", name: "FA", position: "FWD", team: "E" },
+};
+const g = (id, goals) => ({ player_id: id, match_label: `${id} vs Z (2026-07-10)`, appeared: true, goals, minutes: 90 });
+S.stats = [                     // DEF goal 6, MID goal 5, FWD goal 4, GK cs 6
+  { player_id: "gk", match_label: "A vs Z (2026-07-10)", appeared: true, clean_sheet: true, minutes: 90 }, // 6
+  g("def_a", 2), g("def_b", 1), // 12 / 6
+  g("mid_a", 2), g("mid_b", 1), // 10 / 5
+  g("fwd_a", 2),                // 8
+];
+const dtf = dreamTeam(0, false);
+check("dream XI has GK/DEF/MID/FWD + one flex",
+  [dtf.GK.length, dtf.DEF.length, dtf.MID.length, dtf.FWD.length, dtf.FLEX.length], [1, 1, 1, 1, 1]);
+check("dream flex = best remaining outfielder (def_b 6 > mid_b 5)",
+  dtf.FLEX.map((x) => x.p.player_id), ["def_b"]);
+check("dream flex adds to the total", dtf.total, 6 + 12 + 10 + 8 + 6);
+S.stats = []; S.managers = []; S.playerById = {}; S.league = {};
 
 /* resilientWrite: an unapplied additive migration (missing optional
    column) is dropped and retried instead of failing the whole write. */

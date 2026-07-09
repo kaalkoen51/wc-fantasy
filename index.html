@@ -3579,9 +3579,13 @@ function openPlayerDetail(pid, managerId, perspectiveLabel) {
 
 // Best starting XI by scoped points (per-90 optional), grouped by position.
 // round 0 = cumulative; round k = each team's k-th match. Only players who
-// appeared in scope are eligible. Returns { GK:[…],DEF,MID,FWD, total }.
+// appeared in scope are eligible. When the league's redraft grants a flex slot
+// (leagueFlex() > 0), FLEX holds the best remaining outfielder(s) — any of
+// DEF/MID/FWD not already in the XI. Returns { GK,DEF,MID,FWD, FLEX, total }.
 function dreamTeam(round, per90) {
   const quota = starterQuota();
+  const flex = leagueFlex();
+  const bySort = (a, b) => b.val - a.val || b.pts - a.pts || a.p.name.localeCompare(b.p.name);
   const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
   for (const id of new Set((S.stats || []).map((r) => r.player_id))) {
     const p = S.playerById[id];
@@ -3594,12 +3598,18 @@ function dreamTeam(round, per90) {
     const val = per90 ? Math.round((pts / mins) * 90 * 10) / 10 : pts;
     byPos[p.position].push({ p, pts, mins, val });
   }
-  const out = { total: 0 };
+  const out = { total: 0, FLEX: [] };
+  const used = new Set();
   for (const pos of ["GK", "DEF", "MID", "FWD"]) {
-    out[pos] = byPos[pos]
-      .sort((a, b) => b.val - a.val || b.pts - a.pts || a.p.name.localeCompare(b.p.name))
-      .slice(0, quota[pos] || 0);
+    out[pos] = byPos[pos].sort(bySort).slice(0, quota[pos] || 0);
+    for (const x of out[pos]) used.add(x.p.player_id);
     out.total += out[pos].reduce((s, x) => s + x.pts, 0);
+  }
+  if (flex > 0) {
+    out.FLEX = OUTFIELD.flatMap((pos) => byPos[pos])
+      .filter((x) => !used.has(x.p.player_id))
+      .sort(bySort).slice(0, flex);
+    out.total += out.FLEX.reduce((s, x) => s + x.pts, 0);
   }
   return out;
 }
@@ -3625,6 +3635,7 @@ function currentRoundDreamIds() {
   const dt = dreamTeam(round, false);
   const ids = new Set();
   for (const pos of ["GK", "DEF", "MID", "FWD"]) for (const x of dt[pos]) ids.add(x.p.player_id);
+  for (const x of dt.FLEX) ids.add(x.p.player_id);
   _dreamIdsFor = S.stats; _dreamIdsRound = round; _dreamIds = ids;
   return ids;
 }
@@ -3658,24 +3669,29 @@ function renderDreamTeam(round, per90) {
     </button>`;
   };
   const emptyCard = `<div class="w-[30%] max-w-[7.5rem] shrink-0 rounded-xl border border-dashed border-slate-800 p-2 flex items-center justify-center text-slate-600 text-sm min-h-[6rem]">—</div>`;
-  const rowFor = (pos) => {
-    const cards = dt[pos].map(card);
-    while (cards.length < (quota[pos] || 0)) cards.push(emptyCard);
+  const flexN = leagueFlex();
+  const rowOf = (label, list, slots) => {
+    const cards = list.map(card);
+    while (cards.length < slots) cards.push(emptyCard);
     return `<div>
-      <div class="text-[10px] uppercase tracking-wide text-slate-500 mb-1 text-center">${posName[pos]}</div>
+      <div class="text-[10px] uppercase tracking-wide text-slate-500 mb-1 text-center">${label}</div>
       <div class="flex flex-wrap justify-center gap-2">${cards.join("")}</div>
     </div>`;
   };
+  const rowFor = (pos) => rowOf(posName[pos], dt[pos], quota[pos] || 0);
+  const flexRow = flexN > 0 ? rowOf("Flex · any outfield", dt.FLEX, flexN) : "";
   const scope = round ? `Round ${round}` : "Cumulative";
+  const formation = `${quota.GK}-${quota.DEF}-${quota.MID}-${quota.FWD}${flexN ? ` +${flexN} flex` : ""}`;
   $("stats-dream").innerHTML = `
     <div class="flex items-center justify-between">
       <div class="text-sm font-semibold">Dream XI · ${scope}${per90 ? " · per 90" : ""}</div>
       <div class="text-sm font-mono text-wcgold">${dt.total}p</div>
     </div>
-    <p class="text-[10px] text-slate-500">Best starters (${quota.GK}-${quota.DEF}-${quota.MID}-${quota.FWD}) by ${
+    <p class="text-[10px] text-slate-500">Best starters (${formation}) by ${
       per90 ? "points per 90" : "total points"}. 👤 ${
       round ? "= who owned them that round" : "= who drafted them"}. Updates after every game.</p>
     <div class="rounded-xl border border-slate-800 bg-emerald-950/20 p-3 space-y-3">
+      ${flexRow}
       ${["FWD", "MID", "DEF", "GK"].map(rowFor).join("")}
     </div>`;
   $("stats-dream").querySelectorAll("[data-sp]").forEach((b) => b.onclick = () =>
