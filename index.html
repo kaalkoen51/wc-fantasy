@@ -3266,19 +3266,39 @@ const ownerOf = (pid) => {
 
 /* ---------- availability (suspensions & injuries) and avatars ---------- */
 
-// FIFA wipes single yellows after the quarter-finals so nobody misses the
-// final on accumulation; this is the first day of the post-wipe window.
-// Yellow-card accumulation resets (UTC dates): after the group stage — the
-// Round of 32 starts 2026-06-28 — and after the quarter-finals — the semis
-// start after 2026-07-12. Adjust if FIFA's schedule/rule differs.
-const YELLOW_RESET_DATES = ["2026-06-28", "2026-07-12"];
+// FIFA wipes accumulated single yellows at two stage boundaries so an early
+// booking never carries too far: after the GROUP STAGE (a group yellow doesn't
+// follow you into the knockouts) and after the QUARTER-FINALS (nothing carries
+// to the semis — so a 2nd yellow *in the QF* still bans you for the semi, but a
+// lone yellow in the semi does not). The boundary dates are derived from the
+// fixture schedule so they stay correct: the first Round-of-32 date, and the
+// first semi-final date — or, until the semis are published, the day after the
+// last quarter-final (so every QF sits in the same accumulation window).
+let _yrd = null, _yrdFor = null;
+function yellowResetDates() {
+  if (_yrdFor === S.fixtures && _yrd) return _yrd;
+  const fx = S.fixtures || [];
+  const firstDate = (key) => fx.filter((f) => koRoundOf(f.round) === key)
+    .map((f) => f.date).filter(Boolean).sort()[0] || null;
+  const r32 = firstDate("R32");
+  let postQF = firstDate("SF");
+  if (!postQF) {
+    const qf = fx.filter((f) => koRoundOf(f.round) === "QF")
+      .map((f) => f.date).filter(Boolean).sort();
+    if (qf.length) {
+      const d = new Date(qf[qf.length - 1] + "T00:00:00Z");
+      d.setUTCDate(d.getUTCDate() + 1);           // day after the last QF
+      postQF = d.toISOString().slice(0, 10);
+    }
+  }
+  _yrd = [r32 || "2026-06-28", postQF || "2026-07-14"];
+  _yrdFor = S.fixtures;
+  return _yrd;
+}
 
-// Which accumulation window a match date falls in. FIFA wipes accumulated
-// single yellows at stage boundaries so they don't carry across: after the
-// GROUP STAGE (a group booking doesn't follow you into the knockouts) and after
-// the QUARTER-FINALS (not carried to the semis). Yellows only combine within
-// the same window. (YELLOW_RESET_DATES = R32 start; semis start.)
-const yellowWindow = (d) => YELLOW_RESET_DATES.filter((r) => String(d) >= r).length;
+// Which accumulation window a match date falls in (0 = group, 1 = R32..QF,
+// 2 = semis onward). Yellows only combine within the same window.
+const yellowWindow = (d) => yellowResetDates().filter((r) => String(d) >= r).length;
 
 // Best-effort "suspended for their next match" from our own card data:
 // a red in their latest appearance, or an even count of single-yellow
