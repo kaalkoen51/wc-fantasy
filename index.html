@@ -537,9 +537,14 @@ function toast(msg) {
 const BUILTIN_SUPABASE_URL  = "https://gpdyemrgulhdnsmmadgs.supabase.co";
 const BUILTIN_SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdwZHllbXJndWxoZG5zbW1hZGdzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwOTExNDksImV4cCI6MjA5NjY2NzE0OX0.Iih401Skuw6SpC8U-URv7KPvOJ7M71uce3SI_OS8QTs";
 
-const getConfig  = () => JSON.parse(localStorage.getItem("wcf_config") || "null")
-  || (BUILTIN_SUPABASE_URL && BUILTIN_SUPABASE_ANON
-      ? { url: BUILTIN_SUPABASE_URL, key: BUILTIN_SUPABASE_ANON } : null);
+// The Supabase connection lives in the CODE (BUILTIN_*), never the browser, and
+// the code wins. Every *.github.io Pages site shares one origin, so localStorage
+// is shared across all of them — a stale or foreign "wcf_config" left by another
+// Pages app must not be able to point this app at the wrong project. The saved
+// config is only a fallback for a hypothetical build with no baked-in creds.
+const getConfig  = () => (BUILTIN_SUPABASE_URL && BUILTIN_SUPABASE_ANON
+  ? { url: BUILTIN_SUPABASE_URL, key: BUILTIN_SUPABASE_ANON }
+  : JSON.parse(localStorage.getItem("wcf_config") || "null"));
 const setConfig  = (c) => localStorage.setItem("wcf_config", JSON.stringify(c));
 const getSession = () => JSON.parse(localStorage.getItem("wcf_session") || "null");
 const setSession = (s) => s ? localStorage.setItem("wcf_session", JSON.stringify(s))
@@ -5528,7 +5533,12 @@ async function init() {
   setInterval(renderBanner, 60e3);
   const cfg = getConfig();
   if (!cfg) { showView("config"); return; }
-  S.sb = window.supabase.createClient(cfg.url, cfg.key);
+  // Anon-key only (no user login), so don't persist an auth token — that write
+  // (sb-<ref>-auth-token) lives in the shared *.github.io localStorage and can
+  // collide with other Pages apps. A unique storageKey isolates us regardless.
+  S.sb = window.supabase.createClient(cfg.url, cfg.key, {
+    auth: { persistSession: false, autoRefreshToken: false, storageKey: "wcf-supabase-auth" },
+  });
   renderHome();
   const sess = getSession();
   if (sess?.leagueId) {
