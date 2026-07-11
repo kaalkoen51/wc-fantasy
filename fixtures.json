@@ -974,10 +974,10 @@
     "away": "Belgium",
     "kickoff_utc": "2026-07-10T19:00:00+00:00",
     "date": "2026-07-10",
-    "status": "NS",
+    "status": "FT",
     "round": "Quarter-finals",
-    "home_score": null,
-    "away_score": null
+    "home_score": 2,
+    "away_score": 1
   },
   {
     "home": "Norway",
@@ -996,6 +996,16 @@
     "date": "2026-07-12",
     "status": "NS",
     "round": "Quarter-finals",
+    "home_score": null,
+    "away_score": null
+  },
+  {
+    "home": "France",
+    "away": "Spain",
+    "kickoff_utc": "2026-07-14T19:00:00+00:00",
+    "date": "2026-07-14",
+    "status": "NS",
+    "round": "Semi-finals",
     "home_score": null,
     "away_score": null
   }
