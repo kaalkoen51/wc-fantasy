@@ -984,26 +984,36 @@
     "away": "England",
     "kickoff_utc": "2026-07-11T21:00:00+00:00",
     "date": "2026-07-11",
-    "status": "NS",
+    "status": "AET",
     "round": "Quarter-finals",
-    "home_score": null,
-    "away_score": null
+    "home_score": 1,
+    "away_score": 2
   },
   {
     "home": "Argentina",
     "away": "Switzerland",
     "kickoff_utc": "2026-07-12T01:00:00+00:00",
     "date": "2026-07-12",
-    "status": "NS",
+    "status": "AET",
     "round": "Quarter-finals",
-    "home_score": null,
-    "away_score": null
+    "home_score": 3,
+    "away_score": 1
   },
   {
     "home": "France",
     "away": "Spain",
     "kickoff_utc": "2026-07-14T19:00:00+00:00",
     "date": "2026-07-14",
+    "status": "NS",
+    "round": "Semi-finals",
+    "home_score": null,
+    "away_score": null
+  },
+  {
+    "home": "England",
+    "away": "Argentina",
+    "kickoff_utc": "2026-07-15T19:00:00+00:00",
+    "date": "2026-07-15",
     "status": "NS",
     "round": "Semi-finals",
     "home_score": null,
