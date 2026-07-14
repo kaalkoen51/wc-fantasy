@@ -3657,9 +3657,11 @@ function renderDreamTeam(round, per90) {
     return label ? (ownerEntryAt(p.player_id, label)?.manager.name || null) : null;
   };
   const posName = { GK: "Goalkeeper", DEF: "Defenders", MID: "Midfielders", FWD: "Forwards" };
-  const card = (x) => {
+  const card = (x, isFlex) => {
     const owner = ownerName(x.p);
-    return `<button data-sp="${esc(x.p.player_id)}" class="w-[30%] max-w-[7.5rem] shrink-0 rounded-xl border border-slate-700 bg-slate-900 p-2 text-center flex flex-col items-center gap-1">
+    return `<button data-sp="${esc(x.p.player_id)}" class="relative w-[30%] max-w-[7.5rem] shrink-0 rounded-xl border ${
+      isFlex ? "border-wcgold/60" : "border-slate-700"} bg-slate-900 p-2 text-center flex flex-col items-center gap-1">
+      ${isFlex ? '<span class="absolute top-1 right-1 rounded bg-wcgold/20 text-wcgold text-[8px] font-bold px-1 leading-tight" title="Flex slot">FLEX</span>' : ""}
       ${avatarHtml(x.p.player_id, x.p.team, "w-10 h-10")}
       <span class="text-xs font-medium leading-tight">${esc(x.p.name)} ${availBadges(x.p.player_id)}</span>
       <span class="text-[10px] text-slate-500 truncate w-full">${esc(x.p.team)}</span>
@@ -3670,16 +3672,18 @@ function renderDreamTeam(round, per90) {
   };
   const emptyCard = `<div class="w-[30%] max-w-[7.5rem] shrink-0 rounded-xl border border-dashed border-slate-800 p-2 flex items-center justify-center text-slate-600 text-sm min-h-[6rem]">—</div>`;
   const flexN = leagueFlex();
-  const rowOf = (label, list, slots) => {
-    const cards = list.map(card);
-    while (cards.length < slots) cards.push(emptyCard);
+  // Flex players sit in the row of their own position, tagged FLEX.
+  const flexByPos = {};
+  for (const x of dt.FLEX) (flexByPos[x.p.position] ||= []).push(x);
+  const rowFor = (pos) => {
+    const cards = dt[pos].map((x) => card(x, false));
+    while (cards.length < (quota[pos] || 0)) cards.push(emptyCard);
+    for (const x of (flexByPos[pos] || [])) cards.push(card(x, true));
     return `<div>
-      <div class="text-[10px] uppercase tracking-wide text-slate-500 mb-1 text-center">${label}</div>
+      <div class="text-[10px] uppercase tracking-wide text-slate-500 mb-1 text-center">${posName[pos]}</div>
       <div class="flex flex-wrap justify-center gap-2">${cards.join("")}</div>
     </div>`;
   };
-  const rowFor = (pos) => rowOf(posName[pos], dt[pos], quota[pos] || 0);
-  const flexRow = flexN > 0 ? rowOf("Flex · any outfield", dt.FLEX, flexN) : "";
   const scope = round ? `Round ${round}` : "Cumulative";
   const formation = `${quota.GK}-${quota.DEF}-${quota.MID}-${quota.FWD}${flexN ? ` +${flexN} flex` : ""}`;
   $("stats-dream").innerHTML = `
@@ -3691,7 +3695,6 @@ function renderDreamTeam(round, per90) {
       per90 ? "points per 90" : "total points"}. 👤 ${
       round ? "= who owned them that round" : "= who drafted them"}. Updates after every game.</p>
     <div class="rounded-xl border border-slate-800 bg-emerald-950/20 p-3 space-y-3">
-      ${flexRow}
       ${["FWD", "MID", "DEF", "GK"].map(rowFor).join("")}
     </div>`;
   $("stats-dream").querySelectorAll("[data-sp]").forEach((b) => b.onclick = () =>
