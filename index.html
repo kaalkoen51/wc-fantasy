@@ -1739,7 +1739,7 @@ function computeScores() {
       const tb = managerTeamBonus(m.id);
       const items = tb ? [{ pick: tb.pick, pts: tb.pts, note: stageOf(tb.pick.team) }] : [];
       return { manager: m, total: (m.frozen_points || 0) + (tb ? tb.pts : 0),
-               items, eliminated: true };
+               teamPts: (tb ? tb.pts : 0), items, eliminated: true };
     }
     let total = 0;
     const earnedByPlayer = {};
@@ -1806,7 +1806,11 @@ function computeScores() {
         pts, note: champion ? (pts ? "correct" : champion + " won") : "pending",
       });
     }
-    return { manager: m, total, items, roundPts };
+    // National-team stage bonuses + champion-pick payout, so the table can show
+    // a "player points only" view (total − teamPts).
+    const teamPts = items.filter((it) => it.pick.slot === "TEAM" || it.pick.slot === "WIN")
+      .reduce((s, it) => s + it.pts, 0);
+    return { manager: m, total, items, roundPts, teamPts };
   });
 }
 
@@ -3091,18 +3095,31 @@ function renderBoard() {
   const open = new Set([...document.querySelectorAll("#board-lb details[open]")]
     .map((d) => d.dataset.mgr));
   const me = myManager();
-  const scores = computeScores().sort((a, b) => b.total - a.total);
+  // The official table is Total (player points + national-team stage bonuses).
+  // "Player points only" (total − teamPts) is a secondary, just-for-fun view.
+  const playerView = S.tableView === "player";
+  const valueOf = (s) => playerView ? s.total - (s.teamPts || 0) : s.total;
+  const scores = computeScores().sort((a, b) => valueOf(b) - valueOf(a));
   const yetByMgr = computeYetToPlay();
   const mv = standingsMovement(scores);
+  const showMove = mv.showMovement && !playerView;   // arrows rank by Total
   const mvps = roundMVPs(scores);
   const chartHtml = seasonChartHtml(scores, me?.id);
-  $("board-lb").innerHTML = chartHtml + scores.map((s, i) => {
+  const toggleHtml = `
+    <div class="flex gap-1 rounded-lg bg-slate-900 border border-slate-700 p-1 text-sm">
+      <button data-tableview="total" class="flex-1 rounded-md py-1.5 font-semibold ${
+        !playerView ? "bg-wcred text-white" : "text-slate-400"}">🏆 Total <span class="text-[9px] font-normal opacity-80">official</span></button>
+      <button data-tableview="player" class="flex-1 rounded-md py-1.5 font-semibold ${
+        playerView ? "bg-wcred text-white" : "text-slate-400"}">⚽ Player pts <span class="text-[9px] font-normal opacity-80">for fun</span></button>
+    </div>
+    ${playerView ? `<p class="text-[10px] text-amber-300/90 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-1.5">⚽ Player-points-only — just for fun. The official standings are 🏆 <b>Total</b> (national-team stage bonuses included).</p>` : ""}`;
+  $("board-lb").innerHTML = chartHtml + toggleHtml + scores.map((s, i) => {
     const ytp = yetByMgr[s.manager.id];
     const ytpLine = ytp?.hasSnapshot && ytp.total > 0
       ? `<span class="block text-[10px] font-normal text-slate-400">${ytp.yet}/${ytp.total} starters yet to play</span>`
       : "";
     const mvi = mv.byId[s.manager.id];
-    const icon = (mv.showMovement && !s.eliminated) ? movementIcon(mvi.delta) : "";
+    const icon = (showMove && !s.eliminated) ? movementIcon(mvi.delta) : "";
     const rp = mvi.roundPts;
     const tallyLine = (mv.maxRound >= 1 && !s.eliminated)
       ? `<span class="block text-[10px] font-normal ${
@@ -3115,7 +3132,7 @@ function renderBoard() {
              ${open.has(s.manager.id) ? "open" : ""}>
       <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3">
         <span class="text-slate-500 font-mono w-6">${i + 1}.</span>
-        ${mv.showMovement ? `<span class="w-3 text-center text-xs shrink-0">${icon}</span>` : ""}
+        ${showMove ? `<span class="w-3 text-center text-xs shrink-0">${icon}</span>` : ""}
         <span class="flex-1 min-w-0">
           <span class="block font-semibold truncate">${esc(s.manager.name)}${
             s.manager.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}${
@@ -3124,7 +3141,7 @@ function renderBoard() {
           ${ytpLine}
         </span>
         <span class="shrink-0 text-right">
-          <span class="block font-bold text-wcgold">${s.total} pts</span>
+          <span class="block font-bold text-wcgold">${valueOf(s)} pts</span>
           ${tallyLine}
         </span>
       </summary>
@@ -3133,6 +3150,9 @@ function renderBoard() {
   }).join("") || '<p class="text-sm text-slate-500">No managers.</p>';
   const cc = document.getElementById("chart-compare");
   if (cc) cc.onchange = () => { S.chartCompare = cc.value || null; renderBoard(); };
+  $("board-lb").querySelectorAll("[data-tableview]").forEach((b) => b.onclick = () => {
+    S.tableView = b.dataset.tableview; renderBoard();
+  });
   // Fill each manager's history pager (current lineup + past rounds).
   for (const s of scores)
     renderHistInto("hist-lb-" + s.manager.id, s.manager.id, `${s.manager.name}'s lineup`);
@@ -3153,6 +3173,7 @@ S.statsRound = 0;       // Stats tab: scope to a round (0 = whole tournament)
 S.statsView = "list";   // Stats tab: "list" leaderboard or "dream" best XI
 S.histIdxByMgr = {};   // manager id -> history pager index (0 = current)
 S.chartCompare = null; // Table season chart: manager id to compare against (H2H)
+S.tableView = "total"; // Table: "total" (official, incl. teams) or "player" (for fun)
 S.homeScoreMode = "total"; // current-lineup view: "total" or "round" points
 S.formerOpen = {};     // manager id -> former-players section expanded?
 S.messages = [];       // chat messages (group + DMs) for this league
