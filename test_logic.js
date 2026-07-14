@@ -117,6 +117,8 @@ const sc2 = computeScores()[0];
 const teamItem = sc2.items.find((i) => i.pick.slot === "TEAM");
 check("TEAM pick sf = 50", [teamItem.pts, teamItem.note], [50, "sf"]);
 check("total includes stage bonus", sc2.total, 14 + 50);
+check("teamPts isolates the national-team portion (player-only = total − teamPts)",
+  [sc2.teamPts, sc2.total - sc2.teamPts], [50, 14]);
 S.stages = [];
 const teamItem0 = computeScores()[0].items.find((i) => i.pick.slot === "TEAM");
 check("no stage row = group = 0", [teamItem0.pts, teamItem0.note], [0, "group"]);
