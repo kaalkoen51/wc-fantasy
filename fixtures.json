@@ -1004,10 +1004,10 @@
     "away": "Spain",
     "kickoff_utc": "2026-07-14T19:00:00+00:00",
     "date": "2026-07-14",
-    "status": "NS",
+    "status": "FT",
     "round": "Semi-finals",
-    "home_score": null,
-    "away_score": null
+    "home_score": 0,
+    "away_score": 2
   },
   {
     "home": "England",
