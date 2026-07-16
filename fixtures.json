@@ -1014,8 +1014,28 @@
     "away": "Argentina",
     "kickoff_utc": "2026-07-15T19:00:00+00:00",
     "date": "2026-07-15",
-    "status": "NS",
+    "status": "FT",
     "round": "Semi-finals",
+    "home_score": 1,
+    "away_score": 2
+  },
+  {
+    "home": "France",
+    "away": "England",
+    "kickoff_utc": "2026-07-18T21:00:00+00:00",
+    "date": "2026-07-18",
+    "status": "NS",
+    "round": "3rd Place Final",
+    "home_score": null,
+    "away_score": null
+  },
+  {
+    "home": "Spain",
+    "away": "Argentina",
+    "kickoff_utc": "2026-07-19T19:00:00+00:00",
+    "date": "2026-07-19",
+    "status": "NS",
+    "round": "Final",
     "home_score": null,
     "away_score": null
   }
