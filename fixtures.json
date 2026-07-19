@@ -1024,10 +1024,10 @@
     "away": "England",
     "kickoff_utc": "2026-07-18T21:00:00+00:00",
     "date": "2026-07-18",
-    "status": "NS",
+    "status": "FT",
     "round": "3rd Place Final",
-    "home_score": null,
-    "away_score": null
+    "home_score": 4,
+    "away_score": 6
   },
   {
     "home": "Spain",
