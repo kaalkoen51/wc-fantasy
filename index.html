@@ -508,6 +508,36 @@ const STAGE_BONUS = { r32: 5, r16: 10, qf: 15, sf: 20, final: 25, winner: 15 };
 // champion — paid out when the admin sets a team's stage to "winner".
 const FINAL_PICK_BONUS = 5;
 
+/* ---------- per-league draft config (Workstream B) ----------
+   A league may override the hardcoded WC-2026 defaults above via a
+   `leagues.config` jsonb. Accessors deep-merge the league's config OVER the
+   defaults, so a null/partial config behaves EXACTLY like today (the live
+   league has no config → identical scoring). Merged results are memoized on
+   the config object's identity because calcPlayerPoints is called per-row. */
+const cfgOf = () => S.league?.config || {};
+const _UNSET = Symbol("unset");   // sentinel so the first memo build always runs
+let _scoringCache = null, _scoringFor = _UNSET;
+function scoring() {
+  const c = cfgOf().scoring;
+  if (_scoringFor !== c) {
+    _scoringFor = c;
+    const s = c || {};
+    _scoringCache = { ...SCORING, ...s,
+      goal:        { ...SCORING.goal,        ...(s.goal || {}) },
+      clean_sheet: { ...SCORING.clean_sheet, ...(s.clean_sheet || {}) } };
+  }
+  return _scoringCache;
+}
+let _stageBonusCache = null, _stageBonusFor = _UNSET;
+function stageBonuses() {
+  const c = cfgOf().stageBonus;
+  if (_stageBonusFor !== c) { _stageBonusFor = c; _stageBonusCache = { ...STAGE_BONUS, ...(c || {}) }; }
+  return _stageBonusCache;
+}
+const stageOrder     = () => cfgOf().stageOrder || STAGE_ORDER;
+const finalPickBonus = () => cfgOf().finalPickBonus ?? FINAL_PICK_BONUS;
+const phaseOneQuota  = () => ({ ...PHASE1_QUOTA, ...(cfgOf().quota || {}) });
+
 /* ---------- state & tiny helpers ---------- */
 
 const S = {
@@ -721,7 +751,7 @@ const activeManagers = () => S.managers.filter((m) => !m.eliminated);
 // Quotas for the current phase. Phase 1 is fixed; redrafts use the
 // admin-chosen quota on the league row. TEAM picks carry through every
 // phase and are never redrafted, so their quota is 0 after phase 1.
-const posQuota = () => leaguePhase() === 1 ? PHASE1_QUOTA
+const posQuota = () => leaguePhase() === 1 ? phaseOneQuota()
   : { TEAM: 0, ...(S.league.phase_quota || {}) };
 const starterQuota = () => leaguePhase() === 1 ? PHASE1_STARTERS
   : (S.league.phase_starters || S.league.phase_quota || PHASE1_STARTERS);
@@ -1536,26 +1566,28 @@ function renderDraft() {
 // already encodes the ">=60 min and conceded 0" rule.
 function calcPlayerPoints(r, pos) {
   if (!r.appeared) return 0;
+  const sc = scoring();
   let p = 0;
-  p += (r.goals || 0) * SCORING.goal[pos];
-  p += (r.assists || 0) * SCORING.assist;
-  if (r.clean_sheet) p += SCORING.clean_sheet[pos];
-  p += (r.yellow_cards || 0) * SCORING.yellow_card;
-  p += (r.red_cards || 0) * SCORING.red_card;
-  if (pos === "GK") p += Math.floor((r.saves || 0) / 2) * SCORING.save_per_2;
-  else p += Math.floor((r.defensive_actions || 0) / 2) * SCORING.def_action_per_2;
-  if (r.motm) p += SCORING.motm;
-  p += (r.penalty_saved || 0) * SCORING.penalty_saved;
-  p += (r.penalty_missed || 0) * SCORING.penalty_missed;
+  p += (r.goals || 0) * sc.goal[pos];
+  p += (r.assists || 0) * sc.assist;
+  if (r.clean_sheet) p += sc.clean_sheet[pos];
+  p += (r.yellow_cards || 0) * sc.yellow_card;
+  p += (r.red_cards || 0) * sc.red_card;
+  if (pos === "GK") p += Math.floor((r.saves || 0) / 2) * sc.save_per_2;
+  else p += Math.floor((r.defensive_actions || 0) / 2) * sc.def_action_per_2;
+  if (r.motm) p += sc.motm;
+  p += (r.penalty_saved || 0) * sc.penalty_saved;
+  p += (r.penalty_missed || 0) * sc.penalty_missed;
   return p;
 }
 
 // Cumulative stage bonus: every stage reached up to and including the
-// current one pays out once (group = 0; a champion totals 90).
+// current one pays out once (group = 0; a champion totals 90 by default).
 function calcTeamPoints(stage) {
-  const idx = STAGE_ORDER.indexOf(stage);
+  const order = stageOrder(), bonus = stageBonuses();
+  const idx = order.indexOf(stage);
   let pts = 0;
-  for (let i = 1; i <= idx; i++) pts += STAGE_BONUS[STAGE_ORDER[i]];
+  for (let i = 1; i <= idx; i++) pts += bonus[order[i]] || 0;
   return pts;
 }
 
@@ -1798,7 +1830,7 @@ function computeScores() {
     // Final phase: champion prediction pays out once the winner is set.
     if (m.final_pick) {
       const champion = S.stages.find((s) => s.stage === "winner")?.team;
-      const pts = champion === m.final_pick ? FINAL_PICK_BONUS : 0;
+      const pts = champion === m.final_pick ? finalPickBonus() : 0;
       total += pts;
       items.push({
         pick: { slot: "WIN", player_name: `Champion pick: ${m.final_pick}`,
@@ -1926,7 +1958,7 @@ function managerHistory(mgrId) {
   let finalBonus = 0;
   if (mgr?.final_pick) {
     const champion = S.stages.find((s) => s.stage === "winner")?.team;
-    finalBonus = champion === mgr.final_pick ? FINAL_PICK_BONUS : 0;
+    finalBonus = champion === mgr.final_pick ? finalPickBonus() : 0;
     items.push({ entry: { player_id: "__final__", player_name: `Champion: ${mgr.final_pick}`,
       position: "", team: mgr.final_pick, slot: "WIN" }, pts: finalBonus, special: true });
   }
@@ -1963,25 +1995,26 @@ function managerHistory(mgrId) {
 }
 
 // Shared rules content: scoring per position + stage bonuses + sub rule.
-// Built from the SCORING/STAGE_BONUS constants so it can't drift.
+// Built live from the league's scoring config (or the defaults) so it can't drift.
 function scoringHtml() {
+  const sc = scoring();
   const rows = [
-    ["Goal", GROUPS.slice(0, 4).map((g) => `${g} ${SCORING.goal[g]}`).join(" / ")],
-    ["Assist", SCORING.assist],
+    ["Goal", GROUPS.slice(0, 4).map((g) => `${g} ${sc.goal[g]}`).join(" / ")],
+    ["Assist", sc.assist],
     ["Clean sheet (≥60 min, 0 conceded)",
-      GROUPS.slice(0, 4).map((g) => `${g} ${SCORING.clean_sheet[g]}`).join(" / ")],
-    ["Yellow card", SCORING.yellow_card],
-    ["Red card", SCORING.red_card],
-    ["Saves (GK)", `+${SCORING.save_per_2} per 2 saves`],
+      GROUPS.slice(0, 4).map((g) => `${g} ${sc.clean_sheet[g]}`).join(" / ")],
+    ["Yellow card", sc.yellow_card],
+    ["Red card", sc.red_card],
+    ["Saves (GK)", `+${sc.save_per_2} per 2 saves`],
     ["Defensive actions — tackles, blocks, interceptions (not GK)",
-      `+${SCORING.def_action_per_2} per 2 actions`],
-    ["Top-rated player (per match)", `+${SCORING.motm}`],
-    ["Penalty saved", `+${SCORING.penalty_saved}`],
-    ["Penalty missed", SCORING.penalty_missed],
-    ["Champion pick (final phase only)", `+${FINAL_PICK_BONUS}`],
+      `+${sc.def_action_per_2} per 2 actions`],
+    ["Top-rated player (per match)", `+${sc.motm}`],
+    ["Penalty saved", `+${sc.penalty_saved}`],
+    ["Penalty missed", sc.penalty_missed],
+    ["Champion pick (final phase only)", `+${finalPickBonus()}`],
   ];
-  const stages = STAGE_ORDER.slice(1).map((s) =>
-    `${s.toUpperCase()} +${STAGE_BONUS[s]}`).join(" · ");
+  const stages = stageOrder().slice(1).map((s) =>
+    `${s.toUpperCase()} +${stageBonuses()[s]}`).join(" · ");
   return `<div class="space-y-2 text-sm text-slate-300">
     <table class="w-full text-xs">
       <tbody>${rows.map(([k, v]) => `<tr class="border-b border-slate-800">
@@ -1994,7 +2027,7 @@ function scoringHtml() {
     <p class="text-xs"><b>Subs:</b> a sub only scores in a round where a starter in their position
       played that round but didn't feature (so the sub covers a no-show starter, even if they
       play on different days). Players who don't appear score 0.</p>
-    <p class="text-xs"><b>Top-rated player (+${SCORING.motm}):</b> awarded automatically to the
+    <p class="text-xs"><b>Top-rated player (+${sc.motm}):</b> awarded automatically to the
       single highest-rated player in each match (by API-Football's match rating, and only if it's
       ≥ 7.5). It's a data-driven "best performer" bonus — a close proxy for, but not always the
       same as, the official Player of the Match award.</p>
@@ -2003,7 +2036,7 @@ function scoringHtml() {
       squad slots and each costs your earliest draft round), TEAM picks always carry, the rest
       go back in the pool, and the order is reverse standings (last place picks first). Earlier
       points stay banked. For the final there are no squads: surviving managers just call the
-      champion for +${FINAL_PICK_BONUS}.</p>
+      champion for +${finalPickBonus()}.</p>
   </div>`;
 }
 
@@ -2067,10 +2100,10 @@ function phaseCardsHtml(me) {
     const finalists = S.stages
       .filter((s) => ["final", "winner"].includes(s.stage)).map((s) => s.team);
     html += `<div class="rounded-xl border border-wcgold bg-wcred/10 p-4 space-y-2">
-      <div class="font-semibold text-sm">The final — call the champion (+${FINAL_PICK_BONUS})</div>
+      <div class="font-semibold text-sm">The final — call the champion (+${finalPickBonus()})</div>
       ${champion
         ? `<p class="text-sm">${esc(champion)} won it. ${
-            me.final_pick === champion ? `You called it — +${FINAL_PICK_BONUS}!`
+            me.final_pick === champion ? `You called it — +${finalPickBonus()}!`
             : me.final_pick ? `You picked ${esc(me.final_pick)}.` : "You didn't pick."}</p>`
         : finalists.length
           ? `<div class="flex gap-2">${finalists.map((t) =>
@@ -3247,23 +3280,24 @@ function playerBreakdown(pid, pos) {
   ];
   const n = Object.fromEntries(cats.map(([k]) => [k, 0]));
   const p = Object.fromEntries(cats.map(([k]) => [k, 0]));
+  const sc = scoring();
   for (const r of statRowsFor(pid)) {
     if (!r.appeared) continue;
-    n.goals += r.goals || 0;       p.goals += (r.goals || 0) * SCORING.goal[pos];
-    n.assists += r.assists || 0;   p.assists += (r.assists || 0) * SCORING.assist;
-    if (r.clean_sheet) { n.cs++;   p.cs += SCORING.clean_sheet[pos]; }
-    n.yc += r.yellow_cards || 0;   p.yc += (r.yellow_cards || 0) * SCORING.yellow_card;
-    n.rc += r.red_cards || 0;      p.rc += (r.red_cards || 0) * SCORING.red_card;
+    n.goals += r.goals || 0;       p.goals += (r.goals || 0) * sc.goal[pos];
+    n.assists += r.assists || 0;   p.assists += (r.assists || 0) * sc.assist;
+    if (r.clean_sheet) { n.cs++;   p.cs += sc.clean_sheet[pos]; }
+    n.yc += r.yellow_cards || 0;   p.yc += (r.yellow_cards || 0) * sc.yellow_card;
+    n.rc += r.red_cards || 0;      p.rc += (r.red_cards || 0) * sc.red_card;
     if (pos === "GK") {
       n.saves += r.saves || 0;
-      p.saves += Math.floor((r.saves || 0) / 2) * SCORING.save_per_2;
+      p.saves += Math.floor((r.saves || 0) / 2) * sc.save_per_2;
     } else {
       n.da += r.defensive_actions || 0;
-      p.da += Math.floor((r.defensive_actions || 0) / 2) * SCORING.def_action_per_2;
+      p.da += Math.floor((r.defensive_actions || 0) / 2) * sc.def_action_per_2;
     }
-    if (r.motm) { n.motm++;        p.motm += SCORING.motm; }
-    n.ps += r.penalty_saved || 0;  p.ps += (r.penalty_saved || 0) * SCORING.penalty_saved;
-    n.pm += r.penalty_missed || 0; p.pm += (r.penalty_missed || 0) * SCORING.penalty_missed;
+    if (r.motm) { n.motm++;        p.motm += sc.motm; }
+    n.ps += r.penalty_saved || 0;  p.ps += (r.penalty_saved || 0) * sc.penalty_saved;
+    n.pm += r.penalty_missed || 0; p.pm += (r.penalty_missed || 0) * sc.penalty_missed;
   }
   return cats.filter(([k]) => n[k])
     .map(([k, label]) => ({ label, count: n[k], pts: p[k] }));
@@ -4981,7 +5015,7 @@ function admRenderStages() {
         <input type="checkbox" data-koteam="${esc(t)}" ${isEliminated(t) ? "checked" : ""}> out</label>
       <span class="text-xs text-slate-500 font-mono">+${calcTeamPoints(stage)}</span>
       <select data-team="${esc(t)}" class="stage-sel rounded bg-slate-900 border border-slate-700 px-1.5 py-1 text-xs">
-        ${STAGE_ORDER.map((s) =>
+        ${stageOrder().map((s) =>
           `<option value="${s}" ${stage === s ? "selected" : ""}>${s}</option>`).join("")}
       </select>
     </div>`;
@@ -5368,7 +5402,7 @@ async function startRedraft() {
 
 async function startFinalPhase() {
   if (!confirm("Start the final phase? All squads dissolve (TEAM picks stay for stage bonuses) "
-    + `and every surviving manager calls the champion for +${FINAL_PICK_BONUS}. `
+    + `and every surviving manager calls the champion for +${finalPickBonus()}. `
     + "Do this on a day with no matches. This can't be undone."))
     return;
   await snapshotRosters();              // bank everything up to the semis

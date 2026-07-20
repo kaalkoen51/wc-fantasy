@@ -89,6 +89,18 @@ alter table match_stats add column if not exists minutes int;
 alter table leagues add column if not exists phase int not null default 1;
 alter table leagues add column if not exists phase_quota jsonb;
 alter table leagues add column if not exists phase_starters jsonb;
+-- Per-league draft design (Workstream B): overrides the app's hardcoded
+-- WC-2026 scoring/bonuses/quota. Shape (all keys optional; missing keys fall
+-- back to the defaults in index.html):
+--   { "scoring": { "goal": {"FWD":4,...}, "assist":3, "clean_sheet":{...},
+--                  "yellow_card":-1, "red_card":-3, "save_per_2":1,
+--                  "def_action_per_2":1, "motm":3, "penalty_saved":5,
+--                  "penalty_missed":-2 },
+--     "stageBonus": {"r32":5,"r16":10,"qf":15,"sf":20,"final":25,"winner":15},
+--     "finalPickBonus": 5,
+--     "quota": {"GK":2,"DEF":4,"MID":4,"FWD":3,"TEAM":1} }
+-- NULL = behaves exactly like the original hardcoded WC-2026 league.
+alter table leagues add column if not exists config jsonb;
 alter table leagues add column if not exists keeper_window boolean not null default false;
 alter table leagues add column if not exists final_phase boolean not null default false;
 alter table managers add column if not exists eliminated boolean not null default false;
