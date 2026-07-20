@@ -17,10 +17,11 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, scoring, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
+        scoring, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota,
         slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick,
         posQuota, picksPerManager, totalPicks,
         playerBreakdown, playerPoints, suspendedNext, resilientWrite,
@@ -79,6 +80,26 @@ check("DNP scores 0", calcPlayerPoints(row({ appeared: false, goals: 3 }), "MID"
 check("DEF: cs + 5 def actions", calcPlayerPoints(row({ clean_sheet: true, defensive_actions: 5 }), "DEF"), 4 + 2);
 check("GK def actions don't score", calcPlayerPoints(row({ defensive_actions: 8 }), "GK"), 0);
 check("rows without def actions still score", calcPlayerPoints({ ...row({ goals: 1 }), defensive_actions: undefined }, "MID"), 5);
+
+/* Workstream B: per-league config overrides the hardcoded WC-2026 defaults.
+   Deep-merge — unspecified keys keep their default; null config = defaults. */
+S.league = { config: { scoring: { goal: { FWD: 10 } } } };
+check("config overrides a scoring value (FWD goal 10)", calcPlayerPoints(row({ goals: 1 }), "FWD"), 10);
+check("partial scoring config keeps other defaults (assist still 3)", calcPlayerPoints(row({ assists: 1 }), "FWD"), 3);
+check("partial goal config keeps other positions (MID goal still 5)", calcPlayerPoints(row({ goals: 1 }), "MID"), 5);
+S.league = { config: { stageBonus: { r32: 100 } } };
+check("config overrides a stage bonus (r32 100 + r16 default 10)", calcTeamPoints("r16"), 110);
+S.league = { config: { finalPickBonus: 20 } };
+check("config overrides the champion-pick bonus", finalPickBonus(), 20);
+S.league = { phase: 1, config: { quota: { FWD: 5 } } };
+check("config overrides phase-1 quota (FWD 5)", posQuota().FWD, 5);
+check("partial quota config keeps defaults (GK still 2)", posQuota().GK, 2);
+// No config anywhere → identical to the original hardcoded league.
+S.league = {};
+check("no config = default FWD goal 4", calcPlayerPoints(row({ goals: 1 }), "FWD"), 4);
+check("no config = default champion bonus 5", finalPickBonus(), 5);
+check("no config = champion still banks 90", calcTeamPoints("winner"), 90);
+S.league = null;
 
 /* sub activation */
 S.managers = [{ id: "m1", name: "M1", draft_position: 1 }];
