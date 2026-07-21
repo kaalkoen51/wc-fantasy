@@ -1,0 +1,49 @@
+name: Scheduled competition pull
+
+# Reads competition_pools.scheduled (the app-admin on/off toggles) and pulls
+# each enabled competition's completed games into the SHARED competition_stats —
+# one pull serves every league on the competition. Date-based and idempotent
+# (upserts merge), so overlaps and delayed runs are harmless. Does nothing if no
+# competition has its toggle on.
+on:
+  schedule:
+    - cron: "0 6 * * *"    # morning UTC — sweeps yesterday + today
+    - cron: "0 18 * * *"   # evening UTC — catches same-day games
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Date to pull (YYYY-MM-DD, UTC). Blank = yesterday + today."
+        required: false
+        default: ""
+
+concurrency:
+  group: competitions-pull
+  cancel-in-progress: false
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run scheduled competition pull
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          PULL_DATE: ${{ inputs.date }}
+        run: |
+          if [ -n "$PULL_DATE" ]; then
+            python daily_pull.py --competitions --date "$PULL_DATE"
+          else
+            python daily_pull.py --competitions --date "$(date -u -d yesterday +%F)"
+            python daily_pull.py --competitions --date "$(date -u +%F)"
+          fi
