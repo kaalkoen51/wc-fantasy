@@ -17,11 +17,12 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, scoring, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, scoring, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         scoring, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota,
+        phaseOneStarters, starterQuota, effectiveConfig,
         apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture,
         fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey,
         slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick,
@@ -96,6 +97,19 @@ check("config overrides the champion-pick bonus", finalPickBonus(), 20);
 S.league = { phase: 1, config: { quota: { FWD: 5 } } };
 check("config overrides phase-1 quota (FWD 5)", posQuota().FWD, 5);
 check("partial quota config keeps defaults (GK still 2)", posQuota().GK, 2);
+S.league = { phase: 1, config: { starters: { MID: 4 } } };
+check("config overrides phase-1 starters (MID 4)", starterQuota().MID, 4);
+check("partial starters config keeps defaults (DEF still 3)", starterQuota().DEF, 3);
+// effectiveConfig merges everything over defaults for the create-form editor.
+{
+  const eff = effectiveConfig({ scoring: { goal: { FWD: 9 } }, quota: { GK: 3 } });
+  check("effectiveConfig merges + fills all defaults",
+    [eff.scoring.goal.FWD, eff.scoring.goal.GK, eff.scoring.assist, eff.quota.GK,
+     eff.quota.DEF, eff.starters.GK, eff.finalPickBonus],
+    [9, 8, 3, 3, 4, 1, 5]);
+  check("effectiveConfig({}) equals effectiveConfig(null) (all defaults)",
+    JSON.stringify(effectiveConfig({})), JSON.stringify(effectiveConfig(null)));
+}
 // No config anywhere → identical to the original hardcoded league.
 S.league = {};
 check("no config = default FWD goal 4", calcPlayerPoints(row({ goals: 1 }), "FWD"), 4);

@@ -98,7 +98,28 @@
       <input id="create-num" type="number" min="2" max="15" value="8" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100"></label>
     <label class="block text-sm text-slate-400">Seconds per pick
       <input id="create-dur" type="number" min="15" max="300" value="60" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100"></label>
+    <label class="block text-sm text-slate-400">Competition
+      <select id="create-comp" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100">
+        <option value="wc">World Cup 2026 (built-in squads)</option>
+      </select></label>
+    <div id="create-comp-api" class="hidden space-y-3 rounded-lg border border-slate-700 bg-slate-900/50 p-3">
+      <p class="text-[11px] text-slate-500">This competition's squads &amp; fixtures are pulled from API-Football once
+        and shared with any other league on it. If it's already loaded, we reuse it (no key needed).</p>
+      <label class="block text-sm text-slate-400">Season
+        <input id="create-comp-season" type="number" placeholder="e.g. 2024 = 2024/25" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100"></label>
+      <label class="block text-sm text-slate-400">API-Football key <span class="text-slate-500">(only if not already loaded)</span>
+        <input id="create-api-key" placeholder="x-apisports-key" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100"></label>
+    </div>
+    <details class="rounded-xl border border-slate-700 bg-slate-900/50 p-3">
+      <summary class="cursor-pointer text-sm font-semibold">Customise scoring &amp; squad <span class="text-[10px] text-slate-500 font-normal">· optional</span></summary>
+      <div class="pt-3 space-y-2">
+        <p class="text-[11px] text-slate-500">Leave as-is for standard World Cup scoring &amp; squad shape. Changes apply to this league only.</p>
+        <div id="create-config" class="space-y-2"></div>
+        <button type="button" id="create-config-reset" class="text-xs text-slate-400 underline">reset to defaults</button>
+      </div>
+    </details>
     <button id="create-go" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2.5 font-semibold">Create league</button>
+    <pre id="create-comp-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
     <div id="create-result" class="hidden rounded-xl border border-amber-600 bg-amber-950/30 p-4 space-y-2 text-sm">
       <p>League created! <b>Save these somewhere safe:</b></p>
       <p>Invite code (share with managers): <code id="create-code" class="text-amber-300 text-lg font-bold"></code>
@@ -566,6 +587,22 @@ function stageBonuses() {
 const stageOrder     = () => cfgOf().stageOrder || STAGE_ORDER;
 const finalPickBonus = () => cfgOf().finalPickBonus ?? FINAL_PICK_BONUS;
 const phaseOneQuota  = () => ({ ...PHASE1_QUOTA, ...(cfgOf().quota || {}) });
+const phaseOneStarters = () => ({ ...PHASE1_STARTERS, ...(cfgOf().starters || {}) });
+
+// A config merged over ALL the WC-2026 defaults — the full effective set. Used
+// to pre-fill the "design your draft" editors and to compare against defaults.
+function effectiveConfig(cfg) {
+  cfg = cfg || {};
+  return {
+    scoring: { ...SCORING, ...(cfg.scoring || {}),
+      goal:        { ...SCORING.goal,        ...(cfg.scoring?.goal || {}) },
+      clean_sheet: { ...SCORING.clean_sheet, ...(cfg.scoring?.clean_sheet || {}) } },
+    stageBonus: { ...STAGE_BONUS, ...(cfg.stageBonus || {}) },
+    finalPickBonus: cfg.finalPickBonus ?? FINAL_PICK_BONUS,
+    quota: { ...PHASE1_QUOTA, ...(cfg.quota || {}) },
+    starters: { ...PHASE1_STARTERS, ...(cfg.starters || {}) },
+  };
+}
 
 /* ---------- state & tiny helpers ---------- */
 
@@ -903,7 +940,7 @@ const activeManagers = () => S.managers.filter((m) => !m.eliminated);
 // phase and are never redrafted, so their quota is 0 after phase 1.
 const posQuota = () => leaguePhase() === 1 ? phaseOneQuota()
   : { TEAM: 0, ...(S.league.phase_quota || {}) };
-const starterQuota = () => leaguePhase() === 1 ? PHASE1_STARTERS
+const starterQuota = () => leaguePhase() === 1 ? phaseOneStarters()
   : (S.league.phase_starters || S.league.phase_quota || PHASE1_STARTERS);
 
 // Fluid ("flex") squad slots for a redraft: extra places that can go to ANY
@@ -1066,6 +1103,46 @@ async function enterLeague() {
 
 /* ---------- create / join / lobby ---------- */
 
+// Populate the create-league form: competition options, the collapsible
+// scoring/squad editor (WC defaults), and the show/hide + reset wiring.
+function renderCreateForm() {
+  const sel = $("create-comp");
+  if (sel.options.length <= 1)
+    sel.innerHTML = `<option value="wc">World Cup 2026 (built-in squads)</option>`
+      + COMPETITIONS.filter((c) => c.apiLeagueId !== 1)
+          .map((c) => `<option value="${c.apiLeagueId}">${esc(c.name)}</option>`).join("");
+  const syncApi = () => $("create-comp-api").classList.toggle("hidden", sel.value === "wc");
+  sel.onchange = syncApi;
+  syncApi();
+  $("create-config").innerHTML = configFieldsHtml(effectiveConfig({}), { includeSquad: true });
+  $("create-config-reset").onclick = () => {
+    $("create-config").innerHTML = configFieldsHtml(effectiveConfig({}), { includeSquad: true });
+  };
+  $("create-go").disabled = false;
+  $("create-result").classList.add("hidden");
+  $("create-comp-log").textContent = "";
+}
+
+// Pull (or reuse) a competition's shared pool during league creation.
+async function ensureCompetitionPool(competition, apiKey, log) {
+  const compKey = `${competition.apiLeagueId}-${competition.season}`;
+  const existing = await S.sb.from("competition_pools").select("competition_key")
+    .eq("competition_key", compKey).maybeSingle();
+  if (existing.error) throw new Error(existing.error.message);
+  if (existing.data) { log(`Reusing shared ${competition.name} pool.`); return; }
+  if (!apiKey) throw new Error(`${competition.name} isn't loaded yet — enter an API-Football key.`);
+  log("Fetching teams & squads…");
+  const built = await fetchCompetitionPool(apiKey, competition.apiLeagueId, competition.season,
+    (d, t, tm) => log(`Loading squads ${d}/${t} — ${tm}`));
+  if (!built.players.length) throw new Error("No players returned — check the season.");
+  log(`${built.players.length} players. Fetching fixtures…`);
+  const fixtures = await fetchCompetitionFixtures(apiKey, competition.apiLeagueId, competition.season);
+  const up = await S.sb.from("competition_pools").upsert(
+    { competition_key: compKey, players: built.players, fixtures, updated_at: new Date().toISOString() });
+  if (up.error) throw new Error(up.error.message);
+  localStorage.setItem("wcf_apikey", apiKey);
+}
+
 async function createLeague() {
   const name = $("create-name").value.trim();
   const num = parseInt($("create-num").value, 10);
@@ -1073,17 +1150,57 @@ async function createLeague() {
   if (!name) return toast("Give the league a name.");
   if (!(num >= 2 && num <= 15)) return toast("Managers must be 2–15.");
   if (!(dur >= 15 && dur <= 300)) return toast("Pick duration must be 15–300s.");
-  const row = {
-    name, num_managers: num, pick_duration_seconds: dur,
-    invite_code: genInviteCode(), admin_token: crypto.randomUUID(), current_pick: 0,
-  };
-  const { data, error } = await S.sb.from("leagues").insert(row).select().single();
-  if (error) return toast("Create failed: " + error.message);
-  setSession({ leagueId: data.id, adminToken: data.admin_token, managerId: null });
-  $("create-code").textContent = data.invite_code;
-  $("create-admin").textContent = data.admin_token;
-  $("create-result").classList.remove("hidden");
-  $("create-go").disabled = true;
+
+  // Competition (World Cup built-in, or an API-Football competition).
+  const compVal = $("create-comp").value;
+  let competition = null;
+  if (compVal !== "wc") {
+    const season = parseInt($("create-comp-season").value, 10);
+    if (!season) return toast("Enter the season for the competition.");
+    const c = COMPETITIONS.find((x) => x.apiLeagueId === +compVal);
+    competition = { name: c?.name || ("League " + compVal), apiLeagueId: +compVal, season };
+  }
+  const config = customConfigOrNull($("create-config"));   // null = pure WC defaults
+
+  const log = (t) => { $("create-comp-log").textContent = t; };
+  const btn = $("create-go");
+  btn.disabled = true;
+  try {
+    // Load the competition pool BEFORE creating the league, so a key/season
+    // mistake fails fast without leaving an empty, misconfigured league.
+    if (competition) await ensureCompetitionPool(competition, $("create-api-key").value.trim(), log);
+
+    const row = {
+      name, num_managers: num, pick_duration_seconds: dur,
+      invite_code: genInviteCode(), admin_token: crypto.randomUUID(), current_pick: 0,
+    };
+    if (config) row.config = config;
+    if (competition) row.competition = competition;
+    const { data, error } = await insertLeagueRow(row);
+    if (error) throw new Error(error.message);
+
+    setSession({ leagueId: data.id, adminToken: data.admin_token, managerId: null });
+    $("create-code").textContent = data.invite_code;
+    $("create-admin").textContent = data.admin_token;
+    $("create-result").classList.remove("hidden");
+    log(competition ? `✅ ${competition.name} ${competition.season} ready.` : "");
+  } catch (e) {
+    toast("Create failed: " + e.message);
+    btn.disabled = false;
+  }
+}
+
+// Insert a league, dropping the config/competition columns and retrying if the
+// database hasn't had schema.sql applied yet (so a basic league still creates).
+async function insertLeagueRow(row) {
+  let res = await S.sb.from("leagues").insert(row).select().single();
+  const missing = res.error && /Could not find the '(config|competition)' column/.exec(res.error.message);
+  if (missing) {
+    const { config, competition, ...rest } = row;
+    toast("Custom settings need schema.sql — created a standard league instead.");
+    res = await S.sb.from("leagues").insert(rest).select().single();
+  }
+  return res;
 }
 
 async function findLeague() {
@@ -5692,22 +5809,24 @@ async function startFinalPhase() {
   scheduleRefetch();
 }
 
-// "Design your draft" editor: number inputs for every scoring value, the
-// stage-bonus ladder, and the champion bonus, populated from the league's
-// effective config (merged over defaults). Frozen once any game is scored so
-// past totals can never be retroactively rewritten.
-function renderConfigEditor() {
-  const box = $("adm-config");
-  if (!box) return;
-  const locked = (S.stats?.length || 0) > 0;
-  const sc = scoring(), sb = stageBonuses();
+// Shared "design your draft" fields — number inputs for every scoring value,
+// the stage-bonus ladder, the champion bonus, and (create only) squad quota +
+// starters. `eff` is an effectiveConfig(...) so blanks never appear. Used by
+// both the admin editor and the create-league form.
+function configFieldsHtml(eff, opts = {}) {
+  const { includeSquad = false, locked = false } = opts;
   const num = (key, label, val) =>
     `<label class="text-[11px] text-slate-400">${label}
-      <input data-cfg="${key}" type="number" step="1" value="${val}" ${locked ? "disabled" : ""}
+      <input data-cfg="${key}" type="number" step="1" value="${val}"${locked ? " disabled" : ""}
         class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm${locked ? " opacity-60" : ""}"></label>`;
-  const grid = (cells) => `<div class="grid grid-cols-4 gap-2">${cells.join("")}</div>`;
-  box.innerHTML = `
-    ${locked ? `<div class="rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs px-3 py-2">🔒 Games have already been scored — the draft design is locked so past totals never change.</div>` : ""}
+  const grid = (cells, cols = 4) => `<div class="grid grid-cols-${cols} gap-2">${cells.join("")}</div>`;
+  const sc = eff.scoring, sb = eff.stageBonus;
+  const squad = !includeSquad ? "" : `
+    <div class="text-xs text-slate-400">Squad size per position (draft quota)</div>
+    ${grid(["GK", "DEF", "MID", "FWD", "TEAM"].map((p) => num(`quota.${p}`, p, eff.quota[p])), 5)}
+    <div class="text-xs text-slate-400">Starters per position (the rest are subs)</div>
+    ${grid(["GK", "DEF", "MID", "FWD"].map((p) => num(`starters.${p}`, p, eff.starters[p])))}`;
+  return `${squad}
     <div class="text-xs text-slate-400">Goal (per position)</div>
     ${grid(["GK", "DEF", "MID", "FWD"].map((p) => num(`scoring.goal.${p}`, p, sc.goal[p])))}
     <div class="text-xs text-slate-400">Clean sheet — ≥60 min (per position)</div>
@@ -5726,9 +5845,50 @@ function renderConfigEditor() {
     <div class="text-xs text-slate-400">National-team stage bonuses (cumulative)</div>
     ${grid(["r32", "r16", "qf", "sf", "final", "winner"].map((s) => num(`stageBonus.${s}`, s.toUpperCase(), sb[s])))}
     <div class="grid grid-cols-2 gap-2 items-end">
-      ${num("finalPickBonus", "Champion pick bonus", finalPickBonus())}
-      <span class="text-[10px] text-slate-500 pb-1">A champion TEAM banks ${calcTeamPoints("winner")} in total.</span>
-    </div>
+      ${num("finalPickBonus", "Champion pick bonus", eff.finalPickBonus)}
+    </div>`;
+}
+
+// Read a container's [data-cfg] inputs back into a partial config. Blank fields
+// are skipped (fall back to defaults via the deep-merge); empty sub-objects are
+// dropped so an editor without squad fields never writes quota/starters.
+function readConfigFromFields(container) {
+  const cfg = { scoring: { goal: {}, clean_sheet: {} }, stageBonus: {}, quota: {}, starters: {} };
+  for (const inp of container.querySelectorAll("[data-cfg]")) {
+    if (inp.value.trim() === "") continue;
+    const v = Number(inp.value);
+    if (!Number.isFinite(v)) continue;
+    const path = inp.dataset.cfg.split(".");
+    if (path[0] === "scoring" && path.length === 3) cfg.scoring[path[1]][path[2]] = v;
+    else if (path[0] === "scoring") cfg.scoring[path[1]] = v;
+    else if (path[0] === "stageBonus") cfg.stageBonus[path[1]] = v;
+    else if (path[0] === "finalPickBonus") cfg.finalPickBonus = v;
+    else if (path[0] === "quota") cfg.quota[path[1]] = v;
+    else if (path[0] === "starters") cfg.starters[path[1]] = v;
+  }
+  for (const k of ["quota", "starters"]) if (!Object.keys(cfg[k]).length) delete cfg[k];
+  return cfg;
+}
+
+// The config to STORE from a full field set: null when every value equals the
+// WC default (so a plain league carries no config), else the full config.
+function customConfigOrNull(container) {
+  const cfg = readConfigFromFields(container);
+  const same = JSON.stringify(effectiveConfig(cfg)) === JSON.stringify(effectiveConfig({}));
+  return same ? null : cfg;
+}
+
+// Admin "Design your draft" editor (scoring + bonuses; squad is set at
+// creation / redraft). Frozen once any game is scored so past totals never
+// get retroactively rewritten.
+function renderConfigEditor() {
+  const box = $("adm-config");
+  if (!box) return;
+  const locked = (S.stats?.length || 0) > 0;
+  box.innerHTML = `
+    ${locked ? `<div class="rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs px-3 py-2">🔒 Games have already been scored — the draft design is locked so past totals never change.</div>` : ""}
+    ${configFieldsHtml(effectiveConfig(cfgOf()), { locked })}
+    <p class="text-[10px] text-slate-500">A champion TEAM banks ${calcTeamPoints("winner")} in total.</p>
     ${locked ? "" : `<div class="flex gap-2 pt-1">
       <button id="adm-config-save" class="flex-1 bg-wcred hover:bg-wcred-hov rounded-lg py-2 text-sm font-semibold">Save draft design</button>
       <button id="adm-config-reset" class="shrink-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm font-semibold">Reset to WC defaults</button>
@@ -5739,17 +5899,7 @@ function renderConfigEditor() {
 }
 
 async function saveConfigEditor() {
-  const cfg = { scoring: { goal: {}, clean_sheet: {} }, stageBonus: {} };
-  for (const inp of $("adm-config").querySelectorAll("[data-cfg]")) {
-    if (inp.value.trim() === "") continue;            // blank → keep default via merge
-    const v = Number(inp.value);
-    if (!Number.isFinite(v)) continue;
-    const path = inp.dataset.cfg.split(".");
-    if (path[0] === "scoring" && path.length === 3) cfg.scoring[path[1]][path[2]] = v;
-    else if (path[0] === "scoring") cfg.scoring[path[1]] = v;
-    else if (path[0] === "stageBonus") cfg.stageBonus[path[1]] = v;
-    else if (path[0] === "finalPickBonus") cfg.finalPickBonus = v;
-  }
+  const cfg = readConfigFromFields($("adm-config"));
   const { error } = await S.sb.from("leagues").update({ config: cfg }).eq("id", S.league.id);
   if (error) return toast(/config|column|schema cache/.test(error.message)
     ? "Config needs a schema update — run schema.sql." : error.message);
@@ -5874,7 +6024,7 @@ function wire() {
     setConfig({ url, key });
     location.reload();
   };
-  $("home-create").onclick = () => showView("create");
+  $("home-create").onclick = () => { renderCreateForm(); showView("create"); };
   $("home-join").onclick = () => showView("join");
   $("hdr-exit").onclick = () => {
     if (!confirm("Exit this league? You'll go back to the join screen — rejoin any time with your invite code."))
