@@ -43,6 +43,10 @@
   .kb-col:not(.kb-last) .kb-pair::after { content: ""; position: absolute; right: -18px; top: 50%;
                                           width: 18px; height: 2px; background: #475569; }
   .kb-card { margin: 5px 0; }
+  /* Collapsible create-league sections: hide the native marker, rotate caret. */
+  .create-sec > summary::-webkit-details-marker { display: none; }
+  .create-sec .sec-caret { transition: transform .15s; }
+  .create-sec[open] .sec-caret { transform: rotate(180deg); }
 </style>
 </head>
 <body class="bg-wcnavy text-slate-100 min-h-screen">
@@ -92,32 +96,84 @@
   <!-- Create league -->
   <section data-view="create" class="hidden space-y-4">
     <h2 class="text-xl font-semibold">Create a league</h2>
-    <label class="block text-sm text-slate-400">League name
-      <input id="create-name" placeholder="Braai Boys WC 2026" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100"></label>
-    <label class="block text-sm text-slate-400">Number of managers (5–15 recommended)
-      <input id="create-num" type="number" min="2" max="15" value="8" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100"></label>
-    <label class="block text-sm text-slate-400">Seconds per pick
-      <input id="create-dur" type="number" min="15" max="300" value="60" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100"></label>
-    <label class="block text-sm text-slate-400">Competition
-      <select id="create-comp" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100">
-        <option value="wc">World Cup 2026 (built-in squads)</option>
-      </select></label>
-    <div id="create-comp-api" class="hidden space-y-3 rounded-lg border border-slate-700 bg-slate-900/50 p-3">
-      <p class="text-[11px] text-slate-500">This competition's squads &amp; fixtures are pulled from API-Football once
-        and shared with any other league on it. If it's already loaded, we reuse it (no key needed).</p>
-      <label class="block text-sm text-slate-400">Season
-        <input id="create-comp-season" type="number" placeholder="e.g. 2024 = 2024/25" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100"></label>
-      <label class="block text-sm text-slate-400">API-Football key <span class="text-slate-500">(only if not already loaded)</span>
-        <input id="create-api-key" placeholder="x-apisports-key" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100"></label>
+    <p class="text-xs text-slate-500 -mt-3">Just name it and go, or open any section to customise — everything has sensible defaults.</p>
+
+    <!-- 1 · Basics -->
+    <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
+      <div class="text-sm font-semibold flex items-center gap-2">⚙️ Basics</div>
+      <label class="block text-sm text-slate-400">League name
+        <input id="create-name" placeholder="Braai Boys WC 2026" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></label>
+      <div class="grid grid-cols-2 gap-3">
+        <label class="block text-sm text-slate-400">Managers
+          <input id="create-num" type="number" min="2" max="15" value="8" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></label>
+        <label class="block text-sm text-slate-400">Seconds / pick
+          <input id="create-dur" type="number" min="15" max="300" value="60" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></label>
+      </div>
     </div>
-    <details class="rounded-xl border border-slate-700 bg-slate-900/50 p-3">
-      <summary class="cursor-pointer text-sm font-semibold">Customise scoring &amp; squad <span class="text-[10px] text-slate-500 font-normal">· optional</span></summary>
-      <div class="pt-3 space-y-2">
-        <p class="text-[11px] text-slate-500">Leave as-is for standard World Cup scoring &amp; squad shape. Changes apply to this league only.</p>
-        <div id="create-config" class="space-y-2"></div>
-        <button type="button" id="create-config-reset" class="text-xs text-slate-400 underline">reset to defaults</button>
+
+    <!-- 2 · Competition -->
+    <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
+      <div class="text-sm font-semibold flex items-center gap-2">🏆 Competition</div>
+      <p class="text-[11px] text-slate-500">Who's in the draft pool.</p>
+      <select id="create-comp" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100">
+        <option value="wc">World Cup 2026 (built-in squads)</option>
+      </select>
+      <div id="create-comp-api" class="hidden space-y-3 rounded-lg border border-slate-700 bg-slate-800/40 p-3">
+        <p class="text-[11px] text-slate-500">Squads &amp; fixtures are pulled from API-Football once and shared with any
+          other league on this competition. If it's already loaded, we reuse it (no key needed).</p>
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block text-sm text-slate-400">Season
+            <input id="create-comp-season" type="number" placeholder="2024" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></label>
+          <label class="block text-sm text-slate-400">API-Football key
+            <input id="create-api-key" placeholder="only if not loaded" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></label>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3 · Squad -->
+    <details class="create-sec rounded-xl border border-slate-700 bg-slate-900 p-4">
+      <summary class="cursor-pointer select-none flex items-center justify-between gap-2 list-none">
+        <span class="text-sm font-semibold">🥅 Squad</span>
+        <span class="text-xs text-slate-500 flex items-center gap-1"><span id="create-squad-summary"></span><span class="sec-caret">▾</span></span>
+      </summary>
+      <div id="create-squad" class="pt-3 space-y-2"></div>
+    </details>
+
+    <!-- 4 · Scoring -->
+    <details class="create-sec rounded-xl border border-slate-700 bg-slate-900 p-4">
+      <summary class="cursor-pointer select-none flex items-center justify-between gap-2 list-none">
+        <span class="text-sm font-semibold">📊 Scoring</span>
+        <span class="text-xs text-slate-500 flex items-center gap-1"><span id="create-scoring-summary"></span><span class="sec-caret">▾</span></span>
+      </summary>
+      <div id="create-scoring" class="pt-3 space-y-2"></div>
+    </details>
+
+    <!-- 5 · Team bonus -->
+    <details class="create-sec rounded-xl border border-slate-700 bg-slate-900 p-4">
+      <summary class="cursor-pointer select-none flex items-center justify-between gap-2 list-none">
+        <span class="text-sm font-semibold">🌍 Team bonus</span>
+        <span class="text-xs text-slate-500 flex items-center gap-1"><span id="create-team-summary"></span><span class="sec-caret">▾</span></span>
+      </summary>
+      <div class="pt-3 space-y-3">
+        <p class="text-[11px] text-slate-500">Each manager also drafts a <b>team</b> (national side or club) that banks bonus
+          points as it goes deep — a fun knockout-tournament layer. Turn it off for a pure players-only league.</p>
+        <div class="flex gap-2">
+          <button type="button" data-teamtoggle="off" class="flex-1 rounded-lg py-2 text-sm font-semibold border border-slate-700">No team bonus</button>
+          <button type="button" data-teamtoggle="on" class="flex-1 rounded-lg py-2 text-sm font-semibold border border-slate-700">Yes, include it</button>
+        </div>
+        <div id="create-team-fields" class="space-y-2 hidden">
+          <div class="grid grid-cols-2 gap-2 items-end">
+            <label class="text-[11px] text-slate-400">Team picks / manager
+              <input data-cfg="quota.TEAM" type="number" step="1" value="1" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
+          </div>
+          <div id="create-team-bonuses" class="space-y-2"></div>
+          <p class="text-[10px] text-slate-500">Stage bonuses suit knockout competitions. Points for match <i>wins</i> vs
+            <i>progression</i>, and league-based team scoring, are coming next.</p>
+        </div>
       </div>
     </details>
+
+    <button type="button" id="create-reset" class="w-full text-xs text-slate-500 underline">reset all customisations to defaults</button>
     <button id="create-go" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2.5 font-semibold">Create league</button>
     <pre id="create-comp-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
     <div id="create-result" class="hidden rounded-xl border border-amber-600 bg-amber-950/30 p-4 space-y-2 text-sm">
@@ -1105,6 +1161,46 @@ async function enterLeague() {
 
 // Populate the create-league form: competition options, the collapsible
 // scoring/squad editor (WC defaults), and the show/hide + reset wiring.
+// The create-form's team-bonus toggle (default on = a WC-style team pick).
+S._createTeamOn = true;
+
+function paintCreateFields() {
+  const eff = effectiveConfig({});
+  $("create-squad").innerHTML = squadFieldsHtml(eff, false);
+  $("create-scoring").innerHTML = scoringFieldsHtml(eff, false);
+  $("create-team-bonuses").innerHTML = stageBonusFieldsHtml(eff, false);
+  $("create-squad").oninput = $("create-scoring").oninput = updateCreateSummaries;
+  $("create-team-fields").oninput = updateCreateSummaries;
+}
+
+function syncCreateTeam() {
+  for (const b of document.querySelectorAll("[data-teamtoggle]")) {
+    const on = (b.dataset.teamtoggle === "on") === S._createTeamOn;
+    b.className = "flex-1 rounded-lg py-2 text-sm font-semibold border " +
+      (on ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400");
+  }
+  $("create-team-fields").classList.toggle("hidden", !S._createTeamOn);
+  updateCreateSummaries();
+}
+
+// Live one-line summaries in each collapsed section header.
+function updateCreateSummaries() {
+  const val = (k, d) => {
+    const el = document.querySelector(`#create-squad [data-cfg="${k}"], #create-scoring [data-cfg="${k}"], #create-team-fields [data-cfg="${k}"]`);
+    const n = el ? Number(el.value) : NaN;
+    return Number.isFinite(n) ? n : d;
+  };
+  const eff = effectiveConfig({});
+  const q = ["GK", "DEF", "MID", "FWD"].reduce((s, p) => s + val(`quota.${p}`, eff.quota[p]), 0);
+  const st = ["GK", "DEF", "MID", "FWD"].reduce((s, p) => s + val(`starters.${p}`, eff.starters[p]), 0);
+  if ($("create-squad-summary")) $("create-squad-summary").textContent = `${q} squad · ${st} starters`;
+  const cfg = readConfigFromFields(document.querySelector('[data-view="create"]'));
+  const scoringCustom = JSON.stringify(effectiveConfig({ scoring: cfg.scoring }).scoring) !== JSON.stringify(eff.scoring);
+  if ($("create-scoring-summary")) $("create-scoring-summary").textContent = scoringCustom ? "customised" : "World Cup default";
+  if ($("create-team-summary")) $("create-team-summary").textContent = S._createTeamOn
+    ? `on · ${val("quota.TEAM", 1)} pick` : "off";
+}
+
 function renderCreateForm() {
   const sel = $("create-comp");
   if (sel.options.length <= 1)
@@ -1114,10 +1210,12 @@ function renderCreateForm() {
   const syncApi = () => $("create-comp-api").classList.toggle("hidden", sel.value === "wc");
   sel.onchange = syncApi;
   syncApi();
-  $("create-config").innerHTML = configFieldsHtml(effectiveConfig({}), { includeSquad: true });
-  $("create-config-reset").onclick = () => {
-    $("create-config").innerHTML = configFieldsHtml(effectiveConfig({}), { includeSquad: true });
-  };
+  S._createTeamOn = true;
+  paintCreateFields();
+  for (const b of document.querySelectorAll("[data-teamtoggle]"))
+    b.onclick = () => { S._createTeamOn = b.dataset.teamtoggle === "on"; syncCreateTeam(); };
+  syncCreateTeam();
+  $("create-reset").onclick = () => { S._createTeamOn = true; paintCreateFields(); syncCreateTeam(); };
   $("create-go").disabled = false;
   $("create-result").classList.add("hidden");
   $("create-comp-log").textContent = "";
@@ -1143,6 +1241,18 @@ async function ensureCompetitionPool(competition, apiKey, log) {
   localStorage.setItem("wcf_apikey", apiKey);
 }
 
+// Read the whole create form's config (squad + scoring + team sections), apply
+// the team-bonus toggle, and return null if it's all WC defaults.
+function readCreateConfig() {
+  const cfg = readConfigFromFields(document.querySelector('[data-view="create"]'));
+  if (!S._createTeamOn) {                 // no team pick → drop TEAM and its bonuses
+    cfg.quota = { ...(cfg.quota || {}), TEAM: 0 };
+    delete cfg.stageBonus;
+    delete cfg.finalPickBonus;
+  }
+  return JSON.stringify(effectiveConfig(cfg)) === JSON.stringify(effectiveConfig({})) ? null : cfg;
+}
+
 async function createLeague() {
   const name = $("create-name").value.trim();
   const num = parseInt($("create-num").value, 10);
@@ -1160,7 +1270,7 @@ async function createLeague() {
     const c = COMPETITIONS.find((x) => x.apiLeagueId === +compVal);
     competition = { name: c?.name || ("League " + compVal), apiLeagueId: +compVal, season };
   }
-  const config = customConfigOrNull($("create-config"));   // null = pure WC defaults
+  const config = readCreateConfig();   // null = pure WC defaults
 
   const log = (t) => { $("create-comp-log").textContent = t; };
   const btn = $("create-go");
@@ -5809,44 +5919,58 @@ async function startFinalPhase() {
   scheduleRefetch();
 }
 
-// Shared "design your draft" fields — number inputs for every scoring value,
-// the stage-bonus ladder, the champion bonus, and (create only) squad quota +
-// starters. `eff` is an effectiveConfig(...) so blanks never appear. Used by
-// both the admin editor and the create-league form.
-function configFieldsHtml(eff, opts = {}) {
-  const { includeSquad = false, locked = false } = opts;
-  const num = (key, label, val) =>
-    `<label class="text-[11px] text-slate-400">${label}
-      <input data-cfg="${key}" type="number" step="1" value="${val}"${locked ? " disabled" : ""}
-        class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm${locked ? " opacity-60" : ""}"></label>`;
-  const grid = (cells, cols = 4) => `<div class="grid grid-cols-${cols} gap-2">${cells.join("")}</div>`;
-  const sc = eff.scoring, sb = eff.stageBonus;
-  const squad = !includeSquad ? "" : `
-    <div class="text-xs text-slate-400">Squad size per position (draft quota)</div>
-    ${grid(["GK", "DEF", "MID", "FWD", "TEAM"].map((p) => num(`quota.${p}`, p, eff.quota[p])), 5)}
-    <div class="text-xs text-slate-400">Starters per position (the rest are subs)</div>
-    ${grid(["GK", "DEF", "MID", "FWD"].map((p) => num(`starters.${p}`, p, eff.starters[p])))}`;
-  return `${squad}
-    <div class="text-xs text-slate-400">Goal (per position)</div>
-    ${grid(["GK", "DEF", "MID", "FWD"].map((p) => num(`scoring.goal.${p}`, p, sc.goal[p])))}
-    <div class="text-xs text-slate-400">Clean sheet — ≥60 min (per position)</div>
-    ${grid(["GK", "DEF", "MID", "FWD"].map((p) => num(`scoring.clean_sheet.${p}`, p, sc.clean_sheet[p])))}
-    <div class="text-xs text-slate-400">Other actions</div>
-    ${grid([
-      num("scoring.assist", "Assist", sc.assist),
-      num("scoring.yellow_card", "Yellow", sc.yellow_card),
-      num("scoring.red_card", "Red", sc.red_card),
-      num("scoring.motm", "Top-rated", sc.motm),
-      num("scoring.save_per_2", "Saves /2", sc.save_per_2),
-      num("scoring.def_action_per_2", "Def acts /2", sc.def_action_per_2),
-      num("scoring.penalty_saved", "Pen saved", sc.penalty_saved),
-      num("scoring.penalty_missed", "Pen missed", sc.penalty_missed),
-    ])}
-    <div class="text-xs text-slate-400">National-team stage bonuses (cumulative)</div>
-    ${grid(["r32", "r16", "qf", "sf", "final", "winner"].map((s) => num(`stageBonus.${s}`, s.toUpperCase(), sb[s])))}
+// Shared "design your draft" field builders. `data-cfg` keys drive
+// readConfigFromFields; `eff` is an effectiveConfig(...) so blanks never appear.
+const cfgNum = (key, label, val, locked) =>
+  `<label class="text-[11px] text-slate-400">${label}
+    <input data-cfg="${key}" type="number" step="1" value="${val}"${locked ? " disabled" : ""}
+      class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm${locked ? " opacity-60" : ""}"></label>`;
+const cfgGrid = (cells, cols = 4) => `<div class="grid grid-cols-${cols} gap-2">${cells.join("")}</div>`;
+
+function scoringFieldsHtml(eff, locked) {
+  const sc = eff.scoring;
+  return `
+    <div class="text-xs text-slate-400 font-medium">Goals (per position)</div>
+    ${cfgGrid(["GK", "DEF", "MID", "FWD"].map((p) => cfgNum(`scoring.goal.${p}`, p, sc.goal[p], locked)))}
+    <div class="text-xs text-slate-400 font-medium">Clean sheet — ≥60 min (per position)</div>
+    ${cfgGrid(["GK", "DEF", "MID", "FWD"].map((p) => cfgNum(`scoring.clean_sheet.${p}`, p, sc.clean_sheet[p], locked)))}
+    <div class="text-xs text-slate-400 font-medium">Other actions</div>
+    ${cfgGrid([
+      cfgNum("scoring.assist", "Assist", sc.assist, locked),
+      cfgNum("scoring.yellow_card", "Yellow", sc.yellow_card, locked),
+      cfgNum("scoring.red_card", "Red", sc.red_card, locked),
+      cfgNum("scoring.motm", "Top-rated", sc.motm, locked),
+      cfgNum("scoring.save_per_2", "Saves /2", sc.save_per_2, locked),
+      cfgNum("scoring.def_action_per_2", "Def acts /2", sc.def_action_per_2, locked),
+      cfgNum("scoring.penalty_saved", "Pen saved", sc.penalty_saved, locked),
+      cfgNum("scoring.penalty_missed", "Pen missed", sc.penalty_missed, locked),
+    ])}`;
+}
+
+function squadFieldsHtml(eff, locked) {
+  return `
+    <div class="text-xs text-slate-400 font-medium">Squad size per position (draft quota)</div>
+    ${cfgGrid(["GK", "DEF", "MID", "FWD"].map((p) => cfgNum(`quota.${p}`, p, eff.quota[p], locked)))}
+    <div class="text-xs text-slate-400 font-medium">Starters per position (the rest are subs)</div>
+    ${cfgGrid(["GK", "DEF", "MID", "FWD"].map((p) => cfgNum(`starters.${p}`, p, eff.starters[p], locked)))}`;
+}
+
+// Team-pick stage/champion bonuses (no TEAM quota — that's set alongside it).
+function stageBonusFieldsHtml(eff, locked) {
+  const sb = eff.stageBonus;
+  return `
+    <div class="text-xs text-slate-400 font-medium">Stage bonuses — cumulative, per knockout round the team reaches</div>
+    ${cfgGrid(["r32", "r16", "qf", "sf", "final", "winner"].map((s) => cfgNum(`stageBonus.${s}`, s.toUpperCase(), sb[s], locked)), 3)}
     <div class="grid grid-cols-2 gap-2 items-end">
-      ${num("finalPickBonus", "Champion pick bonus", eff.finalPickBonus)}
+      ${cfgNum("finalPickBonus", "Champion pick bonus", eff.finalPickBonus, locked)}
     </div>`;
+}
+
+// The admin editor keeps scoring + team bonuses together (squad/TEAM are set at
+// creation/redraft, not mid-season).
+function configFieldsHtml(eff, opts = {}) {
+  const locked = opts.locked || false;
+  return scoringFieldsHtml(eff, locked) + stageBonusFieldsHtml(eff, locked);
 }
 
 // Read a container's [data-cfg] inputs back into a partial config. Blank fields
