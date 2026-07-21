@@ -305,6 +305,27 @@ create index if not exists messages_league_idx on messages (league_id, created_a
 -- app degrades to no reactions if this column hasn't been added yet.
 alter table messages add column if not exists reactions jsonb;
 
+-- Competition / player-pool (Workstream B, part 3): a league can be tied to an
+-- API-Football competition instead of the static WC-2026 players.json. The
+-- selected competition (small, always loaded with the league row):
+--   { "name": "Premier League", "apiLeagueId": 39, "season": 2024 }
+alter table leagues add column if not exists competition jsonb;
+-- The bulky pool + fixtures live in their own one-row-per-league table so the
+-- frequently-refetched leagues row stays small. Loaded once per session.
+-- players: [{ player_id:"api_<id>", api_id, name, position, team, team_code,
+--             number, photo }]  ·  fixtures: [{ home, away, kickoff_utc, date,
+--             status, round, home_score, away_score }]
+create table if not exists league_pools (
+    league_id uuid primary key references leagues(id) on delete cascade,
+    players jsonb not null default '[]',
+    fixtures jsonb not null default '[]',
+    updated_at timestamptz default now()
+);
+alter table league_pools enable row level security;
+do $$ begin
+    create policy league_pools_all on league_pools for all using (true) with check (true);
+exception when duplicate_object then null; end $$;
+
 -- Realtime: stream changes to connected clients.
 -- (wrapped so re-running this file never errors on already-added tables)
 do $$
