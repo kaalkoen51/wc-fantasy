@@ -273,11 +273,12 @@
     <div id="admin-panel" class="hidden space-y-4">
       <div class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">Competition &amp; players</h3>
-        <p class="text-xs text-slate-500">Pick a competition and pull its teams, squads and fixtures
-          straight from API-Football — this becomes the league's player pool. Leave unset to use the
-          built-in World Cup 2026 squads. <b>Loading replaces the current pool</b>, so do it before
-          anyone drafts. Season = the API's season key (a domestic league's start year, e.g. 2024 for
-          2024/25; a tournament's year).</p>
+        <p class="text-xs text-slate-500">Pick a competition to draft from. Its teams, squads and
+          fixtures are pulled from API-Football <b>once and shared</b> by every league on the same
+          competition — if another league already loaded it, this reuses that data instantly (no
+          re-pull), and one admin's stat pull updates them all. Leave unset for the built-in World
+          Cup 2026 squads. Season = the API's season key (a domestic league's start year, e.g. 2024
+          for 2024/25; a tournament's year).</p>
         <input id="adm-api-key" placeholder="API-Football key" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
         <div id="adm-comp-current" class="text-xs text-wcgold"></div>
         <div class="flex gap-2">
@@ -665,8 +666,9 @@ async function resilientWrite(table, rows, opts = {}) {
 
 /* ---------- API-Football competitions (Workstream B, part 3) ----------
    A league can be tied to an API-Football competition instead of the static
-   WC-2026 players.json. The admin loads it once (teams → squads → fixtures) and
-   it's stored per-league in `league_pools`, so every manager shares one pool. */
+   WC-2026 players.json. The pool (squads + fixtures) and raw stats are pulled
+   ONCE and stored per-competition (keyed by "<apiLeagueId>-<season>"), so every
+   league on the same competition shares them — no duplicated API calls. */
 const COMPETITIONS = [
   { name: "FIFA World Cup",        apiLeagueId: 1,   kind: "cup" },
   { name: "UEFA Champions League", apiLeagueId: 2,   kind: "cup" },
@@ -682,6 +684,10 @@ const COMPETITIONS = [
 ];
 // The league's competition (null → legacy static players.json / fixtures.json).
 const leagueCompetition = () => S.league?.competition || null;
+// Competition data (pool + stats) is SHARED across every league on the same
+// competition, keyed by "<apiLeagueId>-<season>". null → legacy WC league.
+const compKeyOf = (c) => c ? `${c.apiLeagueId}-${c.season}` : null;
+const competitionKey = () => compKeyOf(leagueCompetition());
 
 // --- pure API transforms (unit-tested) ---
 const API_POS = { Goalkeeper: "GK", Defender: "DEF", Midfielder: "MID", Attacker: "FWD" };
@@ -734,21 +740,36 @@ async function fetchCompetitionFixtures(key, apiLeagueId, season) {
   return (await apiFootball(key, "fixtures", { league: apiLeagueId, season })).map(parseApiFixture);
 }
 
-// The per-league stored pool (one row in league_pools), fetched once per
+// The league's competition key, resolving it from the DB when S.league isn't
+// populated yet (loadPlayers runs before refetchAll sets S.league).
+async function resolveCompetitionKey() {
+  let comp = leagueCompetition();
+  if (!comp) {
+    const id = S.league?.id || getSession()?.leagueId;
+    if (!id || !S.sb) return null;
+    try {
+      const { data } = await S.sb.from("leagues").select("competition").eq("id", id).maybeSingle();
+      comp = data?.competition || null;
+    } catch { return null; }
+  }
+  return compKeyOf(comp);
+}
+
+// The SHARED competition pool (one row in competition_pools), fetched once per
 // session. undefined = not yet checked; null = none (legacy static-file league).
-async function loadLeaguePool() {
-  if (S._leaguePool !== undefined) return S._leaguePool;
-  const id = S.league?.id || getSession()?.leagueId;
-  if (!id || !S.sb) return (S._leaguePool = null);
+async function loadCompetitionPool() {
+  if (S._compPool !== undefined) return S._compPool;
+  const key = await resolveCompetitionKey();
+  if (!key || !S.sb) return (S._compPool = null);
   try {
-    const { data } = await S.sb.from("league_pools").select("*").eq("league_id", id).maybeSingle();
-    return (S._leaguePool = data || null);
-  } catch { return (S._leaguePool = null); }
+    const { data } = await S.sb.from("competition_pools").select("*").eq("competition_key", key).maybeSingle();
+    return (S._compPool = data || null);
+  } catch { return (S._compPool = null); }
 }
 
 async function loadPlayers() {
   if (S.players.length) return;
-  const pool = await loadLeaguePool();
+  const pool = await loadCompetitionPool();
   if (pool?.players?.length) {
     S.players = pool.players;                       // API competition pool
   } else {
@@ -767,16 +788,24 @@ async function loadPlayers() {
 async function refetchAll() {
   const id = getSession()?.leagueId;
   if (!id) return;
-  // match_stats outgrows Supabase's 1000-row request cap mid-tournament, so a
-  // plain select silently drops the newest rows (recent games show "did not
-  // play" / no points). Page through it in 1000-row batches, ordered by id for
-  // stable paging, so every row loads.
+  // The league row first, so we know its competition before choosing the stats
+  // source (competition-shared vs legacy per-league).
+  const l = await S.sb.from("leagues").select("*").eq("id", id).maybeSingle();
+  if (l.error) { toast("Load failed: " + l.error.message); return; }
+  if (!l.data) { toast("League not found."); setSession(null); showView("home"); return; }
+  S.league = l.data;
+  const compKey = competitionKey();
+  // Stats outgrow Supabase's 1000-row request cap, so page through them.
+  // Competition leagues read the SHARED competition_stats (one pull serves every
+  // league on that competition); legacy WC leagues read their own match_stats.
   const fetchAllStats = async () => {
     const PAGE = 1000;
     let from = 0, all = [];
     for (;;) {
-      const { data, error } = await S.sb.from("match_stats").select("*")
-        .eq("league_id", id).order("id").range(from, from + PAGE - 1);
+      const q = compKey
+        ? S.sb.from("competition_stats").select("*").eq("competition_key", compKey)
+        : S.sb.from("match_stats").select("*").eq("league_id", id);
+      const { data, error } = await q.order("id").range(from, from + PAGE - 1);
       if (error) return { data: all, error };
       all = all.concat(data || []);
       if (!data || data.length < PAGE) break;
@@ -784,8 +813,7 @@ async function refetchAll() {
     }
     return { data: all, error: null };
   };
-  const [l, m, p, st, tg, tr, sn, tx, msg] = await Promise.all([
-    S.sb.from("leagues").select("*").eq("id", id).maybeSingle(),
+  const [m, p, st, tg, tr, sn, tx, msg] = await Promise.all([
     S.sb.from("managers").select("*").eq("league_id", id).order("created_at"),
     S.sb.from("picks").select("*").eq("league_id", id).order("pick_number"),
     fetchAllStats(),
@@ -799,10 +827,8 @@ async function refetchAll() {
     S.sb.from("messages").select("*").eq("league_id", id)
       .order("created_at"),
   ]);
-  const err = l.error || m.error || p.error || st.error || tg.error || tr.error;
+  const err = m.error || p.error || st.error || tg.error || tr.error;
   if (err) { toast("Load failed: " + err.message); return; }
-  if (!l.data) { toast("League not found."); setSession(null); showView("home"); return; }
-  S.league = l.data;
   S.managers = m.data;
   S.picks = p.data;
   S.stats = st.data;
@@ -824,11 +850,17 @@ const scheduleRefetch = () => { clearTimeout(refetchTimer); refetchTimer = setTi
 function subscribeRealtime() {
   const id = getSession()?.leagueId;
   if (!id || S.channel) return;
+  // Competition leagues watch the SHARED competition_stats (any admin's pull
+  // reaches every league on the competition); legacy WC leagues watch their own.
+  const ck = competitionKey();
+  const statsSub = ck
+    ? { table: "competition_stats", filter: "competition_key=eq." + ck }
+    : { table: "match_stats", filter: "league_id=eq." + id };
   S.channel = S.sb.channel("league-" + id)
     .on("postgres_changes", { event: "*", schema: "public", table: "leagues",     filter: "id=eq." + id },        scheduleRefetch)
     .on("postgres_changes", { event: "*", schema: "public", table: "managers",    filter: "league_id=eq." + id }, scheduleRefetch)
     .on("postgres_changes", { event: "*", schema: "public", table: "picks",       filter: "league_id=eq." + id }, scheduleRefetch)
-    .on("postgres_changes", { event: "*", schema: "public", table: "match_stats", filter: "league_id=eq." + id }, scheduleRefetch)
+    .on("postgres_changes", { event: "*", schema: "public", ...statsSub }, scheduleRefetch)
     .on("postgres_changes", { event: "*", schema: "public", table: "team_stages", filter: "league_id=eq." + id }, scheduleRefetch)
     .on("postgres_changes", { event: "*", schema: "public", table: "trades",      filter: "league_id=eq." + id }, scheduleRefetch)
     // trade_items has no league_id to filter on; unfiltered is fine at this scale.
@@ -846,8 +878,8 @@ function leaveLeague() {
   if (S.channel) { S.sb.removeChannel(S.channel); S.channel = null; }
   setSession(null);
   S.league = null; S.managers = []; S.picks = []; S.stats = [];
-  // Player pool is per-league now — clear it so the next league loads its own.
-  S.players = []; S.teams = []; S.playerById = {}; S.fixtures = null; S._leaguePool = undefined;
+  // Pool is per-competition now — clear it so the next league loads its own.
+  S.players = []; S.teams = []; S.playerById = {}; S.fixtures = null; S._compPool = undefined;
   S.messages = []; S.chatThread = "league"; S._chatSeenLoaded = false;
   $("hdr-league").textContent = "";
   renderHome();
@@ -933,7 +965,7 @@ const TEAM_NAME_FIX = {
 };
 async function loadFixtures() {
   if (S.fixtures) return;
-  const pool = await loadLeaguePool();
+  const pool = await loadCompetitionPool();
   if (pool?.players?.length) {
     // API competition: stored fixtures already use the same API team names as
     // the pool, so no FIFA-name normalization is needed (or wanted).
@@ -5215,49 +5247,64 @@ function mapApiPlayer(team, shirt, apiName) {
   return null;
 }
 
-// Load a whole competition (teams → squads → fixtures) from API-Football and
-// store it as this league's pool. Replaces any existing pool.
+// Tie this league to an API-Football competition. If that competition's pool is
+// already loaded (by any other league), REUSE it — no API calls. Otherwise pull
+// teams → squads → fixtures once into the SHARED competition_pools so every
+// league on the competition reads the same data.
 async function loadCompetition() {
-  const key = $("adm-api-key").value.trim();
+  const apiKey = $("adm-api-key").value.trim();
   const apiLeagueId = +$("adm-comp-select").value;
   const season = +$("adm-comp-season").value;
   const comp = COMPETITIONS.find((c) => c.apiLeagueId === apiLeagueId);
   const name = comp?.name || ("League " + apiLeagueId);
+  const compKey = `${apiLeagueId}-${season}`;
+  const competition = { name, apiLeagueId, season };
   const log = (t) => { $("adm-comp-log").textContent = t; };
-  if (!key) return toast("Enter your API-Football key first.");
   if (!apiLeagueId || !season) return toast("Pick a competition and a season.");
   if ((S.stats?.length || 0) &&
-      !confirm("This league already has scored games — replacing the pool can orphan them. Continue?")) return;
-  if (!confirm(`Load ${name} ${season}? This replaces the league's player pool.`)) return;
-  localStorage.setItem("wcf_apikey", key);
+      !confirm("This league already has scored games — changing competition can orphan them. Continue?")) return;
   const btn = $("adm-comp-load");
   btn.disabled = true;
   try {
-    log("Fetching teams…");
-    const { players, teams } = await fetchCompetitionPool(key, apiLeagueId, season,
-      (d, t, tm) => log(`Loading squads ${d}/${t} — ${tm}`));
-    if (!players.length) throw new Error("No players returned — check the season for this competition.");
-    log(`${players.length} players across ${teams.length} teams. Fetching fixtures…`);
-    const fixtures = await fetchCompetitionFixtures(key, apiLeagueId, season);
-    const competition = { name, apiLeagueId, season };
-    const pool = await S.sb.from("league_pools").upsert(
-      { league_id: S.league.id, players, fixtures, updated_at: new Date().toISOString() });
-    if (pool.error) throw new Error(pool.error.message);
+    log("Checking shared competition data…");
+    const existing = await S.sb.from("competition_pools").select("*")
+      .eq("competition_key", compKey).maybeSingle();
+    if (existing.error) throw new Error(existing.error.message);
+    let players, fixtures;
+    if (existing.data?.players?.length &&
+        confirm(`${name} ${season} is already loaded (${existing.data.players.length} players shared across leagues). Reuse it without re-pulling?  (Cancel = re-pull fresh squads from the API.)`)) {
+      players = existing.data.players;
+      fixtures = existing.data.fixtures || [];
+      log(`Reusing shared pool: ${players.length} players.`);
+    } else {
+      if (!apiKey) { btn.disabled = false; return toast("Enter your API-Football key to pull."); }
+      localStorage.setItem("wcf_apikey", apiKey);
+      log("Fetching teams…");
+      const built = await fetchCompetitionPool(apiKey, apiLeagueId, season,
+        (d, t, tm) => log(`Loading squads ${d}/${t} — ${tm}`));
+      players = built.players;
+      if (!players.length) throw new Error("No players returned — check the season for this competition.");
+      log(`${players.length} players across ${built.teams.length} teams. Fetching fixtures…`);
+      fixtures = await fetchCompetitionFixtures(apiKey, apiLeagueId, season);
+      const up = await S.sb.from("competition_pools").upsert(
+        { competition_key: compKey, players, fixtures, updated_at: new Date().toISOString() });
+      if (up.error) throw new Error(up.error.message);
+    }
     const upd = await S.sb.from("leagues").update({ competition }).eq("id", S.league.id);
     if (upd.error) throw new Error(upd.error.message);
     // Reflect locally without a reload.
     S.league.competition = competition;
-    S._leaguePool = { players, fixtures };
+    S._compPool = { players, fixtures };
     S.players = players;
     S.teams = [...new Set(players.map((p) => p.team))].sort();
     S.playerById = Object.fromEntries(players.map((p) => [p.player_id, p]));
     S.fixtures = fixtures;
-    log(`✅ Loaded ${name} ${season}: ${players.length} players, ${teams.length} teams, ${fixtures.length} fixtures.`);
-    toast("Competition loaded.");
+    log(`✅ ${name} ${season}: ${players.length} players, ${fixtures.length} fixtures.`);
+    toast("Competition set.");
     renderAdmin(); renderBoard();
   } catch (e) {
     log("⚠️ " + e.message);
-    toast(/league_pools|column|schema cache|relation|competition/.test(e.message)
+    toast(/competition_pools|column|schema cache|relation|competition/.test(e.message)
       ? "Pool storage needs a schema update — run schema.sql on the database." : e.message);
   } finally {
     btn.disabled = false;
@@ -5287,6 +5334,12 @@ async function pullStatsNow() {
     const seen = new Set();
     // Which competition's fixtures to pull — the league's, or the WC-2026 default.
     const comp = leagueCompetition() || { apiLeagueId: 1, season: 2026 };
+    // Where the stats land: the SHARED competition_stats (so every league on this
+    // competition sees them from one pull), or the legacy per-league match_stats.
+    const compKey = competitionKey();
+    const statsTable = compKey ? "competition_stats" : "match_stats";
+    const keyField = compKey ? { competition_key: compKey } : { league_id: S.league.id };
+    const onConflict = (compKey ? "competition_key" : "league_id") + ",player_id,match_label";
     const all = [
       ...await apiFootball(key, "fixtures", { date, league: comp.apiLeagueId, season: comp.season }),
       ...await apiFootball(key, "fixtures", { date: prevDate, league: comp.apiLeagueId, season: comp.season }),
@@ -5344,7 +5397,7 @@ async function pullStatsNow() {
             : mapApiPlayer(team, +games.number || 0, e.player.name);
           if (!pid) { skipped.push(`${e.player.name} (${team})`); continue; }
           const row = {
-            league_id: S.league.id, player_id: pid, match_label: label,
+            ...keyField, player_id: pid, match_label: label,
             appeared: true,
             goals: +g.total || 0, assists: +g.assists || 0,
             clean_sheet: minutes >= 60 && !(conceded[tb.team.id] || 0),
@@ -5362,8 +5415,7 @@ async function pullStatsNow() {
         }
       }
       if (best && best.rating >= 7.5) best.row.motm = true; // MOTM heuristic
-      await resilientWrite("match_stats", rows,
-        { upsert: true, onConflict: "league_id,player_id,match_label" });
+      await resilientWrite(statsTable, rows, { upsert: true, onConflict });
       total += rows.length;
       // Diagnostic: the API's max minutes + clean sheets for this match, so a
       // stuck-at-49 game is obviously an upstream (API) issue, not the write.

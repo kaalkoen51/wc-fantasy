@@ -310,20 +310,57 @@ alter table messages add column if not exists reactions jsonb;
 -- selected competition (small, always loaded with the league row):
 --   { "name": "Premier League", "apiLeagueId": 39, "season": 2024 }
 alter table leagues add column if not exists competition jsonb;
--- The bulky pool + fixtures live in their own one-row-per-league table so the
--- frequently-refetched leagues row stays small. Loaded once per session.
+
+-- Competition data is SHARED across every league on the same competition, keyed
+-- by competition_key = '<apiLeagueId>-<season>' (e.g. '39-2024'). Pull the
+-- squads/fixtures/stats ONCE and all ten Premier-League drafts read the same
+-- rows — no duplicated API calls or storage. (League-private data — picks,
+-- managers, trades, scoring config — stays keyed by league_id.)
+
+-- The pool + fixtures for one competition (one row per competition).
 -- players: [{ player_id:"api_<id>", api_id, name, position, team, team_code,
 --             number, photo }]  ·  fixtures: [{ home, away, kickoff_utc, date,
 --             status, round, home_score, away_score }]
-create table if not exists league_pools (
-    league_id uuid primary key references leagues(id) on delete cascade,
+create table if not exists competition_pools (
+    competition_key text primary key,
     players jsonb not null default '[]',
     fixtures jsonb not null default '[]',
     updated_at timestamptz default now()
 );
-alter table league_pools enable row level security;
+alter table competition_pools enable row level security;
 do $$ begin
-    create policy league_pools_all on league_pools for all using (true) with check (true);
+    create policy competition_pools_all on competition_pools for all using (true) with check (true);
+exception when duplicate_object then null; end $$;
+
+-- Shared raw match stats for a competition (mirrors match_stats, minus
+-- league_id). Any league's admin pull writes here once; every league on the
+-- competition reads it. Legacy WC leagues (no competition) keep using match_stats.
+create table if not exists competition_stats (
+    id uuid primary key default gen_random_uuid(),
+    competition_key text not null,
+    player_id text,
+    match_label text,
+    appeared bool default true,
+    goals int default 0,
+    assists int default 0,
+    clean_sheet bool default false,
+    yellow_cards int default 0,
+    red_cards int default 0,
+    saves int default 0,
+    motm bool default false,
+    penalty_saved int default 0,
+    penalty_missed int default 0,
+    defensive_actions int default 0,
+    home_score int default 0,
+    away_score int default 0,
+    minutes int default 0,
+    created_at timestamptz default now(),
+    unique (competition_key, player_id, match_label)
+);
+create index if not exists competition_stats_key_idx on competition_stats (competition_key, id);
+alter table competition_stats enable row level security;
+do $$ begin
+    create policy competition_stats_all on competition_stats for all using (true) with check (true);
 exception when duplicate_object then null; end $$;
 
 -- Realtime: stream changes to connected clients.
@@ -333,7 +370,8 @@ declare t text;
 begin
     foreach t in array array['leagues','managers','picks','match_stats',
                              'team_stages','trades','trade_items',
-                             'lineup_snapshots','transactions','messages'] loop
+                             'lineup_snapshots','transactions','messages',
+                             'competition_stats'] loop
         begin
             execute format('alter publication supabase_realtime add table %I', t);
         exception when duplicate_object then null;
