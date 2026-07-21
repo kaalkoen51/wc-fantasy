@@ -506,6 +506,10 @@ def fetch_scheduled_competitions() -> list:
         headers={"apikey": service_key, "Authorization": f"Bearer {service_key}"},
         timeout=30,
     )
+    # Table not migrated yet (PostgREST 404 / PGRST205) → no-op, stay green.
+    if resp.status_code == 404 or "PGRST205" in resp.text or "does not exist" in resp.text:
+        print("competition_pools not found — run schema.sql to enable scheduled pulls.")
+        return []
     if resp.status_code >= 400:
         sys.exit(f"Supabase read failed ({resp.status_code}): {resp.text}")
     return [r["competition_key"] for r in resp.json()]
