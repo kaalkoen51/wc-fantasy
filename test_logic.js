@@ -17,13 +17,13 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, scoring, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, scoring, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         scoring, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota,
         apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture,
-        fetchCompetitionPool, fetchCompetitionFixtures,
+        fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey,
         slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick,
         posQuota, picksPerManager, totalPicks,
         playerBreakdown, playerPoints, suspendedNext, resilientWrite,
@@ -1050,6 +1050,15 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
         : [{ players: [{ id: 3, name: "Palmer", position: "Midfielder", number: 20 }, { id: 1, name: "Saka", position: "Attacker", number: 7 }] }];
     return { json: async () => ({ response, errors: {} }) };
   };
+  // Competition key: shared across every league on the same competition+season.
+  check("compKeyOf builds <league>-<season>", compKeyOf({ apiLeagueId: 39, season: 2024 }), "39-2024");
+  check("compKeyOf is null with no competition", compKeyOf(null), null);
+  S.league = { competition: { apiLeagueId: 2, season: 2025 } };
+  check("competitionKey reads the league's competition", competitionKey(), "2-2025");
+  S.league = {};
+  check("competitionKey null for a legacy league", competitionKey(), null);
+  S.league = null;
+
   const built = await fetchCompetitionPool("k", 39, 2024);
   check("fetchCompetitionPool dedups a player across squads", built.players.length, 3);
   check("fetchCompetitionPool sorts team names", built.teams, ["Arsenal", "Chelsea"]);
