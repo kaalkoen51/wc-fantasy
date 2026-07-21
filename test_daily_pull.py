@@ -13,6 +13,7 @@ import daily_pull
 from daily_pull import (
     PLAYERS_JSON,
     PlayerMatcher,
+    build_competition_payload,
     build_stats_payload,
     extract_player_rows,
     featured,
@@ -197,6 +198,51 @@ class TestExtractPlayerRows(unittest.TestCase):
             by_api["154"]["match_label"],
             "Argentina vs Scotland (2026-06-15)",
         )
+
+
+class TestCompetitionMode(unittest.TestCase):
+    """Scheduled competition pull: API ids (not the FIFA matcher), raw team
+    names, and a competition-keyed payload."""
+
+    def make_fixture(self):
+        return {
+            "fixture": {"id": 7, "date": "2026-08-15T18:00:00+00:00"},
+            "teams": {"home": {"id": 33, "name": "Manchester United"},
+                      "away": {"id": 40, "name": "Liverpool"}},
+            "goals": {"home": 1, "away": 2},
+        }
+
+    def make_teams_data(self):
+        return [{
+            "team": {"id": 33, "name": "Manchester United"},
+            "players": [{
+                "player": {"id": 500, "name": "B. Fernandes"},
+                "statistics": [{
+                    "games": {"minutes": 90, "position": "Midfielder",
+                              "number": 8, "rating": "7.6"},
+                    "goals": {"total": 1}, "cards": {}, "penalty": {}, "tackles": {},
+                }],
+            }],
+        }]
+
+    def test_uses_api_ids_and_raw_team_names(self):
+        rows = extract_player_rows(
+            self.make_fixture(), self.make_teams_data(), None, use_api_ids=True)
+        r = rows[0]
+        self.assertEqual(r["player_id"], "api_500")       # API id, not a FIFA map
+        self.assertEqual(r["match_note"], "api-id")
+        self.assertEqual(r["position"], "MID")
+        # raw API team names (no FIFA normalization) so labels match stored fixtures
+        self.assertEqual(r["match_label"], "Manchester United vs Liverpool (2026-08-15)")
+
+    def test_competition_payload_keys_by_competition(self):
+        rows = extract_player_rows(
+            self.make_fixture(), self.make_teams_data(), None, use_api_ids=True)
+        payload = build_competition_payload(rows, "39-2024")
+        self.assertEqual(payload[0]["competition_key"], "39-2024")
+        self.assertEqual(payload[0]["player_id"], "api_500")
+        self.assertEqual(payload[0]["goals"], 1)
+        self.assertNotIn("league_id", payload[0])
 
 
 class TestMultiLeague(unittest.TestCase):

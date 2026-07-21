@@ -264,18 +264,24 @@ def featured(row: dict) -> bool:
     return bool(row.get("minutes")) or any(row.get(k) for k in STAT_FIELDS)
 
 
-def extract_player_rows(fixture: dict, teams_data: list, matcher: PlayerMatcher) -> list:
+def extract_player_rows(
+    fixture: dict, teams_data: list, matcher, use_api_ids: bool = False
+) -> list:
     """Flatten API-Football fixture-player stats into per-player dicts.
 
-    `player_id` is the FIFA squad-list id from players.json (the id the app
-    scores by), or None when the player could not be mapped — those rows
-    must not be upserted.
+    `player_id` is the FIFA squad-list id from players.json (the id the WC app
+    scores by), or None when the player could not be mapped — those rows must
+    not be upserted. In competition mode (`use_api_ids=True`) there is no
+    matcher: the player_id is the API id ("api_<id>", matching the app's
+    API-loaded pool) and team names are the API's own (no FIFA normalization),
+    so labels line up with the stored competition fixtures.
     """
     home = fixture["teams"]["home"]
     away = fixture["teams"]["away"]
     goals = fixture.get("goals", {})
+    namefn = (lambda n: n) if use_api_ids else fix_team_name
     match_label = (
-        f"{fix_team_name(home['name'])} vs {fix_team_name(away['name'])} "
+        f"{namefn(home['name'])} vs {namefn(away['name'])} "
         f"({fixture['fixture']['date'][:10]})"
     )
 
@@ -304,18 +310,26 @@ def extract_player_rows(fixture: dict, teams_data: list, matcher: PlayerMatcher)
 
             api_name = player.get("name", "Unknown")
             shirt = to_int(games.get("number")) or None
-            matched, match_note = matcher.match(api_name, team_name, shirt)
+            if use_api_ids:
+                api_id = player.get("id")
+                resolved_id = f"api_{api_id}" if api_id is not None else None
+                resolved_name, resolved_pos, match_note = api_name, position, "api-id"
+            else:
+                matched, match_note = matcher.match(api_name, team_name, shirt)
+                resolved_id = matched["player_id"] if matched else None
+                resolved_name = matched["name"] if matched else api_name
+                # the app scores by the squad-list position, so prefer it
+                resolved_pos = matched["position"] if matched else position
 
             rows.append(
                 {
-                    "player_id": matched["player_id"] if matched else None,
-                    "player_name": matched["name"] if matched else api_name,
+                    "player_id": resolved_id,
+                    "player_name": resolved_name,
                     "api_player_id": str(player.get("id")),
                     "api_name": api_name,
-                    "team": fix_team_name(team_name),
+                    "team": namefn(team_name),
                     "match_note": match_note,
-                    # the app scores by the squad-list position, so prefer it
-                    "position": matched["position"] if matched else position,
+                    "position": resolved_pos,
                     "match_label": match_label,
                     "minutes": minutes,
                     "rating": to_float(games.get("rating")),
@@ -383,6 +397,28 @@ def parse_league_ids(value) -> list:
     return [s.strip() for s in (value or "").split(",") if s.strip()]
 
 
+def _stat_columns(row: dict) -> dict:
+    """The raw stat columns shared by match_stats and competition_stats."""
+    return {
+        "player_id": row["player_id"],
+        "match_label": row["match_label"],
+        "appeared": True,
+        "goals": row["goals"],
+        "assists": row["assists"],
+        "clean_sheet": row["minutes"] >= 60 and row["conceded"] == 0,
+        "yellow_cards": row["yellow_cards"],
+        "red_cards": row["red_cards"],
+        "saves": row["saves"],
+        "motm": row["motm"],
+        "penalty_saved": row["penalty_saved"],
+        "penalty_missed": row["penalty_missed"],
+        "defensive_actions": row["defensive_actions"],
+        "home_score": row.get("home_score"),
+        "away_score": row.get("away_score"),
+        "minutes": row.get("minutes"),
+    }
+
+
 def build_stats_payload(rows: list, league_ids) -> list:
     """One match_stats upsert entry per (row, league). The API fetching
     is league-independent — fan-out across leagues only multiplies the
@@ -390,28 +426,16 @@ def build_stats_payload(rows: list, league_ids) -> list:
     if isinstance(league_ids, str):
         league_ids = parse_league_ids(league_ids)
     return [
-        {
-            "league_id": league_id,
-            "player_id": row["player_id"],
-            "match_label": row["match_label"],
-            "appeared": True,
-            "goals": row["goals"],
-            "assists": row["assists"],
-            "clean_sheet": row["minutes"] >= 60 and row["conceded"] == 0,
-            "yellow_cards": row["yellow_cards"],
-            "red_cards": row["red_cards"],
-            "saves": row["saves"],
-            "motm": row["motm"],
-            "penalty_saved": row["penalty_saved"],
-            "penalty_missed": row["penalty_missed"],
-            "defensive_actions": row["defensive_actions"],
-            "home_score": row.get("home_score"),
-            "away_score": row.get("away_score"),
-            "minutes": row.get("minutes"),
-        }
+        {"league_id": league_id, **_stat_columns(row)}
         for league_id in league_ids
         for row in rows
     ]
+
+
+def build_competition_payload(rows: list, competition_key: str) -> list:
+    """One competition_stats entry per row — shared by every league on the
+    competition (keyed by competition_key, not league)."""
+    return [{"competition_key": competition_key, **_stat_columns(row)} for row in rows]
 
 
 # Columns added by later, additive schema.sql migrations. If the
@@ -424,17 +448,16 @@ OPTIONAL_COLUMNS = ("home_score", "away_score", "defensive_actions", "minutes")
 MISSING_COLUMN_RE = re.compile(r"Could not find the '(\w+)' column")
 
 
-def upsert_match_stats(rows: list, league_ids) -> None:
+def _post_upsert(table: str, on_conflict: str, payload: list) -> list:
+    """POST an upsert to a PostgREST table, dropping unapplied-migration
+    optional columns and retrying. Returns the list of dropped columns."""
     supabase_url = require_env("SUPABASE_URL", "Supabase project URL")
     service_key = require_env("SUPABASE_SERVICE_KEY", "Supabase service role key")
-
-    payload = build_stats_payload(rows, league_ids)
-
     dropped = []
     while True:
         resp = requests.post(
-            f"{supabase_url.rstrip('/')}/rest/v1/match_stats",
-            params={"on_conflict": "league_id,player_id,match_label"},
+            f"{supabase_url.rstrip('/')}/rest/v1/{table}",
+            params={"on_conflict": on_conflict},
             headers={
                 "apikey": service_key,
                 "Authorization": f"Bearer {service_key}",
@@ -445,7 +468,7 @@ def upsert_match_stats(rows: list, league_ids) -> None:
             timeout=30,
         )
         if resp.status_code < 400:
-            break
+            return dropped
         col = (MISSING_COLUMN_RE.search(resp.text) or [None, None])[1]
         if col in OPTIONAL_COLUMNS and col not in dropped:
             for row in payload:
@@ -454,10 +477,38 @@ def upsert_match_stats(rows: list, league_ids) -> None:
             continue
         sys.exit(f"Supabase upsert failed ({resp.status_code}): {resp.text}")
 
+
+def upsert_match_stats(rows: list, league_ids) -> None:
+    payload = build_stats_payload(rows, league_ids)
+    dropped = _post_upsert("match_stats", "league_id,player_id,match_label", payload)
     leagues = max(1, len(payload) // max(1, len(rows)))
     note = f" (dropped missing column(s): {', '.join(dropped)} — run schema.sql)" \
         if dropped else ""
     print(f"Upserted {len(rows)} rows x {leagues} league(s) to match_stats.{note}")
+
+
+def upsert_competition_stats(rows: list, competition_key: str) -> None:
+    payload = build_competition_payload(rows, competition_key)
+    dropped = _post_upsert(
+        "competition_stats", "competition_key,player_id,match_label", payload)
+    note = f" (dropped missing column(s): {', '.join(dropped)} — run schema.sql)" \
+        if dropped else ""
+    print(f"Upserted {len(rows)} rows to competition_stats[{competition_key}].{note}")
+
+
+def fetch_scheduled_competitions() -> list:
+    """competition_keys whose app-admin scheduled-pull toggle is on."""
+    supabase_url = require_env("SUPABASE_URL", "Supabase project URL")
+    service_key = require_env("SUPABASE_SERVICE_KEY", "Supabase service role key")
+    resp = requests.get(
+        f"{supabase_url.rstrip('/')}/rest/v1/competition_pools",
+        params={"scheduled": "eq.true", "select": "competition_key"},
+        headers={"apikey": service_key, "Authorization": f"Bearer {service_key}"},
+        timeout=30,
+    )
+    if resp.status_code >= 400:
+        sys.exit(f"Supabase read failed ({resp.status_code}): {resp.text}")
+    return [r["competition_key"] for r in resp.json()]
 
 
 def print_summary(rows: list) -> None:
@@ -472,6 +523,43 @@ def print_summary(rows: list) -> None:
             f"{row['points']:>4}  {row['position']:<4} "
             f"{row['player_name']:<28} {row['match_label']}"
         )
+
+
+def pull_competition_rows(date: str, league_id: int, season: int, mock: bool) -> list:
+    """Completed-match player rows for one competition, keyed by API id."""
+    fixtures = fetch_fixtures(date, league_id, season, mock)
+    rows = []
+    for fixture in fixtures:
+        teams_data = fetch_fixture_players(fixture["fixture"]["id"], mock)
+        rows.extend(extract_player_rows(fixture, teams_data, None, use_api_ids=True))
+    return [r for r in rows if featured(r) and r["player_id"]]
+
+
+def run_competition_pulls(date: str, mock: bool, dry_run: bool) -> None:
+    """Pull every competition whose app-admin scheduled toggle is on into the
+    shared competition_stats — one pull serves every league on it."""
+    keys = fetch_scheduled_competitions()
+    if not keys:
+        print("No competitions have scheduled pulls enabled. Nothing to do.")
+        return
+    print(f"{len(keys)} scheduled competition(s): {', '.join(keys)}")
+    for key in keys:
+        try:
+            lid_s, season_s = key.split("-")
+            league_id, season = int(lid_s), int(season_s)
+        except ValueError:
+            print(f"  skip malformed competition_key {key!r}")
+            continue
+        rows = pull_competition_rows(date, league_id, season, mock)
+        print(f"  {key} (league {league_id}, season {season}): {len(rows)} player rows")
+        if not rows:
+            continue
+        for row in rows:
+            row["points"] = calculate_points(row)
+        if dry_run:
+            print(f"  [dry-run] would upsert {len(rows)} rows to competition_stats[{key}]")
+            continue
+        upsert_competition_stats(rows, key)
 
 
 def main() -> None:
@@ -508,7 +596,24 @@ def main() -> None:
         action="store_true",
         help="Use bundled sample data from mock_data/ instead of the network",
     )
+    parser.add_argument(
+        "--competitions",
+        action="store_true",
+        help="Pull every competition whose app-admin scheduled toggle is on "
+        "(from competition_pools) into the shared competition_stats, instead of "
+        "the WC/FANTASY_LEAGUE_ID match_stats pull.",
+    )
     args = parser.parse_args()
+
+    # Competition mode: shared per-competition pull driven by the app toggles.
+    if args.competitions:
+        print(
+            f"Scheduled competition pull for {args.date}"
+            + (" [mock]" if args.mock else "")
+            + (" [dry-run]" if args.dry_run else "")
+        )
+        run_competition_pulls(args.date, args.mock, args.dry_run)
+        return
 
     league_ids = parse_league_ids(args.league_id)
     if not args.dry_run and not league_ids:
