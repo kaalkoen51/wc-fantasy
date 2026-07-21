@@ -272,12 +272,26 @@
     </div>
     <div id="admin-panel" class="hidden space-y-4">
       <div class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
+        <h3 class="font-semibold text-sm">Competition &amp; players</h3>
+        <p class="text-xs text-slate-500">Pick a competition and pull its teams, squads and fixtures
+          straight from API-Football — this becomes the league's player pool. Leave unset to use the
+          built-in World Cup 2026 squads. <b>Loading replaces the current pool</b>, so do it before
+          anyone drafts. Season = the API's season key (a domestic league's start year, e.g. 2024 for
+          2024/25; a tournament's year).</p>
+        <input id="adm-api-key" placeholder="API-Football key" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+        <div id="adm-comp-current" class="text-xs text-wcgold"></div>
+        <div class="flex gap-2">
+          <select id="adm-comp-select" class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm"></select>
+          <input id="adm-comp-season" type="number" placeholder="Season" class="w-24 shrink-0 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm">
+        </div>
+        <button id="adm-comp-load" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg px-4 py-2 text-sm font-semibold">Load competition from API</button>
+        <pre id="adm-comp-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
+      </div>
+      <div class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">Pull stats now</h3>
         <p class="text-xs text-slate-500">Fetches completed matches for the chosen date straight
           from API-Football and writes everyone's stats — same as the 06:00 automated pull, on
-          demand. Your API key is stored only on this device. In-progress games are skipped;
-          re-pull after the final whistle.</p>
-        <input id="adm-api-key" placeholder="API-Football key" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+          demand. In-progress games are skipped; re-pull after the final whistle.</p>
         <div class="flex gap-2">
           <input id="adm-pull-date" type="date" class="flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
           <button id="adm-pull-now" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-4 py-2 text-sm font-semibold">Pull stats now</button>
@@ -649,17 +663,105 @@ async function resilientWrite(table, rows, opts = {}) {
 
 /* ---------- data loading & realtime ---------- */
 
+/* ---------- API-Football competitions (Workstream B, part 3) ----------
+   A league can be tied to an API-Football competition instead of the static
+   WC-2026 players.json. The admin loads it once (teams → squads → fixtures) and
+   it's stored per-league in `league_pools`, so every manager shares one pool. */
+const COMPETITIONS = [
+  { name: "FIFA World Cup",        apiLeagueId: 1,   kind: "cup" },
+  { name: "UEFA Champions League", apiLeagueId: 2,   kind: "cup" },
+  { name: "UEFA Europa League",    apiLeagueId: 3,   kind: "cup" },
+  { name: "UEFA Euro",             apiLeagueId: 4,   kind: "cup" },
+  { name: "UEFA Nations League",   apiLeagueId: 5,   kind: "cup" },
+  { name: "Copa América",          apiLeagueId: 9,   kind: "cup" },
+  { name: "Premier League",        apiLeagueId: 39,  kind: "league" },
+  { name: "La Liga",               apiLeagueId: 140, kind: "league" },
+  { name: "Serie A",               apiLeagueId: 135, kind: "league" },
+  { name: "Bundesliga",            apiLeagueId: 78,  kind: "league" },
+  { name: "Ligue 1",               apiLeagueId: 61,  kind: "league" },
+];
+// The league's competition (null → legacy static players.json / fixtures.json).
+const leagueCompetition = () => S.league?.competition || null;
+
+// --- pure API transforms (unit-tested) ---
+const API_POS = { Goalkeeper: "GK", Defender: "DEF", Midfielder: "MID", Attacker: "FWD" };
+const apiPosToSlot = (pos) => API_POS[pos] || "MID";
+const teamCodeFrom = (name, code) =>
+  code || String(name || "").replace(/[^A-Za-z]/g, "").slice(0, 3).toUpperCase() || "TBD";
+
+// One API squad player → the app's player record. player_id = "api_<id>" so
+// stats match exactly by id later (no name/shirt guessing).
+function parseSquadPlayer(ap, teamName, teamCode) {
+  return {
+    player_id: "api_" + ap.id, api_id: ap.id,
+    name: ap.name, position: apiPosToSlot(ap.position),
+    team: teamName, team_code: teamCode,
+    number: ap.number ?? null, photo: ap.photo || null,
+  };
+}
+// One API fixture → the app's fixture record (same shape as fixtures.json).
+function parseApiFixture(f) {
+  return {
+    home: f.teams.home.name, away: f.teams.away.name,
+    kickoff_utc: f.fixture.date, date: String(f.fixture.date || "").slice(0, 10),
+    status: f.fixture.status?.short || "NS",
+    round: f.league?.round || null,
+    home_score: f.goals?.home ?? null, away_score: f.goals?.away ?? null,
+  };
+}
+
+// Fetch a competition's whole pool: teams → each team's squad (thin wrapper
+// around the pure transforms above; onProgress(done, total, team) for the UI).
+async function fetchCompetitionPool(key, apiLeagueId, season, onProgress) {
+  const teams = await apiFootball(key, "teams", { league: apiLeagueId, season });
+  if (!teams.length) throw new Error("No teams found — check the competition and season.");
+  const byId = {};   // dedup players who appear in two squads
+  const names = [];
+  let done = 0;
+  for (const t of teams) {
+    const teamName = t.team.name, code = teamCodeFrom(teamName, t.team.code);
+    names.push(teamName);
+    onProgress && onProgress(++done, teams.length, teamName);
+    const squads = await apiFootball(key, "players/squads", { team: t.team.id });
+    for (const ap of (squads[0]?.players || [])) {
+      const p = parseSquadPlayer(ap, teamName, code);
+      if (!byId[p.player_id]) byId[p.player_id] = p;
+    }
+  }
+  return { players: Object.values(byId), teams: [...new Set(names)].sort() };
+}
+async function fetchCompetitionFixtures(key, apiLeagueId, season) {
+  return (await apiFootball(key, "fixtures", { league: apiLeagueId, season })).map(parseApiFixture);
+}
+
+// The per-league stored pool (one row in league_pools), fetched once per
+// session. undefined = not yet checked; null = none (legacy static-file league).
+async function loadLeaguePool() {
+  if (S._leaguePool !== undefined) return S._leaguePool;
+  const id = S.league?.id || getSession()?.leagueId;
+  if (!id || !S.sb) return (S._leaguePool = null);
+  try {
+    const { data } = await S.sb.from("league_pools").select("*").eq("league_id", id).maybeSingle();
+    return (S._leaguePool = data || null);
+  } catch { return (S._leaguePool = null); }
+}
+
 async function loadPlayers() {
   if (S.players.length) return;
-  try {
-    const resp = await fetch("players.json");
-    S.players = await resp.json();
-    S.teams = [...new Set(S.players.map((p) => p.team))].sort();
-    S.playerById = Object.fromEntries(S.players.map((p) => [p.player_id, p]));
-  } catch (e) {
-    toast("Could not load players.json — serve this file over HTTP (e.g. GitHub Pages or `python -m http.server`).");
-    throw e;
+  const pool = await loadLeaguePool();
+  if (pool?.players?.length) {
+    S.players = pool.players;                       // API competition pool
+  } else {
+    try {
+      const resp = await fetch("players.json");     // legacy static WC pool
+      S.players = await resp.json();
+    } catch (e) {
+      toast("Could not load players.json — serve this file over HTTP (e.g. GitHub Pages or `python -m http.server`).");
+      throw e;
+    }
   }
+  S.teams = [...new Set(S.players.map((p) => p.team))].sort();
+  S.playerById = Object.fromEntries(S.players.map((p) => [p.player_id, p]));
 }
 
 async function refetchAll() {
@@ -744,6 +846,8 @@ function leaveLeague() {
   if (S.channel) { S.sb.removeChannel(S.channel); S.channel = null; }
   setSession(null);
   S.league = null; S.managers = []; S.picks = []; S.stats = [];
+  // Player pool is per-league now — clear it so the next league loads its own.
+  S.players = []; S.teams = []; S.playerById = {}; S.fixtures = null; S._leaguePool = undefined;
   S.messages = []; S.chatThread = "league"; S._chatSeenLoaded = false;
   $("hdr-league").textContent = "";
   renderHome();
@@ -829,6 +933,13 @@ const TEAM_NAME_FIX = {
 };
 async function loadFixtures() {
   if (S.fixtures) return;
+  const pool = await loadLeaguePool();
+  if (pool?.players?.length) {
+    // API competition: stored fixtures already use the same API team names as
+    // the pool, so no FIFA-name normalization is needed (or wanted).
+    S.fixtures = pool.fixtures || [];
+    return;
+  }
   try {
     // no-store: fixtures.json is rebuilt daily (and scores change during games).
     // GitHub Pages caches static files ~10 min, so without this a stale copy
@@ -5104,6 +5215,55 @@ function mapApiPlayer(team, shirt, apiName) {
   return null;
 }
 
+// Load a whole competition (teams → squads → fixtures) from API-Football and
+// store it as this league's pool. Replaces any existing pool.
+async function loadCompetition() {
+  const key = $("adm-api-key").value.trim();
+  const apiLeagueId = +$("adm-comp-select").value;
+  const season = +$("adm-comp-season").value;
+  const comp = COMPETITIONS.find((c) => c.apiLeagueId === apiLeagueId);
+  const name = comp?.name || ("League " + apiLeagueId);
+  const log = (t) => { $("adm-comp-log").textContent = t; };
+  if (!key) return toast("Enter your API-Football key first.");
+  if (!apiLeagueId || !season) return toast("Pick a competition and a season.");
+  if ((S.stats?.length || 0) &&
+      !confirm("This league already has scored games — replacing the pool can orphan them. Continue?")) return;
+  if (!confirm(`Load ${name} ${season}? This replaces the league's player pool.`)) return;
+  localStorage.setItem("wcf_apikey", key);
+  const btn = $("adm-comp-load");
+  btn.disabled = true;
+  try {
+    log("Fetching teams…");
+    const { players, teams } = await fetchCompetitionPool(key, apiLeagueId, season,
+      (d, t, tm) => log(`Loading squads ${d}/${t} — ${tm}`));
+    if (!players.length) throw new Error("No players returned — check the season for this competition.");
+    log(`${players.length} players across ${teams.length} teams. Fetching fixtures…`);
+    const fixtures = await fetchCompetitionFixtures(key, apiLeagueId, season);
+    const competition = { name, apiLeagueId, season };
+    const pool = await S.sb.from("league_pools").upsert(
+      { league_id: S.league.id, players, fixtures, updated_at: new Date().toISOString() });
+    if (pool.error) throw new Error(pool.error.message);
+    const upd = await S.sb.from("leagues").update({ competition }).eq("id", S.league.id);
+    if (upd.error) throw new Error(upd.error.message);
+    // Reflect locally without a reload.
+    S.league.competition = competition;
+    S._leaguePool = { players, fixtures };
+    S.players = players;
+    S.teams = [...new Set(players.map((p) => p.team))].sort();
+    S.playerById = Object.fromEntries(players.map((p) => [p.player_id, p]));
+    S.fixtures = fixtures;
+    log(`✅ Loaded ${name} ${season}: ${players.length} players, ${teams.length} teams, ${fixtures.length} fixtures.`);
+    toast("Competition loaded.");
+    renderAdmin(); renderBoard();
+  } catch (e) {
+    log("⚠️ " + e.message);
+    toast(/league_pools|column|schema cache|relation|competition/.test(e.message)
+      ? "Pool storage needs a schema update — run schema.sql on the database." : e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function pullStatsNow() {
   const key = $("adm-api-key").value.trim();
   const date = $("adm-pull-date").value;
@@ -5125,9 +5285,11 @@ async function pullStatsNow() {
     const done = ["FT", "AET", "PEN"];
     const notStarted = ["NS", "TBD", "PST", "CANC", "SUSP"];
     const seen = new Set();
+    // Which competition's fixtures to pull — the league's, or the WC-2026 default.
+    const comp = leagueCompetition() || { apiLeagueId: 1, season: 2026 };
     const all = [
-      ...await apiFootball(key, "fixtures", { date, league: 1, season: 2026 }),
-      ...await apiFootball(key, "fixtures", { date: prevDate, league: 1, season: 2026 }),
+      ...await apiFootball(key, "fixtures", { date, league: comp.apiLeagueId, season: comp.season }),
+      ...await apiFootball(key, "fixtures", { date: prevDate, league: comp.apiLeagueId, season: comp.season }),
     ].filter((f) => !seen.has(f.fixture.id) && seen.add(f.fixture.id));
     const fixtures = all.filter((f) => done.includes(f.fixture.status.short));
     // Games still being played are excluded (their stats aren't final) — call
@@ -5145,9 +5307,12 @@ async function pullStatsNow() {
     const skipped = [];
     const summary = [];
     let total = 0;
+    // FIFA-name normalization only applies to the legacy WC pool; an API
+    // competition's stored fixtures/pool already use the API's own team names.
+    const fixName = leagueCompetition() ? (n) => n : (n) => TEAM_NAME_FIX[n] || n;
     for (const f of fixtures) {
-      const home = TEAM_NAME_FIX[f.teams.home.name] || f.teams.home.name;
-      const away = TEAM_NAME_FIX[f.teams.away.name] || f.teams.away.name;
+      const home = fixName(f.teams.home.name);
+      const away = fixName(f.teams.away.name);
       const label = `${home} vs ${away} (${f.fixture.date.slice(0, 10)})`;
       log(`Pulling ${label}…`);
       const conceded = { [f.teams.home.id]: f.goals.away || 0,
@@ -5156,7 +5321,7 @@ async function pullStatsNow() {
       let best = null;
       for (const tb of await apiFootball(key, "fixtures/players",
                                          { fixture: f.fixture.id })) {
-        const team = TEAM_NAME_FIX[tb.team.name] || tb.team.name;
+        const team = fixName(tb.team.name);
         for (const e of tb.players) {
           const st = (e.statistics || [])[0] || {};
           const games = st.games || {};
@@ -5172,7 +5337,11 @@ async function pullStatsNow() {
             || (+cards.yellow || 0) || (+cards.red || 0)
             || (+pen.saved || 0) || (+pen.missed || 0) || def;
           if (!minutes && !contributed) continue;
-          const pid = mapApiPlayer(team, +games.number || 0, e.player.name);
+          // API-loaded pools carry the API id, so match exactly; the legacy WC
+          // pool falls back to name/shirt matching.
+          const pid = S.playerById["api_" + e.player.id]
+            ? "api_" + e.player.id
+            : mapApiPlayer(team, +games.number || 0, e.player.name);
           if (!pid) { skipped.push(`${e.player.name} (${team})`); continue; }
           const row = {
             league_id: S.league.id, player_id: pid, match_label: label,
@@ -5507,6 +5676,16 @@ function renderAdmin() {
   $("admin-panel").classList.toggle("hidden", !ok);
   if (!ok) return;
   renderConfigEditor();
+  // Competition selector + current-pool status.
+  if (!$("adm-comp-select").options.length)
+    $("adm-comp-select").innerHTML = COMPETITIONS.map((c) =>
+      `<option value="${c.apiLeagueId}">${esc(c.name)}</option>`).join("");
+  if (!$("adm-comp-season").value) $("adm-comp-season").value = new Date().getFullYear();
+  const curComp = leagueCompetition();
+  if (curComp) $("adm-comp-select").value = curComp.apiLeagueId;
+  $("adm-comp-current").textContent = curComp
+    ? `Current: ${curComp.name} ${curComp.season} — ${S.players.length} players`
+    : "Current: built-in World Cup 2026 squads";
   admQuotaSizePreview();
   if (!$("adm-home").options.length) {
     const opts = (sel) => $(sel).innerHTML =
@@ -5663,6 +5842,7 @@ function wire() {
   ["adm-q-gk", "adm-q-def", "adm-q-mid", "adm-q-fwd", "adm-q-flex"].forEach((id) =>
     $(id).oninput = admQuotaSizePreview);
   $("adm-pull-now").onclick = () => pullStatsNow().catch((e) => toast(e.message));
+  $("adm-comp-load").onclick = () => loadCompetition().catch((e) => toast(e.message));
   $("adm-snapshot").onclick = () => {
     if (confirm("Snapshot every manager's current lineup as the locked state from today?"))
       snapshotRosters().then(() => { toast("Lineups locked."); scheduleRefetch(); })

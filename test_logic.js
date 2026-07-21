@@ -17,11 +17,13 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, scoring, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, scoring, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         scoring, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota,
+        apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture,
+        fetchCompetitionPool, fetchCompetitionFixtures,
         slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick,
         posQuota, picksPerManager, totalPicks,
         playerBreakdown, playerPoints, suspendedNext, resilientWrite,
@@ -1017,6 +1019,45 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
   try { await resilientWrite("trade_items", [{ trade_id: "t1" }]); }
   catch { threw = true; }
   check("resilientWrite rethrows a real error", threw, true);
+
+  /* Workstream B part 3: API-Football competition transforms + pool fetch. */
+  check("apiPosToSlot maps API positions",
+    ["Goalkeeper", "Defender", "Midfielder", "Attacker", "?"].map(apiPosToSlot),
+    ["GK", "DEF", "MID", "FWD", "MID"]);
+  check("teamCodeFrom uses the API code when present", teamCodeFrom("Chelsea", "CHE"), "CHE");
+  check("teamCodeFrom derives a code from the name", teamCodeFrom("Manchester United", null), "MAN");
+  const sp = parseSquadPlayer(
+    { id: 42, name: "Bukayo Saka", position: "Attacker", number: 7, photo: "x.png" }, "Arsenal", "ARS");
+  check("parseSquadPlayer builds api_ id + fields",
+    [sp.player_id, sp.api_id, sp.position, sp.team, sp.team_code, sp.number],
+    ["api_42", 42, "FWD", "Arsenal", "ARS", 7]);
+  const fx = parseApiFixture({ fixture: { id: 9, date: "2026-08-15T14:00:00+00:00", status: { short: "NS" } },
+    teams: { home: { name: "Arsenal" }, away: { name: "Chelsea" } },
+    goals: { home: null, away: null }, league: { round: "Regular Season - 1" } });
+  check("parseApiFixture matches the fixtures.json shape",
+    [fx.home, fx.away, fx.date, fx.status, fx.round], ["Arsenal", "Chelsea", "2026-08-15", "NS", "Regular Season - 1"]);
+
+  // fetchCompetitionPool: teams → squads, deduping a player in two squads.
+  const savedFetch = global.fetch;
+  global.fetch = async (url) => {
+    const u = new URL(url), path = u.pathname;
+    let response = [];
+    if (path === "/teams")
+      response = [{ team: { id: 10, name: "Arsenal", code: "ARS" } }, { team: { id: 11, name: "Chelsea", code: null } }];
+    else if (path === "/players/squads")
+      response = u.searchParams.get("team") === "10"
+        ? [{ players: [{ id: 1, name: "Saka", position: "Attacker", number: 7 }, { id: 2, name: "Rice", position: "Midfielder", number: 41 }] }]
+        : [{ players: [{ id: 3, name: "Palmer", position: "Midfielder", number: 20 }, { id: 1, name: "Saka", position: "Attacker", number: 7 }] }];
+    return { json: async () => ({ response, errors: {} }) };
+  };
+  const built = await fetchCompetitionPool("k", 39, 2024);
+  check("fetchCompetitionPool dedups a player across squads", built.players.length, 3);
+  check("fetchCompetitionPool sorts team names", built.teams, ["Arsenal", "Chelsea"]);
+  check("fetchCompetitionPool keeps first team for a dup player",
+    built.players.find((p) => p.player_id === "api_1").team, "Arsenal");
+  check("fetchCompetitionPool derives a code for a codeless team",
+    built.players.find((p) => p.team === "Chelsea").team_code, "CHE");
+  global.fetch = savedFetch;
 
   process.exit(fails ? 1 : 0);
 })();
