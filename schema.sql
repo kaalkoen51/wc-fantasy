@@ -325,8 +325,12 @@ create table if not exists competition_pools (
     competition_key text primary key,
     players jsonb not null default '[]',
     fixtures jsonb not null default '[]',
+    -- App-admin toggle: when true, the scheduled runner (GitHub Actions cron)
+    -- pulls this competition's completed games into competition_stats daily.
+    scheduled boolean not null default false,
     updated_at timestamptz default now()
 );
+alter table competition_pools add column if not exists scheduled boolean not null default false;
 alter table competition_pools enable row level security;
 do $$ begin
     create policy competition_pools_all on competition_pools for all using (true) with check (true);

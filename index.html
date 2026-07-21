@@ -289,6 +289,13 @@
         <pre id="adm-comp-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
       </div>
       <div class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
+        <h3 class="font-semibold text-sm">Scheduled pulls <span class="text-[10px] text-slate-500 font-normal">· app admin</span></h3>
+        <p class="text-xs text-slate-500">Turn the automatic daily stat pull on or off per competition.
+          When on, the scheduled job pulls that competition's completed games into the shared stats each
+          day — one pull serves every league on it. When off, use "Pull stats now" by hand.</p>
+        <div id="adm-schedules" class="space-y-1.5"></div>
+      </div>
+      <div class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">Pull stats now</h3>
         <p class="text-xs text-slate-500">Fetches completed matches for the chosen date straight
           from API-Football and writes everyone's stats — same as the 06:00 automated pull, on
@@ -5311,6 +5318,44 @@ async function loadCompetition() {
   }
 }
 
+// App-admin: list every loaded competition with an on/off switch for the daily
+// scheduled pull (stored on competition_pools.scheduled; the cron runner reads it).
+async function renderScheduleManager() {
+  const box = $("adm-schedules");
+  if (!box || !S.sb) return;
+  const { data, error } = await S.sb.from("competition_pools")
+    .select("competition_key, scheduled, updated_at").order("competition_key");
+  if (error) {
+    box.innerHTML = `<p class="text-xs text-slate-500">${
+      /scheduled|column|relation|competition_pools/.test(error.message)
+        ? "Run schema.sql to enable scheduled pulls." : esc(error.message)}</p>`;
+    return;
+  }
+  if (!data.length) {
+    box.innerHTML = `<p class="text-xs text-slate-500">No API competitions loaded yet — load one above first.</p>`;
+    return;
+  }
+  box.innerHTML = data.map((r) => {
+    const [lid, season] = r.competition_key.split("-");
+    const name = COMPETITIONS.find((c) => c.apiLeagueId === +lid)?.name || ("League " + lid);
+    const on = !!r.scheduled;
+    return `<div class="flex items-center justify-between gap-2 rounded-lg bg-slate-800/50 px-3 py-2">
+      <span class="text-sm min-w-0 truncate"><span class="font-medium">${esc(name)}</span>
+        <span class="text-slate-500">${esc(season)}</span></span>
+      <button data-sched="${esc(r.competition_key)}" data-on="${on}" class="shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold ${
+        on ? "bg-wcgreen text-slate-900" : "bg-slate-700 text-slate-300"}">${on ? "Scheduled ✓" : "Off"}</button>
+    </div>`;
+  }).join("");
+  box.querySelectorAll("[data-sched]").forEach((b) => b.onclick = async () => {
+    const next = b.dataset.on !== "true";
+    const { error } = await S.sb.from("competition_pools")
+      .update({ scheduled: next }).eq("competition_key", b.dataset.sched);
+    if (error) return toast(error.message);
+    toast(next ? "Daily pull scheduled." : "Scheduled pull off.");
+    renderScheduleManager();
+  });
+}
+
 async function pullStatsNow() {
   const key = $("adm-api-key").value.trim();
   const date = $("adm-pull-date").value;
@@ -5738,6 +5783,7 @@ function renderAdmin() {
   $("adm-comp-current").textContent = curComp
     ? `Current: ${curComp.name} ${curComp.season} — ${S.players.length} players`
     : "Current: built-in World Cup 2026 squads";
+  renderScheduleManager();
   admQuotaSizePreview();
   if (!$("adm-home").options.length) {
     const opts = (sel) => $(sel).innerHTML =
