@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, scoring, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -84,12 +84,24 @@ check("DEF: cs + 5 def actions", calcPlayerPoints(row({ clean_sheet: true, defen
 check("GK def actions don't score", calcPlayerPoints(row({ defensive_actions: 8 }), "GK"), 0);
 check("rows without def actions still score", calcPlayerPoints({ ...row({ goals: 1 }), defensive_actions: undefined }, "MID"), 5);
 
-/* Workstream B: per-league config overrides the hardcoded WC-2026 defaults.
-   Deep-merge — unspecified keys keep their default; null config = defaults. */
-S.league = { config: { scoring: { goal: { FWD: 10 } } } };
-check("config overrides a scoring value (FWD goal 10)", calcPlayerPoints(row({ goals: 1 }), "FWD"), 10);
-check("partial scoring config keeps other defaults (assist still 3)", calcPlayerPoints(row({ assists: 1 }), "FWD"), 3);
-check("partial goal config keeps other positions (MID goal still 5)", calcPlayerPoints(row({ goals: 1 }), "MID"), 5);
+/* Workstream B: per-league config.scoring is a RULES array that replaces the
+   defaults; stageBonus/finalPickBonus/quota still deep-merge. */
+S.league = { config: { scoring: [
+  { stat: "goals.total", mode: "each", perPosition: true, points: { GK: 8, DEF: 6, MID: 5, FWD: 10 } },
+  { stat: "goals.assists", mode: "each", perPosition: false, points: 2 },
+  { stat: "passes.total", mode: "per", per: 10, perPosition: false, points: 1 },
+  { stat: "passes.accuracy", mode: "threshold", gte: 90, perPosition: false, points: 3 },
+] } };
+check("rule: per-position points (FWD goal 10)", calcPlayerPoints(row({ goals: 1 }), "FWD"), 10);
+check("rule: position-independent points (assist 2, any pos)", calcPlayerPoints(row({ assists: 1 }), "DEF"), 2);
+check("rule: 'per N' formula (1 pt / 10 passes → 34 passes = 3)",
+  calcPlayerPoints({ ...row({}), raw: { "passes.total": 34 } }, "MID"), 3);
+check("rule: 'threshold' formula (pass acc ≥ 90 → +3)",
+  calcPlayerPoints({ ...row({}), raw: { "passes.accuracy": 91 } }, "MID"), 3);
+check("rule: below threshold → 0",
+  calcPlayerPoints({ ...row({}), raw: { "passes.accuracy": 88 } }, "MID"), 0);
+check("custom rules REPLACE defaults (a yellow no longer scores)",
+  calcPlayerPoints(row({ yellow_cards: 1 }), "MID"), 0);
 S.league = { config: { stageBonus: { r32: 100 } } };
 check("config overrides a stage bonus (r32 100 + r16 default 10)", calcTeamPoints("r16"), 110);
 S.league = { config: { finalPickBonus: 20 } };
@@ -100,15 +112,18 @@ check("partial quota config keeps defaults (GK still 2)", posQuota().GK, 2);
 S.league = { phase: 1, config: { starters: { MID: 4 } } };
 check("config overrides phase-1 starters (MID 4)", starterQuota().MID, 4);
 check("partial starters config keeps defaults (DEF still 3)", starterQuota().DEF, 3);
-// effectiveConfig merges everything over defaults for the create-form editor.
+// effectiveConfig fills defaults for the create-form editor: rules array +
+// merged quota/starters/bonuses.
 {
-  const eff = effectiveConfig({ scoring: { goal: { FWD: 9 } }, quota: { GK: 3 } });
-  check("effectiveConfig merges + fills all defaults",
-    [eff.scoring.goal.FWD, eff.scoring.goal.GK, eff.scoring.assist, eff.quota.GK,
-     eff.quota.DEF, eff.starters.GK, eff.finalPickBonus],
-    [9, 8, 3, 3, 4, 1, 5]);
+  const eff = effectiveConfig({ quota: { GK: 3 } });
+  check("effectiveConfig gives the default rules + merged quota/starters",
+    [Array.isArray(eff.rules), eff.rules[0].stat, eff.quota.GK, eff.quota.DEF,
+     eff.starters.GK, eff.finalPickBonus],
+    [true, "goals.total", 3, 4, 1, 5]);
   check("effectiveConfig({}) equals effectiveConfig(null) (all defaults)",
     JSON.stringify(effectiveConfig({})), JSON.stringify(effectiveConfig(null)));
+  check("effectiveConfig deep-clones rules (editor can mutate safely)",
+    effectiveConfig({}).rules !== effectiveConfig({}).rules, true);
 }
 // No config anywhere → identical to the original hardcoded league.
 S.league = {};
@@ -214,10 +229,10 @@ check("GK breakdown sums to playerPoints",
   playerBreakdown("ger_1", "GK").reduce((s, r) => s + r.pts, 0),
   playerPoints("ger_1", "GK"));
 check("GK saves floor per match (2+1, not 4)",
-  playerBreakdown("ger_1", "GK").find((r) => r.label.startsWith("Saves")).pts, 3);
-check("DEF breakdown categories", playerBreakdown("ger_5", "DEF")
+  playerBreakdown("ger_1", "GK").find((r) => r.label.startsWith("Save")).pts, 3);
+check("DEF breakdown by rule (rules order)", playerBreakdown("ger_5", "DEF")
   .map((r) => [r.label, r.count, r.pts]),
-  [["Goals", 1, 6], ["Defensive actions (per 2)", 5, 2], ["Yellow cards", 1, -1]]);
+  [["Goal", 1, 6], ["Yellow card", 1, -1], ["Defensive action (tackle/block/int)", 5, 2]]);
 
 /* trading: slot position groups */
 check("SUB_GK and GK same group", slotGroup("SUB_GK"), slotGroup("GK"));

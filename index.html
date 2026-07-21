@@ -622,18 +622,6 @@ const FINAL_PICK_BONUS = 5;
    the config object's identity because calcPlayerPoints is called per-row. */
 const cfgOf = () => S.league?.config || {};
 const _UNSET = Symbol("unset");   // sentinel so the first memo build always runs
-let _scoringCache = null, _scoringFor = _UNSET;
-function scoring() {
-  const c = cfgOf().scoring;
-  if (_scoringFor !== c) {
-    _scoringFor = c;
-    const s = c || {};
-    _scoringCache = { ...SCORING, ...s,
-      goal:        { ...SCORING.goal,        ...(s.goal || {}) },
-      clean_sheet: { ...SCORING.clean_sheet, ...(s.clean_sheet || {}) } };
-  }
-  return _scoringCache;
-}
 let _stageBonusCache = null, _stageBonusFor = _UNSET;
 function stageBonuses() {
   const c = cfgOf().stageBonus;
@@ -645,14 +633,14 @@ const finalPickBonus = () => cfgOf().finalPickBonus ?? FINAL_PICK_BONUS;
 const phaseOneQuota  = () => ({ ...PHASE1_QUOTA, ...(cfgOf().quota || {}) });
 const phaseOneStarters = () => ({ ...PHASE1_STARTERS, ...(cfgOf().starters || {}) });
 
-// A config merged over ALL the WC-2026 defaults — the full effective set. Used
-// to pre-fill the "design your draft" editors and to compare against defaults.
+// The full effective config, defaults filled in — for pre-filling the "design
+// your draft" editors and comparing against defaults. `rules` is the scoring
+// rules array (custom or DEFAULT_RULES), deep-cloned so editors can mutate it.
 function effectiveConfig(cfg) {
   cfg = cfg || {};
+  const rules = Array.isArray(cfg.scoring) && cfg.scoring.length ? cfg.scoring : DEFAULT_RULES;
   return {
-    scoring: { ...SCORING, ...(cfg.scoring || {}),
-      goal:        { ...SCORING.goal,        ...(cfg.scoring?.goal || {}) },
-      clean_sheet: { ...SCORING.clean_sheet, ...(cfg.scoring?.clean_sheet || {}) } },
+    rules: JSON.parse(JSON.stringify(rules)),
     stageBonus: { ...STAGE_BONUS, ...(cfg.stageBonus || {}) },
     finalPickBonus: cfg.finalPickBonus ?? FINAL_PICK_BONUS,
     quota: { ...PHASE1_QUOTA, ...(cfg.quota || {}) },
@@ -736,7 +724,7 @@ function genInviteCode() {
 // been applied yet — drop it and retry. Mirrors the self-heal in
 // daily_pull.py's upsert. (Scoring/trade mechanics never read these.)
 const STRIPPABLE_COLUMNS = new Set([
-  "home_score", "away_score", "minutes",
+  "home_score", "away_score", "minutes", "raw",
   "offered_player_name", "requested_player_name",
   "offered_player_id", "requested_player_id", "planner",
 ]);
@@ -1166,10 +1154,11 @@ S._createTeamOn = true;
 
 function paintCreateFields() {
   const eff = effectiveConfig({});
+  S._createRules = eff.rules;
   $("create-squad").innerHTML = squadFieldsHtml(eff, false);
-  $("create-scoring").innerHTML = scoringFieldsHtml(eff, false);
+  renderRulesEditor($("create-scoring"), S._createRules, { onChange: updateCreateSummaries });
   $("create-team-bonuses").innerHTML = stageBonusFieldsHtml(eff, false);
-  $("create-squad").oninput = $("create-scoring").oninput = updateCreateSummaries;
+  $("create-squad").oninput = updateCreateSummaries;
   $("create-team-fields").oninput = updateCreateSummaries;
 }
 
@@ -1194,9 +1183,9 @@ function updateCreateSummaries() {
   const q = ["GK", "DEF", "MID", "FWD"].reduce((s, p) => s + val(`quota.${p}`, eff.quota[p]), 0);
   const st = ["GK", "DEF", "MID", "FWD"].reduce((s, p) => s + val(`starters.${p}`, eff.starters[p]), 0);
   if ($("create-squad-summary")) $("create-squad-summary").textContent = `${q} squad · ${st} starters`;
-  const cfg = readConfigFromFields(document.querySelector('[data-view="create"]'));
-  const scoringCustom = JSON.stringify(effectiveConfig({ scoring: cfg.scoring }).scoring) !== JSON.stringify(eff.scoring);
-  if ($("create-scoring-summary")) $("create-scoring-summary").textContent = scoringCustom ? "customised" : "World Cup default";
+  const scoringCustom = JSON.stringify(S._createRules) !== JSON.stringify(DEFAULT_RULES);
+  if ($("create-scoring-summary")) $("create-scoring-summary").textContent =
+    scoringCustom ? `${(S._createRules || []).length} custom rules` : "World Cup default";
   if ($("create-team-summary")) $("create-team-summary").textContent = S._createTeamOn
     ? `on · ${val("quota.TEAM", 1)} pick` : "off";
 }
@@ -1245,6 +1234,7 @@ async function ensureCompetitionPool(competition, apiKey, log) {
 // the team-bonus toggle, and return null if it's all WC defaults.
 function readCreateConfig() {
   const cfg = readConfigFromFields(document.querySelector('[data-view="create"]'));
+  if (JSON.stringify(S._createRules) !== JSON.stringify(DEFAULT_RULES)) cfg.scoring = S._createRules;
   if (!S._createTeamOn) {                 // no team pick → drop TEAM and its bonuses
     cfg.quota = { ...(cfg.quota || {}), TEAM: 0 };
     delete cfg.stageBonus;
@@ -1948,20 +1938,89 @@ function renderDraft() {
 
 // Mirrors calculate_points() in daily_pull.py. clean_sheet as stored
 // already encodes the ">=60 min and conceded 0" rule.
+/* ---------- scoring rules engine (Workstream B) ----------
+   Scoring is a list of rules, each: { stat, label, perPosition, points, mode,
+   per?, gte? }. `points` is a number (position-independent) or {GK,DEF,MID,FWD}.
+   mode "each" = points × count · "per" = points × floor(count/per) · "threshold"
+   = points if count ≥ gte. A league stores its rules in config.scoring (array);
+   with none it uses DEFAULT_RULES, which exactly replicate the WC-2026 scoring. */
+
+// Stats a rule can score, grouped for the builder dropdown. The first block is
+// always captured; the rest come from the raw API stats (competition pulls).
+const STAT_CATALOG = [
+  { key: "goals.total", label: "Goal" },
+  { key: "goals.assists", label: "Assist" },
+  { key: "clean_sheet", label: "Clean sheet (≥60 min)" },
+  { key: "cards.yellow", label: "Yellow card" },
+  { key: "cards.red", label: "Red card" },
+  { key: "goals.saves", label: "Save (GK)" },
+  { key: "defensive_actions", label: "Defensive action (tackle/block/int)" },
+  { key: "motm", label: "Top-rated player" },
+  { key: "penalty.saved", label: "Penalty saved" },
+  { key: "penalty.missed", label: "Penalty missed" },
+  { key: "passes.total", label: "Pass" },
+  { key: "passes.key", label: "Key pass" },
+  { key: "passes.accuracy", label: "Pass accuracy %" },
+  { key: "shots.total", label: "Shot" },
+  { key: "shots.on", label: "Shot on target" },
+  { key: "dribbles.success", label: "Successful dribble" },
+  { key: "duels.won", label: "Duel won" },
+  { key: "fouls.drawn", label: "Foul drawn" },
+  { key: "fouls.committed", label: "Foul committed" },
+  { key: "goals.conceded", label: "Goal conceded" },
+  { key: "offsides", label: "Offside" },
+  { key: "rating", label: "Match rating" },
+  { key: "minutes", label: "Minute played" },
+];
+const STAT_LABEL = Object.fromEntries(STAT_CATALOG.map((s) => [s.key, s.label]));
+
+const DEFAULT_RULES = [
+  { stat: "goals.total", mode: "each", perPosition: true, points: { GK: 8, DEF: 6, MID: 5, FWD: 4 } },
+  { stat: "goals.assists", mode: "each", perPosition: false, points: 3 },
+  { stat: "clean_sheet", mode: "each", perPosition: true, points: { GK: 6, DEF: 4, MID: 1, FWD: 0 } },
+  { stat: "cards.yellow", mode: "each", perPosition: false, points: -1 },
+  { stat: "cards.red", mode: "each", perPosition: false, points: -3 },
+  { stat: "goals.saves", mode: "per", per: 2, perPosition: true, points: { GK: 1, DEF: 0, MID: 0, FWD: 0 } },
+  { stat: "defensive_actions", mode: "per", per: 2, perPosition: true, points: { GK: 0, DEF: 1, MID: 1, FWD: 1 } },
+  { stat: "motm", mode: "each", perPosition: false, points: 3 },
+  { stat: "penalty.saved", mode: "each", perPosition: false, points: 5 },
+  { stat: "penalty.missed", mode: "each", perPosition: false, points: -2 },
+];
+
+const scoringRules = () => {
+  const c = cfgOf().scoring;
+  return Array.isArray(c) && c.length ? c : DEFAULT_RULES;
+};
+
+// A stat row → a flat { "goals.total": n, ... } map. New rows carry the full API
+// stat set in `raw`; legacy rows are reconstructed from the derived columns, so
+// DEFAULT_RULES score them exactly as the old hardcoded formula did.
+function rawStatsOf(r) {
+  const base = {
+    "goals.total": r.goals || 0, "goals.assists": r.assists || 0,
+    "goals.saves": r.saves || 0, "clean_sheet": r.clean_sheet ? 1 : 0,
+    "cards.yellow": r.yellow_cards || 0, "cards.red": r.red_cards || 0,
+    "motm": r.motm ? 1 : 0, "penalty.saved": r.penalty_saved || 0,
+    "penalty.missed": r.penalty_missed || 0,
+    "defensive_actions": r.defensive_actions || 0, "minutes": r.minutes || 0,
+  };
+  return r.raw ? { ...base, ...r.raw } : base;
+}
+
+// Points a single rule awards a player at position `pos` for one match.
+function evalRule(rule, raw, pos) {
+  const pts = rule.perPosition ? (rule.points?.[pos] ?? 0) : (rule.points ?? 0);
+  const v = raw[rule.stat] || 0;
+  if (rule.mode === "per") return rule.per ? Math.floor(v / rule.per) * pts : 0;
+  if (rule.mode === "threshold") return v >= (rule.gte ?? Infinity) ? pts : 0;
+  return v * pts;   // "each"
+}
+
 function calcPlayerPoints(r, pos) {
   if (!r.appeared) return 0;
-  const sc = scoring();
+  const raw = rawStatsOf(r);
   let p = 0;
-  p += (r.goals || 0) * sc.goal[pos];
-  p += (r.assists || 0) * sc.assist;
-  if (r.clean_sheet) p += sc.clean_sheet[pos];
-  p += (r.yellow_cards || 0) * sc.yellow_card;
-  p += (r.red_cards || 0) * sc.red_card;
-  if (pos === "GK") p += Math.floor((r.saves || 0) / 2) * sc.save_per_2;
-  else p += Math.floor((r.defensive_actions || 0) / 2) * sc.def_action_per_2;
-  if (r.motm) p += sc.motm;
-  p += (r.penalty_saved || 0) * sc.penalty_saved;
-  p += (r.penalty_missed || 0) * sc.penalty_missed;
+  for (const rule of scoringRules()) p += evalRule(rule, raw, pos);
   return p;
 }
 
@@ -2380,23 +2439,19 @@ function managerHistory(mgrId) {
 
 // Shared rules content: scoring per position + stage bonuses + sub rule.
 // Built live from the league's scoring config (or the defaults) so it can't drift.
+// Human-readable value for one scoring rule (per-position or flat, + formula).
+function ruleValueText(rule) {
+  const pts = rule.perPosition
+    ? GROUPS.slice(0, 4).map((g) => `${g} ${rule.points?.[g] ?? 0}`).join(" / ")
+    : `${rule.points ?? 0}`;
+  if (rule.mode === "per") return `${pts} per ${rule.per}`;
+  if (rule.mode === "threshold") return `${pts} if ≥ ${rule.gte}`;
+  return `${pts}`;
+}
+
 function scoringHtml() {
-  const sc = scoring();
-  const rows = [
-    ["Goal", GROUPS.slice(0, 4).map((g) => `${g} ${sc.goal[g]}`).join(" / ")],
-    ["Assist", sc.assist],
-    ["Clean sheet (≥60 min, 0 conceded)",
-      GROUPS.slice(0, 4).map((g) => `${g} ${sc.clean_sheet[g]}`).join(" / ")],
-    ["Yellow card", sc.yellow_card],
-    ["Red card", sc.red_card],
-    ["Saves (GK)", `+${sc.save_per_2} per 2 saves`],
-    ["Defensive actions — tackles, blocks, interceptions (not GK)",
-      `+${sc.def_action_per_2} per 2 actions`],
-    ["Top-rated player (per match)", `+${sc.motm}`],
-    ["Penalty saved", `+${sc.penalty_saved}`],
-    ["Penalty missed", sc.penalty_missed],
-    ["Champion pick (final phase only)", `+${finalPickBonus()}`],
-  ];
+  const rows = scoringRules().map((r) => [STAT_LABEL[r.stat] || r.stat, ruleValueText(r)])
+    .concat([["Champion pick (final phase only)", `+${finalPickBonus()}`]]);
   const stages = stageOrder().slice(1).map((s) =>
     `${s.toUpperCase()} +${stageBonuses()[s]}`).join(" · ");
   return `<div class="space-y-2 text-sm text-slate-300">
@@ -2411,7 +2466,7 @@ function scoringHtml() {
     <p class="text-xs"><b>Subs:</b> a sub only scores in a round where a starter in their position
       played that round but didn't feature (so the sub covers a no-show starter, even if they
       play on different days). Players who don't appear score 0.</p>
-    <p class="text-xs"><b>Top-rated player (+${sc.motm}):</b> awarded automatically to the
+    <p class="text-xs"><b>Top-rated player:</b> awarded automatically to the
       single highest-rated player in each match (by API-Football's match rating, and only if it's
       ≥ 7.5). It's a data-driven "best performer" bonus — a close proxy for, but not always the
       same as, the official Player of the Match award.</p>
@@ -3653,38 +3708,21 @@ const STAT_SORTS = [
 const statRowsFor = (pid) =>
   (S.stats || []).filter((r) => r.player_id === pid);
 
-// Per-category breakdown for one player; the pts sum equals
-// playerPoints() because saves/defensive actions floor per match.
+// Per-rule breakdown for one player; the pts sum equals playerPoints()
+// (each rule evaluated per match, so 'per N' floors match-by-match).
 function playerBreakdown(pid, pos) {
-  const cats = [
-    ["goals", "Goals"], ["assists", "Assists"], ["cs", "Clean sheets"],
-    ["saves", "Saves (per 2)"], ["da", "Defensive actions (per 2)"],
-    ["motm", "Top-rated player"], ["ps", "Penalties saved"],
-    ["pm", "Penalties missed"], ["yc", "Yellow cards"], ["rc", "Red cards"],
-  ];
-  const n = Object.fromEntries(cats.map(([k]) => [k, 0]));
-  const p = Object.fromEntries(cats.map(([k]) => [k, 0]));
-  const sc = scoring();
+  const acc = scoringRules().map((rule) => ({ rule, count: 0, pts: 0 }));
   for (const r of statRowsFor(pid)) {
     if (!r.appeared) continue;
-    n.goals += r.goals || 0;       p.goals += (r.goals || 0) * sc.goal[pos];
-    n.assists += r.assists || 0;   p.assists += (r.assists || 0) * sc.assist;
-    if (r.clean_sheet) { n.cs++;   p.cs += sc.clean_sheet[pos]; }
-    n.yc += r.yellow_cards || 0;   p.yc += (r.yellow_cards || 0) * sc.yellow_card;
-    n.rc += r.red_cards || 0;      p.rc += (r.red_cards || 0) * sc.red_card;
-    if (pos === "GK") {
-      n.saves += r.saves || 0;
-      p.saves += Math.floor((r.saves || 0) / 2) * sc.save_per_2;
-    } else {
-      n.da += r.defensive_actions || 0;
-      p.da += Math.floor((r.defensive_actions || 0) / 2) * sc.def_action_per_2;
+    const raw = rawStatsOf(r);
+    for (const a of acc) {
+      a.count += raw[a.rule.stat] || 0;
+      a.pts += evalRule(a.rule, raw, pos);
     }
-    if (r.motm) { n.motm++;        p.motm += sc.motm; }
-    n.ps += r.penalty_saved || 0;  p.ps += (r.penalty_saved || 0) * sc.penalty_saved;
-    n.pm += r.penalty_missed || 0; p.pm += (r.penalty_missed || 0) * sc.penalty_missed;
   }
-  return cats.filter(([k]) => n[k])
-    .map(([k, label]) => ({ label, count: n[k], pts: p[k] }));
+  return acc.filter((a) => a.count || a.pts).map((a) => ({
+    label: STAT_LABEL[a.rule.stat] || a.rule.stat, count: a.count, pts: a.pts,
+  }));
 }
 
 function statBits(r) {
@@ -5654,6 +5692,8 @@ async function pullStatsNow() {
           const g = st.goals || {}, cards = st.cards || {},
                 pen = st.penalty || {}, tk = st.tackles || {};
           const def = (+tk.total || 0) + (+tk.blocks || 0) + (+tk.interceptions || 0);
+          const passes = st.passes || {}, shots = st.shots || {}, dribbles = st.dribbles || {},
+                duels = st.duels || {}, fouls = st.fouls || {};
           // API-Football sometimes leaves `minutes` null for a just-finished
           // fixture even for players who featured/scored. Skip only true
           // non-participants (no minutes AND no recorded stat); keep anyone with
@@ -5679,6 +5719,21 @@ async function pullStatsNow() {
             defensive_actions: def,
             home_score: +f.goals.home || 0, away_score: +f.goals.away || 0,
             minutes,
+            // Full flattened stat set for custom scoring rules (any stat).
+            raw: {
+              "goals.total": +g.total || 0, "goals.assists": +g.assists || 0,
+              "goals.saves": +g.saves || 0, "goals.conceded": +g.conceded || 0,
+              "clean_sheet": minutes >= 60 && !(conceded[tb.team.id] || 0) ? 1 : 0,
+              "cards.yellow": +cards.yellow || 0, "cards.red": +cards.red || 0,
+              "penalty.saved": +pen.saved || 0, "penalty.missed": +pen.missed || 0,
+              "defensive_actions": def, "minutes": minutes, "motm": 0,
+              "passes.total": +passes.total || 0, "passes.key": +passes.key || 0,
+              "passes.accuracy": parseInt(passes.accuracy) || 0,
+              "shots.total": +shots.total || 0, "shots.on": +shots.on || 0,
+              "dribbles.success": +dribbles.success || 0, "duels.won": +duels.won || 0,
+              "fouls.drawn": +fouls.drawn || 0, "fouls.committed": +fouls.committed || 0,
+              "offsides": +st.offsides || 0, "rating": parseFloat(games.rating) || 0,
+            },
           };
           const rating = parseFloat(games.rating);
           if (!isNaN(rating) && (!best || rating > best.rating))
@@ -5686,7 +5741,7 @@ async function pullStatsNow() {
           rows.push(row);
         }
       }
-      if (best && best.rating >= 7.5) best.row.motm = true; // MOTM heuristic
+      if (best && best.rating >= 7.5) { best.row.motm = true; best.row.raw.motm = 1; } // MOTM
       await resilientWrite(statsTable, rows, { upsert: true, onConflict });
       total += rows.length;
       // Diagnostic: the API's max minutes + clean sheets for this match, so a
@@ -5927,24 +5982,67 @@ const cfgNum = (key, label, val, locked) =>
       class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm${locked ? " opacity-60" : ""}"></label>`;
 const cfgGrid = (cells, cols = 4) => `<div class="grid grid-cols-${cols} gap-2">${cells.join("")}</div>`;
 
-function scoringFieldsHtml(eff, locked) {
-  const sc = eff.scoring;
-  return `
-    <div class="text-xs text-slate-400 font-medium">Goals (per position)</div>
-    ${cfgGrid(["GK", "DEF", "MID", "FWD"].map((p) => cfgNum(`scoring.goal.${p}`, p, sc.goal[p], locked)))}
-    <div class="text-xs text-slate-400 font-medium">Clean sheet — ≥60 min (per position)</div>
-    ${cfgGrid(["GK", "DEF", "MID", "FWD"].map((p) => cfgNum(`scoring.clean_sheet.${p}`, p, sc.clean_sheet[p], locked)))}
-    <div class="text-xs text-slate-400 font-medium">Other actions</div>
-    ${cfgGrid([
-      cfgNum("scoring.assist", "Assist", sc.assist, locked),
-      cfgNum("scoring.yellow_card", "Yellow", sc.yellow_card, locked),
-      cfgNum("scoring.red_card", "Red", sc.red_card, locked),
-      cfgNum("scoring.motm", "Top-rated", sc.motm, locked),
-      cfgNum("scoring.save_per_2", "Saves /2", sc.save_per_2, locked),
-      cfgNum("scoring.def_action_per_2", "Def acts /2", sc.def_action_per_2, locked),
-      cfgNum("scoring.penalty_saved", "Pen saved", sc.penalty_saved, locked),
-      cfgNum("scoring.penalty_missed", "Pen missed", sc.penalty_missed, locked),
-    ])}`;
+// Stateful scoring-rules editor. Renders `rules` (mutated in place) into
+// `container`: per rule a stat, a formula (flat / per-N / threshold), and a
+// per-position toggle (one value, or GK/DEF/MID/FWD). Structural changes
+// re-render; number edits update in place. `onChange` fires after any edit.
+function renderRulesEditor(container, rules, opts = {}) {
+  const { locked = false, onChange = () => {} } = opts;
+  const dis = locked ? " disabled" : "";
+  const inp = "rounded bg-slate-800 border border-slate-700 px-2 py-1 text-sm" + (locked ? " opacity-60" : "");
+  const statOpts = (sel) => STAT_CATALOG.map((s) =>
+    `<option value="${s.key}"${s.key === sel ? " selected" : ""}>${esc(s.label)}</option>`).join("");
+  container.innerHTML = rules.map((rule, i) => {
+    const pts = rule.perPosition
+      ? `<div class="grid grid-cols-4 gap-1">${["GK", "DEF", "MID", "FWD"].map((g) =>
+          `<label class="text-[10px] text-slate-500 text-center">${g}<input data-ri="${i}" data-rk="points.${g}" type="number" step="1" value="${rule.points?.[g] ?? 0}"${dis} class="mt-0.5 w-full ${inp}"></label>`).join("")}</div>`
+      : `<label class="text-[10px] text-slate-500">Points <input data-ri="${i}" data-rk="points" type="number" step="1" value="${typeof rule.points === "number" ? rule.points : 0}"${dis} class="ml-1 w-20 ${inp}"></label>`;
+    const extra = rule.mode === "per"
+      ? `<label class="text-[10px] text-slate-500">per <input data-ri="${i}" data-rk="per" type="number" min="1" value="${rule.per ?? 1}"${dis} class="w-14 ${inp}"></label>`
+      : rule.mode === "threshold"
+      ? `<label class="text-[10px] text-slate-500">if ≥ <input data-ri="${i}" data-rk="gte" type="number" value="${rule.gte ?? 0}"${dis} class="w-16 ${inp}"></label>` : "";
+    return `<div class="rounded-lg border border-slate-700 bg-slate-800/40 p-2 space-y-1.5">
+      <div class="flex items-center gap-1.5">
+        <select data-ri="${i}" data-rk="stat"${dis} class="flex-1 min-w-0 ${inp}">${statOpts(rule.stat)}</select>
+        ${locked ? "" : `<button type="button" data-rdel="${i}" class="shrink-0 text-slate-500 hover:text-wcred px-1" title="remove">✕</button>`}
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <select data-ri="${i}" data-rk="mode"${dis} class="${inp}">
+          <option value="each"${rule.mode === "each" ? " selected" : ""}>flat / each</option>
+          <option value="per"${rule.mode === "per" ? " selected" : ""}>per N</option>
+          <option value="threshold"${rule.mode === "threshold" ? " selected" : ""}>if ≥ N</option>
+        </select>
+        ${extra}
+        <label class="flex items-center gap-1 text-[10px] text-slate-400"><input type="checkbox" data-ri="${i}" data-rk="perPosition"${rule.perPosition ? " checked" : ""}${dis}> per position</label>
+      </div>
+      ${pts}
+    </div>`;
+  }).join("") + (locked ? "" :
+    `<button type="button" data-radd="1" class="w-full rounded-lg border border-dashed border-slate-600 text-slate-400 hover:text-slate-200 py-1.5 text-xs">+ add stat</button>`);
+  if (locked) return;
+  const rerender = () => renderRulesEditor(container, rules, opts);
+  // number edits: update in place (keep focus)
+  for (const el of container.querySelectorAll('input[type="number"]'))
+    el.oninput = () => {
+      const r = rules[+el.dataset.ri], k = el.dataset.rk, v = Number(el.value);
+      if (k.startsWith("points.")) { r.points = { ...(typeof r.points === "object" ? r.points : {}) }; r.points[k.slice(7)] = v; }
+      else r[k] = v;
+      onChange();
+    };
+  // structural edits: mutate + re-render
+  for (const el of container.querySelectorAll("select, input[type=checkbox]"))
+    el.onchange = () => {
+      const r = rules[+el.dataset.ri], k = el.dataset.rk;
+      if (k === "perPosition") {
+        if (el.checked) { const n = typeof r.points === "number" ? r.points : 0; r.points = { GK: n, DEF: n, MID: n, FWD: n }; r.perPosition = true; }
+        else { r.points = (r.points && (r.points.MID ?? r.points.DEF)) || 0; r.perPosition = false; }
+      } else r[k] = el.value;
+      rerender(); onChange();
+    };
+  for (const el of container.querySelectorAll("[data-rdel]"))
+    el.onclick = () => { rules.splice(+el.dataset.rdel, 1); rerender(); onChange(); };
+  const add = container.querySelector("[data-radd]");
+  if (add) add.onclick = () => { rules.push({ stat: "goals.total", mode: "each", perPosition: false, points: 1 }); rerender(); onChange(); };
 }
 
 function squadFieldsHtml(eff, locked) {
@@ -5966,40 +6064,23 @@ function stageBonusFieldsHtml(eff, locked) {
     </div>`;
 }
 
-// The admin editor keeps scoring + team bonuses together (squad/TEAM are set at
-// creation/redraft, not mid-season).
-function configFieldsHtml(eff, opts = {}) {
-  const locked = opts.locked || false;
-  return scoringFieldsHtml(eff, locked) + stageBonusFieldsHtml(eff, locked);
-}
-
-// Read a container's [data-cfg] inputs back into a partial config. Blank fields
-// are skipped (fall back to defaults via the deep-merge); empty sub-objects are
-// dropped so an editor without squad fields never writes quota/starters.
+// Read a container's [data-cfg] number inputs (stage bonuses, quota, starters,
+// champion bonus) into a partial config. Scoring rules come separately from the
+// rules editor. Empty sub-objects are dropped.
 function readConfigFromFields(container) {
-  const cfg = { scoring: { goal: {}, clean_sheet: {} }, stageBonus: {}, quota: {}, starters: {} };
+  const cfg = { stageBonus: {}, quota: {}, starters: {} };
   for (const inp of container.querySelectorAll("[data-cfg]")) {
     if (inp.value.trim() === "") continue;
     const v = Number(inp.value);
     if (!Number.isFinite(v)) continue;
     const path = inp.dataset.cfg.split(".");
-    if (path[0] === "scoring" && path.length === 3) cfg.scoring[path[1]][path[2]] = v;
-    else if (path[0] === "scoring") cfg.scoring[path[1]] = v;
-    else if (path[0] === "stageBonus") cfg.stageBonus[path[1]] = v;
+    if (path[0] === "stageBonus") cfg.stageBonus[path[1]] = v;
     else if (path[0] === "finalPickBonus") cfg.finalPickBonus = v;
     else if (path[0] === "quota") cfg.quota[path[1]] = v;
     else if (path[0] === "starters") cfg.starters[path[1]] = v;
   }
-  for (const k of ["quota", "starters"]) if (!Object.keys(cfg[k]).length) delete cfg[k];
+  for (const k of ["stageBonus", "quota", "starters"]) if (!Object.keys(cfg[k]).length) delete cfg[k];
   return cfg;
-}
-
-// The config to STORE from a full field set: null when every value equals the
-// WC default (so a plain league carries no config), else the full config.
-function customConfigOrNull(container) {
-  const cfg = readConfigFromFields(container);
-  const same = JSON.stringify(effectiveConfig(cfg)) === JSON.stringify(effectiveConfig({}));
-  return same ? null : cfg;
 }
 
 // Admin "Design your draft" editor (scoring + bonuses; squad is set at
@@ -6009,14 +6090,19 @@ function renderConfigEditor() {
   const box = $("adm-config");
   if (!box) return;
   const locked = (S.stats?.length || 0) > 0;
+  const eff = effectiveConfig(cfgOf());
+  S._admRules = eff.rules;
   box.innerHTML = `
     ${locked ? `<div class="rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs px-3 py-2">🔒 Games have already been scored — the draft design is locked so past totals never change.</div>` : ""}
-    ${configFieldsHtml(effectiveConfig(cfgOf()), { locked })}
+    <div class="text-xs text-slate-400 font-medium">Scoring rules</div>
+    <div id="adm-rules" class="space-y-1.5"></div>
+    ${stageBonusFieldsHtml(eff, locked)}
     <p class="text-[10px] text-slate-500">A champion TEAM banks ${calcTeamPoints("winner")} in total.</p>
     ${locked ? "" : `<div class="flex gap-2 pt-1">
       <button id="adm-config-save" class="flex-1 bg-wcred hover:bg-wcred-hov rounded-lg py-2 text-sm font-semibold">Save draft design</button>
       <button id="adm-config-reset" class="shrink-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm font-semibold">Reset to WC defaults</button>
     </div>`}`;
+  renderRulesEditor($("adm-rules"), S._admRules, { locked });
   if (locked) return;
   $("adm-config-save").onclick = saveConfigEditor;
   $("adm-config-reset").onclick = resetConfigEditor;
@@ -6024,6 +6110,7 @@ function renderConfigEditor() {
 
 async function saveConfigEditor() {
   const cfg = readConfigFromFields($("adm-config"));
+  if (JSON.stringify(S._admRules) !== JSON.stringify(DEFAULT_RULES)) cfg.scoring = S._admRules;
   const { error } = await S.sb.from("leagues").update({ config: cfg }).eq("id", S.league.id);
   if (error) return toast(/config|column|schema cache/.test(error.message)
     ? "Config needs a schema update — run schema.sql." : error.message);

@@ -43,6 +43,10 @@ create table if not exists match_stats (
     created_at timestamptz default now(),
     unique (league_id, player_id, match_label)
 );
+-- Full flattened API stat set ({ "passes.total": 45, "passes.accuracy": 88, … }),
+-- so custom scoring rules can score any stat. Additive; legacy rows are null and
+-- fall back to the derived columns above.
+alter table match_stats add column if not exists raw jsonb;
 
 create table if not exists team_stages (
     id uuid primary key default gen_random_uuid(),
@@ -358,9 +362,11 @@ create table if not exists competition_stats (
     home_score int default 0,
     away_score int default 0,
     minutes int default 0,
+    raw jsonb,
     created_at timestamptz default now(),
     unique (competition_key, player_id, match_label)
 );
+alter table competition_stats add column if not exists raw jsonb;
 create index if not exists competition_stats_key_idx on competition_stats (competition_key, id);
 alter table competition_stats enable row level security;
 do $$ begin

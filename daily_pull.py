@@ -303,6 +303,11 @@ def extract_player_rows(
             cards = stats.get("cards", {}) or {}
             penalty = stats.get("penalty", {}) or {}
             tackles = stats.get("tackles", {}) or {}
+            passes = stats.get("passes", {}) or {}
+            shots = stats.get("shots", {}) or {}
+            dribbles = stats.get("dribbles", {}) or {}
+            duels = stats.get("duels", {}) or {}
+            fouls = stats.get("fouls", {}) or {}
 
             minutes = to_int(games.get("minutes"))
             position = POSITION_MAP.get(games.get("position"), "MID")
@@ -349,6 +354,35 @@ def extract_player_rows(
                         + to_int(tackles.get("interceptions"))
                     ),
                     "motm": False,  # assigned per fixture below
+                    # Full flattened stat set for custom scoring rules.
+                    "raw": {
+                        "goals.total": to_int(stat_goals.get("total")),
+                        "goals.assists": to_int(stat_goals.get("assists")),
+                        "goals.saves": to_int(stat_goals.get("saves")),
+                        "goals.conceded": to_int(stat_goals.get("conceded")),
+                        "clean_sheet": 1 if (minutes >= 60 and team_conceded == 0) else 0,
+                        "cards.yellow": to_int(cards.get("yellow")),
+                        "cards.red": to_int(cards.get("red")),
+                        "penalty.saved": to_int(penalty.get("saved")),
+                        "penalty.missed": to_int(penalty.get("missed")),
+                        "defensive_actions": (
+                            to_int(tackles.get("total"))
+                            + to_int(tackles.get("blocks"))
+                            + to_int(tackles.get("interceptions"))
+                        ),
+                        "minutes": minutes, "motm": 0,
+                        "passes.total": to_int(passes.get("total")),
+                        "passes.key": to_int(passes.get("key")),
+                        "passes.accuracy": to_int(passes.get("accuracy")),
+                        "shots.total": to_int(shots.get("total")),
+                        "shots.on": to_int(shots.get("on")),
+                        "dribbles.success": to_int(dribbles.get("success")),
+                        "duels.won": to_int(duels.get("won")),
+                        "fouls.drawn": to_int(fouls.get("drawn")),
+                        "fouls.committed": to_int(fouls.get("committed")),
+                        "offsides": to_int(stats.get("offsides")),
+                        "rating": to_float(games.get("rating")) or 0,
+                    },
                 }
             )
 
@@ -364,6 +398,8 @@ def assign_motm(rows: list) -> None:
     best = max(rated, key=lambda r: r["rating"])
     if best["rating"] >= MOTM_MIN_RATING:
         best["motm"] = True
+        if isinstance(best.get("raw"), dict):
+            best["raw"]["motm"] = 1
 
 
 def calculate_points(row: dict) -> int:
@@ -416,6 +452,7 @@ def _stat_columns(row: dict) -> dict:
         "home_score": row.get("home_score"),
         "away_score": row.get("away_score"),
         "minutes": row.get("minutes"),
+        "raw": row.get("raw"),
     }
 
 
@@ -443,7 +480,7 @@ def build_competition_payload(rows: list, competition_key: str) -> list:
 # whole write with PGRST204; we drop the offending column and retry so an
 # unapplied migration degrades gracefully (these are display-only — they
 # never affect scoring) instead of silently killing every pull.
-OPTIONAL_COLUMNS = ("home_score", "away_score", "defensive_actions", "minutes")
+OPTIONAL_COLUMNS = ("home_score", "away_score", "defensive_actions", "minutes", "raw")
 
 MISSING_COLUMN_RE = re.compile(r"Could not find the '(\w+)' column")
 
