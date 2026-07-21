@@ -199,6 +199,15 @@ class TestExtractPlayerRows(unittest.TestCase):
             "Argentina vs Scotland (2026-06-15)",
         )
 
+    def test_raw_stat_map_captured(self):
+        rows = extract_player_rows(
+            self.make_fixture(), self.make_teams_data(), PlayerMatcher(ROSTER))
+        raw = next(r["raw"] for r in rows if r["api_player_id"] == "154")
+        self.assertEqual(raw["defensive_actions"], 6)     # 3 + 1 + 2
+        self.assertEqual(raw["goals.total"], 0)
+        for k in ("passes.total", "passes.accuracy", "shots.on", "duels.won"):
+            self.assertIn(k, raw)                          # full stat set present
+
 
 class TestCompetitionMode(unittest.TestCase):
     """Scheduled competition pull: API ids (not the FIFA matcher), raw team
