@@ -352,6 +352,13 @@
         </div>
       </div>
       <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
+        <h3 class="font-semibold text-sm">⚙️ Design your draft — scoring &amp; bonuses</h3>
+        <p class="text-xs text-slate-500">Customise how points are scored for this league. Editable until
+          the first game is scored, then locked so past results never shift. Leave as-is for the standard
+          World Cup values.</p>
+        <div id="adm-config" class="space-y-2"></div>
+      </div>
+      <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">Redrafts &amp; final phase</h3>
         <p class="text-xs text-slate-500">As the field narrows: (1) optionally remove trailing
           managers — their points freeze and their players return to the pool; (2) set the keeper
@@ -5419,11 +5426,87 @@ async function startFinalPhase() {
   scheduleRefetch();
 }
 
+// "Design your draft" editor: number inputs for every scoring value, the
+// stage-bonus ladder, and the champion bonus, populated from the league's
+// effective config (merged over defaults). Frozen once any game is scored so
+// past totals can never be retroactively rewritten.
+function renderConfigEditor() {
+  const box = $("adm-config");
+  if (!box) return;
+  const locked = (S.stats?.length || 0) > 0;
+  const sc = scoring(), sb = stageBonuses();
+  const num = (key, label, val) =>
+    `<label class="text-[11px] text-slate-400">${label}
+      <input data-cfg="${key}" type="number" step="1" value="${val}" ${locked ? "disabled" : ""}
+        class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm${locked ? " opacity-60" : ""}"></label>`;
+  const grid = (cells) => `<div class="grid grid-cols-4 gap-2">${cells.join("")}</div>`;
+  box.innerHTML = `
+    ${locked ? `<div class="rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs px-3 py-2">🔒 Games have already been scored — the draft design is locked so past totals never change.</div>` : ""}
+    <div class="text-xs text-slate-400">Goal (per position)</div>
+    ${grid(["GK", "DEF", "MID", "FWD"].map((p) => num(`scoring.goal.${p}`, p, sc.goal[p])))}
+    <div class="text-xs text-slate-400">Clean sheet — ≥60 min (per position)</div>
+    ${grid(["GK", "DEF", "MID", "FWD"].map((p) => num(`scoring.clean_sheet.${p}`, p, sc.clean_sheet[p])))}
+    <div class="text-xs text-slate-400">Other actions</div>
+    ${grid([
+      num("scoring.assist", "Assist", sc.assist),
+      num("scoring.yellow_card", "Yellow", sc.yellow_card),
+      num("scoring.red_card", "Red", sc.red_card),
+      num("scoring.motm", "Top-rated", sc.motm),
+      num("scoring.save_per_2", "Saves /2", sc.save_per_2),
+      num("scoring.def_action_per_2", "Def acts /2", sc.def_action_per_2),
+      num("scoring.penalty_saved", "Pen saved", sc.penalty_saved),
+      num("scoring.penalty_missed", "Pen missed", sc.penalty_missed),
+    ])}
+    <div class="text-xs text-slate-400">National-team stage bonuses (cumulative)</div>
+    ${grid(["r32", "r16", "qf", "sf", "final", "winner"].map((s) => num(`stageBonus.${s}`, s.toUpperCase(), sb[s])))}
+    <div class="grid grid-cols-2 gap-2 items-end">
+      ${num("finalPickBonus", "Champion pick bonus", finalPickBonus())}
+      <span class="text-[10px] text-slate-500 pb-1">A champion TEAM banks ${calcTeamPoints("winner")} in total.</span>
+    </div>
+    ${locked ? "" : `<div class="flex gap-2 pt-1">
+      <button id="adm-config-save" class="flex-1 bg-wcred hover:bg-wcred-hov rounded-lg py-2 text-sm font-semibold">Save draft design</button>
+      <button id="adm-config-reset" class="shrink-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm font-semibold">Reset to WC defaults</button>
+    </div>`}`;
+  if (locked) return;
+  $("adm-config-save").onclick = saveConfigEditor;
+  $("adm-config-reset").onclick = resetConfigEditor;
+}
+
+async function saveConfigEditor() {
+  const cfg = { scoring: { goal: {}, clean_sheet: {} }, stageBonus: {} };
+  for (const inp of $("adm-config").querySelectorAll("[data-cfg]")) {
+    if (inp.value.trim() === "") continue;            // blank → keep default via merge
+    const v = Number(inp.value);
+    if (!Number.isFinite(v)) continue;
+    const path = inp.dataset.cfg.split(".");
+    if (path[0] === "scoring" && path.length === 3) cfg.scoring[path[1]][path[2]] = v;
+    else if (path[0] === "scoring") cfg.scoring[path[1]] = v;
+    else if (path[0] === "stageBonus") cfg.stageBonus[path[1]] = v;
+    else if (path[0] === "finalPickBonus") cfg.finalPickBonus = v;
+  }
+  const { error } = await S.sb.from("leagues").update({ config: cfg }).eq("id", S.league.id);
+  if (error) return toast(/config|column|schema cache/.test(error.message)
+    ? "Config needs a schema update — run schema.sql." : error.message);
+  S.league.config = cfg;
+  toast("Draft design saved.");
+  renderAdmin(); renderBoard();
+}
+
+async function resetConfigEditor() {
+  if (!confirm("Reset scoring & bonuses to the standard World Cup values?")) return;
+  const { error } = await S.sb.from("leagues").update({ config: null }).eq("id", S.league.id);
+  if (error) return toast(error.message);
+  S.league.config = null;
+  toast("Reset to defaults.");
+  renderAdmin(); renderBoard();
+}
+
 function renderAdmin() {
   const ok = isAdmin();
   $("admin-gate").classList.toggle("hidden", ok);
   $("admin-panel").classList.toggle("hidden", !ok);
   if (!ok) return;
+  renderConfigEditor();
   admQuotaSizePreview();
   if (!$("adm-home").options.length) {
     const opts = (sel) => $(sel).innerHTML =
