@@ -2074,7 +2074,8 @@ function flexCounting(starters, bench, playedIds, bounds, totalStarters) {
   for (const s of starters)
     if (s.position !== "GK" && played.has(s.player_id)) { counting.add(s.player_id); base[s.position]++; }
   const cand = bench.filter((x) => x.position !== "GK" && played.has(x.player_id));
-  const maxAdd = (total - 1) - (base.DEF + base.MID + base.FWD);   // empty outfield slots
+  const gkSlots = (b.GK && b.GK[1] > 0) ? 1 : 0;
+  const maxAdd = (total - gkSlots) - (base.DEF + base.MID + base.FWD);   // empty outfield slots
   if (maxAdd > 0 && cand.length) {
     // Pick the bench subset that maximizes coverage while keeping the formation
     // valid, tie-broken toward earlier bench order (cand ≤ ~8, so enumerate).
@@ -2098,6 +2099,21 @@ function flexCounting(starters, bench, playedIds, bounds, totalStarters) {
     for (const id of best.ids) counting.add(id);
   }
   return counting;
+}
+
+// Flex counting player_ids for round `rnd` from a roster (starter/bench entries),
+// resolving each player's round-r match via teamMatches + an appeared(pid,label)
+// predicate. Shared by the leaderboard and the lineup-history views.
+function flexRoundCounting(roster, rnd, teamMatches, appeared) {
+  const st = roster.filter((e) => !e.is_sub && e.position !== "TEAM");
+  const bn = roster.filter((e) => e.is_sub && e.position !== "TEAM");
+  const played = new Set();
+  for (const e of [...st, ...bn]) {
+    const lbl = (teamMatches[e.team] || [])[rnd - 1];
+    if (lbl && appeared(e.player_id, lbl)) played.add(e.player_id);
+  }
+  const b = formationBounds();
+  return flexCounting(st, bn, played, b, b.starters);
 }
 
 // A stat row → a flat { "goals.total": n, ... } map. New rows carry the full API
@@ -2328,6 +2344,12 @@ function computeScores() {
     let total = 0;
     const earnedByPlayer = {};
     const roundPts = {};   // labelRound -> player-match points that round
+    // Flex mode resolves each round's counting players through the auto-sub
+    // engine (bench promoted in order, formation kept valid), cached per round.
+    const flex = isFlexFormation();
+    const flexCache = {};
+    const flexCountForRound = (rnd, roster) => flexCache[rnd] ||
+      (flexCache[rnd] = flexRoundCounting(roster, rnd, teamMatches, appearedIn));
     for (const label of statLabels) {
       const d = labelDate(label);
       const rnd = roundOf(labelTeams(label)[0], label) + 1;   // 1-based round
@@ -2338,20 +2360,24 @@ function computeScores() {
         const rows = (statsByPlayer[entry.player_id] || [])
           .filter((r) => r.match_label === label);
         if (!rows.length) continue;
+        const scored = rows.reduce((s2, r) => s2 + calcPlayerPoints(r, entry.position), 0);
         let pts = 0;
-        if (!entry.is_sub) {
-          pts = rows.reduce((s2, r) => s2 + calcPlayerPoints(r, entry.position), 0);
+        if (flex) {
+          // Counts if the auto-sub engine keeps this player in for their round.
+          if (flexCountForRound(roundOf(entry.team, label) + 1, roster).has(entry.player_id))
+            pts = scored;
+        } else if (!entry.is_sub) {
+          pts = scored;
         } else {
-          // Sub scores its round-k match only if a same-position starter's
-          // team also played its round-k match but the starter didn't feature.
+          // Fixed mode: a sub scores its round-k match only if a same-position
+          // starter's team also played round-k but the starter didn't feature.
           const r = roundOf(entry.team, label);
           const mates = starters.filter((st) => st.position === entry.position);
           const activated = r >= 0 && mates.some((st) => {
             const stLabel = (teamMatches[st.team] || [])[r];
             return stLabel && !appearedIn(st.player_id, stLabel);
           });
-          if (activated) pts = rows.reduce(
-            (s2, r2) => s2 + calcPlayerPoints(r2, entry.position), 0);
+          if (activated) pts = scored;
         }
         earnedByPlayer[entry.player_id] = (earnedByPlayer[entry.player_id] || 0) + pts;
         if (rnd >= 1) roundPts[rnd] = (roundPts[rnd] || 0) + pts;
@@ -2437,6 +2463,7 @@ function managerHistory(mgrId) {
     if (idx === -1 && snaps.length) idx = 0;
     return idx;
   };
+  const flex = isFlexFormation();
   const matchPoints = (roster, label) => {
     const starters = roster.filter((e) => !e.is_sub && e.position !== "TEAM");
     const out = {};
@@ -2444,9 +2471,13 @@ function managerHistory(mgrId) {
       if (entry.position === "TEAM") continue;
       const rows = (statsByPlayer[entry.player_id] || []).filter((r) => r.match_label === label);
       if (!rows.length) continue;
+      const scored = rows.reduce((s2, r) => s2 + calcPlayerPoints(r, entry.position), 0);
       let pts = 0;
-      if (!entry.is_sub) {
-        pts = rows.reduce((s2, r) => s2 + calcPlayerPoints(r, entry.position), 0);
+      if (flex) {
+        if (flexRoundCounting(roster, roundOf(entry.team, label) + 1, teamMatches, appearedIn)
+            .has(entry.player_id)) pts = scored;
+      } else if (!entry.is_sub) {
+        pts = scored;
       } else {
         const r = roundOf(entry.team, label);
         const mates = starters.filter((st) => st.position === entry.position);
@@ -2454,7 +2485,7 @@ function managerHistory(mgrId) {
           const stLabel = (teamMatches[st.team] || [])[r];
           return stLabel && !appearedIn(st.player_id, stLabel);
         }))
-          pts = rows.reduce((s2, r2) => s2 + calcPlayerPoints(r2, entry.position), 0);
+          pts = scored;
       }
       out[entry.player_id] = (out[entry.player_id] || 0) + pts;
     }

@@ -264,6 +264,35 @@ check("former player line shows banked points",
   hist.items.find((i) => i.pick.player_id === "__former__").pts, 6);
 S.snapshots = [];
 
+/* Flex-formation scoring end-to-end: a bench FORWARD covers a no-show DEFENDER
+   (cross-position — fixed mode never would) because the formation stays valid. */
+S.fixtures = []; S.snapshots = []; S.stages = [];
+S.league = { phase: 1, config: { formationMode: "flex",
+  formation: { GK: [0, 0], DEF: [1, 2], MID: [1, 2], FWD: [1, 2], starters: 4 } } };
+S.managers = [{ id: "m1", name: "M1", draft_position: 1 }];
+S.picks = [
+  { manager_id: "m1", player_id: "fra_5", position: "DEF", team: "France", is_sub: false, pick_number: 1 },
+  { manager_id: "m1", player_id: "fra_6", position: "DEF", team: "France", is_sub: false, pick_number: 2 },
+  { manager_id: "m1", player_id: "arg_5", position: "MID", team: "Argentina", is_sub: false, pick_number: 3 },
+  { manager_id: "m1", player_id: "bra_5", position: "FWD", team: "Brazil", is_sub: false, pick_number: 4 },
+  { manager_id: "m1", player_id: "ita_9", position: "FWD", team: "Italy", is_sub: true, pick_number: 5 },
+];
+S.stats = [
+  row({ player_id: "fra_6", match_label: "France vs X (2026-06-13)", appeared: true }),   // France played; fra_5 no-show
+  row({ player_id: "arg_5", match_label: "Argentina vs Y (2026-06-13)", appeared: true }),
+  row({ player_id: "bra_5", match_label: "Brazil vs Z (2026-06-13)", appeared: true }),
+  row({ player_id: "ita_9", match_label: "Italy vs W (2026-06-13)", appeared: true, goals: 1 }),
+];
+{
+  const s = computeScores()[0];
+  check("flex: bench FWD covers a no-show DEF (cross-position) → scores its 4",
+    s.items.find((i) => i.pick.player_id === "ita_9").pts, 4);
+  check("flex: the no-show starter scores 0",
+    s.items.find((i) => i.pick.player_id === "fra_5").pts, 0);
+  check("flex: manager total = the promoted forward's 4", s.total, 4);
+}
+S.league = {}; S.picks = []; S.stats = [];
+
 /* player stats breakdown: per-category points sum to the player total */
 S.stats = [
   row({ player_id: "ger_1", match_label: "Germany vs X (2026-06-20)", saves: 5, clean_sheet: true }),
