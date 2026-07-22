@@ -17,12 +17,13 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         scoring, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota,
         phaseOneStarters, starterQuota, effectiveConfig,
+        flexCounting, formationValid, DEFAULT_FORMATION,
         apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture,
         fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey,
         slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick,
@@ -133,6 +134,42 @@ check("partial starters config keeps defaults (DEF still 3)", starterQuota().DEF
   check("effectiveConfig deep-clones rules (editor can mutate safely)",
     effectiveConfig({}).rules !== effectiveConfig({}).rules, true);
 }
+
+/* Flexible formations: auto-subs promote bench in listed order, only into a
+   subset that keeps the formation valid (DEF 3-5, MID 2-5, FWD 1-3, 11 total). */
+{
+  const B = DEFAULT_FORMATION;
+  const P = (id, position) => ({ player_id: id, position });
+  const st442 = [P("gk", "GK"), P("d1", "DEF"), P("d2", "DEF"), P("d3", "DEF"), P("d4", "DEF"),
+    P("m1", "MID"), P("m2", "MID"), P("m3", "MID"), P("m4", "MID"), P("f1", "FWD"), P("f2", "FWD")];
+  const ids = st442.map((s) => s.player_id);
+  check("flex: all starters play → all 11 count",
+    flexCounting(st442, [], new Set(ids), B).size, 11);
+  // 1 DEF no-show, all-forward bench → first bench FWD subs in (4-4-2 → 3-4-3)
+  const r1 = flexCounting(st442, [P("bf1", "FWD"), P("bf2", "FWD")],
+    new Set([...ids.filter((id) => id !== "d4"), "bf1", "bf2"]), B);
+  check("flex: DEF no-show + FWD bench → first FWD subs in (→ 3-4-3)",
+    [r1.has("bf1"), r1.has("bf2"), r1.has("d4")], [true, false, false]);
+  // 3-4-3, 1 DEF no-show, bench FWD already at max → no valid sub, slot stays empty
+  const st343 = [P("gk", "GK"), P("d1", "DEF"), P("d2", "DEF"), P("d3", "DEF"),
+    P("m1", "MID"), P("m2", "MID"), P("m3", "MID"), P("m4", "MID"),
+    P("f1", "FWD"), P("f2", "FWD"), P("f3", "FWD")];
+  const r2 = flexCounting(st343, [P("bf1", "FWD")],
+    new Set([...st343.map((s) => s.player_id).filter((id) => id !== "d3"), "bf1"]), B);
+  check("flex: no valid sub (FWD maxed) → slot empty, 10 count",
+    [r2.has("bf1"), r2.size], [false, 10]);
+  // GK no-show → only a bench GK can cover it
+  check("flex: GK no-show → bench GK covers",
+    flexCounting(st442, [P("bgk", "GK")], new Set([...ids.filter((id) => id !== "gk"), "bgk"]), B).has("bgk"), true);
+  // bench order priority: MID listed before FWD → MID subs in (→ 3-5-2)
+  const r3 = flexCounting(st442, [P("bm1", "MID"), P("bf1", "FWD")],
+    new Set([...ids.filter((id) => id !== "d4"), "bm1", "bf1"]), B);
+  check("flex: bench order priority (MID listed first subs in)",
+    [r3.has("bm1"), r3.has("bf1")], [true, false]);
+}
+check("formationValid: 4-4-2 legal", formationValid({ GK: 1, DEF: 4, MID: 4, FWD: 2 }, DEFAULT_FORMATION), true);
+check("formationValid: 2-4-4 illegal (DEF<3, FWD>3)", formationValid({ GK: 1, DEF: 2, MID: 4, FWD: 4 }, DEFAULT_FORMATION), false);
+check("formationValid: wrong total illegal", formationValid({ GK: 1, DEF: 4, MID: 4, FWD: 1 }, DEFAULT_FORMATION), false);
 // No config anywhere → identical to the original hardcoded league.
 S.league = {};
 check("no config = default FWD goal 4", calcPlayerPoints(row({ goals: 1 }), "FWD"), 4);
