@@ -996,16 +996,37 @@ const activeManagers = () => S.managers.filter((m) => !m.eliminated);
 // Quotas for the current phase. Phase 1 is fixed; redrafts use the
 // admin-chosen quota on the league row. TEAM picks carry through every
 // phase and are never redrafted, so their quota is 0 after phase 1.
-const posQuota = () => leaguePhase() === 1 ? phaseOneQuota()
-  : { TEAM: 0, ...(S.league.phase_quota || {}) };
-const starterQuota = () => leaguePhase() === 1 ? phaseOneStarters()
-  : (S.league.phase_starters || S.league.phase_quota || PHASE1_STARTERS);
+// Flex FORMATION draft: the per-position quota is the formation minimum and the
+// rest of the squad is fluid (draft any mix), so it reuses the flex-slot model.
+const flexFormationMins = () => {
+  const f = formationBounds();
+  return { GK: f.GK[0], DEF: f.DEF[0], MID: f.MID[0], FWD: f.FWD[0], TEAM: phaseOneQuota().TEAM || 0 };
+};
+const posQuota = () => {
+  if (isFlexFormation()) return flexFormationMins();
+  return leaguePhase() === 1 ? phaseOneQuota() : { TEAM: 0, ...(S.league.phase_quota || {}) };
+};
+const starterQuota = () => {
+  if (isFlexFormation()) { const f = formationBounds(); return { GK: f.GK[0], DEF: f.DEF[0], MID: f.MID[0], FWD: f.FWD[0] }; }
+  return leaguePhase() === 1 ? phaseOneStarters()
+    : (S.league.phase_starters || S.league.phase_quota || PHASE1_STARTERS);
+};
 
 // Fluid ("flex") squad slots for a redraft: extra places that can go to ANY
 // outfield position (DEF/MID/FWD, never GK). The per-position quota is then a
 // MINIMUM; flex fills the rest. 0 in phase 1 / when unset = the old fixed model.
 const OUTFIELD = ["DEF", "MID", "FWD"];
-const leagueFlex = () => leaguePhase() === 1 ? 0 : (S.league.phase_flex || 0);
+const leagueFlex = () => {
+  if (isFlexFormation()) {   // squad beyond the formation minimums is fluid
+    const q = flexFormationMins();
+    return Math.max(0, (cfgOf().squadSize ?? 15) - (q.GK + q.DEF + q.MID + q.FWD));
+  }
+  return leaguePhase() === 1 ? 0 : (S.league.phase_flex || 0);
+};
+// Flex-formation lineup slots (starting XI beyond the minimums are fluid).
+const lineupFlex = () => isFlexFormation()
+  ? Math.max(0, formationBounds().starters - (starterQuota().GK + starterQuota().DEF + starterQuota().MID + starterQuota().FWD))
+  : leagueFlex();
 const posCounts = (picks) => {
   const c = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
   for (const pk of picks) if (c[pk.position] != null) c[pk.position]++;
@@ -1716,6 +1737,13 @@ function quotaLeft(mgrPicks, group) {
 function slotForNewPick(mgrPicks, group) {
   if (group === "TEAM") return "TEAM";
   const starters = posCounts(mgrPicks.filter(notSub));
+  // Flex formation: a new pick starts only if the starting XI can still hold
+  // this position without breaking its max (the manager re-picks the XI later).
+  if (isFlexFormation()) {
+    const f = formationBounds();
+    return (starters[group] || 0) < f[group][1]
+      && flexLeft(starters, group, starterQuota(), lineupFlex()) > 0 ? group : "SUB_" + group;
+  }
   return flexLeft(starters, group, starterQuota(), leagueFlex()) > 0 ? group : "SUB_" + group;
 }
 
@@ -2006,7 +2034,15 @@ function renderDraft() {
 
   const banner = $("draft-mybanner");
   banner.classList.toggle("hidden", !myTurn);
-  if (myTurn) banner.textContent = "Your pick — any position you still need";
+  if (myTurn) {
+    if (isFlexFormation()) {
+      const f = formationBounds();
+      banner.innerHTML = `Your pick — draft any mix<br><span class="text-xs font-normal text-slate-300">`
+        + `Squad of ${cfgOf().squadSize ?? 15}. You must end with at least ${f.DEF[0]} DEF, ${f.MID[0]} MID, `
+        + `${f.FWD[0]} FWD and a GK; the rest is your call. Each round you'll pick a formation within `
+        + `DEF ${f.DEF[0]}–${f.DEF[1]}, MID ${f.MID[0]}–${f.MID[1]}, FWD ${f.FWD[0]}–${f.FWD[1]} (${f.starters}-a-side).</span>`;
+    } else banner.textContent = "Your pick — any position you still need";
+  }
 
   renderPool();
 
@@ -4543,7 +4579,9 @@ function lineupCounts() {
 }
 
 function lineupValid(counts) {
-  return flexComplete(counts, starterQuota(), leagueFlex());
+  // Flex formation: the starting XI must be within the min–max bounds and total.
+  if (isFlexFormation()) return formationValid(counts, formationBounds());
+  return flexComplete(counts, starterQuota(), lineupFlex());
 }
 
 function renderLineup() {
@@ -4554,8 +4592,10 @@ function renderLineup() {
   let lastPos = "";
   $("lineup-list").innerHTML = mine.map((pk) => {
     const need = starterQuota()[pk.position] || 0;
+    const fb = isFlexFormation() ? formationBounds() : null;
     const header = pk.position !== lastPos
-      ? `<div class="text-[10px] text-slate-500 mt-2 first:mt-0">${pk.position} — pick ${need} starter${need === 1 ? "" : "s"}</div>`
+      ? `<div class="text-[10px] text-slate-500 mt-2 first:mt-0">${pk.position} — ${
+          fb ? `${fb[pk.position][0]}–${fb[pk.position][1]} in your XI` : `pick ${need} starter${need === 1 ? "" : "s"}`}</div>`
       : "";
     lastPos = pk.position;
     const starter = S.lineupDraft.has(pk.id);
@@ -4579,12 +4619,19 @@ function renderLineup() {
     renderLineup();
   });
   const counts = lineupCounts();
-  const sq = starterQuota(), flex = leagueFlex();
   const total = counts.GK + counts.DEF + counts.MID + counts.FWD;
-  const need = (sq.GK || 0) + (sq.DEF || 0) + (sq.MID || 0) + (sq.FWD || 0) + flex;
-  $("lineup-count").textContent = `Starters ${total}/${need}: ` + ["GK", "DEF", "MID", "FWD"]
-    .filter((g) => (sq[g] || 0) > 0 || counts[g] > 0)
-    .map((g) => `${counts[g]} ${g}`).join(" · ") + (flex ? " · +flex outfield" : "");
+  if (isFlexFormation()) {
+    const f = formationBounds();
+    $("lineup-count").textContent = `Starting XI ${total}/${f.starters} — build any valid formation: `
+      + ["GK", "DEF", "MID", "FWD"].map((g) => `${counts[g]} ${g}`).join(" · ")
+      + (lineupValid(counts) ? " ✓" : "");
+  } else {
+    const sq = starterQuota(), flex = lineupFlex();
+    const need = (sq.GK || 0) + (sq.DEF || 0) + (sq.MID || 0) + (sq.FWD || 0) + flex;
+    $("lineup-count").textContent = `Starters ${total}/${need}: ` + ["GK", "DEF", "MID", "FWD"]
+      .filter((g) => (sq[g] || 0) > 0 || counts[g] > 0)
+      .map((g) => `${counts[g]} ${g}`).join(" · ") + (flex ? " · +flex outfield" : "");
+  }
   $("lineup-save").disabled = !lineupValid(counts);
 }
 

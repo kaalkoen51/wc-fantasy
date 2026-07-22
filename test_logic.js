@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -26,7 +26,7 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         flexCounting, formationValid, DEFAULT_FORMATION,
         apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture,
         fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey,
-        slotGroup, pairValid, tradeError, quotaLeft, slotForNewPick,
+        slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick,
         posQuota, picksPerManager, totalPicks,
         playerBreakdown, playerPoints, suspendedNext, resilientWrite,
         playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt,
@@ -170,6 +170,17 @@ check("partial starters config keeps defaults (DEF still 3)", starterQuota().DEF
 check("formationValid: 4-4-2 legal", formationValid({ GK: 1, DEF: 4, MID: 4, FWD: 2 }, DEFAULT_FORMATION), true);
 check("formationValid: 2-4-4 illegal (DEF<3, FWD>3)", formationValid({ GK: 1, DEF: 2, MID: 4, FWD: 4 }, DEFAULT_FORMATION), false);
 check("formationValid: wrong total illegal", formationValid({ GK: 1, DEF: 4, MID: 4, FWD: 1 }, DEFAULT_FORMATION), false);
+// Flex draft + lineup use the existing flex-slot model (mins + fluid slots).
+S.league = { phase: 1, config: { formationMode: "flex", squadSize: 15,
+  formation: { GK: [1, 1], DEF: [3, 5], MID: [2, 5], FWD: [1, 3], starters: 11 } } };
+check("flex draft: posQuota = formation minimums", [posQuota().DEF, posQuota().MID, posQuota().FWD], [3, 2, 1]);
+check("flex draft: fluid squad slots = squadSize − minimums", leagueFlex(), 15 - (1 + 3 + 2 + 1));
+check("flex draft: a position can be stacked (up to 9 FWD in a 15 squad)", quotaLeft([], "FWD"), 9);
+check("flex lineup: 4-4-2 is valid", lineupValid({ GK: 1, DEF: 4, MID: 4, FWD: 2 }), true);
+check("flex lineup: 3-5-2 is valid", lineupValid({ GK: 1, DEF: 3, MID: 5, FWD: 2 }), true);
+check("flex lineup: 6 defenders exceeds max → invalid", lineupValid({ GK: 1, DEF: 6, MID: 2, FWD: 2 }), false);
+check("flex lineup: only 10 outfield+GK → invalid (wrong total)", lineupValid({ GK: 1, DEF: 4, MID: 3, FWD: 2 }), false);
+S.league = {};
 // No config anywhere → identical to the original hardcoded league.
 S.league = {};
 check("no config = default FWD goal 4", calcPlayerPoints(row({ goals: 1 }), "FWD"), 4);
