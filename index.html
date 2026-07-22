@@ -2030,6 +2030,76 @@ const scoringRules = () => {
   return Array.isArray(c) && c.length ? c : DEFAULT_RULES;
 };
 
+/* ---------- flexible formations (Workstream B) ----------
+   Fixed mode: starters per position are exact (starterQuota). Flex mode: the
+   manager picks any per-position split within these [min,max] bounds that sums
+   to `starters`, and the auto-sub engine promotes bench players (in listed
+   order) to cover no-shows only where the resulting formation stays valid. */
+const DEFAULT_FORMATION = { GK: [1, 1], DEF: [3, 5], MID: [2, 5], FWD: [1, 3], starters: 11 };
+const isFlexFormation = () => cfgOf().formationMode === "flex";
+const formationBounds = () => ({ ...DEFAULT_FORMATION, ...(cfgOf().formation || {}) });
+
+// Is a per-position starter count { GK,DEF,MID,FWD } a legal formation?
+function formationValid(counts, bounds) {
+  const b = bounds || formationBounds();
+  let total = 0;
+  for (const p of ["GK", "DEF", "MID", "FWD"]) {
+    const n = counts[p] || 0, [lo, hi] = b[p] || [0, Infinity];
+    if (n < lo || n > hi) return false;
+    total += n;
+  }
+  return total === b.starters;
+}
+
+// Flexible auto-subs: given a round's starters and bench (bench in listed
+// priority order) and the set of player_ids who played, return the set that
+// COUNTS this round. Bench players are promoted in order to fill no-show slots,
+// but only into a subset that keeps the formation valid (every position within
+// [min,max]); GK is only ever covered by a bench GK. If a no-show can't be
+// validly covered its slot stays empty (scores 0). Pure + unit-tested.
+function flexCounting(starters, bench, playedIds, bounds, totalStarters) {
+  const b = bounds || formationBounds();
+  const total = totalStarters || b.starters;
+  const played = playedIds instanceof Set ? playedIds : new Set(playedIds);
+  const counting = new Set();
+  // GK slot — GK only covers GK.
+  const gk = starters.find((s) => s.position === "GK");
+  if (gk && played.has(gk.player_id)) counting.add(gk.player_id);
+  else if (gk) {
+    const bgk = bench.find((x) => x.position === "GK" && played.has(x.player_id));
+    if (bgk) counting.add(bgk.player_id);
+  }
+  // Outfield — played starters always count.
+  const base = { DEF: 0, MID: 0, FWD: 0 };
+  for (const s of starters)
+    if (s.position !== "GK" && played.has(s.player_id)) { counting.add(s.player_id); base[s.position]++; }
+  const cand = bench.filter((x) => x.position !== "GK" && played.has(x.player_id));
+  const maxAdd = (total - 1) - (base.DEF + base.MID + base.FWD);   // empty outfield slots
+  if (maxAdd > 0 && cand.length) {
+    // Pick the bench subset that maximizes coverage while keeping the formation
+    // valid, tie-broken toward earlier bench order (cand ≤ ~8, so enumerate).
+    let best = { ids: [], cov: -1, order: Infinity };
+    for (let mask = 0; mask < (1 << cand.length); mask++) {
+      const c = { ...base }; let size = 0, order = 0, over = false;
+      for (let i = 0; i < cand.length; i++) if (mask & (1 << i)) {
+        const p = cand[i].position; c[p]++; size++; order += i;
+        if (c[p] > (b[p]?.[1] ?? Infinity)) over = true;
+      }
+      if (over || size > maxAdd) continue;
+      const valid = ["DEF", "MID", "FWD"].every((p) =>
+        (c[p] || 0) >= (b[p]?.[0] ?? 0) && (c[p] || 0) <= (b[p]?.[1] ?? Infinity));
+      if (!valid) continue;
+      if (size > best.cov || (size === best.cov && order < best.order)) {
+        const ids = [];
+        for (let i = 0; i < cand.length; i++) if (mask & (1 << i)) ids.push(cand[i].player_id);
+        best = { ids, cov: size, order };
+      }
+    }
+    for (const id of best.ids) counting.add(id);
+  }
+  return counting;
+}
+
 // A stat row → a flat { "goals.total": n, ... } map. New rows carry the full API
 // stat set in `raw`; legacy rows are reconstructed from the derived columns, so
 // DEFAULT_RULES score them exactly as the old hardcoded formula did.
