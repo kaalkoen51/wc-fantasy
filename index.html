@@ -656,6 +656,9 @@ function effectiveConfig(cfg) {
     finalPickBonus: cfg.finalPickBonus ?? FINAL_PICK_BONUS,
     quota: { ...PHASE1_QUOTA, ...(cfg.quota || {}) },
     starters: { ...PHASE1_STARTERS, ...(cfg.starters || {}) },
+    formationMode: cfg.formationMode || "fixed",
+    formation: { ...DEFAULT_FORMATION, ...(cfg.formation || {}) },
+    squadSize: cfg.squadSize ?? 15,
   };
 }
 
@@ -1163,13 +1166,46 @@ async function enterLeague() {
 // The create-form's team-bonus toggle (default on = a WC-style team pick).
 S._createTeamOn = true;
 
+// Flex-formation fields: total squad + starters + per-position [min,max] bounds.
+function flexFieldsHtml(eff) {
+  const f = eff.formation;
+  const boundRow = (p) => `<div class="grid grid-cols-[3.5rem_1fr_1fr] gap-1.5 items-end">
+    <span class="text-[11px] text-slate-400 pb-1.5">${p}</span>
+    ${cfgNum(`formation.${p}.0`, "min", f[p][0], false)}
+    ${cfgNum(`formation.${p}.1`, "max", f[p][1], false)}</div>`;
+  return `
+    <p class="text-[11px] text-slate-500">Each manager drafts any mix of players (as long as they can field a valid
+      XI) and picks their own formation within these bounds each round. The bench can be any positions — but an
+      all-forward bench can't cover a defender, so a manager trades sub flexibility for extra attackers.</p>
+    <div class="grid grid-cols-2 gap-2">
+      ${cfgNum("squadSize", "Squad size", eff.squadSize, false)}
+      ${cfgNum("formation.starters", "Starting XI", f.starters, false)}
+    </div>
+    <div class="text-xs text-slate-400 font-medium">Formation bounds — min–max per position</div>
+    ${["GK", "DEF", "MID", "FWD"].map(boundRow).join("")}`;
+}
+
+function paintSquad() {
+  const eff = effectiveConfig({});
+  const flex = S._createFlex;
+  const btn = (mode, label) => `<button type="button" data-sqmode="${mode}" class="flex-1 rounded-lg py-1.5 text-xs font-semibold border ${
+    (mode === "flex") === flex ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400"}">${label}</button>`;
+  $("create-squad").innerHTML =
+    `<div class="flex gap-2 mb-1">${btn("fixed", "Fixed formation")}${btn("flex", "Flex formation")}</div>`
+    + (flex ? flexFieldsHtml(eff) : squadFieldsHtml(eff, false));
+  $("create-squad").querySelectorAll("[data-sqmode]").forEach((b) => b.onclick = () => {
+    S._createFlex = b.dataset.sqmode === "flex"; paintSquad(); updateCreateSummaries();
+  });
+  $("create-squad").oninput = updateCreateSummaries;
+}
+
 function paintCreateFields() {
   const eff = effectiveConfig({});
   S._createRules = eff.rules;
-  $("create-squad").innerHTML = squadFieldsHtml(eff, false);
+  S._createFlex = false;
+  paintSquad();
   renderRulesEditor($("create-scoring"), S._createRules, { onChange: updateCreateSummaries });
   $("create-team-bonuses").innerHTML = stageBonusFieldsHtml(eff, false);
-  $("create-squad").oninput = updateCreateSummaries;
   $("create-team-fields").oninput = updateCreateSummaries;
 }
 
@@ -1193,7 +1229,9 @@ function updateCreateSummaries() {
   const eff = effectiveConfig({});
   const q = ["GK", "DEF", "MID", "FWD"].reduce((s, p) => s + val(`quota.${p}`, eff.quota[p]), 0);
   const st = ["GK", "DEF", "MID", "FWD"].reduce((s, p) => s + val(`starters.${p}`, eff.starters[p]), 0);
-  if ($("create-squad-summary")) $("create-squad-summary").textContent = `${q} squad · ${st} starters`;
+  if ($("create-squad-summary")) $("create-squad-summary").textContent = S._createFlex
+    ? `flex · ${val("formation.starters", eff.formation.starters)}-a-side`
+    : `${q} squad · ${st} starters`;
   const scoringCustom = JSON.stringify(S._createRules) !== JSON.stringify(DEFAULT_RULES);
   if ($("create-scoring-summary")) $("create-scoring-summary").textContent =
     scoringCustom ? `${(S._createRules || []).length} custom rules` : "World Cup default";
@@ -1246,6 +1284,18 @@ async function ensureCompetitionPool(competition, apiKey, log) {
 function readCreateConfig() {
   const cfg = readConfigFromFields(document.querySelector('[data-view="create"]'));
   if (JSON.stringify(S._createRules) !== JSON.stringify(DEFAULT_RULES)) cfg.scoring = S._createRules;
+  if (S._createFlex) {                     // flexible formations
+    const g = (k) => Number(document.querySelector(`#create-squad [data-cfg="${k}"]`)?.value);
+    cfg.formationMode = "flex";
+    cfg.formation = {
+      GK: [g("formation.GK.0"), g("formation.GK.1")],
+      DEF: [g("formation.DEF.0"), g("formation.DEF.1")],
+      MID: [g("formation.MID.0"), g("formation.MID.1")],
+      FWD: [g("formation.FWD.0"), g("formation.FWD.1")],
+      starters: g("formation.starters"),
+    };
+    cfg.squadSize = g("squadSize");
+  }
   if (!S._createTeamOn) {                 // no team pick → drop TEAM and its bonuses
     cfg.quota = { ...(cfg.quota || {}), TEAM: 0 };
     delete cfg.stageBonus;
