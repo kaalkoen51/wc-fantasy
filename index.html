@@ -173,6 +173,41 @@
       </div>
     </details>
 
+    <!-- 6 · Format & trades -->
+    <details class="create-sec rounded-xl border border-slate-700 bg-slate-900 p-4">
+      <summary class="cursor-pointer select-none flex items-center justify-between gap-2 list-none">
+        <span class="text-sm font-semibold">🏆 Format &amp; trades</span>
+        <span class="text-xs text-slate-500 flex items-center gap-1"><span id="create-format-summary"></span><span class="sec-caret">▾</span></span>
+      </summary>
+      <div class="pt-3 space-y-3">
+        <div class="text-xs text-slate-400 font-medium">Standings format</div>
+        <div class="flex gap-2">
+          <button type="button" data-fmt="points" class="flex-1 rounded-lg py-2 text-xs font-semibold border">Points tally</button>
+          <button type="button" data-fmt="h2h" class="flex-1 rounded-lg py-2 text-xs font-semibold border">Head-to-head league</button>
+        </div>
+        <div id="create-h2h-fields" class="space-y-2 hidden">
+          <p class="text-[11px] text-slate-500">Managers play a round-robin each round; the winner (higher round score) takes
+            the log points, plus bonuses — an attacking bonus for a big score and a losing bonus for a narrow defeat.</p>
+          <div class="grid grid-cols-3 gap-2">
+            <label class="text-[11px] text-slate-400">Win<input data-cfg="h2h.win" type="number" value="3" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
+            <label class="text-[11px] text-slate-400">Draw<input data-cfg="h2h.draw" type="number" value="1" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
+            <label class="text-[11px] text-slate-400">Loss<input data-cfg="h2h.loss" type="number" value="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="text-[11px] text-slate-400" title="Attacking bonus: score at least this many points in a round">Attacking-bonus score<input data-cfg="h2h.score_bonus" type="number" value="60" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
+            <label class="text-[11px] text-slate-400" title="Losing bonus: lose by at most this many points">Losing-bonus margin<input data-cfg="h2h.losing_margin" type="number" value="5" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
+          </div>
+        </div>
+        <div class="text-xs text-slate-400 font-medium pt-1">Trades &amp; free agents</div>
+        <div class="flex gap-2">
+          <button type="button" data-trade="instant" class="flex-1 rounded-lg py-2 text-xs font-semibold border">Instant</button>
+          <button type="button" data-trade="waiver" class="flex-1 rounded-lg py-2 text-xs font-semibold border">Waiver order</button>
+        </div>
+        <p class="text-[11px] text-slate-500">Instant: free-agent swaps apply immediately (first-come). Waiver: claims queue and
+          resolve when the window closes, in reverse-standings priority (last place picks first).</p>
+      </div>
+    </details>
+
     <button type="button" id="create-reset" class="w-full text-xs text-slate-500 underline">reset all customisations to defaults</button>
     <button id="create-go" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2.5 font-semibold">Create league</button>
     <pre id="create-comp-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
@@ -660,6 +695,9 @@ function effectiveConfig(cfg) {
     formationMode: cfg.formationMode || "fixed",
     formation: { ...DEFAULT_FORMATION, ...(cfg.formation || {}) },
     squadSize: cfg.squadSize ?? 15,
+    h2hEnabled: cfg.h2hEnabled === true,
+    h2h: { ...H2H_DEFAULTS, ...(cfg.h2h || {}) },
+    faDeferToClose: cfg.fa_defer_to_close === true,
   };
 }
 
@@ -1260,6 +1298,20 @@ function updateCreateSummaries() {
     scoringCustom ? `${(S._createRules || []).length} custom rules` : "World Cup default";
   if ($("create-team-summary")) $("create-team-summary").textContent = S._createTeamOn
     ? `on · ${val("quota.TEAM", 1)} pick` : "off";
+  if ($("create-format-summary")) $("create-format-summary").textContent =
+    `${S._createH2H ? "H2H" : "points"} · ${S._createWaiver ? "waiver" : "instant"} trades`;
+}
+
+// Highlight the active Format & Trades toggles + show/hide H2H params.
+function syncCreateFormat() {
+  for (const b of document.querySelectorAll("[data-fmt]"))
+    b.className = "flex-1 rounded-lg py-2 text-xs font-semibold border " +
+      ((b.dataset.fmt === "h2h") === S._createH2H ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400");
+  for (const b of document.querySelectorAll("[data-trade]"))
+    b.className = "flex-1 rounded-lg py-2 text-xs font-semibold border " +
+      ((b.dataset.trade === "waiver") === S._createWaiver ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400");
+  $("create-h2h-fields").classList.toggle("hidden", !S._createH2H);
+  updateCreateSummaries();
 }
 
 function renderCreateForm() {
@@ -1271,12 +1323,20 @@ function renderCreateForm() {
   const syncApi = () => $("create-comp-api").classList.toggle("hidden", sel.value === "wc");
   sel.onchange = syncApi;
   syncApi();
-  S._createTeamOn = true;
+  S._createTeamOn = true; S._createH2H = false; S._createWaiver = false;
   paintCreateFields();
   for (const b of document.querySelectorAll("[data-teamtoggle]"))
     b.onclick = () => { S._createTeamOn = b.dataset.teamtoggle === "on"; syncCreateTeam(); };
+  for (const b of document.querySelectorAll("[data-fmt]"))
+    b.onclick = () => { S._createH2H = b.dataset.fmt === "h2h"; syncCreateFormat(); };
+  for (const b of document.querySelectorAll("[data-trade]"))
+    b.onclick = () => { S._createWaiver = b.dataset.trade === "waiver"; syncCreateFormat(); };
   syncCreateTeam();
-  $("create-reset").onclick = () => { S._createTeamOn = true; paintCreateFields(); syncCreateTeam(); };
+  syncCreateFormat();
+  $("create-reset").onclick = () => {
+    S._createTeamOn = true; S._createH2H = false; S._createWaiver = false;
+    paintCreateFields(); syncCreateTeam(); syncCreateFormat();
+  };
   $("create-go").disabled = false;
   $("create-result").classList.add("hidden");
   $("create-comp-log").textContent = "";
@@ -1324,6 +1384,13 @@ function readCreateConfig() {
     delete cfg.stageBonus;
     delete cfg.finalPickBonus;
   }
+  if (S._createH2H) {                       // head-to-head standings format
+    const g = (k) => Number(document.querySelector(`[data-view="create"] [data-cfg="${k}"]`)?.value);
+    cfg.h2hEnabled = true;
+    cfg.h2h = { win: g("h2h.win"), draw: g("h2h.draw"), loss: g("h2h.loss"),
+      score_bonus: g("h2h.score_bonus"), losing_margin: g("h2h.losing_margin") };
+  }
+  if (S._createWaiver) cfg.fa_defer_to_close = true;   // waiver-order trades
   return JSON.stringify(effectiveConfig(cfg)) === JSON.stringify(effectiveConfig({})) ? null : cfg;
 }
 
@@ -2352,6 +2419,33 @@ function resolveFaClaims(claims, waiverOrder, taken, tradeLimit, pickHolds) {
   const seen = new Set([...awards.map((c) => c.id), ...failed]);
   for (const c of claims) if (!seen.has(c.id)) failed.push(c.id);
   return { awards, failed, order };
+}
+
+// Per-manager round subtotals (the H2H fixture scores), from the lineup history.
+function h2hRoundScores() {
+  const scores = {};
+  for (const m of S.managers) scores[m.id] = managerHistory(m.id).rounds.map((r) => r.subtotal);
+  return scores;
+}
+
+// A deterministic round-robin schedule (sorted ids for stability), the base
+// cycle repeated across `maxRound` rounds.
+function h2hFixturesFor(mgrIds, maxRound) {
+  if (mgrIds.length < 2) return [];
+  const base = roundRobin(mgrIds.slice().sort());
+  const fixtures = [];
+  for (let r = 1; r <= maxRound; r++)
+    for (const [home, away] of base[(r - 1) % base.length])
+      fixtures.push({ round: r, home_manager_id: home, away_manager_id: away });
+  return fixtures;
+}
+
+// The current H2H log for all managers (the standings when H2H is enabled).
+function h2hStandings() {
+  const ids = S.managers.map((m) => m.id);
+  const scores = h2hRoundScores();
+  const maxRound = Math.max(0, ...Object.values(scores).map((a) => a.length));
+  return h2hTable(ids, scores, h2hFixturesFor(ids, maxRound), h2hConfig());
 }
 
 // A stat row → a flat { "goals.total": n, ... } map. New rows carry the full API
@@ -3939,6 +4033,36 @@ function seasonChartHtml(scores, meId) {
   </div>`;
 }
 
+// The head-to-head log table (shown in the Table tab when H2H is enabled).
+function h2hStandingsHtml(me) {
+  const { rows, order } = h2hStandings();
+  const nameBy = mgrNameById();
+  const cfg = h2hConfig();
+  const cols = "grid grid-cols-[1.4rem_1fr_1.5rem_3rem_2.6rem_2.6rem_1.8rem] gap-1 items-center";
+  const head = `<div class="${cols} text-[10px] text-slate-500 px-2 pb-0.5">
+    <span></span><span>Manager</span><span class="text-center">P</span><span class="text-center">W-D-L</span>
+    <span class="text-right">PF</span><span class="text-right">PA</span><span class="text-right">Pts</span></div>`;
+  const body = order.map((id, i) => {
+    const r = rows[id];
+    return `<div class="${cols} rounded-lg px-2 py-2 text-sm ${
+      id === me?.id ? "bg-wcgold/10 border border-wcgold/40" : "bg-slate-900 border border-slate-700"}">
+      <span class="text-slate-500 font-mono">${i + 1}.</span>
+      <span class="truncate font-semibold">${esc(nameBy[id] || "?")}${id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}${
+        r.bonus ? ` <span class="text-[9px] text-emerald-400">+${r.bonus}b</span>` : ""}</span>
+      <span class="text-center text-slate-400 text-xs">${r.P}</span>
+      <span class="text-center text-slate-400 text-xs">${r.W}-${r.D}-${r.L}</span>
+      <span class="text-right font-mono text-xs text-slate-400">${r.PF}</span>
+      <span class="text-right font-mono text-xs text-slate-500">${r.PA}</span>
+      <span class="text-right font-mono font-bold text-wcgold">${r.logPts}</span>
+    </div>`;
+  }).join("");
+  return `<div class="rounded-xl border border-slate-800 bg-slate-900/40 p-2 space-y-1">
+    <div class="text-sm font-semibold px-1">Head-to-head log</div>
+    <p class="text-[10px] text-slate-500 px-1">Win ${cfg.win} · draw ${cfg.draw} · loss ${cfg.loss} · +1 attacking (round ≥ ${cfg.score_bonus}) · +1 losing (by ≤ ${cfg.losing_margin}). PF/PA = points for/against.</p>
+    ${head}${body || '<p class="text-sm text-slate-500 px-2 py-3">No completed rounds yet.</p>'}
+  </div>`;
+}
+
 function renderBoard() {
   // Pre-draft browsing: default to Stats (the shortlistable player list).
   const preDraft = !S.league?.current_pick && S._browsing;
@@ -3974,6 +4098,13 @@ function renderBoard() {
         playerView ? "bg-wcred text-white" : "text-slate-400"}">⚽ Player pts <span class="text-[9px] font-normal opacity-80">for fun</span></button>
     </div>
     ${playerView ? `<p class="text-[10px] text-amber-300/90 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-1.5">⚽ Player-points-only — just for fun. The official standings are 🏆 <b>Total</b> (national-team stage bonuses included).</p>` : ""}`;
+  if (h2hEnabled()) {
+    $("board-lb").innerHTML = chartHtml + h2hStandingsHtml(me);
+    const cc0 = document.getElementById("chart-compare");
+    if (cc0) cc0.onchange = () => { S.chartCompare = cc0.value || null; renderBoard(); };
+    renderRosters("board-rosters"); renderStatsTab(); renderTrades(); renderChat(); renderBracket();
+    return;
+  }
   $("board-lb").innerHTML = chartHtml + toggleHtml + scores.map((s, i) => {
     const ytp = yetByMgr[s.manager.id];
     const ytpLine = ytp?.hasSnapshot && ytp.total > 0
