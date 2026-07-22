@@ -102,6 +102,14 @@ check("rule: below threshold → 0",
   calcPlayerPoints({ ...row({}), raw: { "passes.accuracy": 88 } }, "MID"), 0);
 check("custom rules REPLACE defaults (a yellow no longer scores)",
   calcPlayerPoints(row({ yellow_cards: 1 }), "MID"), 0);
+// minMinutes gate: a rule only scores if the player met the minutes threshold.
+S.league = { config: { scoring: [
+  { stat: "clean_sheet", mode: "each", perPosition: false, points: 4, minMinutes: 60 },
+] } };
+check("minMinutes gate: 90 min clean sheet scores",
+  calcPlayerPoints({ ...row({ clean_sheet: true }), raw: { "clean_sheet": 1, "minutes": 90 } }, "DEF"), 4);
+check("minMinutes gate: 45 min clean sheet scores 0",
+  calcPlayerPoints({ ...row({ clean_sheet: true }), raw: { "clean_sheet": 1, "minutes": 45 } }, "DEF"), 0);
 S.league = { config: { stageBonus: { r32: 100 } } };
 check("config overrides a stage bonus (r32 100 + r16 default 10)", calcTeamPoints("r16"), 110);
 S.league = { config: { finalPickBonus: 20 } };
