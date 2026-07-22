@@ -373,6 +373,27 @@ do $$ begin
     create policy competition_stats_all on competition_stats for all using (true) with check (true);
 exception when duplicate_object then null; end $$;
 
+-- Waiver-order free-agent trading (mechanics-notes §1). When a league's config
+-- has fa_defer_to_close, free-agent swaps queue as fa_claims and resolve at
+-- window close in waiver priority (managers.waiver_order, lower = picks first).
+alter table managers add column if not exists waiver_order int;
+create table if not exists fa_claims (
+    id uuid primary key default gen_random_uuid(),
+    league_id uuid references leagues(id) on delete cascade,
+    manager_id uuid references managers(id) on delete cascade,
+    pick_id uuid references picks(id) on delete cascade,
+    rank int not null default 0,        -- the manager's own preference order (0 first)
+    out_player_id text, out_player_name text,
+    in_player_id text, in_player_name text,
+    status text not null default 'pending',   -- pending → awarded | failed
+    created_at timestamptz default now()
+);
+create index if not exists fa_claims_league_idx on fa_claims (league_id, status);
+alter table fa_claims enable row level security;
+do $$ begin
+    create policy fa_claims_all on fa_claims for all using (true) with check (true);
+exception when duplicate_object then null; end $$;
+
 -- Realtime: stream changes to connected clients.
 -- (wrapped so re-running this file never errors on already-added tables)
 do $$
@@ -381,7 +402,7 @@ begin
     foreach t in array array['leagues','managers','picks','match_stats',
                              'team_stages','trades','trade_items',
                              'lineup_snapshots','transactions','messages',
-                             'competition_stats'] loop
+                             'competition_stats', 'fa_claims'] loop
         begin
             execute format('alter publication supabase_realtime add table %I', t);
         exception when duplicate_object then null;
