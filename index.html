@@ -2206,6 +2206,154 @@ function flexRoundCounting(roster, rnd, teamMatches, appeared) {
   return flexCounting(st, bn, played, b, b.starters);
 }
 
+/* ---------- head-to-head log + bonus points (mechanics-notes spec) ----------
+   Optional league format: instead of everyone tallying points, managers play a
+   round-robin schedule and earn log points (win/draw/loss) + rugby-style bonuses
+   from their per-round fantasy totals. All values are league-configurable. */
+const H2H_DEFAULTS = { win: 3, draw: 1, loss: 0, score_bonus: 60, losing_margin: 5 };
+const h2hConfig = () => ({ ...H2H_DEFAULTS, ...(cfgOf().h2h || {}) });
+const h2hEnabled = () => cfgOf().h2hEnabled === true;
+
+// Round-robin schedule (circle method). Returns rounds of [home, away] pairs;
+// away === null is a bye. Odd counts get a null placeholder that becomes byes.
+function roundRobin(ids) {
+  const arr = ids.slice();
+  if (arr.length % 2) arr.push(null);
+  const n = arr.length, rounds = [];
+  for (let r = 0; r < n - 1; r++) {
+    const pairs = [];
+    for (let i = 0; i < n / 2; i++) {
+      const a = arr[i], b = arr[n - 1 - i];
+      if (a === null || b === null) pairs.push([a === null ? b : a, null]);
+      else pairs.push([a, b]);
+    }
+    rounds.push(pairs);
+    arr.splice(1, 0, arr.pop());   // rotate, keeping the first fixed
+  }
+  return rounds;
+}
+
+// One matchup's log points + bonuses for both managers, from their round scores.
+// Attacking bonus (+1) if own score ≥ score_bonus (either result); losing bonus
+// (+1) if you lose by ≤ losing_margin. Independent of win/draw/loss points.
+function h2hResult(a, b, cfg) {
+  cfg = cfg || h2hConfig();
+  let ptsA, ptsB;
+  if (a > b) { ptsA = cfg.win; ptsB = cfg.loss; }
+  else if (b > a) { ptsB = cfg.win; ptsA = cfg.loss; }
+  else { ptsA = ptsB = cfg.draw; }
+  let bonusA = 0, bonusB = 0;
+  if (a >= cfg.score_bonus) bonusA++;
+  if (b >= cfg.score_bonus) bonusB++;
+  if (a < b && (b - a) <= cfg.losing_margin) bonusA++;
+  if (b < a && (a - b) <= cfg.losing_margin) bonusB++;
+  return { ptsA, ptsB, bonusA, bonusB };
+}
+
+// The H2H log: per-manager { P,W,D,L,PF,PA,bonus,logPts,byes } + sorted order.
+// A fixture counts only once BOTH managers have a score for that round; a bye
+// (one side null) scores nothing but is tallied once the manager has a score.
+function h2hTable(mgrIds, scoresByMgr, fixtures, cfg) {
+  cfg = cfg || h2hConfig();
+  const rows = {};
+  for (const id of mgrIds) rows[id] = { id, P: 0, W: 0, D: 0, L: 0, PF: 0, PA: 0, bonus: 0, logPts: 0, byes: 0 };
+  const scoreOf = (m, round) => scoresByMgr[m]?.[round - 1];
+  for (const f of fixtures) {
+    const home = f.home_manager_id, away = f.away_manager_id;
+    if (away == null || home == null) {                 // bye
+      const m = home ?? away;
+      if (m != null && rows[m] && scoreOf(m, f.round) !== undefined) rows[m].byes++;
+      continue;
+    }
+    if (!rows[home] || !rows[away]) continue;
+    const sa = scoreOf(home, f.round), sb = scoreOf(away, f.round);
+    if (sa === undefined || sb === undefined) continue;  // round incomplete for the pair
+    const r = h2hResult(sa, sb, cfg);
+    rows[home].P++; rows[away].P++;
+    rows[home].PF += sa; rows[home].PA += sb;
+    rows[away].PF += sb; rows[away].PA += sa;
+    if (sa > sb) { rows[home].W++; rows[away].L++; }
+    else if (sb > sa) { rows[away].W++; rows[home].L++; }
+    else { rows[home].D++; rows[away].D++; }
+    rows[home].bonus += r.bonusA; rows[away].bonus += r.bonusB;
+    rows[home].logPts += r.ptsA + r.bonusA;
+    rows[away].logPts += r.ptsB + r.bonusB;
+  }
+  // Head-to-head tiebreak: net score across the rounds a tied pair actually met.
+  const met = (x, y) => {
+    let d = 0;
+    for (const f of fixtures) {
+      if (f.away_manager_id == null) continue;
+      const pair = [f.home_manager_id, f.away_manager_id];
+      if (!pair.includes(x) || !pair.includes(y)) continue;
+      const sx = scoreOf(x, f.round), sy = scoreOf(y, f.round);
+      if (sx !== undefined && sy !== undefined) d += sx - sy;
+    }
+    return d;
+  };
+  const order = mgrIds.slice().sort((x, y) => {
+    if (rows[x].logPts !== rows[y].logPts) return rows[y].logPts - rows[x].logPts;
+    const h = met(x, y);
+    if (h !== 0) return -h;
+    return rows[y].PF - rows[x].PF;
+  });
+  return { rows, order };
+}
+
+/* ---------- waiver-order free-agent claims (mechanics-notes §1) ----------
+   Resolve queued free-agent claims at window close in waiver priority. Pure:
+   given claims (each manager's ordered preference list), the waiver order, the
+   currently-rostered players, a per-manager cap, and each pick's held player,
+   returns { awards, failed, order }. See the spec for the exact rules. */
+function resolveFaClaims(claims, waiverOrder, taken, tradeLimit, pickHolds) {
+  const order = { ...waiverOrder };
+  let maxOrder = Math.max(-1, ...Object.values(order).filter((v) => v != null));
+  const rostered = new Set(taken);
+  const holds = { ...pickHolds };
+  const limit = tradeLimit == null ? Infinity : tradeLimit;
+  const awards = [], failed = [];
+  const byMgr = {};
+  for (const c of claims) (byMgr[c.manager_id] ||= []).push(c);
+  for (const m in byMgr) byMgr[m].sort((a, b) =>
+    (a.rank - b.rank) || String(a.created_at || "").localeCompare(String(b.created_at || "")));
+  const wanters = {};
+  for (const c of claims) (wanters[c.in_player_id] ||= new Set()).add(c.manager_id);
+  const contested = (pid) => (wanters[pid]?.size || 0) > 1;
+  const ptr = {}, count = {}, done = {};
+  for (const m in byMgr) { ptr[m] = 0; count[m] = 0; done[m] = false; }
+  const prio = (m) => order[m] == null ? Infinity : order[m];
+  const active = () => Object.keys(byMgr).filter((m) => !done[m]);
+  const capOut = (m) => {
+    done[m] = true;
+    for (let i = ptr[m]; i < byMgr[m].length; i++) {
+      wanters[byMgr[m][i].in_player_id]?.delete(m);   // ignored → no longer contests
+      failed.push(byMgr[m][i].id);
+    }
+    ptr[m] = byMgr[m].length;
+  };
+  let act;
+  while ((act = active()).length) {
+    const m = act.sort((x, y) => prio(x) - prio(y) || String(x).localeCompare(String(y)))[0];
+    if (count[m] >= limit) { capOut(m); continue; }
+    let executed = null;
+    while (ptr[m] < byMgr[m].length) {
+      const c = byMgr[m][ptr[m]++];
+      const feasible = holds[c.pick_id] === c.out_player_id && !rostered.has(c.in_player_id);
+      if (!feasible) { failed.push(c.id); continue; }   // fallback → next preference
+      rostered.delete(c.out_player_id); rostered.add(c.in_player_id);
+      holds[c.pick_id] = c.in_player_id;
+      count[m]++; awards.push(c); executed = c;
+      break;
+    }
+    if (!executed) { done[m] = true; continue; }
+    if (contested(executed.in_player_id)) { maxOrder++; order[m] = maxOrder; }  // yield
+    if (count[m] >= limit) capOut(m);
+  }
+  const seen = new Set([...awards.map((c) => c.id), ...failed]);
+  for (const c of claims) if (!seen.has(c.id)) failed.push(c.id);
+  return { awards, failed, order };
+}
+
 // A stat row → a flat { "goals.total": n, ... } map. New rows carry the full API
 // stat set in `raw`; legacy rows are reconstructed from the derived columns, so
 // DEFAULT_RULES score them exactly as the old hardcoded formula did.

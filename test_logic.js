@@ -17,13 +17,14 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, resolveFaClaims, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         scoring, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota,
         phaseOneStarters, starterQuota, effectiveConfig,
         flexCounting, formationValid, DEFAULT_FORMATION,
+        roundRobin, h2hResult, h2hTable, resolveFaClaims,
         apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture,
         fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey,
         slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick,
@@ -181,6 +182,72 @@ check("flex lineup: 3-5-2 is valid", lineupValid({ GK: 1, DEF: 3, MID: 5, FWD: 2
 check("flex lineup: 6 defenders exceeds max → invalid", lineupValid({ GK: 1, DEF: 6, MID: 2, FWD: 2 }), false);
 check("flex lineup: only 10 outfield+GK → invalid (wrong total)", lineupValid({ GK: 1, DEF: 4, MID: 3, FWD: 2 }), false);
 S.league = {};
+
+/* H2H log + bonus points (mechanics-notes spec). */
+{
+  // §3 worked example: 470 loses by 30 to 500 (rugby defaults).
+  const rugby = { win: 4, draw: 2, loss: 0, score_bonus: 450, losing_margin: 50 };
+  const r = h2hResult(470, 500, rugby);
+  check("h2hResult: loser 470 gets attacking + losing bonus (0 + 2)",
+    [r.ptsA, r.bonusA], [0, 2]);
+  check("h2hResult: winner 500 gets win + attacking (4 + 1)",
+    [r.ptsB, r.bonusB], [4, 1]);
+  check("h2hResult: a level game is a draw, no bonuses",
+    h2hResult(30, 30, rugby), { ptsA: 2, ptsB: 2, bonusA: 0, bonusB: 0 });
+  // roundRobin: 4 managers → 3 rounds, everyone plays everyone once.
+  const rr = roundRobin(["a", "b", "c", "d"]);
+  check("roundRobin: n=4 → 3 rounds of 2 fixtures", [rr.length, rr[0].length], [3, 2]);
+  const opps = { a: new Set() };
+  for (const rnd of rr) for (const [h, aw] of rnd) if (h === "a" && aw) opps.a.add(aw); else if (aw === "a") opps.a.add(h);
+  check("roundRobin: 'a' meets all 3 others exactly once", [...opps.a].sort(), ["b", "c", "d"]);
+  // h2hTable: a win + bonuses, ordering by log points.
+  const cfg = { win: 3, draw: 1, loss: 0, score_bonus: 60, losing_margin: 5 };
+  const scores = { a: [62], b: [59] };   // a beats b 62-59; a attacking bonus, b losing bonus
+  const fx = [{ round: 1, home_manager_id: "a", away_manager_id: "b" }];
+  const t = h2hTable(["a", "b"], scores, fx, cfg);
+  check("h2hTable: winner logPts = win + attacking bonus", t.rows.a.logPts, 4);
+  check("h2hTable: loser logPts = loss + losing bonus", t.rows.b.logPts, 1);
+  check("h2hTable: PF/PA recorded", [t.rows.a.PF, t.rows.a.PA], [62, 59]);
+  check("h2hTable: order by log points", t.order, ["a", "b"]);
+  // A round only counts once BOTH have a score.
+  const t2 = h2hTable(["a", "b"], { a: [62] }, fx, cfg);
+  check("h2hTable: incomplete round is skipped", t2.rows.a.P, 0);
+  // Bye: scores nothing but is tallied.
+  const t3 = h2hTable(["a"], { a: [50] }, [{ round: 1, home_manager_id: "a", away_manager_id: null }], cfg);
+  check("h2hTable: a bye scores nothing but counts", [t3.rows.a.byes, t3.rows.a.logPts], [1, 0]);
+}
+
+/* Waiver-order free-agent claims (mechanics-notes §1). */
+{
+  // §1.6 worked example (cap 1): M1[P1,P2], M2[P2]. M1 wins P1 (uncontested,
+  // keeps order 0), its P2 claim is ignored; M2 then wins P2 uncontested.
+  const claims = [
+    { id: "c1", manager_id: "M1", rank: 0, out_player_id: "O1", in_player_id: "P1", pick_id: "pk1" },
+    { id: "c2", manager_id: "M1", rank: 1, out_player_id: "O2", in_player_id: "P2", pick_id: "pk2" },
+    { id: "c3", manager_id: "M2", rank: 0, out_player_id: "O3", in_player_id: "P2", pick_id: "pk3" },
+  ];
+  const res = resolveFaClaims(claims, { M1: 0, M2: 1 }, ["O1", "O2", "O3"], 1,
+    { pk1: "O1", pk2: "O2", pk3: "O3" });
+  check("waiver: M1 wins P1 & M2 wins P2; over-cap c2 ignored",
+    [res.awards.map((c) => c.id).sort(), res.failed], [["c1", "c3"], ["c2"]]);
+  check("waiver: uncontested wins keep priority", [res.order.M1, res.order.M2], [0, 1]);
+  // Contested win → winner drops below everyone for remaining turns.
+  const contested = [
+    { id: "a", manager_id: "M1", rank: 0, out_player_id: "O1", in_player_id: "P2", pick_id: "pk1" },
+    { id: "b", manager_id: "M2", rank: 0, out_player_id: "O2", in_player_id: "P2", pick_id: "pk2" },
+  ];
+  const r2 = resolveFaClaims(contested, { M1: 0, M2: 1 }, ["O1", "O2"], Infinity, { pk1: "O1", pk2: "O2" });
+  check("waiver: contested win → winner dropped below the loser",
+    [r2.awards.map((c) => c.id), r2.order.M1 > r2.order.M2], [["a"], true]);
+  // Fallback: an infeasible top preference lets the next one land.
+  const fb = [
+    { id: "x", manager_id: "M1", rank: 0, out_player_id: "O1", in_player_id: "P1", pick_id: "pk1" },
+    { id: "y", manager_id: "M1", rank: 1, out_player_id: "O1", in_player_id: "P2", pick_id: "pk1" },
+  ];
+  const r3 = resolveFaClaims(fb, { M1: 0 }, ["O1", "P1"], Infinity, { pk1: "O1" });
+  check("waiver: infeasible top claim falls back to next preference",
+    [r3.awards.map((c) => c.id), r3.failed], [["y"], ["x"]]);
+}
 // No config anywhere → identical to the original hardcoded league.
 S.league = {};
 check("no config = default FWD goal 4", calcPlayerPoints(row({ goals: 1 }), "FWD"), 4);
