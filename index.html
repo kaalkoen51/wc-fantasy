@@ -234,6 +234,7 @@
       </div>
       <ul id="lobby-managers" class="space-y-1.5 text-sm"></ul>
     </div>
+    <button id="lobby-browse" class="hidden w-full bg-slate-800 hover:bg-slate-700 border border-wcgold/50 text-wcgold rounded-xl py-2.5 font-semibold">⭐ Browse players &amp; build your shortlist</button>
     <div id="lobby-join" class="hidden rounded-xl border border-wcgold/60 bg-wcred/10 p-4 space-y-2">
       <div class="text-sm">You're watching as a spectator — join as a manager to draft a team:</div>
       <input id="lobby-join-name" placeholder="Your manager name" class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2">
@@ -1063,8 +1064,9 @@ function route() {
   const cur = document.querySelector("[data-view]:not(.hidden)")?.dataset.view;
   if (cur === "admin") { renderAdmin(); return; }
   if (!S.league.current_pick) {
-    renderLobby();
-    showView("lobby");
+    // Pre-draft: managers can browse the pool & shortlist from the board.
+    if (S._browsing && myManager()) { renderBoard(); showView("board"); }
+    else { renderLobby(); showView("lobby"); }
   } else if (S.league.current_pick <= totalPicks()) {
     renderDraft();
     showView("draft");
@@ -1472,6 +1474,8 @@ function renderLobby() {
     ? "Start draft" : `Start draft (waiting for ${L.num_managers - S.managers.length} more)`;
   $("lobby-join").classList.toggle("hidden",
     !!me || S.managers.length >= L.num_managers);
+  $("lobby-browse").classList.toggle("hidden", !me);
+  $("lobby-browse").onclick = () => { S._browsing = true; renderBoard(); showView("board"); };
   $("lobby-rules").innerHTML = draftRulesHtml() + scoringHtml();
 }
 
@@ -3788,8 +3792,18 @@ function seasonChartHtml(scores, meId) {
 }
 
 function renderBoard() {
+  // Pre-draft browsing: default to Stats (the shortlistable player list).
+  const preDraft = !S.league?.current_pick && S._browsing;
+  if (preDraft && S.boardTab !== "stats") S.boardTab = "stats";
   setBoardTab(S.boardTab || "home");
   renderBanner();
+  if (preDraft) {
+    $("board-banner").innerHTML = `<div class="flex items-center justify-between gap-2 rounded-xl border border-wcgold/50 bg-wcred/10 px-3 py-2 text-sm">
+      <span class="min-w-0">⭐ Pre-draft — star players to build your shortlist. Auto-pick draws from it in order.</span>
+      <button id="board-tolobby" class="shrink-0 rounded-lg bg-slate-800 border border-slate-700 px-3 py-1.5 text-xs font-semibold">← Lobby</button></div>`;
+    const btl = $("board-tolobby");
+    if (btl) btl.onclick = () => { S._browsing = false; route(); };
+  }
   renderHomeTab();
   const open = new Set([...document.querySelectorAll("#board-lb details[open]")]
     .map((d) => d.dataset.mgr));
