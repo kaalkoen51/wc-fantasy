@@ -205,6 +205,10 @@
         </div>
         <p class="text-[11px] text-slate-500">Instant: free-agent swaps apply immediately (first-come). Waiver: claims queue and
           resolve when the window closes, in reverse-standings priority (last place picks first).</p>
+        <div id="create-waiver-fields" class="hidden">
+          <label class="text-[11px] text-slate-400">Max successful claims per manager, per window <span class="text-slate-500">(blank = unlimited)</span>
+            <input data-cfg="max_fa_per_window" type="number" min="0" placeholder="unlimited" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
+        </div>
       </div>
     </details>
 
@@ -954,7 +958,7 @@ async function refetchAll() {
     }
     return { data: all, error: null };
   };
-  const [m, p, st, tg, tr, sn, tx, msg] = await Promise.all([
+  const [m, p, st, tg, tr, sn, tx, msg, fac] = await Promise.all([
     S.sb.from("managers").select("*").eq("league_id", id).order("created_at"),
     S.sb.from("picks").select("*").eq("league_id", id).order("pick_number"),
     fetchAllStats(),
@@ -967,6 +971,7 @@ async function refetchAll() {
       .order("created_at", { ascending: false }),
     S.sb.from("messages").select("*").eq("league_id", id)
       .order("created_at"),
+    S.sb.from("fa_claims").select("*").eq("league_id", id).order("rank"),
   ]);
   const err = m.error || p.error || st.error || tg.error || tr.error;
   if (err) { toast("Load failed: " + err.message); return; }
@@ -981,6 +986,8 @@ async function refetchAll() {
   S.transactions = tx && !tx.error ? (tx.data || []) : [];
   // messages likewise degrade to no chat if the migration hasn't been run.
   S.messages = msg && !msg.error ? (msg.data || []) : [];
+  // fa_claims likewise optional (waiver mode); empty if not migrated.
+  S.faClaims = fac && !fac.error ? (fac.data || []) : [];
   ptsCache = null;
   route();
 }
@@ -1009,6 +1016,7 @@ function subscribeRealtime() {
     .on("postgres_changes", { event: "*", schema: "public", table: "lineup_snapshots", filter: "league_id=eq." + id }, scheduleRefetch)
     .on("postgres_changes", { event: "*", schema: "public", table: "transactions", filter: "league_id=eq." + id }, scheduleRefetch)
     .on("postgres_changes", { event: "*", schema: "public", table: "messages",     filter: "league_id=eq." + id }, scheduleRefetch)
+    .on("postgres_changes", { event: "*", schema: "public", table: "fa_claims",     filter: "league_id=eq." + id }, scheduleRefetch)
     .subscribe((status) => {
       $("conn-dot").className = "w-2 h-2 rounded-full " +
         (status === "SUBSCRIBED" ? "bg-wcgreen" : "bg-amber-400");
@@ -1311,6 +1319,7 @@ function syncCreateFormat() {
     b.className = "flex-1 rounded-lg py-2 text-xs font-semibold border " +
       ((b.dataset.trade === "waiver") === S._createWaiver ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400");
   $("create-h2h-fields").classList.toggle("hidden", !S._createH2H);
+  $("create-waiver-fields").classList.toggle("hidden", !S._createWaiver);
   updateCreateSummaries();
 }
 
@@ -1390,7 +1399,11 @@ function readCreateConfig() {
     cfg.h2h = { win: g("h2h.win"), draw: g("h2h.draw"), loss: g("h2h.loss"),
       score_bonus: g("h2h.score_bonus"), losing_margin: g("h2h.losing_margin") };
   }
-  if (S._createWaiver) cfg.fa_defer_to_close = true;   // waiver-order trades
+  if (S._createWaiver) {                               // waiver-order trades
+    cfg.fa_defer_to_close = true;
+    const cap = document.querySelector('[data-view="create"] [data-cfg="max_fa_per_window"]')?.value;
+    if (cap != null && cap !== "") cfg.max_fa_per_window = Number(cap);
+  }
   return JSON.stringify(effectiveConfig(cfg)) === JSON.stringify(effectiveConfig({})) ? null : cfg;
 }
 
@@ -5008,7 +5021,7 @@ function renderSwapList() {
         <div class="text-xs text-slate-400">${teamFixLine(e.team)}</div>
       </div>
       <span class="shrink-0 text-xs font-mono text-slate-400">${entryPoints(e.player_id, e.position, e.team)} pts</span>
-      <button data-swapin="${esc(e.player_id)}" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-sm font-semibold">Swap in</button>
+      <button data-swapin="${esc(e.player_id)}" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-sm font-semibold">${faDeferToClose() ? "Claim" : "Swap in"}</button>
     </li>`).join("") || '<li class="py-4 text-sm text-slate-500">No free agents match.</li>';
   const ownedRows = owned.map(({ pk, owner }) => `
     <li class="flex items-center py-2 gap-2">
@@ -5026,8 +5039,11 @@ function renderSwapList() {
     : "");
   $("swap-list").querySelectorAll("[data-swapin]").forEach((b) => b.onclick = () => {
     const entry = free.find((e) => e.player_id === b.dataset.swapin);
-    if (entry && confirm(`Swap ${pick.player_name} out for ${entry.name}?`))
-      doSwap(pick, entry).catch((er) => toast(er.message));
+    if (!entry) return;
+    const msg = faDeferToClose()
+      ? `Queue a waiver claim — ${entry.name} for ${pick.player_name}? Resolves at window close, in waiver order.`
+      : `Swap ${pick.player_name} out for ${entry.name}?`;
+    if (confirm(msg)) swapOrClaim(pick, entry).catch((er) => toast(er.message));
   });
   $("swap-list").querySelectorAll("[data-tradefor]").forEach((b) => b.onclick = () => {
     const theirs = S.picks.find((pk) => pk.id === b.dataset.tradefor);
@@ -5056,6 +5072,94 @@ async function doSwap(pick, entry) {
   toast(`Swapped in ${entry.name} for ${pick.player_name}.`);
   closeSwap();
   scheduleRefetch();
+}
+
+/* ---------- waiver-order free-agent claims (mechanics-notes §1) ---------- */
+const faDeferToClose = () => cfgOf().fa_defer_to_close === true;
+const maxFaPerWindow = () => cfgOf().max_fa_per_window ?? null;
+const myClaims = () => (S.faClaims || [])
+  .filter((c) => c.manager_id === myManager()?.id && c.status === "pending")
+  .sort((a, b) => a.rank - b.rank);
+
+// Manager ids best-first: H2H log order when enabled, else total points desc.
+function standingsOrder() {
+  if (h2hEnabled()) return h2hStandings().order;
+  return computeScores().sort((a, b) => b.total - a.total).map((s) => s.manager.id);
+}
+
+// Instant swap vs a queued waiver claim, per the league's trade mode.
+function swapOrClaim(pick, entry) {
+  return faDeferToClose() ? submitFaClaim(pick, entry) : doSwap(pick, entry);
+}
+
+async function submitFaClaim(pick, entry) {
+  const me = myManager();
+  if (!me) return toast("Join as a manager first.");
+  const mine = myClaims();
+  const rank = mine.length ? Math.max(...mine.map((c) => c.rank)) + 1 : 0;
+  const { error } = await S.sb.from("fa_claims").insert({
+    league_id: S.league.id, manager_id: me.id, pick_id: pick.id, rank,
+    out_player_id: pick.player_id, out_player_name: pick.player_name,
+    in_player_id: entry.player_id, in_player_name: entry.name, status: "pending",
+  });
+  if (error) return toast(/fa_claims|column|relation|schema cache/.test(error.message)
+    ? "Waiver claims need a schema update — run schema.sql." : error.message);
+  toast(`Claim #${rank + 1} queued: ${entry.name} for ${pick.player_name}. Resolves at window close.`);
+  closeSwap();
+  scheduleRefetch();
+}
+
+async function reorderClaim(id, dir) {
+  const list = myClaims();
+  const i = list.findIndex((c) => c.id === id), j = i + dir;
+  if (i < 0 || j < 0 || j >= list.length) return;
+  await S.sb.from("fa_claims").update({ rank: list[j].rank }).eq("id", list[i].id);
+  await S.sb.from("fa_claims").update({ rank: list[i].rank }).eq("id", list[j].id);
+  scheduleRefetch();
+}
+
+async function cancelClaim(id) {
+  await S.sb.from("fa_claims").delete().eq("id", id);
+  scheduleRefetch();
+}
+
+// Seed waiver priority from reverse standings (worst-placed picks first = 0).
+async function resetWaiverOrder() {
+  const worstFirst = standingsOrder().slice().reverse();
+  await Promise.all(worstFirst.map((id, i) =>
+    S.sb.from("managers").update({ waiver_order: i }).eq("id", id)));
+}
+
+// Resolve every queued claim at window close, in waiver priority (uses the pure
+// resolveFaClaims), applies awards to picks, and writes back the waiver order.
+async function processFaClaims() {
+  const pending = (S.faClaims || []).filter((c) => c.status === "pending");
+  if (!pending.length) return;
+  const order = {};
+  for (const m of S.managers) if (m.waiver_order != null) order[m.id] = m.waiver_order;
+  let maxo = Math.max(-1, ...Object.values(order));
+  for (const id of standingsOrder().slice().reverse()) if (order[id] == null) order[id] = ++maxo;
+  const taken = S.picks.map((p) => p.player_id);
+  const holds = Object.fromEntries(S.picks.map((p) => [p.id, p.player_id]));
+  const { awards, failed, order: newOrder } =
+    resolveFaClaims(pending, order, taken, maxFaPerWindow(), holds);
+  for (const c of awards) {
+    const team = S.playerById[c.in_player_id]?.team || null;
+    const { error } = await S.sb.from("picks")
+      .update({ player_id: c.in_player_id, player_name: c.in_player_name, team })
+      .eq("id", c.pick_id).eq("player_id", c.out_player_id);
+    if (!error) S.sb.from("transactions").insert({
+      league_id: S.league.id, manager_id: c.manager_id, kind: "waiver",
+      out_player_id: c.out_player_id, out_player_name: c.out_player_name,
+      in_player_id: c.in_player_id, in_player_name: c.in_player_name,
+    }).then(() => {}, () => {});
+  }
+  if (awards.length) await S.sb.from("fa_claims").update({ status: "awarded" }).in("id", awards.map((c) => c.id));
+  if (failed.length) await S.sb.from("fa_claims").update({ status: "failed" }).in("id", failed);
+  for (const m of S.managers)
+    if (newOrder[m.id] != null && newOrder[m.id] !== m.waiver_order)
+      await S.sb.from("managers").update({ waiver_order: newOrder[m.id] }).eq("id", m.id);
+  toast(`Waivers processed: ${awards.length} awarded, ${failed.length} failed.`);
 }
 
 /* ---------- trading: manager-to-manager ---------- */
@@ -5624,6 +5728,30 @@ function renderPlannerPick() {
   wireStars($("planner-list"), renderPlannerPick);
 }
 
+// Your queued waiver claims, in preference order, with reorder + cancel.
+function faClaimsSectionHtml(me) {
+  const mine = myClaims();
+  const priority = me.waiver_order != null
+    ? `Your priority: <b class="text-wcgold">#${me.waiver_order + 1}</b>`
+    : "priority set at window open";
+  const rows = mine.map((c, i) => `
+    <div class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-3 py-2 text-sm">
+      <span class="text-slate-500 font-mono w-5">${i + 1}.</span>
+      <span class="flex-1 min-w-0 truncate">${esc(c.in_player_name)} <span class="text-slate-500 text-xs">for ${esc(c.out_player_name)}</span></span>
+      <button data-claimup="${c.id}"${i === 0 ? " disabled" : ""} class="shrink-0 text-slate-400 disabled:opacity-30 px-1">▲</button>
+      <button data-claimdown="${c.id}"${i === mine.length - 1 ? " disabled" : ""} class="shrink-0 text-slate-400 disabled:opacity-30 px-1">▼</button>
+      <button data-claimx="${c.id}" class="shrink-0 text-slate-500 hover:text-wcred px-1">✕</button>
+    </div>`).join("") || '<p class="text-xs text-slate-500">No claims queued — tap “Claim” on a free agent to add one.</p>';
+  return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2">
+    <div class="flex items-center justify-between gap-2">
+      <h3 class="font-semibold text-sm">⏳ Waiver claims</h3>
+      <span class="text-[11px] text-slate-400">${priority}</span>
+    </div>
+    <p class="text-[11px] text-slate-500">These resolve when the window closes, in waiver order (worst-placed picks first). Order yours by preference — the first still-available one lands.</p>
+    ${rows}
+  </div>`;
+}
+
 function renderTrades() {
   const box = $("board-trades");
   const me = myManager();
@@ -5637,6 +5765,7 @@ function renderTrades() {
                  : "Trading is closed — you can still respond to pending proposals."}</span>
     ${open && !S.builder ? '<button id="trade-new" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 font-semibold">New trade</button>' : ""}
   </div>`;
+  if (faDeferToClose()) html += faClaimsSectionHtml(me);
   if (S.builder) html += builderHtml(me);
   // Pending requests sit at the very top so they can't be missed; only shown
   // when there's something to act on.
@@ -5659,6 +5788,9 @@ function wireTrades(me) {
   const box = $("board-trades");
   const byId = (id) => S.trades.find((t) => t.id === id);
   wireStars(box, renderTrades);
+  box.querySelectorAll("[data-claimup]").forEach((b) => b.onclick = () => reorderClaim(b.dataset.claimup, -1).catch((e) => toast(e.message)));
+  box.querySelectorAll("[data-claimdown]").forEach((b) => b.onclick = () => reorderClaim(b.dataset.claimdown, 1).catch((e) => toast(e.message)));
+  box.querySelectorAll("[data-claimx]").forEach((b) => b.onclick = () => cancelClaim(b.dataset.claimx).catch((e) => toast(e.message)));
   const slToggle = box.querySelector("#sl-toggle");
   if (slToggle) slToggle.onclick = () => { S.showShortlist = !S.showShortlist; renderTrades(); };
   const slClean = box.querySelector("#sl-clean");
@@ -6741,9 +6873,16 @@ async function toggleDraftSort() {
 
 async function toggleTrading() {
   const next = !S.league.trading_open;
+  const waiver = faDeferToClose();
+  // Waiver mode: resolve all queued claims BEFORE the window shuts.
+  if (!next && waiver) await processFaClaims();
   const { error } = await S.sb.from("leagues")
     .update({ trading_open: next }).eq("id", S.league.id);
   if (error) return toast(error.message);
+  if (next && waiver) {
+    await S.sb.from("fa_claims").delete().eq("league_id", S.league.id);  // fresh window
+    await resetWaiverOrder();                                            // seed from standings
+  }
   if (!next) await snapshotRosters(); // closing = lock everyone's lineups in
   toast(next ? "Trading window opened — lineups and trades unlocked."
              : "Trading window closed — lineups locked in for the next games.");
