@@ -106,8 +106,8 @@
       <div class="grid grid-cols-2 gap-3">
         <label class="block text-sm text-slate-400">Managers
           <input id="create-num" type="number" min="2" max="15" value="8" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></label>
-        <label class="block text-sm text-slate-400">Seconds / pick
-          <input id="create-dur" type="number" min="15" max="300" value="60" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></label>
+        <label class="block text-sm text-slate-400">Seconds / pick <span class="text-slate-500">(0 = no limit)</span>
+          <input id="create-dur" type="number" min="0" max="600" value="60" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></label>
       </div>
     </div>
 
@@ -241,7 +241,13 @@
     </div>
     <div id="lobby-admin" class="hidden space-y-2">
       <button id="lobby-start" class="w-full bg-wcred hover:bg-wcred-hov disabled:bg-slate-800 disabled:text-slate-500 rounded-xl py-3 font-semibold">Start draft</button>
-      <p class="text-xs text-slate-500 text-center">Random draft order is assigned when the draft starts. Snake order, 14 rounds.</p>
+      <div class="flex items-center gap-2 text-xs text-slate-400 justify-center">
+        <span>Managers needed:</span>
+        <input id="lobby-num-input" type="number" min="2" max="15" class="w-16 rounded bg-slate-800 border border-slate-700 px-2 py-1">
+        <button id="lobby-num-set" class="rounded bg-slate-800 border border-slate-700 px-3 py-1 font-semibold">Set</button>
+        <span class="text-slate-500">(if someone drops out). Tap ✕ by a name to kick.</span>
+      </div>
+      <p class="text-xs text-slate-500 text-center">Random draft order is assigned when the draft starts. Snake order.</p>
     </div>
     <p id="lobby-wait" class="text-center text-sm text-slate-400">Waiting for the admin to start the draft…</p>
     <details class="rounded-xl border border-slate-700 bg-slate-900">
@@ -279,6 +285,11 @@
     </div>
     <div id="draft-rosters" class="space-y-2"></div>
     <button id="draft-force" class="hidden w-full bg-amber-700 hover:bg-amber-600 rounded-lg py-2 text-sm font-semibold">Admin: force auto-pick now</button>
+    <div id="draft-timerctl" class="hidden flex items-center gap-2 text-xs text-slate-400">
+      <span>Admin — seconds/pick (0 = no limit):</span>
+      <input id="draft-timer-input" type="number" min="0" max="600" class="w-20 rounded bg-slate-800 border border-slate-700 px-2 py-1">
+      <button id="draft-timer-set" class="rounded bg-slate-800 border border-slate-700 px-3 py-1 font-semibold">Set</button>
+    </div>
   </section>
 
   <!-- Leaderboard / rosters -->
@@ -1249,7 +1260,7 @@ async function createLeague() {
   const dur = parseInt($("create-dur").value, 10);
   if (!name) return toast("Give the league a name.");
   if (!(num >= 2 && num <= 15)) return toast("Managers must be 2–15.");
-  if (!(dur >= 15 && dur <= 300)) return toast("Pick duration must be 15–300s.");
+  if (!(dur >= 0 && dur <= 600)) return toast("Pick duration must be 0–600s (0 = no limit).");
 
   // Competition (World Cup built-in, or an API-Football competition).
   const compVal = $("create-comp").value;
@@ -1370,13 +1381,20 @@ function renderLobby() {
     `${L.num_managers} managers · ${L.pick_duration_seconds}s per pick · ${picksPerManager()} rounds`;
   $("lobby-count").textContent = `${S.managers.length}/${L.num_managers}`;
   const me = myManager();
-  $("lobby-managers").innerHTML = S.managers.map((m) =>
-    `<li class="rounded-lg bg-slate-800/60 px-3 py-2">${esc(m.name)}` +
-    (m.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : "") +
-    "</li>").join("") || '<li class="text-slate-500">No one yet…</li>';
   const admin = isAdmin();
+  $("lobby-managers").innerHTML = S.managers.map((m) =>
+    `<li class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-3 py-2">
+      <span class="flex-1 min-w-0 truncate">${esc(m.name)}${
+        m.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}</span>` +
+    (admin && m.id !== me?.id
+      ? `<button data-kick="${esc(m.id)}" title="kick" class="shrink-0 text-slate-500 hover:text-wcred px-1">✕</button>` : "") +
+    "</li>").join("") || '<li class="text-slate-500">No one yet…</li>';
+  if (admin) $("lobby-managers").querySelectorAll("[data-kick]").forEach((b) =>
+    b.onclick = () => kickManager(b.dataset.kick));
   $("lobby-admin").classList.toggle("hidden", !admin);
   $("lobby-wait").classList.toggle("hidden", admin);
+  if (admin && document.activeElement !== $("lobby-num-input"))
+    $("lobby-num-input").value = L.num_managers;
   const ready = S.managers.length === L.num_managers;
   $("lobby-start").disabled = !ready;
   $("lobby-start").textContent = ready
@@ -1396,6 +1414,18 @@ async function joinFromLobby() {
     .select().single();
   if (error) return toast(error.message);
   setSession({ ...getSession(), managerId: data.id });
+  scheduleRefetch();
+}
+
+// Admin removes a manager from the lobby (before the draft starts).
+async function kickManager(id) {
+  if (!isAdmin() || S.league.current_pick) return;
+  const m = S.managers.find((x) => x.id === id);
+  if (!m || !confirm(`Kick ${m.name} from the lobby?`)) return;
+  await S.sb.from("picks").delete().eq("league_id", S.league.id).eq("manager_id", id);
+  const { error } = await S.sb.from("managers").delete().eq("id", id);
+  if (error) return toast(error.message);
+  toast(`${m.name} removed.`);
   scheduleRefetch();
 }
 
@@ -1730,6 +1760,11 @@ function tickTimer() {
   const L = S.league;
   const clock = $("draft-clock");
   if (!L || !L.current_pick || L.current_pick > totalPicks()) { clock.textContent = "--"; return; }
+  if (!L.pick_duration_seconds) {   // 0 = no time limit (never auto-picks)
+    clock.textContent = "∞";
+    clock.classList.remove("text-red-400"); clock.classList.add("text-wcgold");
+    return;
+  }
   const deadline = Date.parse(L.pick_started_at) + L.pick_duration_seconds * 1000;
   const remain = Math.ceil((deadline - Date.now()) / 1000);
   const shown = Math.max(0, remain);
@@ -1932,6 +1967,9 @@ function renderDraft() {
 
   renderRosters("draft-rosters");
   $("draft-force").classList.toggle("hidden", !isAdmin() || myTurn);
+  $("draft-timerctl").classList.toggle("hidden", !isAdmin());
+  if (isAdmin() && document.activeElement !== $("draft-timer-input"))
+    $("draft-timer-input").value = S.league.pick_duration_seconds ?? 60;
 }
 
 /* ---------- scoring & leaderboard ---------- */
@@ -2009,6 +2047,7 @@ function rawStatsOf(r) {
 
 // Points a single rule awards a player at position `pos` for one match.
 function evalRule(rule, raw, pos) {
+  if (rule.minMinutes && (raw.minutes || 0) < rule.minMinutes) return 0;  // minutes gate
   const pts = rule.perPosition ? (rule.points?.[pos] ?? 0) : (rule.points ?? 0);
   const v = raw[rule.stat] || 0;
   if (rule.mode === "per") return rule.per ? Math.floor(v / rule.per) * pts : 0;
@@ -2444,9 +2483,10 @@ function ruleValueText(rule) {
   const pts = rule.perPosition
     ? GROUPS.slice(0, 4).map((g) => `${g} ${rule.points?.[g] ?? 0}`).join(" / ")
     : `${rule.points ?? 0}`;
-  if (rule.mode === "per") return `${pts} per ${rule.per}`;
-  if (rule.mode === "threshold") return `${pts} if ≥ ${rule.gte}`;
-  return `${pts}`;
+  const mins = rule.minMinutes ? ` (≥${rule.minMinutes}′)` : "";
+  if (rule.mode === "per") return `${pts} per ${rule.per}${mins}`;
+  if (rule.mode === "threshold") return `${pts} if ≥ ${rule.gte}${mins}`;
+  return `${pts}${mins}`;
 }
 
 function scoringHtml() {
@@ -6014,6 +6054,7 @@ function renderRulesEditor(container, rules, opts = {}) {
         </select>
         ${extra}
         <label class="flex items-center gap-1 text-[10px] text-slate-400"><input type="checkbox" data-ri="${i}" data-rk="perPosition"${rule.perPosition ? " checked" : ""}${dis}> per position</label>
+        <label class="flex items-center gap-1 text-[10px] text-slate-400" title="Only score if the player played at least this many minutes (e.g. 60 for a clean sheet)">min mins <input data-ri="${i}" data-rk="minMinutes" type="number" min="0" value="${rule.minMinutes ?? 0}"${dis} class="w-12 ${inp}"></label>
       </div>
       ${pts}
     </div>`;
@@ -6253,6 +6294,14 @@ function wire() {
   $("join-find").onclick = () => findLeague().catch((e) => toast(e.message));
   $("join-go").onclick = () => joinLeague().catch((e) => toast(e.message));
   $("lobby-start").onclick = () => startDraft().catch((e) => toast(e.message));
+  $("lobby-num-set").onclick = async () => {
+    if (!isAdmin()) return;
+    const n = Math.max(2, Math.min(15, parseInt($("lobby-num-input").value, 10) || 0));
+    if (n < S.managers.length) return toast(`${S.managers.length} already joined — kick someone first.`);
+    const { error } = await S.sb.from("leagues").update({ num_managers: n }).eq("id", S.league.id);
+    if (error) return toast(error.message);
+    toast(`League now needs ${n} managers.`);
+  };
   $("lobby-join-go").onclick = () => joinFromLobby().catch((e) => toast(e.message));
   $("pool-search").oninput = (e) => { S.poolSearch = e.target.value; renderPool(); };
   $("pool-team").onchange = () => renderPool();
@@ -6278,6 +6327,17 @@ function wire() {
   $("draft-force").onclick = () => {
     if (confirm("Force a random auto-pick for the manager on the clock?"))
       autoPick(pickInfo(S.league.current_pick)).catch((e) => toast(e.message));
+  };
+  $("draft-timer-set").onclick = async () => {
+    if (!isAdmin()) return;
+    const secs = Math.max(0, Math.min(600, parseInt($("draft-timer-input").value, 10) || 0));
+    // Reset the current pick's clock so the new limit takes effect immediately.
+    const { error } = await S.sb.from("leagues")
+      .update({ pick_duration_seconds: secs, pick_started_at: new Date().toISOString() })
+      .eq("id", S.league.id);
+    if (error) return toast(error.message);
+    autoPickedFor = 0;
+    toast(secs ? `Timer set to ${secs}s.` : "Timer off (no limit).");
   };
   document.querySelectorAll(".board-tab").forEach((b) =>
     b.onclick = () => { setBoardTab(b.dataset.tab); renderBoard(); });
