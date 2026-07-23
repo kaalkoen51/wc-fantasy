@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, fixtureWindows, matchweeksOf, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -26,6 +26,7 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         flexCounting, formationValid, DEFAULT_FORMATION,
         roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims,
         fixtureWindows, matchweeksOf,
+        maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs,
         apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture,
         fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey,
         slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick,
@@ -271,21 +272,26 @@ S.league = {};
   const r3 = resolveFaClaims(fb, { M1: 0 }, ["O1", "P1"], Infinity, { pk1: "O1" });
   check("waiver: infeasible top claim falls back to next preference",
     [r3.awards.map((c) => c.id), r3.failed], [["y"], ["x"]]);
-  // Per-manager cap as a function: M1 exhausted its season allowance (0 left),
-  // M2 still has room — so only M2's uncontested claim lands.
-  const perMgr = [
-    { id: "p", manager_id: "M1", rank: 0, out_player_id: "O1", in_player_id: "P1", pick_id: "pk1" },
-    { id: "q", manager_id: "M2", rank: 0, out_player_id: "O2", in_player_id: "P2", pick_id: "pk2" },
+}
+/* Per-window free-agent cap (instant + waiver): count moves since the window
+   opened. Manual mode → the newest lineup snapshot marks the window start. */
+{
+  S.league = { config: { max_fa_per_window: 2 } };
+  S.snapshots = [{ manager_id: "m1", created_at: "2026-03-01T10:00:00Z" }];  // last lock
+  S.transactions = [
+    { manager_id: "m1", kind: "swap",   created_at: "2026-03-01T09:00:00Z" },  // previous window
+    { manager_id: "m1", kind: "swap",   created_at: "2026-03-01T11:00:00Z" },  // this window
+    { manager_id: "m1", kind: "waiver", created_at: "2026-03-01T12:00:00Z" },  // this window
+    { manager_id: "m1", kind: "trade",  created_at: "2026-03-01T13:00:00Z" },  // not a FA move
+    { manager_id: "m2", kind: "swap",   created_at: "2026-03-01T11:30:00Z" },  // another manager
   ];
-  const r4 = resolveFaClaims(perMgr, { M1: 0, M2: 1 }, ["O1", "O2"],
-    (m) => (m === "M1" ? 0 : 5), { pk1: "O1", pk2: "O2" });
-  check("waiver: per-manager cap fn blocks the tapped-out manager only",
-    [r4.awards.map((c) => c.id), r4.failed], [["q"], ["p"]]);
-  // Function cap of 1 for everyone behaves exactly like the scalar cap of 1.
-  const r5 = resolveFaClaims(claims, { M1: 0, M2: 1 }, ["O1", "O2", "O3"],
-    () => 1, { pk1: "O1", pk2: "O2", pk3: "O3" });
-  check("waiver: constant cap fn matches the scalar cap",
-    [r5.awards.map((c) => c.id).sort(), r5.failed], [["c1", "c3"], ["c2"]]);
+  check("fa/window: counts only this window's FA moves", faMovesThisWindow("m1"), 2);
+  check("fa/window: cap 2 reached → 0 left", faMovesLeft("m1"), 0);
+  check("fa/window: a different manager is unaffected", faMovesLeft("m2"), 1);
+  check("fa/window: window start = newest snapshot", faWindowStartMs(), Date.parse("2026-03-01T10:00:00Z"));
+  S.league = { config: {} };   // no cap configured
+  check("fa/window: no cap → unlimited moves left", faMovesLeft("m1") === Infinity, true);
+  S.league = null; S.snapshots = []; S.transactions = [];
 }
 // No config anywhere → identical to the original hardcoded league.
 S.league = {};
