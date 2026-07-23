@@ -150,8 +150,9 @@
         <div class="text-xs text-slate-400 font-medium">⚖️ Balance check <span class="text-slate-500 font-normal">— live, against prior data</span></div>
         <div id="create-balance" class="space-y-2"></div>
         <div id="create-pull-wrap" class="hidden space-y-1">
+          <div id="create-pull-status" class="text-[10px] text-slate-500"></div>
           <button id="create-pull-history" type="button" class="w-full rounded-lg border border-wcgold/50 bg-wcred/10 text-wcgold px-3 py-1.5 text-xs font-semibold">⬇ Pull this competition's players + season history</button>
-          <p class="text-[10px] text-slate-500">Fetches every squad and completed match for the chosen season into the shared pool — a one-off that can take a few minutes for a full league. Uses the API key from the Competition section.</p>
+          <p class="text-[10px] text-slate-500">The pull is shared and incremental — it skips matches already loaded and only fetches ones played since, so re-running it just tops up. First load of a full season can take a few minutes. Uses the API key from the Competition section.</p>
           <pre id="create-pull-log" class="text-[10px] text-slate-500 whitespace-pre-wrap"></pre>
         </div>
       </div>
@@ -1512,11 +1513,12 @@ async function loadScoringPreviewData() {
   const season = Number($("create-comp-season")?.value);
   if (!season) {
     S._previewData = null;
+    updateCreatePullStatus();
     box.innerHTML = '<span class="text-[11px] text-slate-500">Enter a season above to validate against its prior data.</span>';
     return;
   }
   const key = `${sel.value}-${season}`;
-  if (S._previewData?.key === key) return renderCreateBalance();
+  if (S._previewData?.key === key) { updateCreatePullStatus(); return renderCreateBalance(); }
   box.innerHTML = '<span class="text-[11px] text-slate-500">Loading prior data…</span>';
   try {
     const pool = await S.sb.from("competition_pools").select("players").eq("competition_key", key).maybeSingle();
@@ -1533,7 +1535,24 @@ async function loadScoringPreviewData() {
     }
     S._previewData = { key, rows, posOf, meta };
   } catch { S._previewData = { key, rows: [], posOf: {}, meta: {} }; }
+  updateCreatePullStatus();
   renderCreateBalance();
+}
+
+// Tell the user what's already in the shared store for the selected competition
+// (so it's clear a re-pull isn't needed), and label the button accordingly.
+function updateCreatePullStatus() {
+  const d = S._previewData, status = $("create-pull-status"), btn = $("create-pull-history");
+  if (!status || !btn) return;
+  const players = Object.keys(d?.posOf || {}).length;
+  const matches = new Set((d?.rows || []).map((r) => r.match_label)).size;
+  if (players || matches) {
+    status.innerHTML = `<span class="text-emerald-400">✓ Already loaded:</span> ${players} players · ${matches} match${matches === 1 ? "" : "es"} (shared). Re-pull only adds new matches.`;
+    btn.textContent = "⟳ Pull any new / missing matches";
+  } else {
+    status.textContent = "Not loaded yet for this season.";
+    btn.textContent = "⬇ Pull this competition's players + season history";
+  }
 }
 function renderCreateBalance() {
   const d = S._previewData;
@@ -1545,27 +1564,52 @@ function renderCreateBalance() {
 // before any scheduled pull is set up. Best-effort per match (a failed fixture
 // is logged and skipped, not fatal). log(text) streams progress.
 async function pullCompetitionHistory(apiLeagueId, season, apiKey, key, log) {
-  // 1. Players + positions + fixtures → competition_pools (the squad pull).
-  log("Pulling squads (players + positions)…");
-  const built = await fetchCompetitionPool(apiKey, apiLeagueId, season,
-    (d, t, tm) => log(`Squads ${d}/${t} — ${tm}…`));
-  if (!built.players.length) throw new Error("No players returned — check the season for this competition.");
+  // 1. Players + positions. Reuse an already-loaded squad (saves ~20 API calls);
+  //    only pull squads when the shared pool is empty. Fixtures always refresh.
+  const existing = await S.sb.from("competition_pools").select("players").eq("competition_key", key).maybeSingle();
+  let players = existing.data?.players || [];
+  if (players.length) {
+    log(`Reusing ${players.length} already-loaded players…`);
+  } else {
+    log("Pulling squads (players + positions)…");
+    const built = await fetchCompetitionPool(apiKey, apiLeagueId, season,
+      (d, t, tm) => log(`Squads ${d}/${t} — ${tm}…`));
+    if (!built.players.length) throw new Error("No players returned — check the season for this competition.");
+    players = built.players;
+  }
   const fixtures = await fetchCompetitionFixtures(apiKey, apiLeagueId, season);
   const up = await S.sb.from("competition_pools").upsert(
-    { competition_key: key, players: built.players, fixtures, updated_at: new Date().toISOString() },
+    { competition_key: key, players, fixtures, updated_at: new Date().toISOString() },
     { onConflict: "competition_key" });
   if (up.error) throw new Error(up.error.message);
-  // 2. Per-match player stats for every completed fixture → competition_stats.
+  // 2. Which matches are already stored? Skip them so a re-run only tops up the
+  //    matches played since — the app tracks what it has, no full re-pull.
+  const have = new Set();
+  for (let from = 0; ;) {
+    const { data, error } = await S.sb.from("competition_stats").select("match_label")
+      .eq("competition_key", key).range(from, from + 999);
+    if (error) break;
+    for (const r of data || []) have.add(r.match_label);
+    if (!data || data.length < 1000) break;
+    from += 1000;
+  }
   const done = ["FT", "AET", "PEN"];
   const raw = await apiFootball(apiKey, "fixtures", { league: apiLeagueId, season });
   const completed = raw.filter((f) => done.includes(f.fixture.status?.short));
+  const labelOf = (f) => `${f.teams.home.name} vs ${f.teams.away.name} (${f.fixture.date.slice(0, 10)})`;
+  const todo = completed.filter((f) => !have.has(labelOf(f)));   // only the missing matches
+  const already = completed.length - todo.length;
+  if (!todo.length) {
+    log(`✅ Up to date — all ${completed.length} completed match(es) already loaded (${players.length} players).`);
+    return;
+  }
   const keyField = { competition_key: key };
   const onConflict = "competition_key,player_id,match_label";
   const pidOf = (team, num, name, apiId) => "api_" + apiId;   // API pool → api_ ids
   let total = 0, fails = 0, i = 0;
-  for (const f of completed) {
+  for (const f of todo) {
     i++;
-    log(`Pulling ${built.players.length} players + match ${i}/${completed.length}…`);
+    log(`Pulling new match ${i}/${todo.length}${already ? ` (${already} already loaded)` : ""}…`);
     try {
       const teamBlocks = await apiFootball(apiKey, "fixtures/players", { fixture: f.fixture.id });
       const { rows } = buildFixtureStatRows(f, teamBlocks, keyField, (n) => n, pidOf);
@@ -1573,8 +1617,8 @@ async function pullCompetitionHistory(apiLeagueId, season, apiKey, key, log) {
       total += rows.length;
     } catch { fails++; }
   }
-  log(`✅ Done — ${built.players.length} players, ${total} stat rows from ${completed.length} completed matches`
-    + (fails ? ` (${fails} match(es) failed, skipped).` : "."));
+  log(`✅ Done — ${players.length} players; ${todo.length} new match(es) added, ${already} already had data`
+    + (fails ? `, ${fails} failed.` : "."));
 }
 
 async function pullCreateHistory() {
