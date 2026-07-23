@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, scoringBalance, statSummary, rowPointsWith, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -25,7 +25,7 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         phaseOneStarters, starterQuota, effectiveConfig,
         flexCounting, formationValid, DEFAULT_FORMATION,
         roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims,
-        h2hSchedulePlan, rumblePlacement,
+        h2hSchedulePlan, rumblePlacement, scoringBalance, statSummary, rowPointsWith,
         fixtureWindows, matchweeksOf,
         maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs,
         apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture,
@@ -300,6 +300,34 @@ S.league = {};
   check("h2hTable placement: tracked separately in rumblePts + P counts the round",
     [pTable.rows.a.rumblePts, pTable.rows.a.P, pTable.rows.a.PF], [3, 1, 90]);
   check("h2hTable placement: order follows placement points", pTable.order, ["a", "b", "c"]);
+}
+
+/* Scoring-balance validation (positional fairness of a candidate scoring system). */
+{
+  const rules = [{ stat: "goals.total", mode: "each", perPosition: false, points: 4 }];
+  check("rowPointsWith: goals × points", rowPointsWith({ appeared: true, raw: { "goals.total": 2 } }, "FWD", rules), 8);
+  check("rowPointsWith: no appearance scores 0", rowPointsWith({ appeared: false, raw: { "goals.total": 2 } }, "FWD", rules), 0);
+  const ss = statSummary([2, 4, 6]);
+  check("statSummary: mean + population sd", [ss.n, ss.mean, Math.round(ss.sd * 1000) / 1000], [3, 4, 1.633]);
+  check("statSummary: empty → zeros", statSummary([]), { n: 0, mean: 0, sd: 0 });
+  // Six games each for two FWDs + two DEFs; a third FWD with only 3 games is excluded.
+  const g = (pid, goals) => ({ player_id: pid, appeared: true, raw: { "goals.total": goals } });
+  const rows = [];
+  for (let i = 0; i < 6; i++) { rows.push(g("f1", 1), g("f2", 0), g("d1", 0), g("d2", 1)); }
+  for (let i = 0; i < 3; i++) rows.push(g("f3", 5));
+  const posOf = { f1: "FWD", f2: "FWD", f3: "FWD", d1: "DEF", d2: "DEF" };
+  const bal = scoringBalance(rows, posOf, rules, 5);
+  check("scoringBalance: only 5+ game players counted", bal.count, 4);
+  check("scoringBalance: FWD avg (24 & 0 → 12 ±12)", [bal.perPos.FWD.n, bal.perPos.FWD.mean, bal.perPos.FWD.sd], [2, 12, 12]);
+  check("scoringBalance: DEF avg", [bal.perPos.DEF.n, bal.perPos.DEF.mean], [2, 12]);
+  check("scoringBalance: GK/MID empty", [bal.perPos.GK.n, bal.perPos.MID.n], [0, 0]);
+  check("scoringBalance: position means equal → zero spread", [bal.spread, bal.relSpread], [0, 0]);
+  check("scoringBalance: top scorer total", bal.top[0].points, 24);
+  check("scoringBalance: sub-threshold player excluded", bal.top.some((e) => e.pid === "f3"), false);
+  // A FWD-heavy ruleset should show a non-zero spread (FWDs pull ahead).
+  const skew = scoringBalance(rows, posOf,
+    [{ stat: "goals.total", mode: "each", perPosition: true, points: { GK: 0, DEF: 1, MID: 1, FWD: 10 } }], 5);
+  check("scoringBalance: per-position rule skews the spread", skew.spread > 0, true);
 }
 
 /* Waiver-order free-agent claims (mechanics-notes §1). */
