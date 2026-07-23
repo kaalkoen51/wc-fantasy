@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, scoringBalance, statSummary, rowPointsWith, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, scoringBalance, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -26,6 +26,7 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         flexCounting, formationValid, DEFAULT_FORMATION,
         roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims,
         h2hSchedulePlan, rumblePlacement, scoringBalance, statSummary, rowPointsWith,
+        buildFixtureStatRows,
         fixtureWindows, matchweeksOf,
         maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs,
         apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture,
@@ -328,6 +329,35 @@ S.league = {};
   const skew = scoringBalance(rows, posOf,
     [{ stat: "goals.total", mode: "each", perPosition: true, points: { GK: 0, DEF: 1, MID: 1, FWD: 10 } }], 5);
   check("scoringBalance: per-position rule skews the spread", skew.spread > 0, true);
+}
+
+/* buildFixtureStatRows: one fixture's API player block → stat rows (shared by
+   the admin daily pull and the on-demand competition-history pull). */
+{
+  const f = {
+    teams: { home: { id: 10, name: "Home" }, away: { id: 20, name: "Away" } },
+    goals: { home: 2, away: 0 },
+    fixture: { id: 1, date: "2026-03-01T15:00:00+00:00", status: { short: "FT" } },
+  };
+  const teamBlocks = [
+    { team: { id: 10, name: "Home" }, players: [
+      { player: { id: 100, name: "Scorer" }, statistics: [{ games: { minutes: 90, number: 9, rating: "8.5" }, goals: { total: 2, assists: 1 }, passes: { total: 30 } }] },
+      { player: { id: 101, name: "Keeper" }, statistics: [{ games: { minutes: 90, rating: "7.0" }, goals: { saves: 3 } }] },
+    ] },
+    { team: { id: 20, name: "Away" }, players: [
+      { player: { id: 200, name: "Benchwarmer" }, statistics: [{ games: { minutes: 0 } }] },   // non-participant
+    ] },
+  ];
+  const pidOf = (team, num, name, apiId) => "api_" + apiId;
+  const skipped = [];
+  const { rows, label, maxMin, cs } = buildFixtureStatRows(f, teamBlocks, { competition_key: "39-2024" }, (n) => n, pidOf, skipped);
+  check("buildFixtureStatRows: match label", label, "Home vs Away (2026-03-01)");
+  check("buildFixtureStatRows: non-participant dropped", rows.length, 2);
+  check("buildFixtureStatRows: scorer id/goals/raw", [rows[0].player_id, rows[0].goals, rows[0].raw["goals.total"]], ["api_100", 2, 2]);
+  check("buildFixtureStatRows: clean sheet (90', 0 conceded)", rows[0].clean_sheet, true);
+  check("buildFixtureStatRows: MOTM = top rating ≥7.5", rows[0].motm, true);
+  check("buildFixtureStatRows: rows scoped by competition key", rows[0].competition_key, "39-2024");
+  check("buildFixtureStatRows: maxMin + clean-sheet diagnostics", [maxMin, cs], [90, 2]);
 }
 
 /* Waiver-order free-agent claims (mechanics-notes §1). */
