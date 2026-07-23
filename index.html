@@ -197,6 +197,12 @@
             <label class="text-[11px] text-slate-400" title="Attacking bonus: score at least this many points in a round">Attacking-bonus score<input data-cfg="h2h.score_bonus" type="number" value="60" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
             <label class="text-[11px] text-slate-400" title="Losing bonus: lose by at most this many points">Losing-bonus margin<input data-cfg="h2h.losing_margin" type="number" value="5" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
           </div>
+          <label class="text-[11px] text-slate-400">Rounds you expect to play <span class="text-slate-500">(e.g. matchweeks in the season)</span>
+            <input id="create-h2h-rounds" type="number" min="1" placeholder="how many rounds?" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
+          <label class="flex items-center gap-2 text-[11px] text-slate-300">
+            <input id="create-h2h-rumble" type="checkbox" class="rounded border-slate-600 bg-slate-800">
+            Play leftover rounds as <b>rumbles</b> (everyone vs everyone) to keep the log balanced</label>
+          <div id="create-h2h-feedback" class="rounded-lg border border-slate-700 bg-slate-900/60 px-2.5 py-2 text-[11px] leading-relaxed"></div>
         </div>
         <div class="text-xs text-slate-400 font-medium pt-1">Trades &amp; free agents</div>
         <div class="flex gap-2">
@@ -1410,7 +1416,48 @@ function syncCreateFormat() {
       ((b.dataset.win === "auto") === S._createAutoWin ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400");
   $("create-h2h-fields").classList.toggle("hidden", !S._createH2H);
   $("create-auto-fields").classList.toggle("hidden", !S._createAutoWin);
+  if (S._createH2H) updateH2HFeedback();
   updateCreateSummaries();
+}
+
+// Friendly, colour-coded verdict on how an N-manager / R-round H2H schedule
+// shakes out — feeds the live feedback box under the H2H options.
+function h2hPlanMessage(p) {
+  const s = (x) => x === 1 ? "" : "s";
+  const rival = (min, max) => min === max ? `${min}×` : `${max}× or ${min}×`;
+  if (p.balanced)
+    return `<span class="text-emerald-400 font-semibold">✓ Perfectly balanced.</span> `
+      + `${p.rounds} rounds = ${p.fullCycles} full round-robin cycle${s(p.fullCycles)}. `
+      + `Everyone plays each rival ${p.playsMin}×`
+      + (p.even ? "" : ` and sits out ${p.byesMin} bye weekend${s(p.byesMin)}`) + `.`;
+  if (p.rumble)
+    return `<span class="text-emerald-400 font-semibold">✓ Balanced with rumbles.</span> `
+      + `${p.fullCycles} full cycle${s(p.fullCycles)} then ${p.rumbleRounds} rumble round${s(p.rumbleRounds)} `
+      + `(everyone vs everyone). Head-to-head stays even: each rival met ${p.playsMin}×`
+      + (p.even ? "" : ` with ${p.byesMin} bye${s(p.byesMin)} each`) + `.`;
+  let msg = `<span class="text-amber-400 font-semibold">⚠ Slightly uneven.</span> `
+    + `${p.fullCycles} full cycle${s(p.fullCycles)} + ${p.leftover} leftover round${s(p.leftover)}: `
+    + `some pairs meet ${rival(p.playsMin, p.playsMax)}`;
+  if (p.managersWithExtraBye > 0)
+    msg += `, and ${p.managersWithExtraBye} manager${s(p.managersWithExtraBye)} get an extra bye weekend`;
+  msg += `. `;
+  const fixes = [];
+  if (p.nearestDown >= 1) fixes.push(`${p.nearestDown}`);
+  fixes.push(`${p.nearestUp}`);
+  msg += `<span class="text-slate-400">Use ${fixes.join(" or ")} rounds for a clean split, `
+    + `or tick “rumbles” to fold the leftover into all-play-all rounds.</span>`;
+  return msg;
+}
+
+function updateH2HFeedback() {
+  const box = $("create-h2h-feedback");
+  if (!box) return;
+  const n = Number($("create-num")?.value) || 0;
+  const rounds = Number($("create-h2h-rounds")?.value) || 0;
+  const rumble = $("create-h2h-rumble")?.checked === true;
+  if (n < 2) { box.innerHTML = '<span class="text-slate-500">Add at least 2 managers to check the schedule.</span>'; return; }
+  if (rounds < 1) { box.innerHTML = '<span class="text-slate-500">Enter how many rounds you expect to play for a fairness check.</span>'; return; }
+  box.innerHTML = h2hPlanMessage(h2hSchedulePlan(n, rounds, { rumble }));
 }
 
 function renderCreateForm() {
@@ -1434,6 +1481,10 @@ function renderCreateForm() {
     b.onclick = () => { S._createCaptain = b.dataset.cap === "on"; syncCreateFormat(); };
   for (const b of document.querySelectorAll("[data-win]"))
     b.onclick = () => { S._createAutoWin = b.dataset.win === "auto"; syncCreateFormat(); };
+  // Live H2H schedule fairness feedback as the manager count / rounds change.
+  $("create-num").addEventListener("input", () => { if (S._createH2H) updateH2HFeedback(); });
+  $("create-h2h-rounds").addEventListener("input", updateH2HFeedback);
+  $("create-h2h-rumble").addEventListener("change", updateH2HFeedback);
   syncCreateTeam();
   syncCreateFormat();
   $("create-reset").onclick = () => {
@@ -1492,6 +1543,9 @@ function readCreateConfig() {
     cfg.h2hEnabled = true;
     cfg.h2h = { win: g("h2h.win"), draw: g("h2h.draw"), loss: g("h2h.loss"),
       score_bonus: g("h2h.score_bonus"), losing_margin: g("h2h.losing_margin") };
+    const rnds = $("create-h2h-rounds")?.value;
+    if (rnds != null && rnds !== "") cfg.h2h.rounds = Number(rnds);   // planned rounds → schedule
+    if ($("create-h2h-rumble")?.checked) cfg.h2h.rumble = true;       // rumble the leftover
   }
   if (S._createWaiver) cfg.fa_defer_to_close = true;   // waiver-order trades
   const faCap = document.querySelector('[data-view="create"] [data-cfg="max_fa_per_window"]')?.value;
@@ -2429,7 +2483,8 @@ function fixedRoundSubs(roster, rnd, teamMatches, appeared, cap) {
    Optional league format: instead of everyone tallying points, managers play a
    round-robin schedule and earn log points (win/draw/loss) + rugby-style bonuses
    from their per-round fantasy totals. All values are league-configurable. */
-const H2H_DEFAULTS = { win: 3, draw: 1, loss: 0, score_bonus: 60, losing_margin: 5 };
+const H2H_DEFAULTS = { win: 3, draw: 1, loss: 0, score_bonus: 60, losing_margin: 5,
+  rounds: null, rumble: false };
 const h2hConfig = () => ({ ...H2H_DEFAULTS, ...(cfgOf().h2h || {}) });
 const h2hEnabled = () => cfgOf().h2hEnabled === true;
 
@@ -2450,6 +2505,43 @@ function roundRobin(ids) {
     arr.splice(1, 0, arr.pop());   // rotate, keeping the first fixed
   }
   return rounds;
+}
+
+// Fairness analysis of an N-manager, R-round head-to-head season. One full
+// round-robin cycle is L rounds: N-1 when N is even (no byes), N when odd (each
+// round one manager sits out, so over the cycle everyone byes exactly once).
+// When R is a whole number of cycles the schedule is perfectly balanced. Any
+// leftover rounds make some pairs meet once more than others, and for odd N give
+// some managers an extra bye. If `rumble` is set, those leftover rounds are
+// played all-play-all instead (everyone scores against the field), which keeps
+// the head-to-head portion exactly balanced. Pure — drives the creation-time
+// feedback and the live schedule. Returns { valid:false } for N<2 or R<1.
+function h2hSchedulePlan(n, rounds, opts) {
+  n = Math.floor(n) || 0; rounds = Math.floor(rounds) || 0;
+  if (n < 2 || rounds < 1) return { valid: false, n, rounds };
+  const rumbleOn = !!(opts && opts.rumble);
+  const even = n % 2 === 0;
+  const cycle = even ? n - 1 : n;
+  const fullCycles = Math.floor(rounds / cycle);
+  const leftover = rounds % cycle;
+  const rumble = rumbleOn && leftover > 0;
+  const extra = rumble ? 0 : (leftover > 0 ? 1 : 0);   // +1 games/byes for some
+  const playsMin = fullCycles;
+  const playsMax = fullCycles + extra;
+  const byesMin = even ? 0 : fullCycles;
+  const byesMax = even ? 0 : fullCycles + extra;
+  const balanced = extra === 0;
+  return {
+    valid: true, n, rounds, even, cycle, fullCycles, leftover,
+    rumble, rumbleRounds: rumble ? leftover : 0,
+    // Round index (1-based) at/after which rounds are played as rumbles.
+    rumbleFrom: rumble ? fullCycles * cycle + 1 : Infinity,
+    playsMin, playsMax, byesMin, byesMax, balanced,
+    // Each leftover round sits a distinct manager (odd N) → that many extra byes.
+    managersWithExtraBye: (!even && !rumble) ? leftover : 0,
+    nearestDown: fullCycles * cycle,               // 0 if fewer than one cycle
+    nearestUp: (fullCycles + 1) * cycle,
+  };
 }
 
 // One matchup's log points + bonuses for both managers, from their round scores.
@@ -2638,13 +2730,25 @@ function h2hRoundScores() {
 
 // A deterministic round-robin schedule (sorted ids for stability), the base
 // cycle repeated across `maxRound` rounds.
-function h2hFixturesFor(mgrIds, maxRound) {
+// Build the H2H fixtures up to maxRound. Rounds at/after opts.rumbleFrom are
+// played all-play-all (a "rumble": every pair meets that round), keeping the
+// head-to-head log balanced when the season doesn't divide into whole cycles.
+function h2hFixturesFor(mgrIds, maxRound, opts) {
   if (mgrIds.length < 2) return [];
-  const base = roundRobin(mgrIds.slice().sort());
+  const ids = mgrIds.slice().sort();
+  const base = roundRobin(ids);
+  const rumbleFrom = (opts && opts.rumbleFrom) || Infinity;
   const fixtures = [];
-  for (let r = 1; r <= maxRound; r++)
-    for (const [home, away] of base[(r - 1) % base.length])
-      fixtures.push({ round: r, home_manager_id: home, away_manager_id: away });
+  for (let r = 1; r <= maxRound; r++) {
+    if (r >= rumbleFrom) {
+      for (let i = 0; i < ids.length; i++)
+        for (let j = i + 1; j < ids.length; j++)
+          fixtures.push({ round: r, home_manager_id: ids[i], away_manager_id: ids[j], rumble: true });
+    } else {
+      for (const [home, away] of base[(r - 1) % base.length])
+        fixtures.push({ round: r, home_manager_id: home, away_manager_id: away });
+    }
+  }
   return fixtures;
 }
 
@@ -2653,7 +2757,12 @@ function h2hStandings() {
   const ids = S.managers.map((m) => m.id);
   const scores = h2hRoundScores();
   const maxRound = Math.max(0, ...Object.values(scores).map((a) => a.length));
-  return h2hTable(ids, scores, h2hFixturesFor(ids, maxRound), h2hConfig());
+  const cfg = h2hConfig();
+  // Rumble rounds are honoured only when configured; the planned round count
+  // defaults to whatever has been played so a legacy H2H league is unchanged.
+  const plan = cfg.rumble ? h2hSchedulePlan(ids.length, cfg.rounds || maxRound, { rumble: true }) : null;
+  const rumbleFrom = plan && plan.valid ? plan.rumbleFrom : Infinity;
+  return h2hTable(ids, scores, h2hFixturesFor(ids, maxRound, { rumbleFrom }), cfg);
 }
 
 // A stat row → a flat { "goals.total": n, ... } map. New rows carry the full API
@@ -4298,7 +4407,8 @@ function h2hStandingsHtml(me) {
   }).join("");
   return `<div class="rounded-xl border border-slate-800 bg-slate-900/40 p-2 space-y-1">
     <div class="text-sm font-semibold px-1">Head-to-head log</div>
-    <p class="text-[10px] text-slate-500 px-1">Win ${cfg.win} · draw ${cfg.draw} · loss ${cfg.loss} · +1 attacking (round ≥ ${cfg.score_bonus}) · +1 losing (by ≤ ${cfg.losing_margin}). PF/PA = points for/against.</p>
+    <p class="text-[10px] text-slate-500 px-1">Win ${cfg.win} · draw ${cfg.draw} · loss ${cfg.loss} · +1 attacking (round ≥ ${cfg.score_bonus}) · +1 losing (by ≤ ${cfg.losing_margin}). PF/PA = points for/against.${
+      cfg.rumble ? " ⚔️ Rumble rounds (everyone vs everyone) balance out the leftover rounds." : ""}</p>
     ${head}${body || '<p class="text-sm text-slate-500 px-2 py-3">No completed rounds yet.</p>'}
   </div>`;
 }
