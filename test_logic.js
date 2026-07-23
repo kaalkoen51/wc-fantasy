@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, scoringBalance, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -25,7 +25,7 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         phaseOneStarters, starterQuota, effectiveConfig,
         flexCounting, formationValid, DEFAULT_FORMATION,
         roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims,
-        h2hSchedulePlan, rumblePlacement, scoringBalance, statSummary, rowPointsWith,
+        h2hSchedulePlan, rumblePlacement, scoringBalance, pointsHistogram, statSummary, rowPointsWith,
         buildFixtureStatRows,
         fixtureWindows, matchweeksOf,
         maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs,
@@ -329,6 +329,19 @@ S.league = {};
   const skew = scoringBalance(rows, posOf,
     [{ stat: "goals.total", mode: "each", perPosition: true, points: { GK: 0, DEF: 1, MID: 1, FWD: 10 } }], 5);
   check("scoringBalance: per-position rule skews the spread", skew.spread > 0, true);
+
+  // pointsHistogram: shared bins across positions (the ridgeline overlay data).
+  const hp = [
+    { pos: "FWD", points: 0 }, { pos: "FWD", points: 10 }, { pos: "FWD", points: 20 },
+    { pos: "DEF", points: 0 }, { pos: "DEF", points: 0 },
+  ];
+  const h = pointsHistogram(hp, 2);
+  check("pointsHistogram: shared min/max across all positions", [h.min, h.max, h.binW], [0, 20, 10]);
+  check("pointsHistogram: FWD split across both bins", h.series.FWD, [1, 2]);   // 0 in bin0; 10,20 in bin1
+  check("pointsHistogram: DEF both in the first bin", h.series.DEF, [2, 0]);
+  check("pointsHistogram: empty positions are zero-filled", h.series.GK, [0, 0]);
+  check("pointsHistogram: no players → safe empty shape",
+    [pointsHistogram([], 4).series.MID.length, pointsHistogram([], 4).max], [4, 0]);
 }
 
 /* buildFixtureStatRows: one fixture's API player block → stat rows (shared by
