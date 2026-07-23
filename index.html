@@ -209,6 +209,13 @@
           <label class="text-[11px] text-slate-400">Max successful claims per manager, per window <span class="text-slate-500">(blank = unlimited)</span>
             <input data-cfg="max_fa_per_window" type="number" min="0" placeholder="unlimited" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
         </div>
+        <div class="text-xs text-slate-400 font-medium pt-1">Captain</div>
+        <div class="flex gap-2">
+          <button type="button" data-cap="off" class="flex-1 rounded-lg py-2 text-xs font-semibold border">No captain</button>
+          <button type="button" data-cap="on" class="flex-1 rounded-lg py-2 text-xs font-semibold border">Captain + vice</button>
+        </div>
+        <p class="text-[11px] text-slate-500">Each manager names a captain (double points that round) and a vice-captain
+          (doubles instead if the captain doesn't play at all). Set them in the lineup screen.</p>
       </div>
     </details>
 
@@ -577,6 +584,7 @@
   <div class="absolute bottom-0 inset-x-0 max-h-[85vh] bg-slate-900 border-t border-slate-700 rounded-t-2xl p-4 flex flex-col">
     <div class="font-semibold">Pick your team for the next games</div>
     <p id="lineup-rule" class="text-xs text-slate-500 mt-0.5 mb-2"></p>
+    <div id="lineup-captain" class="hidden grid grid-cols-2 gap-2 mb-2"></div>
     <div id="lineup-list" class="overflow-y-auto flex-1 min-h-0 space-y-1"></div>
     <div class="flex items-center gap-2 mt-3">
       <span id="lineup-count" class="flex-1 text-xs text-slate-400"></span>
@@ -702,8 +710,12 @@ function effectiveConfig(cfg) {
     h2hEnabled: cfg.h2hEnabled === true,
     h2h: { ...H2H_DEFAULTS, ...(cfg.h2h || {}) },
     faDeferToClose: cfg.fa_defer_to_close === true,
+    captain: cfg.captain === true,
   };
 }
+// Captain/vice: the captain's round points are doubled; if the captain didn't
+// play at all that round, the vice-captain's are doubled instead.
+const captainEnabled = () => cfgOf().captain === true;
 
 /* ---------- state & tiny helpers ---------- */
 
@@ -1307,7 +1319,7 @@ function updateCreateSummaries() {
   if ($("create-team-summary")) $("create-team-summary").textContent = S._createTeamOn
     ? `on · ${val("quota.TEAM", 1)} pick` : "off";
   if ($("create-format-summary")) $("create-format-summary").textContent =
-    `${S._createH2H ? "H2H" : "points"} · ${S._createWaiver ? "waiver" : "instant"} trades`;
+    `${S._createH2H ? "H2H" : "points"} · ${S._createWaiver ? "waiver" : "instant"}${S._createCaptain ? " · ©" : ""}`;
 }
 
 // Highlight the active Format & Trades toggles + show/hide H2H params.
@@ -1318,6 +1330,9 @@ function syncCreateFormat() {
   for (const b of document.querySelectorAll("[data-trade]"))
     b.className = "flex-1 rounded-lg py-2 text-xs font-semibold border " +
       ((b.dataset.trade === "waiver") === S._createWaiver ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400");
+  for (const b of document.querySelectorAll("[data-cap]"))
+    b.className = "flex-1 rounded-lg py-2 text-xs font-semibold border " +
+      ((b.dataset.cap === "on") === S._createCaptain ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400");
   $("create-h2h-fields").classList.toggle("hidden", !S._createH2H);
   $("create-waiver-fields").classList.toggle("hidden", !S._createWaiver);
   updateCreateSummaries();
@@ -1332,7 +1347,7 @@ function renderCreateForm() {
   const syncApi = () => $("create-comp-api").classList.toggle("hidden", sel.value === "wc");
   sel.onchange = syncApi;
   syncApi();
-  S._createTeamOn = true; S._createH2H = false; S._createWaiver = false;
+  S._createTeamOn = true; S._createH2H = false; S._createWaiver = false; S._createCaptain = false;
   paintCreateFields();
   for (const b of document.querySelectorAll("[data-teamtoggle]"))
     b.onclick = () => { S._createTeamOn = b.dataset.teamtoggle === "on"; syncCreateTeam(); };
@@ -1340,10 +1355,12 @@ function renderCreateForm() {
     b.onclick = () => { S._createH2H = b.dataset.fmt === "h2h"; syncCreateFormat(); };
   for (const b of document.querySelectorAll("[data-trade]"))
     b.onclick = () => { S._createWaiver = b.dataset.trade === "waiver"; syncCreateFormat(); };
+  for (const b of document.querySelectorAll("[data-cap]"))
+    b.onclick = () => { S._createCaptain = b.dataset.cap === "on"; syncCreateFormat(); };
   syncCreateTeam();
   syncCreateFormat();
   $("create-reset").onclick = () => {
-    S._createTeamOn = true; S._createH2H = false; S._createWaiver = false;
+    S._createTeamOn = true; S._createH2H = false; S._createWaiver = false; S._createCaptain = false;
     paintCreateFields(); syncCreateTeam(); syncCreateFormat();
   };
   $("create-go").disabled = false;
@@ -1404,6 +1421,7 @@ function readCreateConfig() {
     const cap = document.querySelector('[data-view="create"] [data-cfg="max_fa_per_window"]')?.value;
     if (cap != null && cap !== "") cfg.max_fa_per_window = Number(cap);
   }
+  if (S._createCaptain) cfg.captain = true;            // captain + vice-captain
   return JSON.stringify(effectiveConfig(cfg)) === JSON.stringify(effectiveConfig({})) ? null : cfg;
 }
 
@@ -2695,11 +2713,17 @@ function computeScores() {
     const flexCache = {};
     const flexCountForRound = (rnd, roster) => flexCache[rnd] ||
       (flexCache[rnd] = flexRoundCounting(roster, rnd, teamMatches, appearedIn));
+    const captain = captainEnabled();
+    const capByRnd = {}, viceByRnd = {}, playedByRnd = {}, ptsByRnd = {};
     for (const label of statLabels) {
       const d = labelDate(label);
       const rnd = roundOf(labelTeams(label)[0], label) + 1;   // 1-based round
       const roster = rosterAtFor(m.id, matchTime(label), d, snapsByMgr[m.id] || []);
       const starters = roster.filter((e) => !e.is_sub && e.position !== "TEAM");
+      if (captain) {   // snapshot-locked captain, else the manager's current pick
+        capByRnd[rnd] = roster.find((e) => e.is_captain)?.player_id ?? m.captain_id ?? capByRnd[rnd];
+        viceByRnd[rnd] = roster.find((e) => e.is_vice)?.player_id ?? m.vice_id ?? viceByRnd[rnd];
+      }
       for (const entry of roster) {
         if (entry.position === "TEAM") continue;
         const rows = (statsByPlayer[entry.player_id] || [])
@@ -2726,8 +2750,22 @@ function computeScores() {
         }
         earnedByPlayer[entry.player_id] = (earnedByPlayer[entry.player_id] || 0) + pts;
         if (rnd >= 1) roundPts[rnd] = (roundPts[rnd] || 0) + pts;
+        if (captain) {
+          if (rows.some((r) => r.appeared)) (playedByRnd[rnd] ||= new Set()).add(entry.player_id);
+          (ptsByRnd[rnd] ||= {})[entry.player_id] = (ptsByRnd[rnd][entry.player_id] || 0) + pts;
+        }
         total += pts;
       }
+    }
+    // Captain (or vice, if the captain didn't play) doubles their round points.
+    if (captain) for (const rnd of Object.keys(ptsByRnd)) {
+      const cap = capByRnd[rnd], vice = viceByRnd[rnd];
+      const eff = (cap && playedByRnd[rnd]?.has(cap)) ? cap : vice;
+      const bonus = eff ? (ptsByRnd[rnd][eff] || 0) : 0;
+      if (!bonus) continue;
+      total += bonus;
+      roundPts[rnd] = (roundPts[rnd] || 0) + bonus;
+      earnedByPlayer[eff] = (earnedByPlayer[eff] || 0) + bonus;
     }
 
     const mPicks = managerPicks(m.id).sort((a, b) =>
@@ -4849,6 +4887,9 @@ async function snapshotRosters() {
     roster: managerPicks(m.id).map((pk) => ({
       player_id: pk.player_id, player_name: pk.player_name,
       position: pk.position, team: pk.team, is_sub: pk.is_sub, slot: pk.slot,
+      // Lock the captain/vice into the round so past rounds keep their choice.
+      ...(m.captain_id === pk.player_id ? { is_captain: true } : {}),
+      ...(m.vice_id === pk.player_id ? { is_vice: true } : {}),
     })),
   }));
   if (!rows.length) return;
@@ -4866,6 +4907,8 @@ function openLineup() {
   // Draft of the new lineup: set of pick ids that will be starters.
   S.lineupDraft = new Set(managerPicks(me.id)
     .filter((pk) => !pk.is_sub && pk.slot !== "TEAM").map((pk) => pk.id));
+  S.captainDraft = me.captain_id || "";
+  S.viceDraft = me.vice_id || "";
   const sq = starterQuota(), flex = leagueFlex();
   $("lineup-rule").textContent = "Starters: " + ["GK", "DEF", "MID", "FWD"]
     .filter((g) => sq[g] > 0).map((g) => `${sq[g]} ${g}`).join(", ")
@@ -4939,6 +4982,21 @@ function renderLineup() {
       .map((g) => `${counts[g]} ${g}`).join(" · ") + (flex ? " · +flex outfield" : "");
   }
   $("lineup-save").disabled = !lineupValid(counts);
+  // Captain / vice pickers (only among the chosen starters).
+  const capBox = $("lineup-captain");
+  if (captainEnabled()) {
+    capBox.classList.remove("hidden");
+    const starterPicks = mine.filter((pk) => S.lineupDraft.has(pk.id));
+    const opts = (sel) => '<option value="">— none —</option>' + starterPicks.map((pk) =>
+      `<option value="${esc(pk.player_id)}"${pk.player_id === sel ? " selected" : ""}>${esc(pk.player_name)}</option>`).join("");
+    capBox.innerHTML = `
+      <label class="text-[11px] text-slate-400">Captain © <span class="text-slate-500">×2</span>
+        <select id="lineup-cap-sel" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm">${opts(S.captainDraft)}</select></label>
+      <label class="text-[11px] text-slate-400">Vice Ⓥ <span class="text-slate-500">backup</span>
+        <select id="lineup-vice-sel" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm">${opts(S.viceDraft)}</select></label>`;
+    $("lineup-cap-sel").onchange = (e) => { S.captainDraft = e.target.value; };
+    $("lineup-vice-sel").onchange = (e) => { S.viceDraft = e.target.value; };
+  } else capBox.classList.add("hidden");
 }
 
 async function saveLineup() {
@@ -4954,6 +5012,17 @@ async function saveLineup() {
     S.sb.from("picks").update({ is_sub: isSub, slot }).eq("id", pk.id)));
   const err = results.find((r) => r.error)?.error;
   if (err) return toast("Save failed: " + err.message);
+  // Persist captain/vice (only valid if still among the starters).
+  if (captainEnabled()) {
+    const starterIds = new Set(managerPicks(me.id).filter((pk) => S.lineupDraft.has(pk.id)).map((pk) => pk.player_id));
+    const cap = starterIds.has(S.captainDraft) ? S.captainDraft : null;
+    const vice = starterIds.has(S.viceDraft) && S.viceDraft !== cap ? S.viceDraft : null;
+    if (cap !== (me.captain_id || null) || vice !== (me.vice_id || null)) {
+      const { error: ce } = await S.sb.from("managers").update({ captain_id: cap, vice_id: vice }).eq("id", me.id);
+      if (ce) return toast(/captain|column|schema cache/.test(ce.message) ? "Captain needs a schema update — run schema.sql." : ce.message);
+      me.captain_id = cap; me.vice_id = vice;
+    }
+  }
   toast(changes.length ? "Lineup saved." : "Lineup unchanged.");
   $("lineup-sheet").classList.add("hidden");
   scheduleRefetch();

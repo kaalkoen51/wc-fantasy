@@ -377,6 +377,27 @@ S.stats = [
 }
 S.league = {}; S.picks = []; S.stats = [];
 
+/* Captain / vice-captain: the captain's round points double; the vice's double
+   instead if the captain didn't play at all that round. */
+S.fixtures = []; S.snapshots = []; S.stages = []; S.playerById = {};
+S.league = { phase: 1, config: { captain: true } };
+S.managers = [{ id: "m1", name: "M1", captain_id: "fra_5", vice_id: "arg_5" }];
+S.picks = [
+  { manager_id: "m1", player_id: "fra_5", position: "DEF", team: "France", is_sub: false, pick_number: 1 },
+  { manager_id: "m1", player_id: "arg_5", position: "MID", team: "Argentina", is_sub: false, pick_number: 2 },
+];
+S.stats = [
+  row({ player_id: "fra_5", match_label: "France vs X (2026-06-13)", appeared: true, goals: 1 }),      // DEF goal 6
+  row({ player_id: "arg_5", match_label: "Argentina vs Y (2026-06-13)", appeared: true, goals: 1 }),   // MID goal 5
+];
+check("captain: the captain's round points double (6→12) + vice 5 = 17",
+  computeScores()[0].total, 6 + 6 + 5);
+// Captain doesn't play → the vice's points double instead.
+S.stats = [row({ player_id: "arg_5", match_label: "Argentina vs Y (2026-06-13)", appeared: true, goals: 1 })];
+check("captain: if the captain didn't play, the vice doubles (5→10)",
+  computeScores()[0].total, 5 + 5);
+S.league = {}; S.managers = []; S.picks = []; S.stats = [];
+
 /* player stats breakdown: per-category points sum to the player total */
 S.stats = [
   row({ player_id: "ger_1", match_label: "Germany vs X (2026-06-20)", saves: 5, clean_sheet: true }),
