@@ -377,6 +377,11 @@ exception when duplicate_object then null; end $$;
 -- has fa_defer_to_close, free-agent swaps queue as fa_claims and resolve at
 -- window close in waiver priority (managers.waiver_order, lower = picks first).
 alter table managers add column if not exists waiver_order int;
+-- Captain / vice-captain (player ids among the manager's starters). When the
+-- captain feature is on, the captain's round points double (or the vice's if the
+-- captain didn't play). Snapshotted into each round's lineup so it's locked.
+alter table managers add column if not exists captain_id text;
+alter table managers add column if not exists vice_id text;
 create table if not exists fa_claims (
     id uuid primary key default gen_random_uuid(),
     league_id uuid references leagues(id) on delete cascade,
