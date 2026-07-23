@@ -146,6 +146,10 @@
         <span class="text-xs text-slate-500 flex items-center gap-1"><span id="create-scoring-summary"></span><span class="sec-caret">▾</span></span>
       </summary>
       <div id="create-scoring" class="pt-3 space-y-2"></div>
+      <div class="mt-3 rounded-xl border border-slate-700 bg-slate-800/30 p-3 space-y-2">
+        <div class="text-xs text-slate-400 font-medium">⚖️ Balance check <span class="text-slate-500 font-normal">— live, against prior data</span></div>
+        <div id="create-balance" class="space-y-2"></div>
+      </div>
     </details>
 
     <!-- 5 · Team bonus -->
@@ -1374,9 +1378,10 @@ function paintCreateFields() {
   S._createRules = eff.rules;
   S._createFlex = false;
   paintSquad();
-  renderRulesEditor($("create-scoring"), S._createRules, { onChange: updateCreateSummaries });
+  renderRulesEditor($("create-scoring"), S._createRules, { onChange: () => { updateCreateSummaries(); renderCreateBalance(); } });
   $("create-team-bonuses").innerHTML = stageBonusFieldsHtml(eff, false);
   $("create-team-fields").oninput = updateCreateSummaries;
+  renderCreateBalance();
 }
 
 function syncCreateTeam() {
@@ -1491,14 +1496,52 @@ function updateH2HFeedback() {
   box.innerHTML = html;
 }
 
+// Load the selected competition's prior stats + player positions (once, cached)
+// so the create-form balance check can score them under the candidate rules.
+async function loadScoringPreviewData() {
+  const box = $("create-balance"), sel = $("create-comp");
+  if (!box || !sel) return;
+  if (sel.value === "wc" || !sel.value) { S._previewData = null; return renderCreateBalance(); }
+  const season = Number($("create-comp-season")?.value);
+  if (!season) {
+    S._previewData = null;
+    box.innerHTML = '<span class="text-[11px] text-slate-500">Enter a season above to validate against its prior data.</span>';
+    return;
+  }
+  const key = `${sel.value}-${season}`;
+  if (S._previewData?.key === key) return renderCreateBalance();
+  box.innerHTML = '<span class="text-[11px] text-slate-500">Loading prior data…</span>';
+  try {
+    const pool = await S.sb.from("competition_pools").select("players").eq("competition_key", key).maybeSingle();
+    const posOf = {}, meta = {};
+    for (const pl of (pool.data?.players || [])) { posOf[pl.player_id] = pl.position; meta[pl.player_id] = { name: pl.name, team: pl.team }; }
+    const rows = [];
+    for (let from = 0; ;) {
+      const { data, error } = await S.sb.from("competition_stats").select("*")
+        .eq("competition_key", key).order("id").range(from, from + 999);
+      if (error) break;
+      rows.push(...(data || []));
+      if (!data || data.length < 1000) break;
+      from += 1000;
+    }
+    S._previewData = { key, rows, posOf, meta };
+  } catch { S._previewData = { key, rows: [], posOf: {}, meta: {} }; }
+  renderCreateBalance();
+}
+function renderCreateBalance() {
+  const d = S._previewData;
+  renderScoringBalance($("create-balance"), d?.rows || null, d?.posOf || {}, S._createRules, d?.meta || {});
+}
+
 function renderCreateForm() {
   const sel = $("create-comp");
   if (sel.options.length <= 1)
     sel.innerHTML = `<option value="wc">World Cup 2026 (built-in squads)</option>`
       + COMPETITIONS.filter((c) => c.apiLeagueId !== 1)
           .map((c) => `<option value="${c.apiLeagueId}">${esc(c.name)}</option>`).join("");
-  const syncApi = () => $("create-comp-api").classList.toggle("hidden", sel.value === "wc");
+  const syncApi = () => { $("create-comp-api").classList.toggle("hidden", sel.value === "wc"); loadScoringPreviewData(); };
   sel.onchange = syncApi;
+  $("create-comp-season").addEventListener("input", loadScoringPreviewData);
   syncApi();
   S._createTeamOn = true; S._createH2H = false; S._createWaiver = false; S._createCaptain = false; S._createAutoWin = false;
   S._createRumbleScoring = "pairwise";
@@ -2880,12 +2923,56 @@ function evalRule(rule, raw, pos) {
   return v * pts;   // "each"
 }
 
-function calcPlayerPoints(r, pos) {
+// One match row's points at position `pos` under an explicit rules array.
+function rowPointsWith(r, pos, rules) {
   if (!r.appeared) return 0;
   const raw = rawStatsOf(r);
   let p = 0;
-  for (const rule of scoringRules()) p += evalRule(rule, raw, pos);
+  for (const rule of rules) p += evalRule(rule, raw, pos);
   return p;
+}
+function calcPlayerPoints(r, pos) { return rowPointsWith(r, pos, scoringRules()); }
+
+// Mean + population standard deviation of a list of numbers.
+function statSummary(vals) {
+  const n = vals.length;
+  if (!n) return { n: 0, mean: 0, sd: 0 };
+  let sum = 0; for (const v of vals) sum += v;
+  const mean = sum / n;
+  let sq = 0; for (const v of vals) sq += (v - mean) * (v - mean);
+  return { n, mean, sd: Math.sqrt(sq / n) };
+}
+
+// Validate a candidate scoring system against prior stat rows: total each
+// player's points under `rules`, keep those with ≥ minGames appearances, and
+// summarise the points distribution per position (to check the system doesn't
+// systematically favour one position). Returns per-position {n,mean,sd}, the
+// ranked players, and the spread of position means. Pure.
+//   statRows : [{ player_id, appeared, …raw }]   posOf : { player_id: "DEF" }
+function scoringBalance(statRows, posOf, rules, minGames) {
+  minGames = minGames || 5;
+  const agg = {};
+  for (const r of statRows || []) {
+    if (!r.appeared) continue;
+    const pid = r.player_id, pos = posOf[pid];
+    if (!pos) continue;
+    const e = agg[pid] || (agg[pid] = { pid, pos, games: 0, points: 0 });
+    e.games++;
+    e.points += rowPointsWith(r, pos, rules);
+  }
+  const players = Object.values(agg).filter((e) => e.games >= minGames);
+  const perPos = {};
+  for (const p of ["GK", "DEF", "MID", "FWD"])
+    perPos[p] = statSummary(players.filter((x) => x.pos === p).map((x) => x.points));
+  const means = ["GK", "DEF", "MID", "FWD"].map((p) => perPos[p]).filter((s) => s.n).map((s) => s.mean);
+  const spread = means.length ? Math.max(...means) - Math.min(...means) : 0;
+  const overall = means.length ? means.reduce((a, b) => a + b, 0) / means.length : 0;
+  return {
+    perPos, spread, overall,
+    relSpread: overall ? spread / overall : 0,        // spread as a fraction of the average
+    top: players.slice().sort((a, b) => b.points - a.points),
+    count: players.length, minGames,
+  };
 }
 
 // Cumulative stage bonus: every stage reached up to and including the
@@ -7203,6 +7290,54 @@ function renderRulesEditor(container, rules, opts = {}) {
   if (add) add.onclick = () => { rules.push({ stat: "goals.total", mode: "each", perPosition: false, points: 1 }); rerender(); onChange(); };
 }
 
+// Live "is this scoring balanced across positions?" panel. Renders per-position
+// average ± sd (players with ≥5 games) and a collapsible top-20, from prior stat
+// rows scored under `rules`. meta[pid] = { name, team } for the leaderboard.
+function renderScoringBalance(container, statRows, posOf, rules, meta) {
+  if (!container) return;
+  meta = meta || {};
+  if (!statRows || !statRows.length) {
+    container.innerHTML = '<span class="text-[11px] text-slate-500">No prior data loaded — pick an API competition that has been pulled to validate your scoring against real games.</span>';
+    return;
+  }
+  const b = scoringBalance(statRows, posOf, rules, 5);
+  if (!b.count) {
+    container.innerHTML = '<span class="text-[11px] text-slate-500">No players with 5+ games in this data yet.</span>';
+    return;
+  }
+  const fmt = (x) => (Math.round(x * 10) / 10).toFixed(1);
+  const cards = ["GK", "DEF", "MID", "FWD"].map((p) => {
+    const s = b.perPos[p];
+    return `<div class="rounded-lg border border-slate-700 bg-slate-800/40 px-1.5 py-1.5 text-center">
+      <div class="text-[10px] text-slate-500">${p} <span class="text-slate-600">·${s.n}</span></div>
+      <div class="text-sm font-semibold text-slate-200">${s.n ? fmt(s.mean) : "—"}</div>
+      <div class="text-[10px] text-slate-500">±${s.n ? fmt(s.sd) : "—"}</div>
+    </div>`;
+  }).join("");
+  const verdict = b.relSpread <= 0.15
+    ? `<span class="text-emerald-400">✓ Well balanced</span> — position averages within ${fmt(b.spread)} pts of each other.`
+    : b.relSpread <= 0.3
+    ? `<span class="text-amber-400">⚠ Slightly skewed</span> — a ${fmt(b.spread)}-pt gap between the top and bottom position averages.`
+    : `<span class="text-rose-400">⚠ Skewed</span> — a ${fmt(b.spread)}-pt gap between position averages; one position is favoured.`;
+  const rows = b.top.slice(0, 20).map((e, i) => {
+    const m = meta[e.pid] || {};
+    return `<div class="flex items-center gap-2 px-2 py-1 text-[11px] ${i % 2 ? "bg-slate-800/30" : ""}">
+      <span class="w-4 text-right text-slate-500">${i + 1}</span>
+      <span class="w-7 text-slate-500">${e.pos}</span>
+      <span class="flex-1 truncate">${esc(m.name || e.pid)}${m.team ? ` <span class="text-slate-600">${esc(m.team)}</span>` : ""}</span>
+      <span class="text-slate-500">${e.games}g</span>
+      <span class="w-10 text-right font-mono font-semibold text-wcgold">${fmt(e.points)}</span>
+    </div>`;
+  }).join("");
+  container.innerHTML = `
+    <div class="grid grid-cols-4 gap-1.5">${cards}</div>
+    <div class="text-[10px] leading-snug px-0.5">${verdict}</div>
+    <details>
+      <summary class="cursor-pointer text-[11px] text-slate-400 select-none">Top 20 scorers <span class="text-slate-600">(n=${b.count} with 5+ games)</span></summary>
+      <div class="mt-1 rounded-lg border border-slate-700 overflow-hidden">${rows}</div>
+    </details>`;
+}
+
 function squadFieldsHtml(eff, locked) {
   return `
     <div class="text-xs text-slate-400 font-medium">Squad size per position (draft quota)</div>
@@ -7254,13 +7389,23 @@ function renderConfigEditor() {
     ${locked ? `<div class="rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs px-3 py-2">🔒 Games have already been scored — the draft design is locked so past totals never change.</div>` : ""}
     <div class="text-xs text-slate-400 font-medium">Scoring rules</div>
     <div id="adm-rules" class="space-y-1.5"></div>
+    <div class="rounded-xl border border-slate-700 bg-slate-800/30 p-3 space-y-2">
+      <div class="text-xs text-slate-400 font-medium">⚖️ Balance check <span class="text-slate-500 font-normal">— this league's games so far</span></div>
+      <div id="adm-scoring-balance" class="space-y-2"></div>
+    </div>
     ${stageBonusFieldsHtml(eff, locked)}
     <p class="text-[10px] text-slate-500">A champion TEAM banks ${calcTeamPoints("winner")} in total.</p>
     ${locked ? "" : `<div class="flex gap-2 pt-1">
       <button id="adm-config-save" class="flex-1 bg-wcred hover:bg-wcred-hov rounded-lg py-2 text-sm font-semibold">Save draft design</button>
       <button id="adm-config-reset" class="shrink-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm font-semibold">Reset to WC defaults</button>
     </div>`}`;
-  renderRulesEditor($("adm-rules"), S._admRules, { locked });
+  const renderAdmBalance = () => {
+    const posOf = {}, meta = {};
+    for (const p of S.players) { posOf[p.player_id] = p.position; meta[p.player_id] = { name: p.name, team: p.team }; }
+    renderScoringBalance($("adm-scoring-balance"), S.stats, posOf, S._admRules, meta);
+  };
+  renderRulesEditor($("adm-rules"), S._admRules, { locked, onChange: renderAdmBalance });
+  renderAdmBalance();
   if (locked) return;
   $("adm-config-save").onclick = saveConfigEditor;
   $("adm-config-reset").onclick = resetConfigEditor;
