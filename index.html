@@ -205,12 +205,10 @@
         </div>
         <p class="text-[11px] text-slate-500">Instant: free-agent swaps apply immediately (first-come). Waiver: claims queue and
           resolve when the window closes, in reverse-standings priority (last place picks first).</p>
-        <div id="create-waiver-fields" class="hidden">
-          <label class="text-[11px] text-slate-400">Max successful claims per manager, per window <span class="text-slate-500">(blank = unlimited)</span>
-            <input data-cfg="max_fa_per_window" type="number" min="0" placeholder="unlimited" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
-        </div>
-        <label class="text-[11px] text-slate-400">Max free-agent moves per manager, whole season <span class="text-slate-500">(blank = unlimited)</span>
-          <input data-cfg="max_fa_total" type="number" min="0" placeholder="unlimited" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
+        <label class="text-[11px] text-slate-400">Max free-agent moves per manager, per trade window <span class="text-slate-500">(blank = unlimited)</span>
+          <input data-cfg="max_fa_per_window" type="number" min="0" placeholder="unlimited" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
+        <p class="text-[11px] text-slate-500">Applies to both modes — the number of free agents a manager can bring in
+          each window. Instant: swaps beyond the cap are blocked. Waiver: only that many claims are awarded per window.</p>
         <div class="text-xs text-slate-400 font-medium pt-1">Captain</div>
         <div class="flex gap-2">
           <button type="button" data-cap="off" class="flex-1 rounded-lg py-2 text-xs font-semibold border">No captain</button>
@@ -732,7 +730,6 @@ function effectiveConfig(cfg) {
     h2h: { ...H2H_DEFAULTS, ...(cfg.h2h || {}) },
     faDeferToClose: cfg.fa_defer_to_close === true,
     maxFaPerWindow: cfg.max_fa_per_window ?? null,
-    maxFaTotal: cfg.max_fa_total ?? null,
     maxSubs: cfg.maxSubs ?? null,
     captain: cfg.captain === true,
     autoWindows: cfg.autoWindows === true,
@@ -1412,7 +1409,6 @@ function syncCreateFormat() {
     b.className = "flex-1 rounded-lg py-2 text-xs font-semibold border " +
       ((b.dataset.win === "auto") === S._createAutoWin ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400");
   $("create-h2h-fields").classList.toggle("hidden", !S._createH2H);
-  $("create-waiver-fields").classList.toggle("hidden", !S._createWaiver);
   $("create-auto-fields").classList.toggle("hidden", !S._createAutoWin);
   updateCreateSummaries();
 }
@@ -1497,16 +1493,12 @@ function readCreateConfig() {
     cfg.h2h = { win: g("h2h.win"), draw: g("h2h.draw"), loss: g("h2h.loss"),
       score_bonus: g("h2h.score_bonus"), losing_margin: g("h2h.losing_margin") };
   }
-  if (S._createWaiver) {                               // waiver-order trades
-    cfg.fa_defer_to_close = true;
-    const cap = document.querySelector('[data-view="create"] [data-cfg="max_fa_per_window"]')?.value;
-    if (cap != null && cap !== "") cfg.max_fa_per_window = Number(cap);
-  }
+  if (S._createWaiver) cfg.fa_defer_to_close = true;   // waiver-order trades
+  const faCap = document.querySelector('[data-view="create"] [data-cfg="max_fa_per_window"]')?.value;
+  if (faCap != null && faCap !== "") cfg.max_fa_per_window = Number(faCap);  // per-window FA cap (both modes)
   if (S._createCaptain) cfg.captain = true;            // captain + vice-captain
   const ms = document.querySelector('[data-view="create"] [data-cfg="maxSubs"]')?.value;
   if (ms != null && ms !== "") cfg.maxSubs = Number(ms);   // cap on subs per round
-  const faTot = document.querySelector('[data-view="create"] [data-cfg="max_fa_total"]')?.value;
-  if (faTot != null && faTot !== "") cfg.max_fa_total = Number(faTot);   // season FA-move cap
   if (S._createAutoWin) {                              // automatic fixture-driven windows
     cfg.autoWindows = true;
     const g = (k) => document.querySelector(`[data-view="create"] [data-cfg="${k}"]`)?.value;
@@ -2532,18 +2524,14 @@ function h2hTable(mgrIds, scoresByMgr, fixtures, cfg) {
    given claims (each manager's ordered preference list), the waiver order, the
    currently-rostered players, a per-manager cap, and each pick's held player,
    returns { awards, failed, order }. See the spec for the exact rules.
-   tradeLimit caps how many claims each manager can win: pass a number for a
-   flat per-manager cap, or a function (managerId) => cap for per-manager caps
-   (used by the season-total free-agent allowance). null/undefined = no cap. */
+   tradeLimit caps how many claims each manager can win in this window
+   (null/undefined = no cap). */
 function resolveFaClaims(claims, waiverOrder, taken, tradeLimit, pickHolds) {
   const order = { ...waiverOrder };
   let maxOrder = Math.max(-1, ...Object.values(order).filter((v) => v != null));
   const rostered = new Set(taken);
   const holds = { ...pickHolds };
-  const limitOf = (m) => {
-    const v = typeof tradeLimit === "function" ? tradeLimit(m) : tradeLimit;
-    return v == null ? Infinity : v;
-  };
+  const limit = tradeLimit == null ? Infinity : tradeLimit;
   const awards = [], failed = [];
   const byMgr = {};
   for (const c of claims) (byMgr[c.manager_id] ||= []).push(c);
@@ -2567,7 +2555,7 @@ function resolveFaClaims(claims, waiverOrder, taken, tradeLimit, pickHolds) {
   let act;
   while ((act = active()).length) {
     const m = act.sort((x, y) => prio(x) - prio(y) || String(x).localeCompare(String(y)))[0];
-    if (count[m] >= limitOf(m)) { capOut(m); continue; }
+    if (count[m] >= limit) { capOut(m); continue; }
     let executed = null;
     while (ptr[m] < byMgr[m].length) {
       const c = byMgr[m][ptr[m]++];
@@ -2580,7 +2568,7 @@ function resolveFaClaims(claims, waiverOrder, taken, tradeLimit, pickHolds) {
     }
     if (!executed) { done[m] = true; continue; }
     if (contested(executed.in_player_id)) { maxOrder++; order[m] = maxOrder; }  // yield
-    if (count[m] >= limitOf(m)) capOut(m);
+    if (count[m] >= limit) capOut(m);
   }
   const seen = new Set([...awards.map((c) => c.id), ...failed]);
   for (const c of claims) if (!seen.has(c.id)) failed.push(c.id);
@@ -5239,13 +5227,13 @@ const slotGroup = (slot) => SLOT_POS[slot] || null;
 function openSwap(pick) {
   if (!tradingOpen()) return toast(autoWindowsEnabled() ? tradeWindowMessage() : "Trading window is closed.");
   if (pick.slot === "TEAM") return;
-  const cap = maxFaTotal();
+  const cap = maxFaPerWindow();
   if (cap != null && faMovesLeft(pick.manager_id) <= 0)
-    return toast(`No free-agent moves left — you've used all ${cap} for the season.`);
+    return toast(`No free-agent moves left this window — the cap is ${cap}.`);
   S.swapPick = pick;
   $("swap-title").textContent =
     `Swap out ${pick.player_name} (${pick.slot}) — pick a replacement ${slotGroup(pick.slot)}:`
-    + (cap == null ? "" : ` · ${faMovesLeft(pick.manager_id)}/${cap} season moves left`);
+    + (cap == null ? "" : ` · ${faMovesLeft(pick.manager_id)}/${cap} moves left this window`);
   $("swap-search").value = "";
   if (!$("swap-team").options.length) {
     $("swap-team").innerHTML = '<option value="">All teams</option>' +
@@ -5331,7 +5319,7 @@ function renderSwapList() {
 async function doSwap(pick, entry) {
   if (!tradingOpen()) return toast(autoWindowsEnabled() ? tradeWindowMessage() : "Trading window is closed.");
   if (faMovesLeft(pick.manager_id) <= 0)
-    return toast(`No free-agent moves left — you've used all ${maxFaTotal()} for the season.`);
+    return toast(`No free-agent moves left this window — the cap is ${maxFaPerWindow()}.`);
   const { error } = await S.sb.from("picks")
     .update({ player_id: entry.player_id, player_name: entry.name, team: entry.team })
     .eq("id", pick.id).eq("player_id", pick.player_id);
@@ -5353,15 +5341,33 @@ async function doSwap(pick, entry) {
 
 /* ---------- waiver-order free-agent claims (mechanics-notes §1) ---------- */
 const faDeferToClose = () => cfgOf().fa_defer_to_close === true;
+// Optional cap on free-agent moves per manager, PER trade window. Waiver mode
+// enforces it at claim resolution; instant mode counts swaps made this window.
 const maxFaPerWindow = () => cfgOf().max_fa_per_window ?? null;
-// Optional SEASON-total cap on free-agent moves per manager (instant + waiver).
-// Counts completed swaps and awarded waivers from the transactions log.
-const maxFaTotal = () => cfgOf().max_fa_total ?? null;
-const faMovesUsed = (mid) => (S.transactions || [])
-  .filter((t) => t.manager_id === mid && (t.kind === "swap" || t.kind === "waiver")).length;
+// When the current trade window began: auto mode → the fixture-derived open
+// time; manual mode → the last lineup lock (each close snapshots rosters, so
+// the newest snapshot marks the start of the window now in progress).
+function faWindowStartMs() {
+  if (autoWindowsEnabled()) {
+    const w = autoWindowState();
+    if (w.tradeWindow) return w.tradeWindow.openAt;
+  }
+  let latest = 0;
+  for (const s of S.snapshots || []) {
+    const t = Date.parse(s.created_at || s.effective_from);
+    if (!isNaN(t) && t > latest) latest = t;
+  }
+  return latest;
+}
+const faMovesThisWindow = (mid) => {
+  const start = faWindowStartMs();
+  return (S.transactions || []).filter((t) => t.manager_id === mid
+    && (t.kind === "swap" || t.kind === "waiver")
+    && Date.parse(t.created_at || 0) >= start).length;
+};
 const faMovesLeft = (mid) => {
-  const cap = maxFaTotal();
-  return cap == null ? Infinity : Math.max(0, cap - faMovesUsed(mid));
+  const cap = maxFaPerWindow();
+  return cap == null ? Infinity : Math.max(0, cap - faMovesThisWindow(mid));
 };
 const myClaims = () => (S.faClaims || [])
   .filter((c) => c.manager_id === myManager()?.id && c.status === "pending")
@@ -5427,12 +5433,8 @@ async function processFaClaims() {
   for (const id of standingsOrder().slice().reverse()) if (order[id] == null) order[id] = ++maxo;
   const taken = S.picks.map((p) => p.player_id);
   const holds = Object.fromEntries(S.picks.map((p) => [p.id, p.player_id]));
-  // Per-manager cap = min(per-window cap, season allowance remaining).
-  const perWin = maxFaPerWindow(), seasonCap = maxFaTotal();
-  const limit = (perWin == null && seasonCap == null) ? null : (m) =>
-    Math.min(perWin ?? Infinity, seasonCap == null ? Infinity : Math.max(0, seasonCap - faMovesUsed(m)));
   const { awards, failed, order: newOrder } =
-    resolveFaClaims(pending, order, taken, limit, holds);
+    resolveFaClaims(pending, order, taken, maxFaPerWindow(), holds);
   for (const c of awards) {
     const team = S.playerById[c.in_player_id]?.team || null;
     const { error } = await S.sb.from("picks")
