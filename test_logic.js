@@ -17,10 +17,10 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, myManager, isAdmin, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
-const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
+const { S, pickInfo, myManager, isAdmin, calcPlayerPoints, calcTeamPoints, computeScores,
         scoring, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota,
         phaseOneStarters, starterQuota, effectiveConfig,
         flexCounting, formationValid, DEFAULT_FORMATION,
@@ -371,6 +371,26 @@ S.league = {};
   check("buildFixtureStatRows: MOTM = top rating ≥7.5", rows[0].motm, true);
   check("buildFixtureStatRows: rows scoped by competition key", rows[0].competition_key, "39-2024");
   check("buildFixtureStatRows: maxMin + clean-sheet diagnostics", [maxMin, cs], [90, 2]);
+}
+
+/* Account-aware identity: a signed-in user is matched to their manager by
+   user_id (follows them across devices); admin falls to the league owner. */
+{
+  S.authUser = { id: "uX" };
+  S.managers = [{ id: "mA", user_id: "uX" }, { id: "mB", user_id: null }];
+  S.league = null;
+  check("myManager: signed-in user matched by user_id", myManager()?.id, "mA");
+  S.authUser = { id: "nobody" };
+  S.managers = [{ id: "m1", user_id: null }];   // session managerId is "m1" (harness)
+  check("myManager: no account link falls back to the device session", myManager()?.id, "m1");
+  S.authUser = null;
+  check("myManager: not signed in uses the device session", myManager()?.id, "m1");
+  S.authUser = { id: "owner1" };
+  S.league = { owner_id: "owner1", admin_token: "tok" };
+  check("isAdmin: the league owner (by account) is admin", isAdmin(), true);
+  S.authUser = { id: "someone-else" };
+  check("isAdmin: a non-owner without the token is not admin", isAdmin(), false);
+  S.authUser = null; S.league = null; S.managers = [];
 }
 
 /* Waiver-order free-agent claims (mechanics-notes §1). */
