@@ -219,6 +219,22 @@
         <div class="text-xs text-slate-400 font-medium pt-1">Substitutions</div>
         <label class="text-[11px] text-slate-400">Max subs that can come up per round <span class="text-slate-500">(blank = the whole bench)</span>
           <input data-cfg="maxSubs" type="number" min="0" placeholder="whole bench" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
+        <div class="text-xs text-slate-400 font-medium pt-1">Trade &amp; lineup windows</div>
+        <div class="flex gap-2">
+          <button type="button" data-win="manual" class="flex-1 rounded-lg py-2 text-xs font-semibold border">Manual (admin toggles)</button>
+          <button type="button" data-win="auto" class="flex-1 rounded-lg py-2 text-xs font-semibold border">Automatic (fixtures)</button>
+        </div>
+        <p class="text-[11px] text-slate-500">Automatic mode reads the competition's matchweek calendar: the trade window
+          opens 1h after a matchweek's last game and closes 24h before the next one; lineups lock 1h before the next
+          matchweek's first kick-off. Best with a fixture-driven competition like the Premier League.</p>
+        <div id="create-auto-fields" class="hidden grid grid-cols-3 gap-2">
+          <label class="text-[11px] text-slate-400">Trade opens (h after last game)
+            <input data-cfg="windows.tradeOpenAfterH" type="number" min="0" placeholder="1" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
+          <label class="text-[11px] text-slate-400">Trade closes (h before next MW)
+            <input data-cfg="windows.tradeCloseBeforeH" type="number" min="0" placeholder="24" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
+          <label class="text-[11px] text-slate-400">Lineup locks (h before first game)
+            <input data-cfg="windows.lineupLockBeforeH" type="number" min="0" placeholder="1" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
+        </div>
       </div>
     </details>
 
@@ -714,11 +730,61 @@ function effectiveConfig(cfg) {
     h2h: { ...H2H_DEFAULTS, ...(cfg.h2h || {}) },
     faDeferToClose: cfg.fa_defer_to_close === true,
     captain: cfg.captain === true,
+    autoWindows: cfg.autoWindows === true,
   };
 }
 // Captain/vice: the captain's round points are doubled; if the captain didn't
 // play at all that round, the vice-captain's are doubled instead.
 const captainEnabled = () => cfgOf().captain === true;
+// Automatic trade/lineup windows: when on, trade + lineup locks are derived
+// from the competition fixture calendar instead of a manual admin toggle.
+const autoWindowsEnabled = () => cfgOf().autoWindows === true;
+// Cached window state (recomputed at most once a minute, or when S.fixtures
+// changes identity) — fixtureWindows is called from many render sites.
+let _awKey = null, _awVal = null;
+function autoWindowState() {
+  const now = Date.now(), bucket = Math.floor(now / 60000), fx = S.fixtures || null;
+  if (_awVal && _awKey && _awKey.fx === fx && _awKey.b === bucket) return _awVal;
+  _awKey = { fx, b: bucket };
+  _awVal = fixtureWindows(fx || [], now, cfgOf().windows || {});
+  return _awVal;
+}
+// Whether roster trades/swaps are currently allowed. In auto-window mode the
+// answer comes from the fixture calendar; otherwise it's the manual toggle.
+// (Legacy leagues have autoWindows off, so behaviour is unchanged.)
+function tradingOpen() {
+  return autoWindowsEnabled() ? autoWindowState().tradeOpen : !!S.league?.trading_open;
+}
+// Whether lineup (starter/bench) edits are currently allowed. Under auto
+// windows this locks 1h before the upcoming matchweek's first fixture, which
+// is a DIFFERENT moment from the trade window closing.
+function lineupOpen() {
+  return autoWindowsEnabled() ? autoWindowState().lineupOpen : !!S.league?.trading_open;
+}
+// Human-readable "when do lineups lock / when does trading reopen" strings for
+// auto-window mode. mwNo() pulls the matchweek number out of the round label.
+const mwNo = (round) => { const m = String(round || "").match(/(\d+)\s*$/); return m ? m[1] : null; };
+const fmtWhen = (ms) => ms == null ? "" : new Date(ms).toLocaleString([], {
+  weekday: "short", hour: "2-digit", minute: "2-digit", month: "short", day: "numeric" });
+function lineupLockMessage() {
+  const w = autoWindowState();
+  if (!w.upcoming) return "No upcoming fixtures scheduled.";
+  const n = mwNo(w.upcoming.round);
+  return `Lineups lock ${fmtWhen(w.lineupLockAt)}${n ? ` — 1h before Matchweek ${n}` : ""}.`;
+}
+function tradeWindowMessage() {
+  const w = autoWindowState();
+  if (w.tradeOpen) return `Trade window open until ${fmtWhen(w.tradeWindow.closeAt)}.`;
+  // Closed: find the next window that will open (next consecutive gap start).
+  const now = Date.now(), H = 3600e3;
+  const openAfter = (cfgOf().windows?.tradeOpenAfterH ?? 1) * H;
+  const weeks = w.weeks || [];
+  for (let i = 0; i + 1 < weeks.length; i++) {
+    const openAt = weeks[i].last + openAfter;
+    if (openAt > now) return `Trade window opens ${fmtWhen(openAt)}.`;
+  }
+  return "Trade window is closed.";
+}
 
 /* ---------- state & tiny helpers ---------- */
 
@@ -1322,7 +1388,7 @@ function updateCreateSummaries() {
   if ($("create-team-summary")) $("create-team-summary").textContent = S._createTeamOn
     ? `on · ${val("quota.TEAM", 1)} pick` : "off";
   if ($("create-format-summary")) $("create-format-summary").textContent =
-    `${S._createH2H ? "H2H" : "points"} · ${S._createWaiver ? "waiver" : "instant"}${S._createCaptain ? " · ©" : ""}`;
+    `${S._createH2H ? "H2H" : "points"} · ${S._createWaiver ? "waiver" : "instant"}${S._createCaptain ? " · ©" : ""}${S._createAutoWin ? " · auto-windows" : ""}`;
 }
 
 // Highlight the active Format & Trades toggles + show/hide H2H params.
@@ -1336,8 +1402,12 @@ function syncCreateFormat() {
   for (const b of document.querySelectorAll("[data-cap]"))
     b.className = "flex-1 rounded-lg py-2 text-xs font-semibold border " +
       ((b.dataset.cap === "on") === S._createCaptain ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400");
+  for (const b of document.querySelectorAll("[data-win]"))
+    b.className = "flex-1 rounded-lg py-2 text-xs font-semibold border " +
+      ((b.dataset.win === "auto") === S._createAutoWin ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400");
   $("create-h2h-fields").classList.toggle("hidden", !S._createH2H);
   $("create-waiver-fields").classList.toggle("hidden", !S._createWaiver);
+  $("create-auto-fields").classList.toggle("hidden", !S._createAutoWin);
   updateCreateSummaries();
 }
 
@@ -1350,7 +1420,7 @@ function renderCreateForm() {
   const syncApi = () => $("create-comp-api").classList.toggle("hidden", sel.value === "wc");
   sel.onchange = syncApi;
   syncApi();
-  S._createTeamOn = true; S._createH2H = false; S._createWaiver = false; S._createCaptain = false;
+  S._createTeamOn = true; S._createH2H = false; S._createWaiver = false; S._createCaptain = false; S._createAutoWin = false;
   paintCreateFields();
   for (const b of document.querySelectorAll("[data-teamtoggle]"))
     b.onclick = () => { S._createTeamOn = b.dataset.teamtoggle === "on"; syncCreateTeam(); };
@@ -1360,10 +1430,12 @@ function renderCreateForm() {
     b.onclick = () => { S._createWaiver = b.dataset.trade === "waiver"; syncCreateFormat(); };
   for (const b of document.querySelectorAll("[data-cap]"))
     b.onclick = () => { S._createCaptain = b.dataset.cap === "on"; syncCreateFormat(); };
+  for (const b of document.querySelectorAll("[data-win]"))
+    b.onclick = () => { S._createAutoWin = b.dataset.win === "auto"; syncCreateFormat(); };
   syncCreateTeam();
   syncCreateFormat();
   $("create-reset").onclick = () => {
-    S._createTeamOn = true; S._createH2H = false; S._createWaiver = false; S._createCaptain = false;
+    S._createTeamOn = true; S._createH2H = false; S._createWaiver = false; S._createCaptain = false; S._createAutoWin = false;
     paintCreateFields(); syncCreateTeam(); syncCreateFormat();
   };
   $("create-go").disabled = false;
@@ -1427,6 +1499,15 @@ function readCreateConfig() {
   if (S._createCaptain) cfg.captain = true;            // captain + vice-captain
   const ms = document.querySelector('[data-view="create"] [data-cfg="maxSubs"]')?.value;
   if (ms != null && ms !== "") cfg.maxSubs = Number(ms);   // cap on subs per round
+  if (S._createAutoWin) {                              // automatic fixture-driven windows
+    cfg.autoWindows = true;
+    const g = (k) => document.querySelector(`[data-view="create"] [data-cfg="${k}"]`)?.value;
+    const w = {}, put = (k, key) => { const v = g(key); if (v != null && v !== "") w[k] = Number(v); };
+    put("tradeOpenAfterH", "windows.tradeOpenAfterH");
+    put("tradeCloseBeforeH", "windows.tradeCloseBeforeH");
+    put("lineupLockBeforeH", "windows.lineupLockBeforeH");
+    if (Object.keys(w).length) cfg.windows = w;
+  }
   return JSON.stringify(effectiveConfig(cfg)) === JSON.stringify(effectiveConfig({})) ? null : cfg;
 }
 
@@ -2084,7 +2165,7 @@ function renderRosters(containerId) {
     .map((d) => d.dataset.mgr));
   const me = myManager();
   // Free-agent swaps: only on your own roster, post-draft, window open.
-  const canSwap = containerId === "board-rosters" && !!S.league?.trading_open;
+  const canSwap = containerId === "board-rosters" && tradingOpen();
   // Show starters first (GK→DEF→MID→FWD→TEAM), then subs.
   const byMgr = {};
   for (const pk of S.picks) (byMgr[pk.manager_id] ||= []).push(pk);
@@ -2490,6 +2571,60 @@ function resolveFaClaims(claims, waiverOrder, taken, tradeLimit, pickHolds) {
   const seen = new Set([...awards.map((c) => c.id), ...failed]);
   for (const c of claims) if (!seen.has(c.id)) failed.push(c.id);
   return { awards, failed, order };
+}
+
+// Automatic trade/lineup windows driven by the competition fixture list
+// (Premier-League focus: fixtures are grouped into matchweeks by their `round`
+// string, e.g. "Regular Season - 12"). Pure so it's unit-testable.
+//
+//   fixtures : [{ round, kickoff_utc }]  (extra fields ignored; ms or ISO ok)
+//   nowMs    : current time in epoch ms
+//   opts     : { tradeOpenAfterH=1, tradeCloseBeforeH=24, lineupLockBeforeH=1 }
+//
+// Rules (from the spec):
+//   • The trade window between two consecutive matchweeks A→B opens
+//     tradeOpenAfterH hours after A's LAST fixture and closes
+//     tradeCloseBeforeH hours before B's FIRST fixture.
+//   • The lineup for the upcoming matchweek locks lineupLockBeforeH hours
+//     before that matchweek's FIRST fixture.
+// A team playing twice in one matchweek is handled naturally: first/last
+// kickoff are the min/max across all of that week's fixtures.
+function matchweeksOf(fixtures) {
+  const H = 3600e3;
+  const by = {};
+  for (const f of fixtures || []) {
+    const r = f.round;
+    const t = f.kickoff_utc == null ? null
+      : (typeof f.kickoff_utc === "number" ? f.kickoff_utc : Date.parse(f.kickoff_utc));
+    if (r == null || t == null || isNaN(t)) continue;
+    (by[r] ||= []).push(t);
+  }
+  return Object.keys(by).map((r) => ({
+    round: r, first: Math.min(...by[r]), last: Math.max(...by[r]),
+  })).sort((a, b) => a.first - b.first);
+}
+function fixtureWindows(fixtures, nowMs, opts) {
+  const H = 3600e3, o = opts || {};
+  const openAfter = (o.tradeOpenAfterH ?? 1) * H;
+  const closeBefore = (o.tradeCloseBeforeH ?? 24) * H;
+  const lockBefore = (o.lineupLockBeforeH ?? 1) * H;
+  const weeks = matchweeksOf(fixtures);
+  // Trade window: does `now` fall inside any consecutive-matchweek gap?
+  let tradeOpen = false, tradeWindow = null;
+  for (let i = 0; i + 1 < weeks.length; i++) {
+    const openAt = weeks[i].last + openAfter;
+    const closeAt = weeks[i + 1].first - closeBefore;
+    if (nowMs >= openAt && nowMs < closeAt) {
+      tradeOpen = true;
+      tradeWindow = { from: weeks[i].round, to: weeks[i + 1].round, openAt, closeAt };
+      break;
+    }
+  }
+  // Upcoming matchweek = earliest whose first fixture hasn't kicked off yet.
+  const upcoming = weeks.find((w) => w.first > nowMs) || null;
+  const lineupLockAt = upcoming ? upcoming.first - lockBefore : null;
+  const lineupOpen = lineupLockAt != null && nowMs < lineupLockAt;
+  return { tradeOpen, tradeWindow, lineupOpen, lineupLockAt, upcoming, weeks };
 }
 
 // Per-manager round subtotals (the H2H fixture scores), from the lineup history.
@@ -3317,9 +3452,10 @@ function renderHomeTab() {
   const rank = scores.findIndex((s) => s.manager.id === me.id) + 1;
   const myScore = scores[rank - 1];
   const squadHtml = `
-    ${me.eliminated ? "" : `<button id="home-lineup" class="w-full bg-slate-800 border ${S.league.trading_open ? "border-wcgold/60 text-wcgold" : "border-slate-700 text-slate-500"} rounded-xl py-2.5 text-sm font-semibold">${
-      S.league.trading_open ? "Pick my team for the next games"
-                            : "🔒 Lineup locked — opens with the trading window"}</button>`}
+    ${me.eliminated ? "" : `<button id="home-lineup" class="w-full bg-slate-800 border ${lineupOpen() ? "border-wcgold/60 text-wcgold" : "border-slate-700 text-slate-500"} rounded-xl py-2.5 text-sm font-semibold">${
+      lineupOpen() ? "Pick my team for the next games"
+                   : (autoWindowsEnabled() ? "🔒 " + lineupLockMessage()
+                                           : "🔒 Lineup locked — opens with the trading window")}</button>`}
     <div id="hist-home-${me.id}" class="rounded-xl border border-slate-700 bg-slate-900 p-3"></div>`;
   box.innerHTML = `
     ${phaseCardsHtml(me)}
@@ -4953,8 +5089,9 @@ async function snapshotRosters() {
 function openLineup() {
   const me = myManager();
   if (!me) return;
-  if (!S.league.trading_open)
-    return toast("Lineups are locked — the admin opens the window between rounds.");
+  if (!lineupOpen())
+    return toast(autoWindowsEnabled() ? lineupLockMessage()
+      : "Lineups are locked — the admin opens the window between rounds.");
   // Draft of the new lineup: set of pick ids that will be starters.
   S.lineupDraft = new Set(managerPicks(me.id)
     .filter((pk) => !pk.is_sub && pk.slot !== "TEAM").map((pk) => pk.id));
@@ -5052,7 +5189,7 @@ function renderLineup() {
 
 async function saveLineup() {
   const me = myManager();
-  if (!S.league.trading_open)
+  if (!lineupOpen())
     return toast("Lineups are locked — the window closed while you were editing.");
   if (!lineupValid(lineupCounts())) return;
   const changes = managerPicks(me.id).filter((pk) => pk.slot !== "TEAM").map((pk) => {
@@ -5086,7 +5223,7 @@ async function saveLineup() {
 const slotGroup = (slot) => SLOT_POS[slot] || null;
 
 function openSwap(pick) {
-  if (!S.league.trading_open) return toast("Trading window is closed.");
+  if (!tradingOpen()) return toast(autoWindowsEnabled() ? tradeWindowMessage() : "Trading window is closed.");
   if (pick.slot === "TEAM") return;
   S.swapPick = pick;
   $("swap-title").textContent =
@@ -5174,7 +5311,7 @@ function renderSwapList() {
 }
 
 async function doSwap(pick, entry) {
-  if (!S.league.trading_open) return toast("Trading window is closed.");
+  if (!tradingOpen()) return toast(autoWindowsEnabled() ? tradeWindowMessage() : "Trading window is closed.");
   const { error } = await S.sb.from("picks")
     .update({ player_id: entry.player_id, player_name: entry.name, team: entry.team })
     .eq("id", pick.id).eq("player_id", pick.player_id);
@@ -5405,7 +5542,7 @@ function tradeSectionHtml(title, list, incoming) {
     // Accept only while the window is open; Reject/Counter stay available so
     // you can still respond to (and renegotiate) pending proposals when closed.
     const actions = t.status !== "proposed" ? "" : incoming
-      ? `${S.league.trading_open ? `<button data-acc="${t.id}" class="bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-xs font-semibold">Accept</button>` : ""}
+      ? `${tradingOpen() ? `<button data-acc="${t.id}" class="bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-xs font-semibold">Accept</button>` : ""}
          <button data-rej="${t.id}" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold">Reject</button>
          <button data-cnt="${t.id}" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold">Counter</button>`
       : `<button data-can="${t.id}" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold">Cancel</button>`;
@@ -5501,7 +5638,7 @@ function transactionsLogHtml() {
 // tappable for the full detail card, and carry a Trade shortcut when the
 // window is open. Only ever built from your own shortlist.
 function shortlistSectionHtml(me) {
-  const open = !!S.league.trading_open;
+  const open = tradingOpen();
   const allIds = myShortlist();
 
   if (!S.showShortlist) {
@@ -5594,7 +5731,7 @@ function shortlistSectionHtml(me) {
 // player pre-filled; free agent → the normal swap screen (direct when you
 // have one same-position player, else the FA swap builder to choose).
 function tradeForShortlisted(pid) {
-  if (!S.league.trading_open) return toast("Trading window is closed.");
+  if (!tradingOpen()) return toast(autoWindowsEnabled() ? tradeWindowMessage() : "Trading window is closed.");
   const me = myManager();
   const p = S.playerById[pid];
   if (!p) return;
@@ -5621,7 +5758,7 @@ function tradeForShortlisted(pid) {
 // Squad planner section (Trades tab): your whole squad, with planned
 // replacements per slot. Collapsed behind a "Squad planner" button.
 function plannerSectionHtml(me) {
-  const open = !!S.league.trading_open;
+  const open = tradingOpen();
   const myPickIds = new Set(managerPicks(me.id).map((pk) => pk.id));
   const activeMoves = plannerMoves().filter((m) => myPickIds.has(m.out));
 
@@ -5711,7 +5848,7 @@ function plannerMoveHtml(outPick, m, open) {
 }
 
 function plannerExec(outPickId, pid) {
-  if (!S.league.trading_open) return toast("Trading window is closed.");
+  if (!tradingOpen()) return toast(autoWindowsEnabled() ? tradeWindowMessage() : "Trading window is closed.");
   const outPick = S.picks.find((pk) => pk.id === outPickId);
   if (!outPick) return toast("That player is no longer on your roster.");
   const p = S.playerById[pid];
@@ -5879,7 +6016,7 @@ function renderTrades() {
     box.innerHTML = '<p class="text-sm text-slate-500 py-4">Join as a manager to trade.</p>';
     return;
   }
-  const open = !!S.league.trading_open;
+  const open = tradingOpen();
   let html = `<div class="rounded-xl border ${open ? "border-wcgold/60 bg-wcred/10" : "border-slate-700 bg-slate-900"} p-3 text-sm flex items-center justify-between gap-2">
     <span>${open ? "Trading window is <b>open</b>."
                  : "Trading is closed — you can still respond to pending proposals."}</span>
@@ -5999,7 +6136,7 @@ async function submitTrade(me) {
   if (b.target === "FA") return; // FA swaps execute per-player, no proposal
   // New proposals need the window open; counters are responses and are
   // allowed even after it closes (so negotiations don't get stuck).
-  if (!S.league.trading_open && !b.parent) return toast("Trading window is closed.");
+  if (!tradingOpen() && !b.parent) return toast(autoWindowsEnabled() ? tradeWindowMessage() : "Trading window is closed.");
   const pairs = b.pairs.map((p) => ({ mine: pickById(p.mine), theirs: pickById(p.theirs) }));
   const err = tradeError(pairs);
   if (err) return toast(err);
@@ -6030,7 +6167,7 @@ async function submitTrade(me) {
 }
 
 async function acceptTrade(t) {
-  if (!S.league.trading_open) return toast("Trading window is closed.");
+  if (!tradingOpen()) return toast(autoWindowsEnabled() ? tradeWindowMessage() : "Trading window is closed.");
   const pairs = (t.trade_items || []).map((it) => ({
     mine: pickById(it.offered_pick_id), theirs: pickById(it.requested_pick_id),
   }));
@@ -6941,11 +7078,17 @@ function renderAdmin() {
     $("adm-api-key").value = localStorage.getItem("wcf_apikey") || "";
   if (!$("adm-pull-date").value)
     $("adm-pull-date").value = new Date().toISOString().slice(0, 10);
-  const open = !!S.league.trading_open;
-  $("adm-trading-status").textContent = open ? "Trading is OPEN" : "Trading is closed";
+  const auto = autoWindowsEnabled(), open = tradingOpen();
+  $("adm-trading-status").textContent = auto
+    ? (open ? "Trading OPEN · " + tradeWindowMessage() : "Trading closed · " + tradeWindowMessage())
+    : (open ? "Trading is OPEN" : "Trading is closed");
   $("adm-trading-status").className =
     "text-sm font-semibold " + (open ? "text-wcgold" : "text-slate-400");
-  $("adm-trading-toggle").textContent = open ? "Close trading" : "Open trading";
+  $("adm-trading-toggle").textContent = auto ? "Automatic — driven by fixtures"
+    : (open ? "Close trading" : "Open trading");
+  $("adm-trading-toggle").disabled = auto;
+  $("adm-trading-toggle").classList.toggle("opacity-50", auto);
+  $("adm-trading-toggle").classList.toggle("cursor-not-allowed", auto);
   const sortOn = S.league.draft_stat_sort !== false;
   $("adm-sort-status").textContent = sortOn ? "Draft sort is ON" : "Draft sort is OFF";
   $("adm-sort-status").className =
@@ -6992,6 +7135,8 @@ async function toggleDraftSort() {
 }
 
 async function toggleTrading() {
+  if (autoWindowsEnabled())
+    return toast("Trade window is automatic — it opens and closes from the fixture calendar.");
   const next = !S.league.trading_open;
   const waiver = faDeferToClose();
   // Waiver mode: resolve all queued claims BEFORE the window shuts.

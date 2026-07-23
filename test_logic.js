@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, fixtureWindows, matchweeksOf, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -25,6 +25,7 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         phaseOneStarters, starterQuota, effectiveConfig,
         flexCounting, formationValid, DEFAULT_FORMATION,
         roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims,
+        fixtureWindows, matchweeksOf,
         apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture,
         fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey,
         slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick,
@@ -1292,6 +1293,69 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
   check("fetchCompetitionPool derives a code for a codeless team",
     built.players.find((p) => p.team === "Chelsea").team_code, "CHE");
   global.fetch = savedFetch;
+
+  /* ---------- automatic trade/lineup windows (fixtureWindows) ---------- */
+  const awH = 3600e3, awDay = 24 * awH;
+  // Three matchweeks a week apart. MW1 has two games; MW2 has two games; MW3 one.
+  const mw1a = Date.UTC(2026, 7, 15, 12, 0);   // Sat 12:00
+  const mw1b = Date.UTC(2026, 7, 15, 14, 30);  // Sat 14:30 (MW1 last game)
+  const mw2a = Date.UTC(2026, 7, 22, 12, 0);   // next Sat 12:00 (MW2 first game)
+  const mw2b = Date.UTC(2026, 7, 22, 14, 0);
+  const mw3a = Date.UTC(2026, 7, 29, 12, 0);
+  const awFx = [
+    { round: "Regular Season - 2", kickoff_utc: new Date(mw2b).toISOString() },  // out of order on purpose
+    { round: "Regular Season - 1", kickoff_utc: new Date(mw1a).toISOString() },
+    { round: "Regular Season - 1", kickoff_utc: new Date(mw1b).toISOString() },
+    { round: "Regular Season - 2", kickoff_utc: mw2a },                          // numeric ms accepted too
+    { round: "Regular Season - 3", kickoff_utc: new Date(mw3a).toISOString() },
+    { round: null, kickoff_utc: mw1a },                                          // no round → ignored
+  ];
+  const awWeeks = matchweeksOf(awFx);
+  check("matchweeksOf groups + sorts by first kickoff",
+    awWeeks.map((w) => w.round), ["Regular Season - 1", "Regular Season - 2", "Regular Season - 3"]);
+  check("matchweeksOf first/last span a double-game week",
+    [awWeeks[0].first, awWeeks[0].last], [mw1a, mw1b]);
+
+  // Trade window between MW1 and MW2: opens mw1b+1h, closes mw2a-24h.
+  const awMidGap = mw1b + 3 * awDay;   // well inside the gap
+  const wGap = fixtureWindows(awFx, awMidGap);
+  check("trade window open in the MW1 to MW2 gap", wGap.tradeOpen, true);
+  check("trade window names the bounding matchweeks",
+    [wGap.tradeWindow.from, wGap.tradeWindow.to], ["Regular Season - 1", "Regular Season - 2"]);
+  check("trade window opens 1h after MW1's last game", wGap.tradeWindow.openAt, mw1b + awH);
+  check("trade window closes 24h before MW2's first game", wGap.tradeWindow.closeAt, mw2a - awDay);
+
+  check("trade closed while MW1 is being played",
+    fixtureWindows(awFx, mw1a + 30 * 60e3).tradeOpen, false);
+  check("trade closed until 1h after MW1's last game",
+    fixtureWindows(awFx, mw1b + 30 * 60e3).tradeOpen, false);
+  check("trade open once 1h has passed",
+    fixtureWindows(awFx, mw1b + awH + 60e3).tradeOpen, true);
+  check("trade closed inside the 24h pre-MW2 lock-in",
+    fixtureWindows(awFx, mw2a - 12 * awH).tradeOpen, false);
+
+  // Lineup window: locks 1h before the upcoming matchweek's first game.
+  const wLine = fixtureWindows(awFx, awMidGap);
+  check("upcoming matchweek is the next unplayed one", wLine.upcoming.round, "Regular Season - 2");
+  check("lineup locks 1h before MW2's first game", wLine.lineupLockAt, mw2a - awH);
+  check("lineup open during the gap", wLine.lineupOpen, true);
+  check("lineup locked in the final hour before kickoff",
+    fixtureWindows(awFx, mw2a - 30 * 60e3).lineupOpen, false);
+  check("lineup reopens for MW3 once MW2 has kicked off",
+    fixtureWindows(awFx, mw2a + awH).upcoming.round, "Regular Season - 3");
+
+  // Custom thresholds override the 1h / 24h / 1h defaults.
+  const wOpt = fixtureWindows(awFx, awMidGap, { tradeOpenAfterH: 2, tradeCloseBeforeH: 48, lineupLockBeforeH: 3 });
+  check("custom trade-open offset respected", wOpt.tradeWindow.openAt, mw1b + 2 * awH);
+  check("custom trade-close offset respected", wOpt.tradeWindow.closeAt, mw2a - 48 * awH);
+  check("custom lineup-lock offset respected", wOpt.lineupLockAt, mw2a - 3 * awH);
+
+  // No fixtures / season finished → everything closed, nothing crashes.
+  check("empty fixtures → no windows",
+    (() => { const w = fixtureWindows([], awMidGap); return [w.tradeOpen, w.lineupOpen, w.upcoming]; })(),
+    [false, false, null]);
+  check("past the last matchweek → lineup closed",
+    fixtureWindows(awFx, mw3a + awDay).lineupOpen, false);
 
   process.exit(fails ? 1 : 0);
 })();
