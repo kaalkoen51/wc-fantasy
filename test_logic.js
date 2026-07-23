@@ -271,6 +271,21 @@ S.league = {};
   const r3 = resolveFaClaims(fb, { M1: 0 }, ["O1", "P1"], Infinity, { pk1: "O1" });
   check("waiver: infeasible top claim falls back to next preference",
     [r3.awards.map((c) => c.id), r3.failed], [["y"], ["x"]]);
+  // Per-manager cap as a function: M1 exhausted its season allowance (0 left),
+  // M2 still has room — so only M2's uncontested claim lands.
+  const perMgr = [
+    { id: "p", manager_id: "M1", rank: 0, out_player_id: "O1", in_player_id: "P1", pick_id: "pk1" },
+    { id: "q", manager_id: "M2", rank: 0, out_player_id: "O2", in_player_id: "P2", pick_id: "pk2" },
+  ];
+  const r4 = resolveFaClaims(perMgr, { M1: 0, M2: 1 }, ["O1", "O2"],
+    (m) => (m === "M1" ? 0 : 5), { pk1: "O1", pk2: "O2" });
+  check("waiver: per-manager cap fn blocks the tapped-out manager only",
+    [r4.awards.map((c) => c.id), r4.failed], [["q"], ["p"]]);
+  // Function cap of 1 for everyone behaves exactly like the scalar cap of 1.
+  const r5 = resolveFaClaims(claims, { M1: 0, M2: 1 }, ["O1", "O2", "O3"],
+    () => 1, { pk1: "O1", pk2: "O2", pk3: "O3" });
+  check("waiver: constant cap fn matches the scalar cap",
+    [r5.awards.map((c) => c.id).sort(), r5.failed], [["c1", "c3"], ["c2"]]);
 }
 // No config anywhere → identical to the original hardcoded league.
 S.league = {};
