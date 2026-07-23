@@ -216,6 +216,9 @@
         </div>
         <p class="text-[11px] text-slate-500">Each manager names a captain (double points that round) and a vice-captain
           (doubles instead if the captain doesn't play at all). Set them in the lineup screen.</p>
+        <div class="text-xs text-slate-400 font-medium pt-1">Substitutions</div>
+        <label class="text-[11px] text-slate-400">Max subs that can come up per round <span class="text-slate-500">(blank = the whole bench)</span>
+          <input data-cfg="maxSubs" type="number" min="0" placeholder="whole bench" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
       </div>
     </details>
 
@@ -1422,6 +1425,8 @@ function readCreateConfig() {
     if (cap != null && cap !== "") cfg.max_fa_per_window = Number(cap);
   }
   if (S._createCaptain) cfg.captain = true;            // captain + vice-captain
+  const ms = document.querySelector('[data-view="create"] [data-cfg="maxSubs"]')?.value;
+  if (ms != null && ms !== "") cfg.maxSubs = Number(ms);   // cap on subs per round
   return JSON.stringify(effectiveConfig(cfg)) === JSON.stringify(effectiveConfig({})) ? null : cfg;
 }
 
@@ -2245,17 +2250,19 @@ function formationValid(counts, bounds) {
 // but only into a subset that keeps the formation valid (every position within
 // [min,max]); GK is only ever covered by a bench GK. If a no-show can't be
 // validly covered its slot stays empty (scores 0). Pure + unit-tested.
-function flexCounting(starters, bench, playedIds, bounds, totalStarters) {
+function flexCounting(starters, bench, playedIds, bounds, totalStarters, maxSubs) {
   const b = bounds || formationBounds();
   const total = totalStarters || b.starters;
+  const subCap = (maxSubs == null) ? Infinity : maxSubs;   // max bench promotions
   const played = playedIds instanceof Set ? playedIds : new Set(playedIds);
   const counting = new Set();
-  // GK slot — GK only covers GK.
+  // GK slot — GK only covers GK (and it counts toward the sub cap).
+  let gkSubbed = 0;
   const gk = starters.find((s) => s.position === "GK");
   if (gk && played.has(gk.player_id)) counting.add(gk.player_id);
-  else if (gk) {
+  else if (gk && subCap > 0) {
     const bgk = bench.find((x) => x.position === "GK" && played.has(x.player_id));
-    if (bgk) counting.add(bgk.player_id);
+    if (bgk) { counting.add(bgk.player_id); gkSubbed = 1; }
   }
   // Outfield — played starters always count.
   const base = { DEF: 0, MID: 0, FWD: 0 };
@@ -2263,7 +2270,8 @@ function flexCounting(starters, bench, playedIds, bounds, totalStarters) {
     if (s.position !== "GK" && played.has(s.player_id)) { counting.add(s.player_id); base[s.position]++; }
   const cand = bench.filter((x) => x.position !== "GK" && played.has(x.player_id));
   const gkSlots = (b.GK && b.GK[1] > 0) ? 1 : 0;
-  const maxAdd = (total - gkSlots) - (base.DEF + base.MID + base.FWD);   // empty outfield slots
+  const maxAdd = Math.min((total - gkSlots) - (base.DEF + base.MID + base.FWD),   // empty outfield slots
+    subCap - gkSubbed);                                                            // …within the sub cap
   if (maxAdd > 0 && cand.length) {
     // Pick the bench subset that maximizes coverage while keeping the formation
     // valid, tie-broken toward earlier bench order (cand ≤ ~8, so enumerate).
@@ -2301,7 +2309,39 @@ function flexRoundCounting(roster, rnd, teamMatches, appeared) {
     if (lbl && appeared(e.player_id, lbl)) played.add(e.player_id);
   }
   const b = formationBounds();
-  return flexCounting(st, bn, played, b, b.starters);
+  return flexCounting(st, bn, played, b, b.starters, maxSubsPerRound());
+}
+
+// Max bench players that may be promoted per round. Default = the whole bench
+// (no cap); the admin can set a lower config.maxSubs.
+function maxSubsPerRound() {
+  if (cfgOf().maxSubs != null) return cfgOf().maxSubs;
+  if (isFlexFormation()) return Math.max(0, (cfgOf().squadSize ?? 15) - formationBounds().starters);
+  const q = posQuota(), s = starterQuota();
+  return Math.max(0, ["GK", "DEF", "MID", "FWD"].reduce((a, p) => a + ((q[p] || 0) - (s[p] || 0)), 0));
+}
+const maxSubsCapped = () => cfgOf().maxSubs != null;
+
+// Fixed-formation subs that activate this round, respecting the cap: bench
+// players (in roster order) cover a same-position no-show starter until the cap
+// (or the no-shows) run out. Only used when a cap is configured.
+function fixedRoundSubs(roster, rnd, teamMatches, appeared, cap) {
+  const starters = roster.filter((e) => !e.is_sub && e.position !== "TEAM");
+  const noShow = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+  for (const st of starters) {
+    const lbl = (teamMatches[st.team] || [])[rnd - 1];
+    if (lbl && !appeared(st.player_id, lbl)) noShow[st.position]++;
+  }
+  const activated = new Set();
+  let count = 0;
+  for (const sub of roster.filter((e) => e.is_sub && e.position !== "TEAM")) {
+    if (count >= cap) break;
+    const lbl = (teamMatches[sub.team] || [])[rnd - 1];
+    if (lbl && appeared(sub.player_id, lbl) && noShow[sub.position] > 0) {
+      activated.add(sub.player_id); noShow[sub.position]--; count++;
+    }
+  }
+  return activated;
 }
 
 /* ---------- head-to-head log + bonus points (mechanics-notes spec) ----------
@@ -2713,6 +2753,10 @@ function computeScores() {
     const flexCache = {};
     const flexCountForRound = (rnd, roster) => flexCache[rnd] ||
       (flexCache[rnd] = flexRoundCounting(roster, rnd, teamMatches, appearedIn));
+    const fixedCap = !flex && maxSubsCapped();   // fixed mode with a sub cap set
+    const fixedCache = {};
+    const fixedSubsForRound = (rnd, roster) => fixedCache[rnd] ||
+      (fixedCache[rnd] = fixedRoundSubs(roster, rnd, teamMatches, appearedIn, maxSubsPerRound()));
     const captain = captainEnabled();
     const capByRnd = {}, viceByRnd = {}, playedByRnd = {}, ptsByRnd = {};
     for (const label of statLabels) {
@@ -2737,6 +2781,10 @@ function computeScores() {
             pts = scored;
         } else if (!entry.is_sub) {
           pts = scored;
+        } else if (fixedCap) {
+          // Fixed mode with a sub cap: capped same-position cover, round-level.
+          if (fixedSubsForRound(roundOf(entry.team, label) + 1, roster).has(entry.player_id))
+            pts = scored;
         } else {
           // Fixed mode: a sub scores its round-k match only if a same-position
           // starter's team also played round-k but the starter didn't feature.
@@ -2861,6 +2909,9 @@ function managerHistory(mgrId) {
             .has(entry.player_id)) pts = scored;
       } else if (!entry.is_sub) {
         pts = scored;
+      } else if (maxSubsCapped()) {
+        if (fixedRoundSubs(roster, roundOf(entry.team, label) + 1, teamMatches, appearedIn, maxSubsPerRound())
+            .has(entry.player_id)) pts = scored;
       } else {
         const r = roundOf(entry.team, label);
         const mates = starters.filter((st) => st.position === entry.position);

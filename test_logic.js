@@ -171,6 +171,23 @@ check("partial starters config keeps defaults (DEF still 3)", starterQuota().DEF
 check("formationValid: 4-4-2 legal", formationValid({ GK: 1, DEF: 4, MID: 4, FWD: 2 }, DEFAULT_FORMATION), true);
 check("formationValid: 2-4-4 illegal (DEF<3, FWD>3)", formationValid({ GK: 1, DEF: 2, MID: 4, FWD: 4 }, DEFAULT_FORMATION), false);
 check("formationValid: wrong total illegal", formationValid({ GK: 1, DEF: 4, MID: 4, FWD: 1 }, DEFAULT_FORMATION), false);
+// Max subs per round: cap the number of bench promotions.
+{
+  const B = DEFAULT_FORMATION;
+  const P = (id, position) => ({ player_id: id, position });
+  const st = [P("gk", "GK"), P("d1", "DEF"), P("d2", "DEF"), P("d3", "DEF"), P("d4", "DEF"),
+    P("m1", "MID"), P("m2", "MID"), P("m3", "MID"), P("m4", "MID"), P("f1", "FWD"), P("f2", "FWD")];
+  const ids = st.map((s) => s.player_id);
+  const played = new Set([...ids.filter((id) => id !== "d3" && id !== "d4"), "bd1", "bd2"]);  // 2 DEF no-show
+  const bench = [P("bd1", "DEF"), P("bd2", "DEF")];
+  const capped = flexCounting(st, bench, played, B, 11, 1);   // cap 1
+  check("flex maxSubs=1: only one bench player is promoted",
+    [capped.has("bd1"), capped.has("bd2")], [true, false]);
+  const uncapped = flexCounting(st, bench, played, B, 11);    // no cap
+  check("flex no cap: both bench DEF fill the two open slots",
+    [uncapped.has("bd1"), uncapped.has("bd2")], [true, true]);
+  check("flex maxSubs=0: no subs come up at all", flexCounting(st, bench, played, B, 11, 0).size, 9);
+}
 // Flex draft + lineup use the existing flex-slot model (mins + fluid slots).
 S.league = { phase: 1, config: { formationMode: "flex", squadSize: 15,
   formation: { GK: [1, 1], DEF: [3, 5], MID: [2, 5], FWD: [1, 3], starters: 11 } } };
