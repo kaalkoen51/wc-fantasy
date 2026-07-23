@@ -78,6 +78,28 @@
 
   <!-- Home -->
   <section data-view="home" class="hidden space-y-4">
+    <div id="home-account" class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-2">
+      <!-- Signed-out: sign-in / sign-up form -->
+      <div id="account-out" class="space-y-2">
+        <div class="flex items-center justify-between">
+          <span id="account-mode-title" class="text-sm font-semibold">Sign in</span>
+          <button type="button" id="account-toggle" class="text-xs text-wcgold underline">Create an account</button>
+        </div>
+        <p class="text-[11px] text-slate-500">Optional — sign in so your leagues and teams follow you across devices. You can still just join with an invite code.</p>
+        <input id="account-email" type="email" autocomplete="email" placeholder="email" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+        <input id="account-pw" type="password" autocomplete="current-password" placeholder="password" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+        <button id="account-submit" class="w-full bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg py-2 text-sm font-semibold">Sign in</button>
+        <p id="account-msg" class="text-[11px] text-slate-400"></p>
+      </div>
+      <!-- Signed-in: identity + sign out + your leagues -->
+      <div id="account-in" class="hidden space-y-2">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-sm min-w-0"><span class="text-slate-500">Signed in as</span> <span id="account-email-label" class="font-semibold truncate"></span></span>
+          <button id="account-signout" class="shrink-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold">Sign out</button>
+        </div>
+        <div id="account-leagues" class="space-y-1"></div>
+      </div>
+    </div>
     <div id="home-resume" class="hidden rounded-xl border border-wcgold/60 bg-wcred/10 p-4">
       <div class="text-sm text-slate-300 mb-2">You have a league on this device:</div>
       <div class="flex items-center justify-between gap-2">
@@ -869,11 +891,32 @@ const getSession = () => JSON.parse(localStorage.getItem("wcf_session") || "null
 const setSession = (s) => s ? localStorage.setItem("wcf_session", JSON.stringify(s))
                             : localStorage.removeItem("wcf_session");
 
+/* ---------- accounts (Supabase Auth, email + password) ----------
+   Phase 1: identity + ownership at the app level. Signing in links your
+   account (auth uid) to the managers you join and the leagues you create, so
+   the app recognises you across devices and gates admin to the creator. The
+   database RLS is still open, so this is UX-level, not tamper-proof — the
+   owner_id/user_id columns are exactly what a future RLS lockdown keys on. */
+const authUser = () => S.authUser || null;
+const authUid = () => S.authUser?.id || null;
+async function refreshAuthUser() {
+  try { const { data } = await S.sb.auth.getSession(); S.authUser = data.session?.user || null; }
+  catch { S.authUser = null; }
+  return S.authUser;
+}
+
 function myManager() {
+  // Prefer the account link: a signed-in user's manager follows them across
+  // devices. Fall back to the per-device session (legacy / not signed in).
+  const uid = authUid();
+  if (uid) { const mine = S.managers.find((m) => m.user_id === uid); if (mine) return mine; }
   const s = getSession();
   return S.managers.find((m) => m.id === s?.managerId) || null;
 }
 function isAdmin() {
+  // The league creator (owner_id === your account) is always admin; the legacy
+  // admin-token still works for token-based / pre-account leagues.
+  if (S.league?.owner_id && authUid() && S.league.owner_id === authUid()) return true;
   const s = getSession();
   return !!(S.league && s?.adminToken && s.adminToken === S.league.admin_token);
 }
@@ -906,6 +949,7 @@ const STRIPPABLE_COLUMNS = new Set([
   "home_score", "away_score", "minutes", "raw",
   "offered_player_name", "requested_player_name",
   "offered_player_id", "requested_player_id", "planner",
+  "owner_id", "user_id",
 ]);
 
 // Insert/upsert that tolerates an unapplied additive migration. Throws on
@@ -1804,6 +1848,7 @@ async function createLeague() {
     };
     if (config) row.config = config;
     if (competition) row.competition = competition;
+    if (authUid()) row.owner_id = authUid();   // creator's account → admin across devices
     const { data, error } = await insertLeagueRow(row);
     if (error) throw new Error(error.message);
 
@@ -1821,14 +1866,24 @@ async function createLeague() {
 // Insert a league, dropping the config/competition columns and retrying if the
 // database hasn't had schema.sql applied yet (so a basic league still creates).
 async function insertLeagueRow(row) {
-  let res = await S.sb.from("leagues").insert(row).select().single();
-  const missing = res.error && /Could not find the '(config|competition)' column/.exec(res.error.message);
-  if (missing) {
-    const { config, competition, ...rest } = row;
-    toast("Custom settings need schema.sql — created a standard league instead.");
-    res = await S.sb.from("leagues").insert(rest).select().single();
+  let payload = { ...row };
+  for (;;) {
+    const res = await S.sb.from("leagues").insert(payload).select().single();
+    const col = res.error && /Could not find the '(config|competition|owner_id)' column/.exec(res.error.message)?.[1];
+    if (!col) return res;
+    if (col === "config" || col === "competition")
+      toast("Custom settings need schema.sql — created a standard league instead.");
+    delete payload[col];   // drop the missing optional column and retry
   }
-  return res;
+}
+// Insert a manager, tolerating an unapplied user_id migration (drops it + retries).
+async function insertManagerRow(row) {
+  let payload = { ...row };
+  for (;;) {
+    const res = await S.sb.from("managers").insert(payload).select().single();
+    if (!(res.error && /Could not find the 'user_id' column/.test(res.error.message || ""))) return res;
+    delete payload.user_id;
+  }
 }
 
 async function findLeague() {
@@ -1875,17 +1930,20 @@ async function joinLeague() {
   if (S.joinManagers.some((m) => m.name.toLowerCase() === name.toLowerCase()))
     return toast("That name is taken — pick another or reclaim it below.");
   if (S.joinManagers.length >= S.joinTarget.num_managers) return toast("League is full.");
-  const { data, error } = await S.sb.from("managers")
-    .insert({ league_id: S.joinTarget.id, name, join_token: crypto.randomUUID() })
-    .select().single();
+  const row = { league_id: S.joinTarget.id, name, join_token: crypto.randomUUID() };
+  if (authUid()) row.user_id = authUid();   // link this manager to your account
+  const { data, error } = await insertManagerRow(row);
   if (error) return toast("Join failed: " + error.message);
   setSession({ ...joinSessionBase(), managerId: data.id });
   await enterLeague();
 }
 
 // Trust-based reclaim (friend group, open RLS): pick your name to continue
-// on a new device.
+// on a new device. If you're signed in and the name isn't linked yet, claim it
+// to your account so it follows you from now on.
 async function claimManager(m) {
+  if (authUid() && !m.user_id)
+    await S.sb.from("managers").update({ user_id: authUid() }).eq("id", m.id).then(() => {}, () => {});
   setSession({ ...joinSessionBase(), managerId: m.id });
   await enterLeague();
 }
@@ -1928,9 +1986,9 @@ async function joinFromLobby() {
   if (!name) return toast("Enter a name.");
   if (S.managers.some((m) => m.name.toLowerCase() === name.toLowerCase()))
     return toast("That name is taken.");
-  const { data, error } = await S.sb.from("managers")
-    .insert({ league_id: S.league.id, name, join_token: crypto.randomUUID() })
-    .select().single();
+  const row = { league_id: S.league.id, name, join_token: crypto.randomUUID() };
+  if (authUid()) row.user_id = authUid();
+  const { data, error } = await insertManagerRow(row);
   if (error) return toast(error.message);
   setSession({ ...getSession(), managerId: data.id });
   scheduleRefetch();
@@ -7766,6 +7824,75 @@ function renderHome() {
   const has = !!sess?.leagueId;
   $("home-resume").classList.toggle("hidden", !has);
   if (has) $("home-resume-name").textContent = "Tap to rejoin your league";
+  renderAccount();
+}
+
+// Toggle the account card between signed-in and signed-out states.
+let _accountSignup = false;
+function renderAccount() {
+  const inEl = $("account-in"), outEl = $("account-out");
+  if (!inEl || !outEl) return;
+  const u = authUser();
+  inEl.classList.toggle("hidden", !u);
+  outEl.classList.toggle("hidden", !!u);
+  if (u) { $("account-email-label").textContent = u.email || "your account"; loadMyLeagues(); return; }
+  const signup = _accountSignup;
+  $("account-mode-title").textContent = signup ? "Create an account" : "Sign in";
+  $("account-toggle").textContent = signup ? "I already have an account" : "Create an account";
+  $("account-submit").textContent = signup ? "Create account" : "Sign in";
+  $("account-pw").autocomplete = signup ? "new-password" : "current-password";
+}
+
+async function submitAccount() {
+  const email = $("account-email").value.trim();
+  const pw = $("account-pw").value;
+  const msg = (t, ok) => { const el = $("account-msg"); el.textContent = t; el.className = "text-[11px] " + (ok ? "text-emerald-400" : "text-slate-400"); };
+  if (!email || !pw) return msg("Enter your email and password.");
+  const btn = $("account-submit"); btn.disabled = true;
+  try {
+    if (_accountSignup) {
+      const { data, error } = await S.sb.auth.signUp({ email, password: pw });
+      if (error) return msg(error.message);
+      // With email confirmation on, there's a user but no session until confirmed.
+      if (!data.session) return msg("Account created — check your email to confirm, then sign in.", true);
+      msg("Account created — you're signed in.", true);
+    } else {
+      const { error } = await S.sb.auth.signInWithPassword({ email, password: pw });
+      if (error) return msg(error.message);
+    }
+    await refreshAuthUser();
+    $("account-pw").value = "";
+    renderAccount();
+  } finally { btn.disabled = false; }
+}
+
+async function signOutAccount() {
+  await S.sb.auth.signOut();
+  S.authUser = null;
+  renderAccount();
+  toast("Signed out.");
+}
+
+// The leagues this account is a member of (managers linked by user_id) — so
+// they follow you to any device. Tapping one opens it without an invite code.
+async function loadMyLeagues() {
+  const box = $("account-leagues");
+  if (!box) return;
+  if (!authUid()) { box.innerHTML = ""; return; }
+  const { data: mine, error } = await S.sb.from("managers")
+    .select("id,name,league_id").eq("user_id", authUid());
+  if (error || !mine?.length) { box.innerHTML = ""; return; }   // no link column / no leagues
+  const ids = [...new Set(mine.map((m) => m.league_id))];
+  const { data: lgs } = await S.sb.from("leagues").select("id,name").in("id", ids);
+  const byId = Object.fromEntries((lgs || []).map((l) => [l.id, l]));
+  box.innerHTML = `<div class="text-[11px] text-slate-500">Your leagues</div>` + mine.map((m) => {
+    const l = byId[m.league_id];
+    return l ? `<button data-openleague="${esc(m.league_id)}" data-mgr="${esc(m.id)}" class="w-full text-left rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm hover:border-wcgold">${esc(l.name)} <span class="text-slate-500 text-xs">· as ${esc(m.name)}</span></button>` : "";
+  }).join("");
+  box.querySelectorAll("[data-openleague]").forEach((b) => b.onclick = () => {
+    setSession({ leagueId: b.dataset.openleague, managerId: b.dataset.mgr, adminToken: getSession()?.adminToken || null });
+    enterLeague().catch(() => showView("home"));
+  });
 }
 
 function wire() {
@@ -7778,6 +7905,10 @@ function wire() {
   };
   $("home-create").onclick = () => { renderCreateForm(); showView("create"); };
   $("home-join").onclick = () => showView("join");
+  $("account-toggle").onclick = () => { _accountSignup = !_accountSignup; $("account-msg").textContent = ""; renderAccount(); };
+  $("account-submit").onclick = () => submitAccount().catch((e) => toast(e.message));
+  $("account-signout").onclick = () => signOutAccount().catch((e) => toast(e.message));
+  $("account-pw").addEventListener("keydown", (e) => { if (e.key === "Enter") submitAccount().catch(() => {}); });
   $("hdr-exit").onclick = () => {
     if (!confirm("Exit this league? You'll go back to the join screen — rejoin any time with your invite code."))
       return;
@@ -7891,11 +8022,16 @@ async function init() {
   setInterval(renderBanner, 60e3);
   const cfg = getConfig();
   if (!cfg) { showView("config"); return; }
-  // Anon-key only (no user login), so don't persist an auth token — that write
-  // (sb-<ref>-auth-token) lives in the shared *.github.io localStorage and can
-  // collide with other Pages apps. A unique storageKey isolates us regardless.
+  // Persist the auth session so a login survives reloads. The unique storageKey
+  // isolates our token from other apps on the shared *.github.io localStorage.
   S.sb = window.supabase.createClient(cfg.url, cfg.key, {
-    auth: { persistSession: false, autoRefreshToken: false, storageKey: "wcf-supabase-auth" },
+    auth: { persistSession: true, autoRefreshToken: true, storageKey: "wcf-supabase-auth" },
+  });
+  await refreshAuthUser();
+  S.sb.auth.onAuthStateChange((_e, session) => {
+    S.authUser = session?.user || null;
+    renderAccount();
+    if (_shownView === "home") renderHome();
   });
   renderHome();
   const sess = getSession();
