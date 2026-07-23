@@ -6789,13 +6789,16 @@ const foldName = (s) => String(s || "").normalize("NFKD")
 async function apiFootball(key, path, params) {
   const url = new URL("https://v3.football.api-sports.io/" + path);
   for (const k in params) url.searchParams.set(k, params[k]);
-  // Cache elimination, belt-and-suspenders: `no-store` stops the browser from
-  // reusing a response (a pull during a live game otherwise caches that
-  // fixture's in-play 49' snapshot). The `_cb` param additionally makes each
-  // request a unique URL so any edge/CDN cache in front of the API can't serve
-  // a stale copy either — API-Football ignores unknown query params.
-  url.searchParams.set("_cb", Date.now().toString(36) + Math.random().toString(36).slice(2, 8));
-  const resp = await fetch(url, { headers: { "x-apisports-key": key }, cache: "no-store" });
+  // Cache elimination via the fetch layer only. `no-store` stops the browser
+  // from reusing a response (a pull during a live game otherwise caches that
+  // fixture's in-play 49' snapshot), and the no-cache request headers ask any
+  // intermediary not to serve a stale copy. NB: do NOT add a cache-buster query
+  // param — API-Football validates params and rejects unknown ones with
+  // "The <field> field does not exist.", which fails the whole request.
+  const resp = await fetch(url, {
+    headers: { "x-apisports-key": key, "Cache-Control": "no-cache", "Pragma": "no-cache" },
+    cache: "no-store",
+  });
   const data = await resp.json();
   const errs = data.errors && Object.values(data.errors);
   if (errs && errs.length) throw new Error(errs.join("; "));
