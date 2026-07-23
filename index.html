@@ -653,6 +653,17 @@
   </div>
 </div>
 
+<!-- Enlarged points-distribution chart (balance check → tap the ridgeline) -->
+<div id="chart-sheet" class="hidden fixed inset-0 z-40 bg-black/70 p-3">
+  <div class="absolute inset-x-3 top-1/2 -translate-y-1/2 max-h-[90vh] bg-slate-900 border border-slate-700 rounded-2xl p-4 flex flex-col overflow-hidden">
+    <div class="flex items-center justify-between gap-2 mb-2">
+      <div class="text-sm font-semibold">Points distribution by position <span class="text-slate-500 font-normal">— shared scale; dashed = average</span></div>
+      <button id="chart-close" class="shrink-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm font-semibold">Close</button>
+    </div>
+    <div id="chart-sheet-body" class="overflow-auto"></div>
+  </div>
+</div>
+
 <!-- Player detail bottom sheet (Home roster → tap a player). z-[45] so it
      stacks above the squad-planner picker (z-40) when opened from inside it. -->
 <div id="player-sheet" class="hidden fixed inset-0 z-[45] bg-black/60">
@@ -7434,38 +7445,54 @@ function renderRulesEditor(container, rules, opts = {}) {
 // + label carry identity (colour only reinforces — 4 overlapping series can't be
 // told apart by colour alone), and each row's dashed line marks its average.
 // Per-row height is normalised so shapes compare regardless of sample size.
-function ridgelineSvg(players, perPos) {
+function ridgelineSvg(players, perPos, opts) {
+  opts = opts || {};
+  const big = !!opts.big;
   const rowsAll = ["GK", "DEF", "MID", "FWD"].filter((p) => perPos[p].n > 0);
   if (!rowsAll.length) return "";
-  const hist = pointsHistogram(players, 14);
+  const hist = pointsHistogram(players, big ? 30 : 14);   // finer bins when enlarged → sharper tails
   const COL = { GK: "#3987e5", DEF: "#d95926", MID: "#199e70", FWD: "#c98500" };  // validated dark categorical
-  const W = 320, L = 34, R = 8, TOP = 4, ROW = 30, AX = 15;
+  const W = big ? 660 : 320, L = big ? 46 : 34, R = big ? 16 : 8, TOP = big ? 10 : 4;
+  const ROW = big ? 78 : 30, AX = big ? 24 : 15;
+  const fMain = big ? 13 : 9, fTick = big ? 11 : 8, dot = big ? 4.5 : 3, sw = big ? 2 : 1.5;
   const H = TOP + rowsAll.length * ROW + AX;
   const x0 = L, x1 = W - R, span = (hist.max - hist.min) || 1;
   const xOf = (v) => x0 + (x1 - x0) * (v - hist.min) / span;
   const binC = (i) => hist.min + hist.binW * (i + 0.5);
   const plotBottom = TOP + rowsAll.length * ROW;
+  // Per-position extremes (min & max actual totals) — what the enlarged view is for.
+  const ext = {};
+  for (const pos of rowsAll) { const v = players.filter((x) => x.pos === pos).map((x) => x.points); ext[pos] = { min: Math.min(...v), max: Math.max(...v) }; }
   const p = [];
-  // Shared x gridlines + value ticks (min / mid / max points).
-  for (const t of [hist.min, (hist.min + hist.max) / 2, hist.max]) {
-    const x = xOf(t).toFixed(1);
+  // Shared x gridlines + value ticks (min → max points). More ticks when big.
+  const nTicks = big ? 6 : 2;
+  for (let t = 0; t <= nTicks; t++) {
+    const val = hist.min + (span) * t / nTicks, x = xOf(val).toFixed(1);
     p.push(`<line x1="${x}" y1="${TOP}" x2="${x}" y2="${plotBottom}" stroke="#334155" stroke-width="1" stroke-opacity="0.3"/>`);
-    p.push(`<text x="${x}" y="${H - 3}" fill="#64748b" font-size="8" text-anchor="middle">${Math.round(t)}</text>`);
+    p.push(`<text x="${x}" y="${H - 4}" fill="#64748b" font-size="${fTick}" text-anchor="middle">${Math.round(val)}</text>`);
   }
   rowsAll.forEach((pos, r) => {
     const counts = hist.series[pos], maxC = Math.max(1, ...counts);
-    const baseY = TOP + r * ROW + ROW - 3, amp = ROW - 8, col = COL[pos];
+    const baseY = TOP + r * ROW + ROW - 3, amp = ROW - (big ? 18 : 8), col = COL[pos];
     const yOf = (c) => baseY - amp * c / maxC;
     let d = `M ${xOf(binC(0)).toFixed(1)} ${baseY.toFixed(1)}`;
     counts.forEach((c, i) => { d += ` L ${xOf(binC(i)).toFixed(1)} ${yOf(c).toFixed(1)}`; });
     d += ` L ${xOf(binC(counts.length - 1)).toFixed(1)} ${baseY.toFixed(1)} Z`;
     p.push(`<line x1="${x0}" y1="${baseY.toFixed(1)}" x2="${x1}" y2="${baseY.toFixed(1)}" stroke="#334155" stroke-width="1" stroke-opacity="0.4"/>`);
-    p.push(`<path d="${d}" fill="${col}" fill-opacity="0.3" stroke="${col}" stroke-width="1.5" stroke-linejoin="round"/>`);
+    p.push(`<path d="${d}" fill="${col}" fill-opacity="0.3" stroke="${col}" stroke-width="${sw}" stroke-linejoin="round"/>`);
     const mx = xOf(perPos[pos].mean).toFixed(1);   // average marker
-    p.push(`<line x1="${mx}" y1="${(baseY - amp).toFixed(1)}" x2="${mx}" y2="${baseY.toFixed(1)}" stroke="${col}" stroke-width="1" stroke-dasharray="2 2"/>`);
+    p.push(`<line x1="${mx}" y1="${(baseY - amp).toFixed(1)}" x2="${mx}" y2="${baseY.toFixed(1)}" stroke="${col}" stroke-width="1" stroke-dasharray="${big ? "3 2" : "2 2"}"/>`);
     const cy = (TOP + r * ROW + ROW / 2).toFixed(1);
-    p.push(`<circle cx="7" cy="${cy}" r="3" fill="${col}"/>`);
-    p.push(`<text x="13" y="${(+cy + 3).toFixed(1)}" fill="#cbd5e1" font-size="9" font-weight="600">${pos}</text>`);
+    p.push(`<circle cx="${big ? 9 : 7}" cy="${cy}" r="${dot}" fill="${col}"/>`);
+    p.push(`<text x="${big ? 17 : 13}" y="${(+cy + 3).toFixed(1)}" fill="#cbd5e1" font-size="${fMain}" font-weight="600">${pos}</text>`);
+    // Enlarged: mark & label the low/high extremes so the tails are readable.
+    if (big) {
+      for (const [key, anchor] of [["min", "start"], ["max", "end"]]) {
+        const val = ext[pos][key], x = xOf(val), off = key === "min" ? -3 : 3;
+        p.push(`<circle cx="${x.toFixed(1)}" cy="${baseY.toFixed(1)}" r="2.5" fill="${col}"/>`);
+        p.push(`<text x="${(x + off).toFixed(1)}" y="${(baseY - 5).toFixed(1)}" fill="#94a3b8" font-size="10" text-anchor="${anchor}">${Math.round(val)}</text>`);
+      }
+    }
   });
   return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:100%;height:auto" role="img" aria-label="Points distribution by position, shared scale">${p.join("")}</svg>`;
 }
@@ -7511,14 +7538,28 @@ function renderScoringBalance(container, statRows, posOf, rules, meta) {
   container.innerHTML = `
     <div class="grid grid-cols-4 gap-1.5">${cards}</div>
     <div class="text-[10px] leading-snug px-0.5">${verdict}</div>
-    ${chart ? `<div class="rounded-lg border border-slate-700 bg-slate-900/40 p-2">
-      <div class="text-[10px] text-slate-500 mb-1">Points distribution by position <span class="text-slate-600">— shared scale; dashed line = average</span></div>
-      ${chart}</div>` : ""}
+    ${chart ? `<button type="button" data-openchart class="block w-full text-left rounded-lg border border-slate-700 bg-slate-900/40 p-2 hover:border-slate-500">
+      <div class="text-[10px] text-slate-500 mb-1 flex items-center justify-between">
+        <span>Points distribution by position <span class="text-slate-600">— shared scale; dashed line = average</span></span>
+        <span class="text-slate-500">⤢ tap to enlarge</span>
+      </div>
+      ${chart}</button>` : ""}
     <details>
       <summary class="cursor-pointer text-[11px] text-slate-400 select-none">Top 20 scorers <span class="text-slate-600">(n=${b.count} with 5+ games)</span></summary>
       <div class="mt-1 rounded-lg border border-slate-700 overflow-hidden">${rows}</div>
     </details>`;
+  container.querySelector("[data-openchart]")?.addEventListener("click", () => openChartSheet(b.top, b.perPos));
 }
+
+// Enlarged points-distribution chart in a modal — more bins, taller rows and
+// labelled low/high extremes so the tails are easy to read.
+function openChartSheet(players, perPos) {
+  const body = $("chart-sheet-body");
+  if (!body) return;
+  body.innerHTML = ridgelineSvg(players, perPos, { big: true });
+  $("chart-sheet").classList.remove("hidden");
+}
+function closeChartSheet() { $("chart-sheet")?.classList.add("hidden"); }
 
 function squadFieldsHtml(eff, locked) {
   return `
@@ -7827,6 +7868,8 @@ function wire() {
         .catch((e) => toast(e.message));
   };
   $("swap-close").onclick = closeSwap;
+  $("chart-close").onclick = closeChartSheet;
+  $("chart-sheet").onclick = (e) => { if (e.target.id === "chart-sheet") closeChartSheet(); };  // tap backdrop
   $("swap-search").oninput = renderSwapList;
   $("swap-team").onchange = renderSwapList;
   $("lineup-cancel").onclick = () => $("lineup-sheet").classList.add("hidden");
