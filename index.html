@@ -149,6 +149,11 @@
       <div class="mt-3 rounded-xl border border-slate-700 bg-slate-800/30 p-3 space-y-2">
         <div class="text-xs text-slate-400 font-medium">⚖️ Balance check <span class="text-slate-500 font-normal">— live, against prior data</span></div>
         <div id="create-balance" class="space-y-2"></div>
+        <div id="create-pull-wrap" class="hidden space-y-1">
+          <button id="create-pull-history" type="button" class="w-full rounded-lg border border-wcgold/50 bg-wcred/10 text-wcgold px-3 py-1.5 text-xs font-semibold">⬇ Pull this competition's players + season history</button>
+          <p class="text-[10px] text-slate-500">Fetches every squad and completed match for the chosen season into the shared pool — a one-off that can take a few minutes for a full league. Uses the API key from the Competition section.</p>
+          <pre id="create-pull-log" class="text-[10px] text-slate-500 whitespace-pre-wrap"></pre>
+        </div>
       </div>
     </details>
 
@@ -1501,7 +1506,9 @@ function updateH2HFeedback() {
 async function loadScoringPreviewData() {
   const box = $("create-balance"), sel = $("create-comp");
   if (!box || !sel) return;
-  if (sel.value === "wc" || !sel.value) { S._previewData = null; return renderCreateBalance(); }
+  const isApi = sel.value && sel.value !== "wc";
+  $("create-pull-wrap")?.classList.toggle("hidden", !isApi);   // pull button only for API comps
+  if (!isApi) { S._previewData = null; return renderCreateBalance(); }
   const season = Number($("create-comp-season")?.value);
   if (!season) {
     S._previewData = null;
@@ -1533,6 +1540,66 @@ function renderCreateBalance() {
   renderScoringBalance($("create-balance"), d?.rows || null, d?.posOf || {}, S._createRules, d?.meta || {});
 }
 
+// On-demand: pull a competition's players + full-season history straight into
+// the shared competition_pools / competition_stats, so the balance check works
+// before any scheduled pull is set up. Best-effort per match (a failed fixture
+// is logged and skipped, not fatal). log(text) streams progress.
+async function pullCompetitionHistory(apiLeagueId, season, apiKey, key, log) {
+  // 1. Players + positions + fixtures → competition_pools (the squad pull).
+  log("Pulling squads (players + positions)…");
+  const built = await fetchCompetitionPool(apiKey, apiLeagueId, season,
+    (d, t, tm) => log(`Squads ${d}/${t} — ${tm}…`));
+  if (!built.players.length) throw new Error("No players returned — check the season for this competition.");
+  const fixtures = await fetchCompetitionFixtures(apiKey, apiLeagueId, season);
+  const up = await S.sb.from("competition_pools").upsert(
+    { competition_key: key, players: built.players, fixtures, updated_at: new Date().toISOString() },
+    { onConflict: "competition_key" });
+  if (up.error) throw new Error(up.error.message);
+  // 2. Per-match player stats for every completed fixture → competition_stats.
+  const done = ["FT", "AET", "PEN"];
+  const raw = await apiFootball(apiKey, "fixtures", { league: apiLeagueId, season });
+  const completed = raw.filter((f) => done.includes(f.fixture.status?.short));
+  const keyField = { competition_key: key };
+  const onConflict = "competition_key,player_id,match_label";
+  const pidOf = (team, num, name, apiId) => "api_" + apiId;   // API pool → api_ ids
+  let total = 0, fails = 0, i = 0;
+  for (const f of completed) {
+    i++;
+    log(`Pulling ${built.players.length} players + match ${i}/${completed.length}…`);
+    try {
+      const teamBlocks = await apiFootball(apiKey, "fixtures/players", { fixture: f.fixture.id });
+      const { rows } = buildFixtureStatRows(f, teamBlocks, keyField, (n) => n, pidOf);
+      if (rows.length) await resilientWrite("competition_stats", rows, { upsert: true, onConflict });
+      total += rows.length;
+    } catch { fails++; }
+  }
+  log(`✅ Done — ${built.players.length} players, ${total} stat rows from ${completed.length} completed matches`
+    + (fails ? ` (${fails} match(es) failed, skipped).` : "."));
+}
+
+async function pullCreateHistory() {
+  const sel = $("create-comp");
+  const apiLeagueId = sel?.value, season = Number($("create-comp-season")?.value);
+  const apiKey = ($("create-api-key")?.value.trim()) || localStorage.getItem("wcf_apikey") || "";
+  const log = (t) => { if ($("create-pull-log")) $("create-pull-log").textContent = t; };
+  if (!apiLeagueId || apiLeagueId === "wc") return toast("Pick an API competition first.");
+  if (!season) return toast("Enter a season first.");
+  if (!apiKey) return toast("Enter your API-Football key in the Competition section.");
+  localStorage.setItem("wcf_apikey", apiKey);
+  const btn = $("create-pull-history");
+  btn.disabled = true;
+  try {
+    const key = `${apiLeagueId}-${season}`;
+    await pullCompetitionHistory(Number(apiLeagueId), season, apiKey, key, log);
+    S._previewData = null;               // invalidate cache and reload the panel
+    await loadScoringPreviewData();
+  } catch (e) {
+    log("Pull failed: " + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function renderCreateForm() {
   const sel = $("create-comp");
   if (sel.options.length <= 1)
@@ -1542,6 +1609,7 @@ function renderCreateForm() {
   const syncApi = () => { $("create-comp-api").classList.toggle("hidden", sel.value === "wc"); loadScoringPreviewData(); };
   sel.onchange = syncApi;
   $("create-comp-season").addEventListener("input", loadScoringPreviewData);
+  $("create-pull-history").onclick = pullCreateHistory;
   syncApi();
   S._createTeamOn = true; S._createH2H = false; S._createWaiver = false; S._createCaptain = false; S._createAutoWin = false;
   S._createRumbleScoring = "pairwise";
@@ -6865,6 +6933,71 @@ async function renderScheduleManager() {
   });
 }
 
+// Build competition_stats / match_stats rows for one fixture from its
+// fixtures/players API response. keyField scopes the rows (competition vs
+// league); fixName normalizes team names; pidOf(team, shirt, name, apiId)
+// resolves the player id (null → unmappable, pushed to `skipped`). Shared by
+// the admin daily pull and the on-demand history pull.
+function buildFixtureStatRows(f, teamBlocks, keyField, fixName, pidOf, skipped) {
+  const home = fixName(f.teams.home.name), away = fixName(f.teams.away.name);
+  const label = `${home} vs ${away} (${f.fixture.date.slice(0, 10)})`;
+  const conceded = { [f.teams.home.id]: f.goals.away || 0, [f.teams.away.id]: f.goals.home || 0 };
+  const rows = [];
+  let best = null;
+  for (const tb of teamBlocks) {
+    const team = fixName(tb.team.name);
+    for (const e of tb.players) {
+      const st = (e.statistics || [])[0] || {};
+      const games = st.games || {};
+      const minutes = +games.minutes || 0;
+      const g = st.goals || {}, cards = st.cards || {}, pen = st.penalty || {}, tk = st.tackles || {};
+      const def = (+tk.total || 0) + (+tk.blocks || 0) + (+tk.interceptions || 0);
+      const passes = st.passes || {}, shots = st.shots || {}, dribbles = st.dribbles || {},
+            duels = st.duels || {}, fouls = st.fouls || {};
+      // Keep anyone with any contribution even if the API leaves minutes blank,
+      // so a scorer is never dropped; skip true non-participants.
+      const contributed = (+g.total || 0) || (+g.assists || 0) || (+g.saves || 0)
+        || (+cards.yellow || 0) || (+cards.red || 0)
+        || (+pen.saved || 0) || (+pen.missed || 0) || def;
+      if (!minutes && !contributed) continue;
+      const pid = pidOf(team, +games.number || 0, e.player.name, e.player.id);
+      if (!pid) { skipped && skipped.push(`${e.player.name} (${team})`); continue; }
+      const row = {
+        ...keyField, player_id: pid, match_label: label, appeared: true,
+        goals: +g.total || 0, assists: +g.assists || 0,
+        clean_sheet: minutes >= 60 && !(conceded[tb.team.id] || 0),
+        yellow_cards: +cards.yellow || 0, red_cards: +cards.red || 0,
+        saves: +g.saves || 0, motm: false,
+        penalty_saved: +pen.saved || 0, penalty_missed: +pen.missed || 0,
+        defensive_actions: def,
+        home_score: +f.goals.home || 0, away_score: +f.goals.away || 0,
+        minutes,
+        raw: {
+          "goals.total": +g.total || 0, "goals.assists": +g.assists || 0,
+          "goals.saves": +g.saves || 0, "goals.conceded": +g.conceded || 0,
+          "clean_sheet": minutes >= 60 && !(conceded[tb.team.id] || 0) ? 1 : 0,
+          "cards.yellow": +cards.yellow || 0, "cards.red": +cards.red || 0,
+          "penalty.saved": +pen.saved || 0, "penalty.missed": +pen.missed || 0,
+          "defensive_actions": def, "minutes": minutes, "motm": 0,
+          "passes.total": +passes.total || 0, "passes.key": +passes.key || 0,
+          "passes.accuracy": parseInt(passes.accuracy) || 0,
+          "shots.total": +shots.total || 0, "shots.on": +shots.on || 0,
+          "dribbles.success": +dribbles.success || 0, "duels.won": +duels.won || 0,
+          "fouls.drawn": +fouls.drawn || 0, "fouls.committed": +fouls.committed || 0,
+          "offsides": +st.offsides || 0, "rating": parseFloat(games.rating) || 0,
+        },
+      };
+      const rating = parseFloat(games.rating);
+      if (!isNaN(rating) && (!best || rating > best.rating)) best = { row, rating };
+      rows.push(row);
+    }
+  }
+  if (best && best.rating >= 7.5) { best.row.motm = true; best.row.raw.motm = 1; }   // MOTM
+  const maxMin = rows.reduce((mx, r) => Math.max(mx, r.minutes || 0), 0);
+  const cs = rows.filter((r) => r.clean_sheet).length;
+  return { rows, label, maxMin, cs };
+}
+
 async function pullStatsNow() {
   const key = $("adm-api-key").value.trim();
   const date = $("adm-pull-date").value;
@@ -6917,81 +7050,18 @@ async function pullStatsNow() {
     // FIFA-name normalization only applies to the legacy WC pool; an API
     // competition's stored fixtures/pool already use the API's own team names.
     const fixName = leagueCompetition() ? (n) => n : (n) => TEAM_NAME_FIX[n] || n;
+    // API-loaded pools carry the API id (match exactly); the legacy WC pool
+    // falls back to name/shirt matching.
+    const pidOf = (team, num, name, apiId) =>
+      S.playerById["api_" + apiId] ? "api_" + apiId : mapApiPlayer(team, num, name);
     for (const f of fixtures) {
-      const home = fixName(f.teams.home.name);
-      const away = fixName(f.teams.away.name);
-      const label = `${home} vs ${away} (${f.fixture.date.slice(0, 10)})`;
-      log(`Pulling ${label}…`);
-      const conceded = { [f.teams.home.id]: f.goals.away || 0,
-                         [f.teams.away.id]: f.goals.home || 0 };
-      const rows = [];
-      let best = null;
-      for (const tb of await apiFootball(key, "fixtures/players",
-                                         { fixture: f.fixture.id })) {
-        const team = fixName(tb.team.name);
-        for (const e of tb.players) {
-          const st = (e.statistics || [])[0] || {};
-          const games = st.games || {};
-          const minutes = +games.minutes || 0;
-          const g = st.goals || {}, cards = st.cards || {},
-                pen = st.penalty || {}, tk = st.tackles || {};
-          const def = (+tk.total || 0) + (+tk.blocks || 0) + (+tk.interceptions || 0);
-          const passes = st.passes || {}, shots = st.shots || {}, dribbles = st.dribbles || {},
-                duels = st.duels || {}, fouls = st.fouls || {};
-          // API-Football sometimes leaves `minutes` null for a just-finished
-          // fixture even for players who featured/scored. Skip only true
-          // non-participants (no minutes AND no recorded stat); keep anyone with
-          // any contribution so a scorer is never dropped for a blank minute.
-          const contributed = (+g.total || 0) || (+g.assists || 0) || (+g.saves || 0)
-            || (+cards.yellow || 0) || (+cards.red || 0)
-            || (+pen.saved || 0) || (+pen.missed || 0) || def;
-          if (!minutes && !contributed) continue;
-          // API-loaded pools carry the API id, so match exactly; the legacy WC
-          // pool falls back to name/shirt matching.
-          const pid = S.playerById["api_" + e.player.id]
-            ? "api_" + e.player.id
-            : mapApiPlayer(team, +games.number || 0, e.player.name);
-          if (!pid) { skipped.push(`${e.player.name} (${team})`); continue; }
-          const row = {
-            ...keyField, player_id: pid, match_label: label,
-            appeared: true,
-            goals: +g.total || 0, assists: +g.assists || 0,
-            clean_sheet: minutes >= 60 && !(conceded[tb.team.id] || 0),
-            yellow_cards: +cards.yellow || 0, red_cards: +cards.red || 0,
-            saves: +g.saves || 0, motm: false,
-            penalty_saved: +pen.saved || 0, penalty_missed: +pen.missed || 0,
-            defensive_actions: def,
-            home_score: +f.goals.home || 0, away_score: +f.goals.away || 0,
-            minutes,
-            // Full flattened stat set for custom scoring rules (any stat).
-            raw: {
-              "goals.total": +g.total || 0, "goals.assists": +g.assists || 0,
-              "goals.saves": +g.saves || 0, "goals.conceded": +g.conceded || 0,
-              "clean_sheet": minutes >= 60 && !(conceded[tb.team.id] || 0) ? 1 : 0,
-              "cards.yellow": +cards.yellow || 0, "cards.red": +cards.red || 0,
-              "penalty.saved": +pen.saved || 0, "penalty.missed": +pen.missed || 0,
-              "defensive_actions": def, "minutes": minutes, "motm": 0,
-              "passes.total": +passes.total || 0, "passes.key": +passes.key || 0,
-              "passes.accuracy": parseInt(passes.accuracy) || 0,
-              "shots.total": +shots.total || 0, "shots.on": +shots.on || 0,
-              "dribbles.success": +dribbles.success || 0, "duels.won": +duels.won || 0,
-              "fouls.drawn": +fouls.drawn || 0, "fouls.committed": +fouls.committed || 0,
-              "offsides": +st.offsides || 0, "rating": parseFloat(games.rating) || 0,
-            },
-          };
-          const rating = parseFloat(games.rating);
-          if (!isNaN(rating) && (!best || rating > best.rating))
-            best = { row, rating };
-          rows.push(row);
-        }
-      }
-      if (best && best.rating >= 7.5) { best.row.motm = true; best.row.raw.motm = 1; } // MOTM
+      log(`Pulling ${fixName(f.teams.home.name)} vs ${fixName(f.teams.away.name)}…`);
+      const teamBlocks = await apiFootball(key, "fixtures/players", { fixture: f.fixture.id });
+      // Diagnostic (maxMin/cs): a stuck-at-49 game is then obviously an upstream
+      // (API) issue, not the write.
+      const { rows, label, maxMin, cs } = buildFixtureStatRows(f, teamBlocks, keyField, fixName, pidOf, skipped);
       await resilientWrite(statsTable, rows, { upsert: true, onConflict });
       total += rows.length;
-      // Diagnostic: the API's max minutes + clean sheets for this match, so a
-      // stuck-at-49 game is obviously an upstream (API) issue, not the write.
-      const maxMin = rows.reduce((mx, r) => Math.max(mx, r.minutes || 0), 0);
-      const cs = rows.filter((r) => r.clean_sheet).length;
       summary.push(`${label}: ${rows.length} rows · API max ${maxMin}′ · ${cs} clean sheets`);
     }
     log(`Done — ${total} player rows from ${fixtures.length} match(es).`
