@@ -202,6 +202,17 @@
           <label class="flex items-center gap-2 text-[11px] text-slate-300">
             <input id="create-h2h-rumble" type="checkbox" class="rounded border-slate-600 bg-slate-800">
             Play leftover rounds as <b>rumbles</b> (everyone vs everyone) to keep the log balanced</label>
+          <div id="create-rumble-opts" class="hidden space-y-2 pl-5 border-l border-slate-700">
+            <div class="text-[11px] text-slate-400">How a rumble round scores:</div>
+            <div class="flex gap-2">
+              <button type="button" data-rumsc="pairwise" class="flex-1 rounded-lg py-1.5 text-[11px] font-semibold border">Head-to-head vs all</button>
+              <button type="button" data-rumsc="placement" class="flex-1 rounded-lg py-1.5 text-[11px] font-semibold border">Placement points</button>
+            </div>
+            <p class="text-[10px] text-slate-500">Head-to-head vs all: you play every rival that round, banking the usual win/draw/loss points.
+              Placement: managers are ranked by round score and the top finishers earn the points below (ties split evenly).</p>
+            <label id="create-rumble-points-wrap" class="hidden text-[11px] text-slate-400">Points for the top places <span class="text-slate-500">(comma-separated, best first)</span>
+              <input id="create-rumble-points" placeholder="3, 2, 1" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
+          </div>
           <div id="create-h2h-feedback" class="rounded-lg border border-slate-700 bg-slate-900/60 px-2.5 py-2 text-[11px] leading-relaxed"></div>
         </div>
         <div class="text-xs text-slate-400 font-medium pt-1">Trades &amp; free agents</div>
@@ -1449,15 +1460,35 @@ function h2hPlanMessage(p) {
   return msg;
 }
 
+// Parse the placement-points input ("3, 2, 1" → [3,2,1]); defaults to 3-2-1.
+function rumblePointsFromInput() {
+  const raw = $("create-rumble-points")?.value || "";
+  const arr = raw.split(",").map((x) => Number(x.trim())).filter((x) => Number.isFinite(x));
+  return arr.length ? arr : [3, 2, 1];
+}
+
 function updateH2HFeedback() {
   const box = $("create-h2h-feedback");
   if (!box) return;
   const n = Number($("create-num")?.value) || 0;
   const rounds = Number($("create-h2h-rounds")?.value) || 0;
   const rumble = $("create-h2h-rumble")?.checked === true;
+  // Show + paint the rumble-scoring sub-panel.
+  $("create-rumble-opts").classList.toggle("hidden", !rumble);
+  const placement = S._createRumbleScoring === "placement";
+  for (const b of document.querySelectorAll("[data-rumsc]"))
+    b.className = "flex-1 rounded-lg py-1.5 text-[11px] font-semibold border " +
+      ((b.dataset.rumsc === "placement") === placement ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400");
+  $("create-rumble-points-wrap").classList.toggle("hidden", !placement);
   if (n < 2) { box.innerHTML = '<span class="text-slate-500">Add at least 2 managers to check the schedule.</span>'; return; }
   if (rounds < 1) { box.innerHTML = '<span class="text-slate-500">Enter how many rounds you expect to play for a fairness check.</span>'; return; }
-  box.innerHTML = h2hPlanMessage(h2hSchedulePlan(n, rounds, { rumble }));
+  const plan = h2hSchedulePlan(n, rounds, { rumble });
+  let html = h2hPlanMessage(plan);
+  if (rumble && plan.rumble)
+    html += placement
+      ? `<div class="text-slate-400 mt-1">Rumble scoring: top ${rumblePointsFromInput().length} by round score earn ${rumblePointsFromInput().join(", ")} (ties split).</div>`
+      : `<div class="text-slate-400 mt-1">Rumble scoring: full head-to-head against every rival that round.</div>`;
+  box.innerHTML = html;
 }
 
 function renderCreateForm() {
@@ -1470,6 +1501,7 @@ function renderCreateForm() {
   sel.onchange = syncApi;
   syncApi();
   S._createTeamOn = true; S._createH2H = false; S._createWaiver = false; S._createCaptain = false; S._createAutoWin = false;
+  S._createRumbleScoring = "pairwise";
   paintCreateFields();
   for (const b of document.querySelectorAll("[data-teamtoggle]"))
     b.onclick = () => { S._createTeamOn = b.dataset.teamtoggle === "on"; syncCreateTeam(); };
@@ -1485,10 +1517,14 @@ function renderCreateForm() {
   $("create-num").addEventListener("input", () => { if (S._createH2H) updateH2HFeedback(); });
   $("create-h2h-rounds").addEventListener("input", updateH2HFeedback);
   $("create-h2h-rumble").addEventListener("change", updateH2HFeedback);
+  $("create-rumble-points").addEventListener("input", updateH2HFeedback);
+  for (const b of document.querySelectorAll("[data-rumsc]"))
+    b.onclick = () => { S._createRumbleScoring = b.dataset.rumsc; updateH2HFeedback(); };
   syncCreateTeam();
   syncCreateFormat();
   $("create-reset").onclick = () => {
     S._createTeamOn = true; S._createH2H = false; S._createWaiver = false; S._createCaptain = false; S._createAutoWin = false;
+    S._createRumbleScoring = "pairwise";
     paintCreateFields(); syncCreateTeam(); syncCreateFormat();
   };
   $("create-go").disabled = false;
@@ -1545,7 +1581,11 @@ function readCreateConfig() {
       score_bonus: g("h2h.score_bonus"), losing_margin: g("h2h.losing_margin") };
     const rnds = $("create-h2h-rounds")?.value;
     if (rnds != null && rnds !== "") cfg.h2h.rounds = Number(rnds);   // planned rounds → schedule
-    if ($("create-h2h-rumble")?.checked) cfg.h2h.rumble = true;       // rumble the leftover
+    if ($("create-h2h-rumble")?.checked) {                            // rumble the leftover rounds
+      cfg.h2h.rumble = true;
+      cfg.h2h.rumble_scoring = S._createRumbleScoring || "pairwise";
+      if (S._createRumbleScoring === "placement") cfg.h2h.rumble_points = rumblePointsFromInput();
+    }
   }
   if (S._createWaiver) cfg.fa_defer_to_close = true;   // waiver-order trades
   const faCap = document.querySelector('[data-view="create"] [data-cfg="max_fa_per_window"]')?.value;
@@ -2484,7 +2524,7 @@ function fixedRoundSubs(roster, rnd, teamMatches, appeared, cap) {
    round-robin schedule and earn log points (win/draw/loss) + rugby-style bonuses
    from their per-round fantasy totals. All values are league-configurable. */
 const H2H_DEFAULTS = { win: 3, draw: 1, loss: 0, score_bonus: 60, losing_margin: 5,
-  rounds: null, rumble: false };
+  rounds: null, rumble: false, rumble_scoring: "pairwise", rumble_points: null };
 const h2hConfig = () => ({ ...H2H_DEFAULTS, ...(cfgOf().h2h || {}) });
 const h2hEnabled = () => cfgOf().h2hEnabled === true;
 
@@ -2561,13 +2601,39 @@ function h2hResult(a, b, cfg) {
   return { ptsA, ptsB, bonusA, bonusB };
 }
 
-// The H2H log: per-manager { P,W,D,L,PF,PA,bonus,logPts,byes } + sorted order.
-// A fixture counts only once BOTH managers have a score for that round; a bye
-// (one side null) scores nothing but is tallied once the manager has a score.
-function h2hTable(mgrIds, scoresByMgr, fixtures, cfg) {
+// Placement points for one rumble round: rank the managers by their round
+// score (highest first) and hand out points[0], points[1], … to 1st, 2nd, …
+// Managers tied on score split the points for the places they jointly occupy,
+// so the total handed out is fixed regardless of ties. `scoresThisRound` is a
+// { managerId: score } map (only managers who actually scored). Returns
+// { managerId: points }. Pure.
+function rumblePlacement(scoresThisRound, points) {
+  points = points || [];
+  const ranked = Object.entries(scoresThisRound)
+    .filter(([, s]) => s !== undefined && s !== null)
+    .sort((a, b) => b[1] - a[1]);
+  const out = {};
+  for (let i = 0; i < ranked.length;) {
+    let j = i;
+    while (j + 1 < ranked.length && ranked[j + 1][1] === ranked[i][1]) j++;   // tie group [i..j]
+    let sum = 0;
+    for (let k = i; k <= j; k++) sum += (points[k] || 0);
+    const share = sum / (j - i + 1);
+    for (let k = i; k <= j; k++) out[ranked[k][0]] = share;
+    i = j + 1;
+  }
+  return out;
+}
+
+// The H2H log: per-manager { P,W,D,L,PF,PA,bonus,logPts,byes,rumblePts } + sorted
+// order. A fixture counts only once BOTH managers have a score for that round; a
+// bye (one side null) scores nothing but is tallied once the manager has a score.
+// `placement` (optional) = { rounds:[…], points:[…] } scores those rounds by
+// rank instead of pairwise fixtures — the placement-mode rumble rounds.
+function h2hTable(mgrIds, scoresByMgr, fixtures, cfg, placement) {
   cfg = cfg || h2hConfig();
   const rows = {};
-  for (const id of mgrIds) rows[id] = { id, P: 0, W: 0, D: 0, L: 0, PF: 0, PA: 0, bonus: 0, logPts: 0, byes: 0 };
+  for (const id of mgrIds) rows[id] = { id, P: 0, W: 0, D: 0, L: 0, PF: 0, PA: 0, bonus: 0, logPts: 0, byes: 0, rumblePts: 0 };
   const scoreOf = (m, round) => scoresByMgr[m]?.[round - 1];
   for (const f of fixtures) {
     const home = f.home_manager_id, away = f.away_manager_id;
@@ -2589,6 +2655,18 @@ function h2hTable(mgrIds, scoresByMgr, fixtures, cfg) {
     rows[home].bonus += r.bonusA; rows[away].bonus += r.bonusB;
     rows[home].logPts += r.ptsA + r.bonusA;
     rows[away].logPts += r.ptsB + r.bonusB;
+  }
+  // Placement-scored rumble rounds: rank-based points, no pairwise fixtures.
+  for (const round of (placement?.rounds || [])) {
+    const scoresThisRound = {};
+    for (const id of mgrIds) { const s = scoreOf(id, round); if (s !== undefined) scoresThisRound[id] = s; }
+    const award = rumblePlacement(scoresThisRound, placement.points);
+    for (const id in award) {
+      rows[id].P++;
+      rows[id].PF += scoresThisRound[id];
+      rows[id].logPts += award[id];
+      rows[id].rumblePts += award[id];
+    }
   }
   // Head-to-head tiebreak: net score across the rounds a tied pair actually met.
   const met = (x, y) => {
@@ -2738,8 +2816,10 @@ function h2hFixturesFor(mgrIds, maxRound, opts) {
   const ids = mgrIds.slice().sort();
   const base = roundRobin(ids);
   const rumbleFrom = (opts && opts.rumbleFrom) || Infinity;
+  const placementFrom = (opts && opts.placementFrom) || Infinity;   // scored by rank, no fixtures
   const fixtures = [];
   for (let r = 1; r <= maxRound; r++) {
+    if (r >= placementFrom) continue;
     if (r >= rumbleFrom) {
       for (let i = 0; i < ids.length; i++)
         for (let j = i + 1; j < ids.length; j++)
@@ -2761,8 +2841,18 @@ function h2hStandings() {
   // Rumble rounds are honoured only when configured; the planned round count
   // defaults to whatever has been played so a legacy H2H league is unchanged.
   const plan = cfg.rumble ? h2hSchedulePlan(ids.length, cfg.rounds || maxRound, { rumble: true }) : null;
-  const rumbleFrom = plan && plan.valid ? plan.rumbleFrom : Infinity;
-  return h2hTable(ids, scores, h2hFixturesFor(ids, maxRound, { rumbleFrom }), cfg);
+  let fixOpts = {}, placement = null;
+  if (plan && plan.valid && plan.rumble) {
+    if (cfg.rumble_scoring === "placement") {
+      const rounds = [];                                    // the rumble rounds seen so far
+      for (let r = plan.rumbleFrom; r <= maxRound; r++) rounds.push(r);
+      placement = { rounds, points: cfg.rumble_points || [] };
+      fixOpts = { placementFrom: plan.rumbleFrom };         // no pairwise fixtures for them
+    } else {
+      fixOpts = { rumbleFrom: plan.rumbleFrom };            // all-play-all pairwise
+    }
+  }
+  return h2hTable(ids, scores, h2hFixturesFor(ids, maxRound, fixOpts), cfg, placement);
 }
 
 // A stat row → a flat { "goals.total": n, ... } map. New rows carry the full API
@@ -4408,7 +4498,9 @@ function h2hStandingsHtml(me) {
   return `<div class="rounded-xl border border-slate-800 bg-slate-900/40 p-2 space-y-1">
     <div class="text-sm font-semibold px-1">Head-to-head log</div>
     <p class="text-[10px] text-slate-500 px-1">Win ${cfg.win} · draw ${cfg.draw} · loss ${cfg.loss} · +1 attacking (round ≥ ${cfg.score_bonus}) · +1 losing (by ≤ ${cfg.losing_margin}). PF/PA = points for/against.${
-      cfg.rumble ? " ⚔️ Rumble rounds (everyone vs everyone) balance out the leftover rounds." : ""}</p>
+      cfg.rumble ? (cfg.rumble_scoring === "placement"
+        ? ` ⚔️ Rumble rounds score by placement (${(cfg.rumble_points || [3, 2, 1]).join("-")}).`
+        : " ⚔️ Rumble rounds pit everyone against everyone.") : ""}</p>
     ${head}${body || '<p class="text-sm text-slate-500 px-2 py-3">No completed rounds yet.</p>'}
   </div>`;
 }

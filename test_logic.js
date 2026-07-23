@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -25,7 +25,7 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         phaseOneStarters, starterQuota, effectiveConfig,
         flexCounting, formationValid, DEFAULT_FORMATION,
         roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims,
-        h2hSchedulePlan,
+        h2hSchedulePlan, rumblePlacement,
         fixtureWindows, matchweeksOf,
         maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs,
         apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture,
@@ -281,6 +281,25 @@ S.league = {};
   check("h2hFixturesFor rumble: rumble rounds are flagged", rr4.every((f) => f.rumble), true);
   check("h2hFixturesFor rumble: pre-rumble rounds stay 2-fixture",
     rumFix.filter((f) => f.round === 3).length, 2);
+
+  /* Placement-scored rumble rounds. */
+  // Top-3 points 3-2-1: a>b>c>d → 3,2,1,0.
+  const place = rumblePlacement({ a: 90, b: 70, c: 60, d: 40 }, [3, 2, 1]);
+  check("rumblePlacement: 3-2-1 by rank", [place.a, place.b, place.c, place.d], [3, 2, 1, 0]);
+  // Tie for 1st splits places 1+2: (3+2)/2 = 2.5 each; next gets place 3 = 1.
+  const tie = rumblePlacement({ a: 80, b: 80, c: 50 }, [3, 2, 1]);
+  check("rumblePlacement: tie for 1st splits the top two places", [tie.a, tie.b, tie.c], [2.5, 2.5, 1]);
+  check("rumblePlacement: managers with no score are excluded",
+    Object.keys(rumblePlacement({ a: 10 }, [3, 2, 1])).sort(), ["a"]);
+  // h2hTable placement path: round 3 scored by placement, not fixtures.
+  const pScores = { a: [0, 0, 90], b: [0, 0, 70], c: [0, 0, 40] };
+  const pTable = h2hTable(["a", "b", "c"], pScores, [], { win: 3, draw: 1, loss: 0, score_bonus: 999, losing_margin: 0 },
+    { rounds: [3], points: [3, 2, 1] });
+  check("h2hTable placement: rank points land in logPts",
+    [pTable.rows.a.logPts, pTable.rows.b.logPts, pTable.rows.c.logPts], [3, 2, 1]);
+  check("h2hTable placement: tracked separately in rumblePts + P counts the round",
+    [pTable.rows.a.rumblePts, pTable.rows.a.P, pTable.rows.a.PF], [3, 1, 90]);
+  check("h2hTable placement: order follows placement points", pTable.order, ["a", "b", "c"]);
 }
 
 /* Waiver-order free-agent claims (mechanics-notes §1). */
