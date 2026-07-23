@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -25,6 +25,7 @@ const { S, pickInfo, calcPlayerPoints, calcTeamPoints, computeScores,
         phaseOneStarters, starterQuota, effectiveConfig,
         flexCounting, formationValid, DEFAULT_FORMATION,
         roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims,
+        h2hSchedulePlan,
         fixtureWindows, matchweeksOf,
         maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs,
         apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture,
@@ -240,6 +241,46 @@ S.league = {};
   const r1 = fixAll.filter((f) => f.round === 1).map((f) => [f.home_manager_id, f.away_manager_id].sort().join());
   const r4 = fixAll.filter((f) => f.round === 4).map((f) => [f.home_manager_id, f.away_manager_id].sort().join());
   check("h2hFixturesFor: round 4 reuses the round-1 pairings (cycled)", r1.sort(), r4.sort());
+
+  /* h2hSchedulePlan: fairness analysis of managers × rounds. */
+  // Even N: one cycle = N-1 rounds, no byes ever.
+  const even6 = h2hSchedulePlan(6, 5);   // 6 managers, exactly one cycle
+  check("plan even/exact: balanced, no byes",
+    [even6.balanced, even6.cycle, even6.playsMin, even6.playsMax, even6.byesMax], [true, 5, 1, 1, 0]);
+  const even6b = h2hSchedulePlan(6, 10);  // two full cycles
+  check("plan even/two cycles: everyone plays each rival twice",
+    [even6b.balanced, even6b.playsMin, even6b.playsMax], [true, 2, 2]);
+  const even6u = h2hSchedulePlan(6, 7);   // one cycle + 2 leftover
+  check("plan even/leftover: uneven, some pairs meet twice",
+    [even6u.balanced, even6u.leftover, even6u.playsMin, even6u.playsMax, even6u.byesMax],
+    [false, 2, 1, 2, 0]);
+  check("plan even/leftover: nearest clean round counts", [even6u.nearestDown, even6u.nearestUp], [5, 10]);
+  // Odd N: cycle = N rounds, one bye per manager per cycle.
+  const odd5 = h2hSchedulePlan(5, 5);
+  check("plan odd/exact: one bye each, balanced",
+    [odd5.balanced, odd5.cycle, odd5.byesMin, odd5.byesMax], [true, 5, 1, 1]);
+  const odd5u = h2hSchedulePlan(5, 7);   // one cycle + 2 leftover
+  check("plan odd/leftover: 2 managers get an extra bye",
+    [odd5u.balanced, odd5u.managersWithExtraBye, odd5u.byesMin, odd5u.byesMax], [false, 2, 1, 2]);
+  // Rumble folds the leftover into all-play-all → head-to-head portion balanced.
+  const odd5r = h2hSchedulePlan(5, 7, { rumble: true });
+  check("plan rumble: leftover becomes rumbles, byes even again",
+    [odd5r.balanced, odd5r.rumble, odd5r.rumbleRounds, odd5r.byesMin, odd5r.byesMax, odd5r.rumbleFrom],
+    [true, true, 2, 1, 1, 6]);
+  // Rumble does nothing when the season already divides evenly.
+  check("plan rumble/exact: no rumble rounds when balanced",
+    h2hSchedulePlan(6, 10, { rumble: true }).rumble, false);
+  // Guards.
+  check("plan invalid: <2 managers", h2hSchedulePlan(1, 10).valid, false);
+  check("plan invalid: 0 rounds", h2hSchedulePlan(6, 0).valid, false);
+
+  // Rumble rounds in the actual fixtures: round ≥ rumbleFrom is all-play-all.
+  const rumFix = h2hFixturesFor(["a", "b", "c", "d"], 5, { rumbleFrom: 4 });
+  const rr4 = rumFix.filter((f) => f.round === 4);
+  check("h2hFixturesFor rumble: round 4 pairs everyone (C(4,2)=6)", rr4.length, 6);
+  check("h2hFixturesFor rumble: rumble rounds are flagged", rr4.every((f) => f.rumble), true);
+  check("h2hFixturesFor rumble: pre-rumble rounds stay 2-fixture",
+    rumFix.filter((f) => f.round === 3).length, 2);
 }
 
 /* Waiver-order free-agent claims (mechanics-notes §1). */
