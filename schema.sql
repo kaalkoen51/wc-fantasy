@@ -1,5 +1,12 @@
--- World Cup fantasy league schema
+-- Fantasy draft league schema
 -- Run this in the Supabase SQL editor (Database -> SQL Editor -> New query).
+--
+-- SECURITY: the policies below are deliberately wide open (`using (true)`) —
+-- every league is readable and writable by anyone holding the public anon key.
+-- That is safe for a single private league and NOT safe once unrelated people
+-- share the database. Before taking real users, apply `rls.sql`, which replaces
+-- these with membership-based policies. Read its header first: it has a
+-- prerequisite (every user needs an auth identity) and a staging checklist.
 
 create table if not exists leagues (
     id uuid primary key default gen_random_uuid(),
