@@ -532,8 +532,11 @@
         <select id="pool-team" class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm"></select>
         <select id="pool-sort" class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm"></select>
       </div>
-      <div id="pool-chips" class="flex gap-1.5 flex-wrap text-xs"></div>
-      <ul id="pool-list" class="divide-y divide-slate-800 max-h-[50vh] overflow-y-auto"></ul>
+      <div id="pool-chips" class="flex gap-1.5 overflow-x-auto whitespace-nowrap pb-1 text-xs"></div>
+      <!-- No inner scroll: a scrolling list inside a scrolling page is the
+           thing that feels most broken on a phone, and the clock now follows
+           you down anyway. -->
+      <ul id="pool-list" class="divide-y divide-slate-800"></ul>
     </div>
     <div id="draft-rosters" class="space-y-2"></div>
     <button id="draft-force" class="hidden w-full bg-amber-700 hover:bg-amber-600 rounded-lg py-2 text-sm font-semibold">Admin: force auto-pick now</button>
