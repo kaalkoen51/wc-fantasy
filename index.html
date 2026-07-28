@@ -3,10 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WC26 Fantasy</title>
+<title>Fantasy Draft</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
-  // World Cup 26 host-nation palette: Canada red, gold, Mexico green, USA blue.
+  // Product palette. (Token names are historical — these are the app's accent,
+  // supporting and ground colours, not tied to any one competition.)
   tailwind.config = { theme: { extend: { colors: {
     wcred: { DEFAULT: "#C8102E", hov: "#E22945" },
     wcgold: "#FFC72C",
@@ -52,9 +53,9 @@
 <body class="bg-wcnavy text-slate-100 min-h-screen">
 
 <header class="sticky top-0 z-20 bg-slate-900/95 backdrop-blur border-b border-slate-800">
-  <div class="h-1" style="background:linear-gradient(90deg,#C8102E 0%,#FFC72C 33%,#00A859 66%,#1A7DC4 100%)"></div>
+  <div class="h-1" style="background:linear-gradient(90deg,#C8102E 0%,#FFC72C 100%)"></div>
   <div class="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
-    <h1 class="font-bold text-lg">⚽ WC<span class="text-wcgold">26</span> Fantasy</h1>
+    <h1 id="hdr-app" class="font-bold text-lg">⚽ Fantasy <span class="text-wcgold">Draft</span></h1>
     <div class="flex items-center gap-2 text-xs text-slate-400">
       <span id="hdr-league" class="truncate max-w-[10rem]"></span>
       <span id="conn-dot" title="realtime connection" class="w-2 h-2 rounded-full bg-slate-600"></span>
@@ -463,10 +464,7 @@
         <button type="submit" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-4 py-2 text-sm font-semibold">Send</button>
       </form>
     </div>
-    <p class="text-xs text-slate-500 text-center">Subs score only for rounds where a starter in their
-      position played that round but didn't feature. TEAM picks earn cumulative stage bonuses
-      (R32 +5, R16 +10, QF +15, SF +20, Final +25, Winner +15) and carry through every
-      redraft. In the final phase, surviving managers call the champion for +5.</p>
+    <p id="board-rules-note" class="text-xs text-slate-500 text-center"></p>
   </section>
 
   <!-- Admin stats entry -->
@@ -3659,6 +3657,27 @@ function ruleValueText(rule) {
   return `${pts}${mins}`;
 }
 
+// The rules footer under the board, generated from THIS league's config so the
+// app can never describe scoring it isn't actually using. (It used to be static
+// World Cup text, which was simply wrong for any custom league.)
+function boardRulesNote() {
+  const bits = [];
+  const cap = maxSubsPerRound();
+  if (cap > 0) bits.push(isFlexFormation()
+    ? `Bench players come up to cover no-shows as long as the resulting formation stays legal (up to ${cap} per round).`
+    : `A sub scores only in a round where a starter in their position didn't feature${
+        maxSubsCapped() ? ` (up to ${cap} per round)` : ""}.`);
+  if (captainEnabled())
+    bits.push("Your captain scores double each round — or the vice-captain if the captain doesn't play at all.");
+  if ((posQuota().TEAM || 0) > 0) {
+    const stages = stageOrder().slice(1).map((s) => `${s.toUpperCase()} +${stageBonuses()[s]}`).join(", ");
+    bits.push(`TEAM picks earn cumulative stage bonuses (${stages}) and carry through redrafts; in the final phase, surviving managers call the champion for +${finalPickBonus()}.`);
+  }
+  if (h2hEnabled()) bits.push("Standings are a head-to-head log — you play one rival each round.");
+  if (faDeferToClose()) bits.push("Free-agent claims queue and resolve at window close, in waiver order.");
+  return bits.join(" ");
+}
+
 function scoringHtml() {
   const rows = scoringRules().map((r) => [STAT_LABEL[r.stat] || r.stat, ruleValueText(r)])
     .concat([["Champion pick (final phase only)", `+${finalPickBonus()}`]]);
@@ -4810,6 +4829,8 @@ function renderBoard() {
   if (preDraft && S.boardTab !== "stats") S.boardTab = "stats";
   setBoardTab(S.boardTab || "home");
   renderBanner();
+  const note = $("board-rules-note");
+  if (note) note.textContent = boardRulesNote();
   if (preDraft) {
     $("board-banner").innerHTML = `<div class="flex items-center justify-between gap-2 rounded-xl border border-wcgold/50 bg-wcred/10 px-3 py-2 text-sm">
       <span class="min-w-0">⭐ Pre-draft — star players to build your shortlist. Auto-pick draws from it in order.</span>
