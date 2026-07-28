@@ -52,8 +52,8 @@
                 text-shadow: 0 0 20px rgba(255, 199, 44, .3); }
 
   /* Uppercase micro-labels — the vernacular of a printed team sheet. */
-  .eyebrow { text-transform: uppercase; letter-spacing: .14em;
-             font-size: 10px; font-weight: 700; color: #94a3b8; }
+  .eyebrow { text-transform: uppercase; letter-spacing: .12em;
+             font-size: 11px; font-weight: 700; color: #94a3b8; }
 
   /* Controls acknowledge a tap instead of just changing colour. */
   button { transition: transform .12s ease, background-color .15s ease,
@@ -98,6 +98,15 @@
   @media (prefers-reduced-motion: reduce) {
     .pick-flash { animation: none; opacity: 1 }
     .just-landed, .bumped { animation: none }
+  }
+
+  /* Mobile-first: every control gets a finger-sized hit area. Filter chips,
+     thread pills and the banner arrows were all landing at 26–30px. */
+  @media (max-width: 640px) {
+    button, select, input[type="number"], input[type="text"], input[type="email"],
+    input[type="password"], input:not([type]) { min-height: 38px; }
+    /* Icon-only controls (‹ › ☆ ＋) are tall enough but far too narrow to hit. */
+    button { min-width: 38px; }
   }
 
   /* Keep the bottom bar clear of the iOS home indicator. */
@@ -172,7 +181,7 @@
           <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
           Continue with Google
         </button>
-        <div class="flex items-center gap-2 text-[11px] text-slate-500"><div class="flex-1 h-px bg-slate-700"></div>or with email<div class="flex-1 h-px bg-slate-700"></div></div>
+        <div class="flex items-center gap-2 text-xs text-slate-500"><div class="flex-1 h-px bg-slate-700"></div>or with email<div class="flex-1 h-px bg-slate-700"></div></div>
         <input id="account-email" type="email" autocomplete="email" placeholder="email" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
         <input id="account-pw" type="password" autocomplete="current-password" placeholder="password" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
         <button id="account-submit" class="w-full bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg py-2 text-sm font-semibold">Sign in</button>
@@ -281,10 +290,10 @@
         <div class="text-xs text-slate-400 font-medium">⚖️ Balance check <span class="text-slate-400 font-normal">— live, against prior data</span></div>
         <div id="create-balance" class="space-y-2"></div>
         <div id="create-pull-wrap" class="hidden space-y-1">
-          <div id="create-pull-status" class="text-[11px] text-slate-400"></div>
+          <div id="create-pull-status" class="text-xs text-slate-400"></div>
           <button id="create-pull-history" type="button" class="w-full rounded-lg border border-wcgold/50 bg-wcred/10 text-wcgold px-3 py-1.5 text-xs font-semibold">⬇ Pull this competition's players + season history</button>
-          <p class="text-[11px] text-slate-400">The pull is shared and incremental — it skips matches already loaded and only fetches ones played since, so re-running it just tops up. First load of a full season can take a few minutes. Uses the API key from the Competition section.</p>
-          <pre id="create-pull-log" class="text-[11px] text-slate-400 whitespace-pre-wrap"></pre>
+          <p class="text-xs text-slate-400">The pull is shared and incremental — it skips matches already loaded and only fetches ones played since, so re-running it just tops up. First load of a full season can take a few minutes. Uses the API key from the Competition section.</p>
+          <pre id="create-pull-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
         </div>
       </div>
     </details>
@@ -308,7 +317,7 @@
               <input data-cfg="quota.TEAM" type="number" step="1" value="1" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
           </div>
           <div id="create-team-bonuses" class="space-y-2"></div>
-          <p class="text-[11px] text-slate-400">Stage bonuses suit knockout competitions. Points for match <i>wins</i> vs
+          <p class="text-xs text-slate-400">Stage bonuses suit knockout competitions. Points for match <i>wins</i> vs
             <i>progression</i>, and league-based team scoring, are coming next.</p>
         </div>
       </div>
@@ -349,7 +358,7 @@
               <button type="button" data-rumsc="pairwise" class="flex-1 rounded-lg py-1.5 text-xs font-semibold border">Head-to-head vs all</button>
               <button type="button" data-rumsc="placement" class="flex-1 rounded-lg py-1.5 text-xs font-semibold border">Placement points</button>
             </div>
-            <p class="text-[11px] text-slate-400">Head-to-head vs all: you play every rival that round, banking the usual win/draw/loss points.
+            <p class="text-xs text-slate-400">Head-to-head vs all: you play every rival that round, banking the usual win/draw/loss points.
               Placement: managers are ranked by round score and the top finishers earn the points below (ties split evenly).</p>
             <label id="create-rumble-points-wrap" class="hidden text-xs text-slate-400">Points for the top places <span class="text-slate-400">(comma-separated, best first)</span>
               <input id="create-rumble-points" placeholder="3, 2, 1" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
@@ -545,7 +554,7 @@
       <div class="flex items-center gap-2 flex-wrap text-xs">
         <select id="stats-round" class="rounded-lg bg-slate-900 border border-slate-700 px-2 py-1 text-xs"></select>
         <button id="stats-per90" class="rounded-full px-3 py-1 border border-slate-700 text-slate-400">⏱ per 90</button>
-        <span class="text-[11px] text-slate-500">Round = each team's Nth game · per 90 needs ≥90′</span>
+        <span class="text-xs text-slate-500">Round = each team's Nth game · per 90 needs ≥90′</span>
       </div>
       <div id="stats-filters" class="flex items-center gap-1.5 flex-wrap text-xs">
         <button id="stats-unpicked" class="rounded-full px-3 py-1 border border-slate-700 text-slate-400">🟢 Unpicked only</button>
@@ -559,7 +568,7 @@
     <div id="board-chat" class="hidden space-y-2">
       <div id="chat-threads" class="flex gap-1.5 overflow-x-auto pb-1 text-xs"></div>
       <div id="chat-msgs" class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2 h-[42vh] overflow-y-auto"></div>
-      <div id="chat-note" class="text-[11px] text-slate-400 min-h-[1em]"></div>
+      <div id="chat-note" class="text-xs text-slate-400 min-h-[1em]"></div>
       <form id="chat-form" class="flex gap-2">
         <input id="chat-input" maxlength="1000" autocomplete="off" placeholder="Message…"
                class="flex-1 min-w-0 rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm">
@@ -597,7 +606,7 @@
         <pre id="adm-comp-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
       </div>
       <div class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
-        <h3 class="font-semibold text-sm">Scheduled pulls <span class="text-[11px] text-slate-400 font-normal">· app admin</span></h3>
+        <h3 class="font-semibold text-sm">Scheduled pulls <span class="text-xs text-slate-400 font-normal">· app admin</span></h3>
         <p class="text-xs text-slate-400">Turn the automatic daily stat pull on or off per competition.
           When on, the scheduled job pulls that competition's completed games into the shared stats each
           day — one pull serves every league on it. When off, use "Pull stats now" by hand.</p>
@@ -721,7 +730,7 @@
         <div class="grid grid-cols-2 gap-2 text-sm items-end">
           <label class="text-xs text-slate-400">Fluid / flex slots (any outfield — DEF/MID/FWD, not GK)
             <input id="adm-q-flex" type="number" value="1" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <span id="adm-q-size" class="text-[11px] text-slate-400 pb-1"></span>
+          <span id="adm-q-size" class="text-xs text-slate-400 pb-1"></span>
         </div>
         <div class="text-xs text-slate-400">Starters per position (the rest are subs; the flex adds a starter too)</div>
         <div class="grid grid-cols-4 gap-2 text-sm">
