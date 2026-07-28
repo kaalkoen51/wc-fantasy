@@ -1855,6 +1855,7 @@ function tickTimer() {
   if (!L || !L.current_pick || L.current_pick > totalPicks()) { clock.textContent = "--"; return; }
   if (!L.pick_duration_seconds && !pickInfo(L.current_pick).manager?.is_bot) {
     clock.textContent = "∞";   // 0 = no time limit (never auto-picks)
+    const m0 = $("draft-mini-clock"); if (m0) m0.textContent = "∞";
     clock.classList.remove("text-red-400"); clock.classList.add("text-wcgold");
     return;
   }
@@ -1879,7 +1880,14 @@ function tickTimer() {
   const deadline = Date.parse(L.pick_started_at) + L.pick_duration_seconds * 1000;
   const remain = Math.ceil((deadline - Date.now()) / 1000);
   const shown = Math.max(0, remain);
-  clock.textContent = Math.floor(shown / 60) + ":" + String(shown % 60).padStart(2, "0");
+  const face = Math.floor(shown / 60) + ":" + String(shown % 60).padStart(2, "0");
+  clock.textContent = face;
+  const mini = $("draft-mini-clock");
+  if (mini) {
+    mini.textContent = face;
+    mini.classList.toggle("text-red-400", remain <= 10);
+    mini.classList.toggle("text-wcgold", remain > 10);
+  }
   clock.classList.toggle("text-red-400", remain <= 10);
   clock.classList.toggle("text-wcgold", remain > 10);
   if (remain > 0 || autoPickedFor === L.current_pick) return;
@@ -2095,12 +2103,12 @@ function flashPick(pk) {
     + "px-3 py-2 shadow-xl flex items-center gap-2 max-w-[92vw]";
   el.innerHTML = `${avatarHtml(pk.player_id, pk.team, "w-9 h-9")}
     <div class="min-w-0">
-      <div class="eyebrow">${esc(m?.name ?? "?")} picked</div>
+      <div class="eyebrow">${m?.id === myManager()?.id ? "You picked" : esc(m?.name ?? "?") + " picked"}</div>
       <div class="font-bold truncate">${esc(pk.player_name)}</div>
     </div>
     <span class="shrink-0 rounded px-1.5 py-0.5 text-xs font-semibold pos-${pk.position}">${pk.position}</span>`;
   document.body.appendChild(el);
-  setTimeout(() => el.remove(), 1600);
+  setTimeout(() => el.remove(), 3600);
 }
 
 // Announce only genuinely new picks — not the backlog on first render, and not
@@ -2111,7 +2119,7 @@ function announceNewPicks() {
   if (_lastPickSeen === null) { _lastPickSeen = last.pick_number; return; }
   if (last.pick_number <= _lastPickSeen) return;
   _lastPickSeen = last.pick_number;
-  if (last.manager_id !== myManager()?.id) flashPick(last);
+  flashPick(last);
 }
 
 /* The shortlist, shown while you build it. Same priority rules as the in-draft
@@ -2125,7 +2133,7 @@ function renderPredraftShortlist() {
   const rows = ids.map((pid, i) => {
     const e = entryForId(pid);
     if (!e) return "";
-    return `<li class="flex items-center gap-1.5 py-1.5">
+    return `<li data-slrow="${esc(pid)}" class="flex items-center gap-1.5 py-1.5 rounded">
       <span class="w-5 shrink-0 text-xs text-slate-400 font-mono">${i + 1}</span>
       ${avatarHtml(pid, e.team, "w-7 h-7")}
       <span class="min-w-0 flex-1">
@@ -2145,9 +2153,9 @@ function renderPredraftShortlist() {
     ${rows ? `<ul class="divide-y divide-slate-800">${rows}</ul>`
            : '<p class="text-xs text-slate-400">Nothing yet — tap the ☆ beside a player below.</p>'}`;
   box.querySelectorAll("[data-slup]").forEach((b) =>
-    b.onclick = () => { moveShortlist(b.dataset.slup, -1); renderPredraftShortlist(); });
+    b.onclick = () => { moveShortlist(b.dataset.slup, -1); renderPredraftShortlist(); markQueueMoved(b.dataset.slup); });
   box.querySelectorAll("[data-sldn]").forEach((b) =>
-    b.onclick = () => { moveShortlist(b.dataset.sldn, 1); renderPredraftShortlist(); });
+    b.onclick = () => { moveShortlist(b.dataset.sldn, 1); renderPredraftShortlist(); markQueueMoved(b.dataset.sldn); });
   box.querySelectorAll("[data-slrm]").forEach((b) =>
     b.onclick = () => { toggleShortlist(b.dataset.slrm); renderPredraftShortlist(); });
 }
@@ -2175,6 +2183,17 @@ function queuePlan(shortlist, takenBy, myLastPickNo, eligibleIds) {
     rows.push({ pid, idx, gone: false });
   });
   return { rows, hiddenNoFit, available: rows.filter((r) => !r.gone).length };
+}
+
+// After a reorder the list is rebuilt, so flag the row that moved — otherwise
+// the change is something you have to infer by re-reading the order.
+function markQueueMoved(pid) {
+  const row = document.querySelector(`[data-qrow="${CSS.escape(pid)}"]`)
+           || document.querySelector(`[data-slrow="${CSS.escape(pid)}"]`);
+  if (!row) return;
+  row.classList.remove("queue-moved");
+  void row.offsetWidth;
+  row.classList.add("queue-moved");
 }
 
 function renderDraftQueue(me, myTurn) {
@@ -2222,7 +2241,7 @@ function renderDraftQueue(me, myTurn) {
       </li>`;
     const first = n === rows.findIndex((x) => !x.gone);
     const last  = n === rows.map((x) => !x.gone).lastIndexOf(true);
-    return `<li class="flex items-center gap-1.5 py-1">
+    return `<li data-qrow="${esc(r.pid)}" class="flex items-center gap-1.5 py-1 rounded">
       <span class="w-4 shrink-0 text-xs text-slate-400 font-mono">${n + 1}</span>
       ${avatarHtml(r.pid, e.team, "w-6 h-6")}
       <span class="min-w-0 flex-1 truncate text-sm">${esc(e.name)}</span>
@@ -2232,22 +2251,42 @@ function renderDraftQueue(me, myTurn) {
     </li>`;
   }).join("");
 
-  box.innerHTML = `<div class="flex items-center justify-between gap-2">
+  const collapsed = localStorage.getItem("wcf_queue_collapsed") === "1";
+  box.innerHTML = `<button id="queue-toggle" class="w-full flex items-center justify-between gap-2 text-left">
       <span class="text-sm font-semibold">★ Your queue</span>
-      <span class="text-xs text-slate-400">${ids.length ? `${movable} available` : "empty"}</span>
-    </div>
-    ${head}
-    ${list ? `<ul class="divide-y divide-slate-800">${list}</ul>`
+      <span class="text-xs text-slate-400">${ids.length ? `${movable} available` : "empty"} ${collapsed ? "▾" : "▴"}</span>
+    </button>
+    ${collapsed ? "" : head}
+    ${collapsed ? "" : (list ? `<ul class="divide-y divide-slate-800">${list}</ul>`
            : `<p class="text-xs text-slate-400">${ids.length
                 ? "None of your shortlisted players fit the positions you still need."
-                : "Star players on the Players tab to build a queue — auto-pick takes the top one available."}</p>`}
-    ${hiddenNoFit ? `<p class="text-xs text-slate-400">${hiddenNoFit} shortlisted ${
+                : "Star players on the Players tab to build a queue — auto-pick takes the top one available."}</p>`)}
+    ${!collapsed && hiddenNoFit ? `<p class="text-xs text-slate-400">${hiddenNoFit} shortlisted ${
         hiddenNoFit === 1 ? "player doesn't" : "players don't"} fit your remaining slots.</p>` : ""}`;
 
+  const tog = box.querySelector("#queue-toggle");
+  if (tog) tog.onclick = () => {
+    localStorage.setItem("wcf_queue_collapsed", collapsed ? "0" : "1");
+    renderDraftQueue(me, myTurn);
+  };
+
   box.querySelectorAll("[data-qup]").forEach((b) =>
-    b.onclick = () => { moveShortlist(b.dataset.qup, -1); renderDraftQueue(myManager(), myTurn); });
+    b.onclick = () => { moveShortlist(b.dataset.qup, -1); renderDraftQueue(myManager(), myTurn); markQueueMoved(b.dataset.qup); });
   box.querySelectorAll("[data-qdn]").forEach((b) =>
-    b.onclick = () => { moveShortlist(b.dataset.qdn, 1); renderDraftQueue(myManager(), myTurn); });
+    b.onclick = () => { moveShortlist(b.dataset.qdn, 1); renderDraftQueue(myManager(), myTurn); markQueueMoved(b.dataset.qdn); });
+}
+
+/* The clock and whose turn it is must never be off screen. `position: sticky`
+   kept slipping behind the app header on real devices, so this is an explicit
+   compact bar: it appears the moment the full draft panel scrolls out of view
+   and mirrors the same two facts. */
+function syncDraftMini() {
+  const bar = $("draft-mini"), head = $("draft-head");
+  if (!bar || !head) return;
+  const hdr = document.querySelector("header")?.getBoundingClientRect().bottom ?? 0;
+  const gone = head.getBoundingClientRect().bottom < hdr + 4;
+  const onDraft = !document.querySelector('[data-view="draft"]')?.classList.contains("hidden");
+  bar.classList.toggle("hidden", !(onDraft && gone));
 }
 
 function renderDraft() {
@@ -2269,6 +2308,9 @@ function renderDraft() {
   if (head) head.className = "rounded-xl border p-4 " + (myTurn
     ? "border-wcgold bg-wcred/20 ring-2 ring-wcgold/40" : "border-slate-700 bg-slate-900");
   $("draft-onclock").className = "text-lg font-bold truncate " + (myTurn ? "text-wcgold" : "");
+  const miniWho = $("draft-mini-who");
+  if (miniWho) miniWho.textContent = myTurn ? "⏱ You're on the clock!"
+    : `${info.manager.name} is picking${away != null && away > 0 ? ` · you're ${away} away` : ""}`;
   const upnext = $("draft-upnext");
   if (upnext) {
     const show = !myTurn && away != null && away > 0;
@@ -8698,7 +8740,8 @@ function syncHeaderHeight() {
 
 function wire() {
   syncHeaderHeight();
-  window.addEventListener("resize", syncHeaderHeight);
+  window.addEventListener("resize", () => { syncHeaderHeight(); syncDraftMini(); });
+  window.addEventListener("scroll", syncDraftMini, { passive: true });
   $("cfg-save").onclick = () => {
     const url = $("cfg-url").value.trim().replace(/\/$/, "");
     const key = $("cfg-key").value.trim();

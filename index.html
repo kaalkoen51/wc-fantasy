@@ -80,16 +80,21 @@
      under the header, holds briefly, and fades out. Never interactive. */
   @keyframes pick-flash {
     0%   { opacity: 0; transform: translate(-50%, -10px) scale(.96) }
-    14%  { opacity: 1; transform: translate(-50%, 0) scale(1) }
-    76%  { opacity: 1; transform: translate(-50%, 0) scale(1) }
+    6%   { opacity: 1; transform: translate(-50%, 0) scale(1) }
+    90%  { opacity: 1; transform: translate(-50%, 0) scale(1) }
     100% { opacity: 0; transform: translate(-50%, -6px) scale(.99) }
   }
   .pick-flash { position: fixed; top: 4.25rem; left: 50%; z-index: 60;
-                pointer-events: none; animation: pick-flash 1.5s ease forwards; }
+                pointer-events: none; animation: pick-flash 3.5s ease forwards; }
 
   /* The newest row in a list briefly warms, so you can see what just changed. */
   @keyframes row-land { from { background-color: rgba(255,199,44,.22) } to { background-color: transparent } }
   .just-landed { animation: row-land 1.8s ease-out; }
+
+  /* The row you just reordered, so the change is visible rather than inferred. */
+  @keyframes queue-move { 0% { background-color: rgba(255,199,44,.28); transform: translateX(-4px) }
+                          100% { background-color: transparent; transform: none } }
+  .queue-moved { animation: queue-move .45s ease-out; }
 
   /* A value that just moved. */
   @keyframes value-bump { 0% { transform: scale(1) } 35% { transform: scale(1.14) } 100% { transform: scale(1) } }
@@ -97,7 +102,7 @@
 
   @media (prefers-reduced-motion: reduce) {
     .pick-flash { animation: none; opacity: 1 }
-    .just-landed, .bumped { animation: none }
+    .just-landed, .bumped, .queue-moved { animation: none }
   }
 
   /* Mobile-first: every control gets a finger-sized hit area. Filter chips,
@@ -498,6 +503,8 @@
   </section>
 
   <!-- Draft room -->
+  <!-- Shown once the full draft panel scrolls out of view, so the clock and
+       whose turn it is are never off screen. -->
   <section data-view="draft" class="hidden space-y-4">
     <div id="draft-head" class="draft-sticky z-10 rounded-xl border border-slate-700 bg-slate-900 p-4 shadow-lg shadow-slate-950/60">
       <div class="flex items-center justify-between gap-3">
@@ -512,6 +519,11 @@
       <div id="draft-order" class="mt-3 flex gap-1.5 overflow-x-auto pb-1 text-xs"></div>
     </div>
     <div id="draft-mybanner" class="hidden rounded-xl border border-wcgold bg-wcred/15 p-3 text-center font-semibold"></div>
+    <!-- Recent picks sit high: what just happened is the thing you look up for. -->
+    <div class="rounded-xl border border-slate-700 bg-slate-900 p-4">
+      <h3 class="font-semibold mb-2 text-sm">Recent picks</h3>
+      <ul id="draft-recent" class="text-sm space-y-1 text-slate-300"></ul>
+    </div>
     <!-- Your queue, in the room: what auto-pick would take, and what's next. -->
     <div id="draft-queue" class="hidden rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2"></div>
     <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
@@ -522,10 +534,6 @@
       </div>
       <div id="pool-chips" class="flex gap-1.5 flex-wrap text-xs"></div>
       <ul id="pool-list" class="divide-y divide-slate-800 max-h-[50vh] overflow-y-auto"></ul>
-    </div>
-    <div class="rounded-xl border border-slate-700 bg-slate-900 p-4">
-      <h3 class="font-semibold mb-2">Recent picks</h3>
-      <ul id="draft-recent" class="text-sm space-y-1 text-slate-300"></ul>
     </div>
     <div id="draft-rosters" class="space-y-2"></div>
     <button id="draft-force" class="hidden w-full bg-amber-700 hover:bg-amber-600 rounded-lg py-2 text-sm font-semibold">Admin: force auto-pick now</button>
@@ -813,6 +821,14 @@
   <div class="absolute inset-x-3 top-1/2 -translate-y-1/2 max-h-[88vh] overflow-y-auto bg-slate-900 border border-wcgold/60 rounded-2xl p-4">
     <div id="reveal-body" class="space-y-3"></div>
     <button id="reveal-close" class="mt-3 w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2.5 text-sm font-semibold">Let's play</button>
+  </div>
+</div>
+
+<div id="draft-mini" class="hidden fixed inset-x-0 z-20 bg-slate-900/97 backdrop-blur border-b border-wcgold/40"
+     style="top:var(--hdr-h,3.5rem)">
+  <div class="max-w-3xl mx-auto px-4 py-2 flex items-center justify-between gap-3">
+    <span id="draft-mini-who" class="min-w-0 truncate text-sm font-semibold"></span>
+    <span id="draft-mini-clock" class="shrink-0 text-xl font-mono font-bold text-wcgold">--</span>
   </div>
 </div>
 
