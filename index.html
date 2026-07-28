@@ -678,6 +678,14 @@
   </div>
 </div>
 
+<!-- Round recap: the results moment, opened from the matchday card -->
+<div id="recap-sheet" class="hidden fixed inset-0 z-40 bg-black/70 p-3">
+  <div class="absolute inset-x-3 top-1/2 -translate-y-1/2 max-h-[88vh] overflow-y-auto bg-slate-900 border border-wcgold/50 rounded-2xl p-4">
+    <div id="recap-body" class="space-y-3"></div>
+    <button id="recap-close" class="mt-3 w-full bg-slate-800 border border-slate-700 rounded-lg py-2 text-sm font-semibold">Close</button>
+  </div>
+</div>
+
 <!-- Enlarged points-distribution chart (balance check → tap the ridgeline) -->
 <div id="chart-sheet" class="hidden fixed inset-0 z-40 bg-black/70 p-3">
   <div class="absolute inset-x-3 top-1/2 -translate-y-1/2 max-h-[90vh] bg-slate-900 border border-slate-700 rounded-2xl p-4 flex flex-col overflow-hidden">
@@ -3030,6 +3038,96 @@ function fixtureWindows(fixtures, nowMs, opts) {
   return { tradeOpen, tradeWindow, lineupOpen, lineupLockAt, upcoming, weeks };
 }
 
+/* ---------- the matchday card: "what do I do right now?" ----------
+   The app knows the shape of a fantasy week — results land, the trade window
+   opens, lineups lock, games kick off — but until now it never said so. This
+   is the pure core behind the card at the top of Home: given the window state,
+   the clock and whatever the manager hasn't set yet, it picks the stage of the
+   week, the next deadline, and the single action worth offering.
+
+   o = { started, live, tradeOpen, lineupOpen, autoWindows,
+         lineupLockAt, kickoffAt, tradeOpensAt, tradeClosesAt,
+         matchweek, todo: [string] }                          (times = epoch ms) */
+const MD_STAGES = ["results", "transfers", "lineup", "locked", "live"];
+const MD_STAGE_LABEL = { results: "Results", transfers: "Transfers",
+  lineup: "Lineup", locked: "Locked", live: "Live" };
+
+function matchdayPlan(o) {
+  o = o || {};
+  const todo = o.todo || [];
+  if (!o.started) {
+    return { stage: "preseason", title: "Season hasn't started", matchweek: null,
+      deadlineAt: null, deadlineLabel: null, cta: null, todo: [] };
+  }
+  let stage;
+  if (o.live) stage = "live";
+  else if (o.lineupOpen) stage = o.tradeOpen ? "transfers" : "lineup";
+  else if (o.tradeOpen) stage = "transfers";
+  else if (o.tradeOpensAt != null && o.tradeOpensAt > o.nowMs) stage = "results";
+  else stage = "locked";
+
+  let deadlineAt = null, deadlineLabel = null, title = "", cta = null;
+  if (stage === "results") {
+    title = "Round complete"; deadlineAt = o.tradeOpensAt;
+    deadlineLabel = "Trade window opens"; cta = { label: "See round recap", act: "recap" };
+  } else if (stage === "transfers") {
+    title = "Trade window open"; deadlineAt = o.tradeClosesAt;
+    deadlineLabel = "Trade window closes";
+    // If the lineup still needs attention, that outranks browsing free agents.
+    cta = todo.length ? { label: "Set your lineup", act: "lineup" }
+                      : { label: "Make transfers", act: "trades" };
+  } else if (stage === "lineup") {
+    title = "Last chance to set your team"; deadlineAt = o.lineupLockAt;
+    deadlineLabel = "Lineup locks"; cta = { label: "Set your lineup", act: "lineup" };
+  } else if (stage === "locked") {
+    title = "Lineups locked"; deadlineAt = o.kickoffAt;
+    deadlineLabel = "First kick-off"; cta = { label: "View your XI", act: "lineup" };
+  } else {
+    title = "Games in progress"; cta = { label: "Watch live", act: "live" };
+  }
+  return { stage, title, matchweek: o.matchweek ?? null, deadlineAt, deadlineLabel, cta, todo };
+}
+
+/* Digest one completed round for one manager — the "round recap" moment.
+   Everything here already existed, scattered across four tabs; the point is to
+   compose it into the thing people actually care about (and screenshot).
+     round       = { n, items: [{ entry, pts }], subtotal }
+     leagueRound = { managerId: subtotal }  — everyone's score that round
+     h2h         = { oppName, mine, theirs } | null                     Pure. */
+function roundRecap(round, leagueRound, h2h) {
+  if (!round) return null;
+  const scored = (round.items || []).filter((it) => it.pts != null);
+  const starters = scored.filter((it) => !it.entry.is_sub);
+  const bench = scored.filter((it) => it.entry.is_sub);
+  const ranked = starters.slice().sort((a, b) => (b.pts || 0) - (a.pts || 0));
+  const all = Object.values(leagueRound || {});
+  const score = round.subtotal || 0;
+  return {
+    n: round.n,
+    score,
+    rank: all.filter((v) => v > score).length + 1,
+    of: all.length,
+    avg: all.length ? all.reduce((a, b) => a + b, 0) / all.length : 0,
+    best: ranked[0] || null,
+    worst: ranked.length > 1 ? ranked[ranked.length - 1] : null,
+    benchPts: bench.reduce((s, it) => s + (it.pts || 0), 0),
+    result: h2h ? (h2h.mine > h2h.theirs ? "W" : h2h.mine < h2h.theirs ? "L" : "D") : null,
+    h2h: h2h || null,
+  };
+}
+
+// "2d 04h 11m" · "3h 12m 40s" · "4m 09s" — the countdown on the card.
+function fmtCountdown(ms) {
+  if (ms == null || !isFinite(ms)) return "";
+  if (ms <= 0) return "now";
+  const s = Math.floor(ms / 1000), d = Math.floor(s / 86400),
+        h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+  const p2 = (n) => String(n).padStart(2, "0");
+  if (d > 0) return `${d}d ${p2(h)}h ${p2(m)}m`;
+  if (h > 0) return `${h}h ${p2(m)}m ${p2(ss)}s`;
+  return `${m}m ${p2(ss)}s`;
+}
+
 // Per-manager round subtotals (the H2H fixture scores), from the lineup history.
 function h2hRoundScores() {
   const scores = {};
@@ -3960,6 +4058,181 @@ function renderHistInto(elId, mgrId, perspectiveLabel) {
     openPlayerDetail(b.dataset.hp, mgrId, perspectiveLabel));
 }
 
+/* ---------- matchday card (app side) ---------- */
+const LIVE_STATUS = ["1H", "2H", "HT", "ET", "BT", "P", "LIVE", "INT"];
+
+// What this manager still hasn't set for the upcoming round.
+function lineupTodo(me) {
+  const todo = [];
+  if (!me || me.eliminated) return todo;
+  const mine = managerPicks(me.id).filter((pk) => pk.slot !== "TEAM");
+  if (!mine.length) return todo;
+  const counts = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+  for (const pk of mine) if (!pk.is_sub) counts[pk.position] = (counts[pk.position] || 0) + 1;
+  if (!lineupValid(counts)) todo.push("Your starting XI isn't valid yet");
+  if (captainEnabled() && !me.captain_id) todo.push("Captain not set");
+  return todo;
+}
+
+// Gather the live window/clock state and hand it to the pure planner.
+function matchdayNow() {
+  const me = myManager();
+  const auto = autoWindowsEnabled();
+  const w = auto ? autoWindowState() : null;
+  const live = (S.fixtures || []).some((f) => LIVE_STATUS.includes(f.status));
+  // In auto mode the next window open is the start of the gap after this round.
+  let tradeOpensAt = null;
+  if (auto && !w.tradeOpen) {
+    const H = 3600e3, after = (cfgOf().windows?.tradeOpenAfterH ?? 1) * H, now = Date.now();
+    for (const wk of (w.weeks || [])) { const t = wk.last + after; if (t > now) { tradeOpensAt = t; break; } }
+  }
+  return matchdayPlan({
+    nowMs: Date.now(),
+    started: !!S.league?.current_pick,
+    live,
+    tradeOpen: tradingOpen(),
+    lineupOpen: lineupOpen(),
+    autoWindows: auto,
+    lineupLockAt: w?.lineupLockAt ?? null,
+    kickoffAt: w?.upcoming?.first ?? null,
+    tradeOpensAt,
+    tradeClosesAt: w?.tradeWindow?.closeAt ?? null,
+    matchweek: w?.upcoming ? mwNo(w.upcoming.round) : null,
+    todo: lineupTodo(me),
+  });
+}
+
+// The card itself: stage strip, countdown, what's unset, one primary action.
+function matchdayCardHtml(me) {
+  const p = matchdayNow();
+  if (p.stage === "preseason" || me?.eliminated) return "";
+  const strip = MD_STAGES.map((s) => {
+    const on = s === p.stage;
+    return `<span class="px-1.5 py-0.5 rounded ${on
+      ? "bg-wcgold/20 text-wcgold font-semibold" : "text-slate-600"}">${MD_STAGE_LABEL[s]}</span>`;
+  }).join('<span class="text-slate-700">›</span>');
+  const clock = p.deadlineAt != null
+    ? `<div class="mt-1">
+         <div class="text-[11px] text-slate-400">${esc(p.deadlineLabel)}</div>
+         <div id="md-countdown" data-at="${p.deadlineAt}"
+              class="text-2xl font-bold text-wcgold tabular-nums">${fmtCountdown(p.deadlineAt - Date.now())}</div>
+         <div class="text-[11px] text-slate-500">${esc(fmtWhen(p.deadlineAt))}</div>
+       </div>` : "";
+  const todo = p.todo.length
+    ? `<div class="mt-2 space-y-0.5">${p.todo.map((t) =>
+        `<div class="text-[12px] text-amber-300">⚠ ${esc(t)}</div>`).join("")}</div>` : "";
+  const cta = p.cta
+    ? `<button id="md-cta" data-act="${p.cta.act}" class="mt-3 w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2.5 text-sm font-semibold">${esc(p.cta.label)}</button>`
+    : "";
+  return `<div class="rounded-xl border border-wcgold/60 bg-wcred/10 p-4">
+    <div class="flex items-center gap-1 text-[10px] flex-wrap">${strip}</div>
+    <div class="mt-2 flex items-baseline justify-between gap-2">
+      <div class="font-semibold">${esc(p.title)}</div>
+      ${p.matchweek ? `<div class="text-[11px] text-slate-400 shrink-0">Matchweek ${esc(p.matchweek)}</div>` : ""}
+    </div>
+    ${clock}${todo}${cta}
+  </div>`;
+}
+
+/* ---------- round recap (app side) ---------- */
+
+// The most recent completed round for a manager, digested.
+function myRecap() {
+  const me = myManager();
+  if (!me) return null;
+  const hist = managerHistory(me.id);
+  const round = (hist.rounds || [])[hist.rounds.length - 1];
+  if (!round) return null;
+  // Everyone's subtotal for the same round number.
+  const leagueRound = {};
+  for (const m of S.managers) {
+    const r = (managerHistory(m.id).rounds || []).find((x) => x.n === round.n);
+    if (r) leagueRound[m.id] = r.subtotal;
+  }
+  // Your head-to-head opponent that round, when the league is an H2H log.
+  let h2h = null;
+  if (h2hEnabled()) {
+    const ids = S.managers.map((m) => m.id);
+    const fx = h2hFixturesFor(ids, round.n).filter((f) => f.round === round.n);
+    const mine = fx.find((f) => f.home_manager_id === me.id || f.away_manager_id === me.id);
+    const oppId = mine && (mine.home_manager_id === me.id ? mine.away_manager_id : mine.home_manager_id);
+    if (oppId && leagueRound[oppId] != null) h2h = {
+      oppName: S.managers.find((m) => m.id === oppId)?.name || "?",
+      mine: leagueRound[me.id] ?? 0, theirs: leagueRound[oppId],
+    };
+  }
+  return roundRecap(round, leagueRound, h2h);
+}
+
+function openRecap() {
+  const r = myRecap();
+  const body = $("recap-body");
+  if (!body) return;
+  if (!r) { body.innerHTML = '<p class="text-sm text-slate-400">No completed rounds yet.</p>'; }
+  else {
+    const one = (label, val, sub) => `<div class="rounded-lg border border-slate-700 bg-slate-800/40 px-2 py-2 text-center">
+      <div class="text-[10px] text-slate-500">${label}</div>
+      <div class="text-lg font-bold text-slate-100">${val}</div>
+      ${sub ? `<div class="text-[10px] text-slate-500">${sub}</div>` : ""}</div>`;
+    const pick = (it, label) => it ? `<div class="flex items-center gap-2 rounded-lg bg-slate-800/40 px-2 py-1.5">
+      ${avatarHtml(it.entry.player_id, it.entry.team, "w-7 h-7")}
+      <div class="min-w-0 flex-1">
+        <div class="text-[10px] text-slate-500">${label}</div>
+        <div class="text-sm truncate">${esc(it.entry.player_name)}</div>
+      </div>
+      <div class="font-mono font-bold ${(it.pts || 0) >= 0 ? "text-wcgold" : "text-red-400"}">${it.pts ?? 0}</div>
+    </div>` : "";
+    const res = r.result
+      ? `<div class="rounded-xl border ${r.result === "W" ? "border-emerald-500/60 bg-emerald-500/10"
+          : r.result === "L" ? "border-red-500/50 bg-red-500/10" : "border-slate-600 bg-slate-800/40"} p-3 text-center">
+          <div class="text-[11px] text-slate-400">vs ${esc(r.h2h.oppName)}</div>
+          <div class="text-2xl font-bold">${r.result === "W" ? "Win" : r.result === "L" ? "Loss" : "Draw"}
+            <span class="font-mono text-slate-300">${r.h2h.mine}–${r.h2h.theirs}</span></div>
+        </div>` : "";
+    body.innerHTML = `
+      <div class="text-center">
+        <div class="text-[11px] text-slate-400">Round ${r.n} complete</div>
+        <div class="text-4xl font-bold text-wcgold tabular-nums">${r.score}</div>
+        <div class="text-xs text-slate-400">points</div>
+      </div>
+      ${res}
+      <div class="grid grid-cols-3 gap-2">
+        ${one("Rank", `${r.rank}<span class="text-xs text-slate-500">/${r.of}</span>`, "this round")}
+        ${one("League avg", Math.round(r.avg), r.score >= r.avg ? "you beat it" : "below")}
+        ${one("On the bench", r.benchPts, "points left")}
+      </div>
+      <div class="space-y-1.5">${pick(r.best, "Best pick")}${pick(r.worst, "Quietest starter")}</div>`;
+  }
+  $("recap-sheet").classList.remove("hidden");
+  // Only ever auto-show a given round once.
+  const r2 = r || myRecap();
+  if (r2 && S.league?.id) localStorage.setItem("wcf_recap_" + S.league.id, String(r2.n));
+}
+const closeRecap = () => $("recap-sheet")?.classList.add("hidden");
+
+// Auto-open the recap the first time a manager sees a newly completed round —
+// this is the moment the whole week builds to, so it shouldn't need hunting for.
+function maybeAutoRecap() {
+  if (!S.league?.id || !myManager() || S._recapChecked) return;
+  S._recapChecked = true;
+  const r = myRecap();
+  if (!r) return;
+  if (Number(localStorage.getItem("wcf_recap_" + S.league.id) || 0) >= r.n) return;
+  openRecap();
+}
+
+// Tick just the countdown text — a full re-render every second would fight
+// with anything the user is typing or scrolling.
+function tickMatchday() {
+  const el = document.getElementById("md-countdown");
+  if (!el) return;
+  const at = Number(el.dataset.at);
+  if (!at) return;
+  const left = at - Date.now();
+  el.textContent = fmtCountdown(left);
+  if (left <= 0) scheduleRefetch();   // deadline passed → the stage has changed
+}
+
 function renderHomeTab() {
   const me = myManager();
   const box = $("board-home");
@@ -3977,6 +4250,7 @@ function renderHomeTab() {
                                            : "🔒 Lineup locked — opens with the trading window")}</button>`}
     <div id="hist-home-${me.id}" class="rounded-xl border border-slate-700 bg-slate-900 p-3"></div>`;
   box.innerHTML = `
+    ${matchdayCardHtml(me)}
     ${phaseCardsHtml(me)}
     <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 flex items-center justify-between">
       <div>
@@ -4000,6 +4274,14 @@ function renderHomeTab() {
   renderHistInto("hist-home-" + me.id, me.id);   // "your lineup" perspective
   const lb = box.querySelector("#home-lineup");
   if (lb) lb.onclick = openLineup;
+  const cta = box.querySelector("#md-cta");
+  if (cta) cta.onclick = () => {
+    const act = cta.dataset.act;
+    if (act === "lineup") openLineup();
+    else if (act === "trades") setBoardTab("trades");
+    else if (act === "recap") openRecap();
+    else if (act === "live") setBoardTab("lb");
+  };
 }
 
 /* ---------- matchday banner ---------- */
@@ -4831,6 +5113,7 @@ function renderBoard() {
   renderBanner();
   const note = $("board-rules-note");
   if (note) note.textContent = boardRulesNote();
+  maybeAutoRecap();
   if (preDraft) {
     $("board-banner").innerHTML = `<div class="flex items-center justify-between gap-2 rounded-xl border border-wcgold/50 bg-wcred/10 px-3 py-2 text-sm">
       <span class="min-w-0">⭐ Pre-draft — star players to build your shortlist. Auto-pick draws from it in order.</span>
@@ -8110,6 +8393,8 @@ function wire() {
   };
   $("swap-close").onclick = closeSwap;
   $("chart-close").onclick = closeChartSheet;
+  $("recap-close").onclick = closeRecap;
+  $("recap-sheet").onclick = (e) => { if (e.target.id === "recap-sheet") closeRecap(); };
   $("chart-sheet").onclick = (e) => { if (e.target.id === "chart-sheet") closeChartSheet(); };  // tap backdrop
   $("swap-search").oninput = renderSwapList;
   $("swap-team").onchange = renderSwapList;
@@ -8127,6 +8412,7 @@ function wire() {
 async function init() {
   wire();
   setInterval(tickTimer, 500);
+  setInterval(tickMatchday, 1000);   // the matchday countdown
   // Banner LIVE/FT states are time-based; the render cache makes this a
   // no-op whenever nothing changed, so the ticker animation never jumps.
   setInterval(renderBanner, 60e3);

@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -25,7 +25,7 @@ const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcT
         phaseOneStarters, starterQuota, effectiveConfig,
         flexCounting, formationValid, DEFAULT_FORMATION,
         roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims,
-        h2hSchedulePlan, rumblePlacement, scoringBalance, pointsHistogram, statSummary, rowPointsWith,
+        h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, scoringBalance, pointsHistogram, statSummary, rowPointsWith,
         buildFixtureStatRows,
         fixtureWindows, matchweeksOf,
         maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs,
@@ -371,6 +371,63 @@ S.league = {};
   check("buildFixtureStatRows: MOTM = top rating ≥7.5", rows[0].motm, true);
   check("buildFixtureStatRows: rows scoped by competition key", rows[0].competition_key, "39-2024");
   check("buildFixtureStatRows: maxMin + clean-sheet diagnostics", [maxMin, cs], [90, 2]);
+}
+
+/* The matchday card: which stage of the week is it, and what's the one thing
+   to do about it? */
+{
+  const H = 3600e3, base = { started: true, nowMs: 1000, matchweek: "24", todo: [] };
+  check("matchday: before the draft there is no card",
+    matchdayPlan({ started: false }).stage, "preseason");
+  // Both windows open → transfers, and the trade close is the deadline.
+  const tr = matchdayPlan({ ...base, tradeOpen: true, lineupOpen: true,
+    tradeClosesAt: 5000, lineupLockAt: 9000 });
+  check("matchday: both windows open → transfers",
+    [tr.stage, tr.deadlineAt, tr.cta.act], ["transfers", 5000, "trades"]);
+  // …unless the lineup still needs attention — that outranks browsing players.
+  const trTodo = matchdayPlan({ ...base, tradeOpen: true, lineupOpen: true,
+    tradeClosesAt: 5000, todo: ["Captain not set"] });
+  check("matchday: an unset lineup outranks transfers", trTodo.cta.act, "lineup");
+  // Trade shut, lineup still open → last chance, deadline is the lock.
+  const ln = matchdayPlan({ ...base, tradeOpen: false, lineupOpen: true, lineupLockAt: 9000 });
+  check("matchday: trade closed but lineup open → lineup",
+    [ln.stage, ln.deadlineAt, ln.deadlineLabel], ["lineup", 9000, "Lineup locks"]);
+  // Everything shut, kick-off ahead → locked.
+  const lk = matchdayPlan({ ...base, tradeOpen: false, lineupOpen: false, kickoffAt: 12000 });
+  check("matchday: everything shut → locked", [lk.stage, lk.deadlineAt], ["locked", 12000]);
+  // Everything shut but the window reopens later → the round just finished.
+  const rs = matchdayPlan({ ...base, tradeOpen: false, lineupOpen: false, tradeOpensAt: 8000 });
+  check("matchday: waiting for the window to reopen → results",
+    [rs.stage, rs.cta.act], ["results", "recap"]);
+  // Games in progress beats everything.
+  check("matchday: live games win",
+    matchdayPlan({ ...base, live: true, lineupOpen: true }).stage, "live");
+  check("matchday: live has no countdown",
+    matchdayPlan({ ...base, live: true }).deadlineAt, null);
+
+  check("countdown: days", fmtCountdown(2 * 86400e3 + 4 * H + 11 * 60e3), "2d 04h 11m");
+  check("countdown: hours", fmtCountdown(3 * H + 12 * 60e3 + 40e3), "3h 12m 40s");
+  check("countdown: minutes", fmtCountdown(4 * 60e3 + 9e3), "4m 09s");
+  check("countdown: past deadline", fmtCountdown(-5), "now");
+}
+
+/* Round recap: the results moment, composed from one round's items. */
+{
+  const it = (name, pts, sub) => ({ entry: { player_id: "p" + name, player_name: name, is_sub: !!sub }, pts });
+  const round = { n: 7, subtotal: 41,
+    items: [it("Saka", 22), it("Rice", 5), it("Raya", 14), it("Sub A", 9, true), it("TEAM", null)] };
+  const league = { me: 41, a: 55, b: 30, c: 20 };
+  const r = roundRecap(round, league, { oppName: "Sam", mine: 41, theirs: 30 });
+  check("recap: score + round rank", [r.n, r.score, r.rank, r.of], [7, 41, 2, 4]);
+  check("recap: league average", Math.round(r.avg), 37);
+  check("recap: best starter", r.best.entry.player_name, "Saka");
+  check("recap: quietest starter", r.worst.entry.player_name, "Rice");
+  check("recap: points left on the bench", r.benchPts, 9);
+  check("recap: head-to-head win", r.result, "W");
+  check("recap: no h2h → no result", roundRecap(round, league, null).result, null);
+  check("recap: a draw reads as a draw",
+    roundRecap(round, league, { oppName: "Sam", mine: 41, theirs: 41 }).result, "D");
+  check("recap: no round → null", roundRecap(null, league, null), null);
 }
 
 /* The board's rules footer is generated from the league's own config — it used
