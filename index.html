@@ -407,18 +407,21 @@
 
   <!-- Draft room -->
   <section data-view="draft" class="hidden space-y-4">
-    <div class="rounded-xl border border-slate-700 bg-slate-900 p-4">
+    <div id="draft-head" class="rounded-xl border border-slate-700 bg-slate-900 p-4">
       <div class="flex items-center justify-between gap-3">
         <div class="min-w-0">
           <div id="draft-progress" class="text-xs text-slate-400"></div>
           <div id="draft-onclock" class="text-lg font-bold truncate"></div>
           <div id="draft-slotline" class="text-sm text-slate-300"></div>
+          <div id="draft-upnext" class="hidden text-xs text-wcgold font-semibold mt-0.5"></div>
         </div>
         <div id="draft-clock" class="text-4xl font-mono font-bold text-wcgold shrink-0">--</div>
       </div>
       <div id="draft-order" class="mt-3 flex gap-1.5 overflow-x-auto pb-1 text-xs"></div>
     </div>
     <div id="draft-mybanner" class="hidden rounded-xl border border-wcgold bg-wcred/15 p-3 text-center font-semibold"></div>
+    <!-- Your queue, in the room: what auto-pick would take, and what's next. -->
+    <div id="draft-queue" class="hidden rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2"></div>
     <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
       <input id="pool-search" placeholder="Search player…" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
       <div class="flex gap-2">
@@ -710,6 +713,14 @@
     <button data-nav="activity" class="nav-btn py-2.5 text-[11px] font-semibold flex flex-col items-center gap-0.5 relative"><span class="text-lg leading-none">💬</span>Activity<span id="nav-dot" class="hidden absolute top-1.5 right-[22%] w-2 h-2 rounded-full bg-wcgold"></span></button>
   </div>
 </nav>
+
+<!-- Squad reveal: the draft's closing moment, shown once when it completes -->
+<div id="reveal-sheet" class="hidden fixed inset-0 z-40 bg-black/75 p-3">
+  <div class="absolute inset-x-3 top-1/2 -translate-y-1/2 max-h-[88vh] overflow-y-auto bg-slate-900 border border-wcgold/60 rounded-2xl p-4">
+    <div id="reveal-body" class="space-y-3"></div>
+    <button id="reveal-close" class="mt-3 w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2.5 text-sm font-semibold">Let's play</button>
+  </div>
+</div>
 
 <!-- Round recap: the results moment, opened from the matchday card -->
 <div id="recap-sheet" class="hidden fixed inset-0 z-40 bg-black/70 p-3">
@@ -2436,14 +2447,31 @@ function autoPickCandidates(manager) {
   return { shortlist, pool };
 }
 
+/* What auto-pick will actually take if the clock runs out. A shortlist is a
+   queue, so it resolves in the order you set — that's what the app has always
+   promised managers, and what makes showing them the answer possible. Only the
+   no-shortlist fallback is random, because there's no stated preference to
+   honour. Returns { entry, fromShortlist } or null when nothing fits. */
+function autoPickPreview(manager) {
+  const { shortlist, pool } = autoPickCandidates(manager);
+  if (shortlist.length) return { entry: shortlist[0], fromShortlist: true };
+  if (pool.length) return { entry: pool[Math.floor(Math.random() * pool.length)], fromShortlist: false };
+  return null;
+}
+
+// Picks until this manager is on the clock; 0 = right now, null = no more turns.
+function picksUntilTurn(mgrId) {
+  const cur = S.league?.current_pick || 0, total = totalPicks();
+  for (let p = cur; p <= total; p++) if (pickInfo(p).manager?.id === mgrId) return p - cur;
+  return null;
+}
+
 async function autoPick(info) {
-  const { shortlist, pool } = autoPickCandidates(info.manager);
-  const from = shortlist.length ? shortlist : pool;   // shortlist first
-  if (!from.length) { toast("No available players fit the open quota."); return; }
-  const entry = from[Math.floor(Math.random() * from.length)];
-  toast(`Time's up — auto-picked ${entry.name}${
-    shortlist.length ? " (from shortlist)" : ""} for ${info.manager.name}.`);
-  await makePick(entry, info);
+  const choice = autoPickPreview(info.manager);
+  if (!choice) { toast("No available players fit the open quota."); return; }
+  toast(`Time's up — auto-picked ${choice.entry.name}${
+    choice.fromShortlist ? " (top of shortlist)" : ""} for ${info.manager.name}.`);
+  await makePick(choice.entry, info);
 }
 
 // Runs every 500ms. The on-the-clock manager's client auto-picks at 0;
@@ -2626,6 +2654,43 @@ function renderRosters(containerId) {
   if (lineupBtn) lineupBtn.onclick = openLineup;
 }
 
+/* Your shortlist, pinned inside the draft room. Managers fear the clock most
+   when they can't see what happens if it expires — so lead with exactly that,
+   then show the queue behind it with anything already taken struck through. */
+function renderDraftQueue(me, myTurn) {
+  const box = $("draft-queue");
+  if (!box) return;
+  if (!me || me.eliminated) { box.classList.add("hidden"); return; }
+  box.classList.remove("hidden");
+  const ids = me.shortlist || [];
+  const taken = new Set(S.picks.map((pk) => pk.player_id));
+  const choice = autoPickPreview(me);
+  const head = choice
+    ? `<div class="text-[11px] ${myTurn ? "text-amber-300" : "text-slate-400"}">
+         ${myTurn ? "⏱ If the clock runs out" : "If your clock runs out"} you'll get
+         <b class="text-slate-100">${esc(choice.entry.name)}</b>${
+           choice.fromShortlist ? "" : ' <span class="text-slate-500">— a random eligible player, because your shortlist is empty</span>'}.
+       </div>`
+    : `<div class="text-[11px] text-slate-500">No available player fits your open slots.</div>`;
+  const rows = ids.slice(0, 8).map((pid) => {
+    const e = entryForId(pid);
+    if (!e) return "";
+    const gone = taken.has(pid);
+    return `<li class="flex items-center gap-2 py-1 ${gone ? "opacity-40" : ""}">
+      ${avatarHtml(pid, e.team, "w-6 h-6")}
+      <span class="min-w-0 flex-1 truncate text-sm ${gone ? "line-through" : ""}">${esc(e.name)}</span>
+      <span class="shrink-0 text-[10px] pos-${e.position} rounded px-1.5 py-0.5">${e.position}</span>
+    </li>`;
+  }).join("");
+  box.innerHTML = `<div class="flex items-center justify-between gap-2">
+      <span class="text-sm font-semibold">★ Your queue</span>
+      <span class="text-[10px] text-slate-500">${ids.length ? `${ids.length} shortlisted` : "empty"}</span>
+    </div>
+    ${head}
+    ${rows ? `<ul class="divide-y divide-slate-800">${rows}</ul>`
+           : `<p class="text-[11px] text-slate-500">Star players on the Stats tab to build a queue — auto-pick takes the top one still available.</p>`}`;
+}
+
 function renderDraft() {
   if (!S.players.length) return;
   const L = S.league;
@@ -2636,9 +2701,21 @@ function renderDraft() {
   $("draft-progress").textContent =
     `Pick ${L.current_pick} of ${totalPicks()} · Round ${info.round} of ${picksPerManager()}` +
     (leaguePhase() > 1 ? ` · Redraft (phase ${leaguePhase()})` : "");
+  const away = me && !me.eliminated ? picksUntilTurn(me.id) : null;
   $("draft-onclock").textContent = myTurn ? "You're on the clock!"
     : `${info.manager.name} is on the clock`
       + (me?.eliminated ? " · 👀 you're spectating" : "");
+  // Your turn should be unmissable; otherwise show how long you've got.
+  const head = $("draft-head");
+  if (head) head.className = "rounded-xl border p-4 " + (myTurn
+    ? "border-wcgold bg-wcred/20 ring-2 ring-wcgold/40" : "border-slate-700 bg-slate-900");
+  $("draft-onclock").className = "text-lg font-bold truncate " + (myTurn ? "text-wcgold" : "");
+  const upnext = $("draft-upnext");
+  if (upnext) {
+    const show = !myTurn && away != null && away > 0;
+    upnext.classList.toggle("hidden", !show);
+    if (show) upnext.textContent = away === 1 ? "You're next" : `${away} picks until your turn`;
+  }
   $("draft-slotline").textContent = needsSummary(managerPicks(info.manager.id));
   $("draft-order").innerHTML = draftOrderManagers().map((m) =>
     `<span class="rounded-full px-2.5 py-1 whitespace-nowrap border ${
@@ -2657,6 +2734,7 @@ function renderDraft() {
         + `DEF ${f.DEF[0]}–${f.DEF[1]}, MID ${f.MID[0]}–${f.MID[1]}, FWD ${f.FWD[0]}–${f.FWD[1]} (${f.starters}-a-side).</span>`;
     } else banner.textContent = "Your pick — any position you still need";
   }
+  renderDraftQueue(me, myTurn);
 
   renderPool();
 
@@ -4227,6 +4305,45 @@ function matchdayCardHtml(me) {
   </div>`;
 }
 
+/* ---------- squad reveal ----------
+   The draft used to just stop and drop everyone on the leaderboard. This is the
+   closing moment: your finished squad, how it's balanced, and a handoff into
+   the season. Shown once per league. */
+function openReveal() {
+  const me = myManager(), body = $("reveal-body");
+  if (!me || !body) return;
+  const mine = managerPicks(me.id);
+  const byPos = { GK: [], DEF: [], MID: [], FWD: [], TEAM: [] };
+  for (const pk of mine) (byPos[pk.position] || byPos.TEAM).push(pk);
+  const counts = ["DEF", "MID", "FWD"].map((g) => `${byPos[g].length}`).join("-");
+  const group = (g) => byPos[g].length ? `<div>
+      <div class="text-[10px] text-slate-500 mb-1">${g}</div>
+      <div class="space-y-1">${byPos[g].map((pk) => `<div class="flex items-center gap-2">
+        ${avatarHtml(pk.player_id, pk.team, "w-6 h-6")}
+        <span class="min-w-0 flex-1 truncate text-sm">${esc(pk.player_name)}</span>
+        <span class="shrink-0 text-[10px] text-slate-500">${esc(pk.team || "")}</span>
+      </div>`).join("")}</div></div>` : "";
+  body.innerHTML = `
+    <div class="text-center">
+      <div class="text-[11px] text-slate-400">Draft complete</div>
+      <div class="text-2xl font-bold">${esc(me.name)}</div>
+      <div class="text-xs text-slate-400">${mine.length} players · ${counts} outfield shape</div>
+    </div>
+    <div class="space-y-2.5">${["GK", "DEF", "MID", "FWD", "TEAM"].map(group).join("")}</div>
+    <p class="text-[11px] text-slate-500 text-center">Set your starting XI before the first deadline — the matchday card on your team page counts it down.</p>`;
+  $("reveal-sheet").classList.remove("hidden");
+  if (S.league?.id) localStorage.setItem("wcf_reveal_" + S.league.id, "1");
+}
+const closeReveal = () => $("reveal-sheet")?.classList.add("hidden");
+
+function maybeSquadReveal() {
+  if (!S.league?.id || !myManager() || S._revealChecked) return;
+  S._revealChecked = true;
+  if (localStorage.getItem("wcf_reveal_" + S.league.id)) return;
+  if (!managerPicks(myManager().id).length) return;
+  openReveal();
+}
+
 /* ---------- round recap (app side) ---------- */
 
 // The most recent completed round for a manager, digested.
@@ -4307,6 +4424,9 @@ const closeRecap = () => $("recap-sheet")?.classList.add("hidden");
 // this is the moment the whole week builds to, so it shouldn't need hunting for.
 function maybeAutoRecap() {
   if (!S.league?.id || !myManager() || S._recapChecked) return;
+  // The squad reveal owns the screen on draft day; don't stack a second sheet
+  // on top of it — the recap will offer itself on the next render instead.
+  if (!$("reveal-sheet")?.classList.contains("hidden")) return;
   S._recapChecked = true;
   const r = myRecap();
   if (!r) return;
@@ -5265,6 +5385,7 @@ function renderBoard() {
   renderBanner();
   const note = $("board-rules-note");
   if (note) note.textContent = boardRulesNote();
+  maybeSquadReveal();
   maybeAutoRecap();
   if (preDraft) {
     $("board-banner").innerHTML = `<div class="flex items-center justify-between gap-2 rounded-xl border border-wcgold/50 bg-wcred/10 px-3 py-2 text-sm">
@@ -8552,6 +8673,8 @@ function wire() {
   $("swap-close").onclick = closeSwap;
   $("chart-close").onclick = closeChartSheet;
   $("recap-close").onclick = closeRecap;
+  $("reveal-close").onclick = closeReveal;
+  $("reveal-sheet").onclick = (e) => { if (e.target.id === "reveal-sheet") closeReveal(); };
   $("recap-sheet").onclick = (e) => { if (e.target.id === "recap-sheet") closeRecap(); };
   $("chart-sheet").onclick = (e) => { if (e.target.id === "chart-sheet") closeChartSheet(); };  // tap backdrop
   $("swap-search").oninput = renderSwapList;
