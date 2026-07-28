@@ -8,7 +8,7 @@
  * which is committed and served from the same origin as the app.
  */
 module.exports = {
-  content: ["./index.html"],
+  content: ["./index.html", "./app.js"],
   theme: {
     extend: {
       colors: {

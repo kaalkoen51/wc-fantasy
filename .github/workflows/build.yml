@@ -8,9 +8,9 @@ name: Build assets
 
 on:
   push:
-    paths: ["index.html", "tailwind.config.js", "src.css", "styles.css", "vendor/**", "package.json", ".github/workflows/css.yml"]
+    paths: ["index.html", "app.js", "tailwind.config.js", "src.css", "styles.css", "vendor/**", "build.js", "_headers", "package.json", ".github/workflows/css.yml"]
   pull_request:
-    paths: ["index.html", "tailwind.config.js", "src.css", "styles.css", "vendor/**", "package.json"]
+    paths: ["index.html", "app.js", "tailwind.config.js", "src.css", "styles.css", "vendor/**", "build.js", "_headers", "package.json"]
   workflow_dispatch:
 
 jobs:
@@ -39,12 +39,9 @@ jobs:
             exit 1
           fi
           echo "vendored Supabase client matches package.json."
-      - name: No third-party assets in the critical path
-        run: |
-          if grep -nE '<(script|link)[^>]+(src|href)="https?://' index.html; then
-            echo "::error::index.html loads an external asset. Vendor it instead."
-            exit 1
-          fi
-          echo "index.html loads only same-origin assets."
+      - name: Assemble the deployable site
+        # build.js fails on external assets or an inline <script>, either of
+        # which would silently defeat the CSP in _headers.
+        run: npm run bundle
       - name: Logic tests
         run: node test_logic.js

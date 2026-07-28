@@ -7,7 +7,8 @@
     "watch:css": "tailwindcss -i src.css -o styles.css --watch",
     "test": "node test_logic.js",
     "vendor:supabase": "cp node_modules/@supabase/supabase-js/dist/umd/supabase.js vendor/supabase.js",
-    "build": "npm run build:css && npm run vendor:supabase"
+    "build": "npm run build:css && npm run vendor:supabase && npm run bundle",
+    "bundle": "node build.js"
   },
   "devDependencies": {
     "@supabase/supabase-js": "2.110.9",
