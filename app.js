@@ -1342,14 +1342,20 @@ function renderLobby() {
   const admin = isAdmin();
   $("lobby-managers").innerHTML = S.managers.map((m) =>
     `<li class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-3 py-2">
+      <span class="shrink-0 inline-flex items-center justify-center rounded-md w-6 h-6 text-[13px]"
+            style="background:${managerColor(m)}22;border:1px solid ${managerColor(m)}66">${managerCrest(m) || "&nbsp;"}</span>
       <span class="flex-1 min-w-0 truncate">${esc(m.name)}${
         m.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}${
         m.is_bot ? ' <span class="text-slate-400 text-xs">🤖 bot</span>' : ""}</span>` +
+    (m.id === me?.id
+      ? '<button data-editcrest="1" class="tap shrink-0 text-xs text-wcgold underline">edit crest</button>' : "") +
     (admin && m.id !== me?.id
       ? `<button data-kick="${esc(m.id)}" title="kick" class="tap shrink-0 text-slate-400 hover:text-wcred">✕</button>` : "") +
     "</li>").join("") || '<li class="text-slate-400">Nobody yet — share the code above.</li>';
   if (admin) $("lobby-managers").querySelectorAll("[data-kick]").forEach((b) =>
     b.onclick = () => kickManager(b.dataset.kick));
+  $("lobby-managers").querySelectorAll("[data-editcrest]").forEach((b) =>
+    b.onclick = openCrestPicker);
   $("lobby-admin").classList.toggle("hidden", !admin);
   $("lobby-wait").classList.toggle("hidden", admin);
   if (admin && document.activeElement !== $("lobby-num-input"))
@@ -1979,11 +1985,17 @@ function renderRosters(containerId) {
   $(containerId).innerHTML = draftOrderManagers().map((m) => `
     <details data-mgr="${m.id}" class="rounded-xl border border-slate-700 bg-slate-900"
              ${open.has(m.id) || (!open.size && m.id === me?.id) ? "open" : ""}>
-      <summary class="px-4 py-3 font-semibold cursor-pointer select-none">${esc(m.name)}${
+      <summary class="px-4 py-3 font-semibold cursor-pointer select-none flex items-center gap-2">
+        <span class="shrink-0 inline-flex items-center justify-center rounded-md w-6 h-6 text-[13px]"
+              style="background:${managerColor(m)}22;border:1px solid ${managerColor(m)}66">${managerCrest(m) || "&nbsp;"}</span>
+        <span>${esc(m.name)}${
         m.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""
-      }${m.draft_position ? ` <span class="text-xs text-slate-400">· draft pos ${m.draft_position}</span>` : ""}</summary>
+      }${m.draft_position ? ` <span class="text-xs text-slate-400">· draft pos ${m.draft_position}</span>` : ""}</span></summary>
       ${containerId === "board-rosters" && m.id === me?.id
-        ? '<div class="px-4 pb-2"><button id="lineup-open" class="w-full bg-slate-800 border border-wcgold/60 text-wcgold rounded-lg py-2 text-sm font-semibold">Pick my team (starters & subs)</button></div>'
+        ? `<div class="px-4 pb-2 flex gap-2">
+             <button id="lineup-open" class="flex-1 bg-slate-800 border border-wcgold/60 text-wcgold rounded-lg py-2 text-sm font-semibold">Pick my team (starters &amp; subs)</button>
+             <button data-editcrest="1" class="shrink-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm" title="Edit your crest and colour">🎨</button>
+           </div>`
         : ""}
       <div class="px-4 pb-3 grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-sm">
         ${(() => {
@@ -2018,6 +2030,7 @@ function renderRosters(containerId) {
     openSwap(S.picks.find((pk) => pk.id === b.dataset.swap)));
   const lineupBtn = $(containerId).querySelector("#lineup-open");
   if (lineupBtn) lineupBtn.onclick = openLineup;
+  $(containerId).querySelectorAll("[data-editcrest]").forEach((b) => b.onclick = openCrestPicker);
 }
 
 /* Your shortlist, pinned inside the draft room. Managers fear the clock most
@@ -3847,32 +3860,67 @@ function matchdayCardHtml(me) {
   </div>`;
 }
 
-// Pick your crest and accent — cheap, and it makes a league feel like yours.
-function openCrestPicker() {
-  const me = myManager();
-  if (!me) return;
-  const body = $("recap-body");
+/* Pick your crest and accent. Editable at any time — before the draft, mid
+   season, whenever — and the sheet stays open so you can set both without
+   reopening it. Changes apply immediately and persist in the background; if
+   the write fails the value is rolled back rather than silently lost. */
+function renderCrestPicker() {
+  const me = myManager(), body = $("recap-body");
+  if (!me || !body) return;
   body.innerHTML = `
-    <div class="text-center"><div class="eyebrow">Your identity</div>
-      <div class="text-xl font-bold mt-1">${esc(me.name)}</div></div>
-    <div><div class="eyebrow mb-1">Crest</div>
-      <div class="grid grid-cols-6 gap-1.5">${CRESTS.map((c) =>
-        `<button data-crest="${c}" class="rounded-lg border ${me.crest === c
-          ? "border-wcgold bg-wcgold/10" : "border-slate-700 bg-slate-800"} py-2 text-lg">${c}</button>`).join("")}</div></div>
-    <div><div class="eyebrow mb-1">Colour</div>
-      <div class="grid grid-cols-8 gap-1.5">${MGR_COLORS.map((c) =>
-        `<button data-color="${c}" class="rounded-lg h-8 border-2 ${managerColor(me) === c
-          ? "border-white" : "border-transparent"}" style="background:${c}"></button>`).join("")}</div></div>`;
-  $("recap-sheet").classList.remove("hidden");
-  const save = async (patch) => {
-    Object.assign(me, patch);
+    <div class="text-center">
+      <div class="eyebrow">Your identity</div>
+      <div class="mt-2 inline-flex items-center gap-2">
+        <span class="inline-flex items-center justify-center rounded-lg w-11 h-11 text-2xl"
+              style="background:${managerColor(me)}22;border:1px solid ${managerColor(me)}88">${managerCrest(me) || "&nbsp;"}</span>
+        <span class="text-xl font-bold">${esc(me.name)}</span>
+      </div>
+    </div>
+    <div>
+      <div class="eyebrow mb-1.5">Crest</div>
+      <div class="grid grid-cols-6 gap-1.5">
+        ${CRESTS.map((c) => `<button data-crest="${c}" class="rounded-lg border py-2 text-lg ${
+          me.crest === c ? "border-wcgold bg-wcgold/10" : "border-slate-700 bg-slate-800"}">${c}</button>`).join("")}
+        <button data-crest="" class="col-span-6 rounded-lg border border-slate-700 bg-slate-800 py-1.5 text-xs text-slate-400">No crest</button>
+      </div>
+    </div>
+    <div>
+      <div class="eyebrow mb-1.5">Colour</div>
+      <div class="grid grid-cols-8 gap-1.5">
+        ${MGR_COLORS.map((c) => `<button data-color="${c}" class="rounded-lg h-9 border-2 ${
+          managerColor(me) === c ? "border-white" : "border-transparent"}" style="background:${c}"></button>`).join("")}
+      </div>
+      <button data-color="" class="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-800 py-1.5 text-xs text-slate-400">Use my default colour</button>
+    </div>
+    <p id="crest-note" class="text-[11px] text-slate-400 text-center min-h-[1em]"></p>`;
+
+  const apply = async (patch) => {
+    const before = { crest: me.crest ?? null, color: me.color ?? null };
+    Object.assign(me, patch);            // optimistic: the sheet repaints at once
+    renderCrestPicker();
+    renderBoard();
     const { error } = await S.sb.from("managers").update(patch).eq("id", me.id);
-    if (error && /crest|color|column|schema cache/.test(error.message))
-      return toast("Crests need a schema update — run schema.sql.");
-    closeRecap(); renderBoard(); scheduleRefetch();
+    if (error) {
+      Object.assign(me, before);         // put it back rather than lie about it
+      renderCrestPicker();
+      renderBoard();
+      const note = document.getElementById("crest-note");
+      if (note) note.textContent = /crest|color|column|schema cache/.test(error.message)
+        ? "Crests need a schema update — run schema.sql." : error.message;
+      return;
+    }
+    scheduleRefetch();
   };
-  body.querySelectorAll("[data-crest]").forEach((b) => b.onclick = () => save({ crest: b.dataset.crest }));
-  body.querySelectorAll("[data-color]").forEach((b) => b.onclick = () => save({ color: b.dataset.color }));
+  body.querySelectorAll("[data-crest]").forEach((b) =>
+    b.onclick = () => apply({ crest: b.dataset.crest || null }));
+  body.querySelectorAll("[data-color]").forEach((b) =>
+    b.onclick = () => apply({ color: b.dataset.color || null }));
+}
+
+function openCrestPicker() {
+  if (!myManager()) return;
+  renderCrestPicker();
+  $("recap-sheet").classList.remove("hidden");
 }
 
 /* ---------- squad reveal ----------
