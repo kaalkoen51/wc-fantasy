@@ -1,0 +1,34 @@
+#         Security headers (Cloudflare Pages reads this file from the build
+#         output directory). GitHub Pages cannot set response headers at all,
+#         which is one of the reasons for moving.
+#
+# The Content-Security-Policy below is only writable because the app now loads
+# zero third-party assets and has no inline <script> or inline event handlers:
+# script-src can therefore be 'self' with no escape hatches, which is the
+# directive that actually stops cross-site scripting. This app renders a lot of
+# user-supplied text (manager names, chat messages, league names) through
+# innerHTML; it escapes that text, but CSP is what turns a single missed escape
+# from a stolen-account bug into a blocked console error.
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://media.api-sports.io data:; font-src 'self'; connect-src 'self' https://gpdyemrgulhdnsmmadgs.supabase.co wss://gpdyemrgulhdnsmmadgs.supabase.co https://v3.football.api-sports.io; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+  Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=()
+  Cross-Origin-Opener-Policy: same-origin-allow-popups
+
+# Long-lived, content-addressed assets. app.js and styles.css are rebuilt on
+# every deploy, so revalidate them rather than caching hard.
+/vendor/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/*.json
+  Cache-Control: public, max-age=300
+
+# Notes on the two deliberate relaxations:
+#   style-src 'unsafe-inline'  — the app sets style attributes (the matchday
+#     ticker duration, the header rule). Inline *style* cannot execute script,
+#     so this is a much smaller concession than inline script would be.
+#   COOP same-origin-allow-popups — required for the Google sign-in popup flow.
