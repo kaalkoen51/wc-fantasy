@@ -1321,7 +1321,7 @@ function renderLobby() {
         m.is_bot ? ' <span class="text-slate-400 text-xs">🤖 bot</span>' : ""}</span>` +
     (admin && m.id !== me?.id
       ? `<button data-kick="${esc(m.id)}" title="kick" class="tap shrink-0 text-slate-400 hover:text-wcred">✕</button>` : "") +
-    "</li>").join("") || '<li class="text-slate-400">No one yet…</li>';
+    "</li>").join("") || '<li class="text-slate-400">Nobody yet — share the code above.</li>';
   if (admin) $("lobby-managers").querySelectorAll("[data-kick]").forEach((b) =>
     b.onclick = () => kickManager(b.dataset.kick));
   $("lobby-admin").classList.toggle("hidden", !admin);
@@ -2066,7 +2066,7 @@ function renderDraft() {
   $("draft-recent").innerHTML = [...S.picks].slice(-5).reverse().map((pk) => {
     const m = S.managers.find((x) => x.id === pk.manager_id);
     return `<li><span class="text-slate-400">#${pk.pick_number % 1000}</span> ${esc(m?.name ?? "?")}: <b>${esc(pk.player_name)}</b> <span class="text-xs text-slate-400">${pk.slot}</span></li>`;
-  }).join("") || '<li class="text-slate-400">No picks yet.</li>';
+  }).join("") || '<li class="text-slate-400">No picks yet — the board is wide open.</li>';
 
   renderRosters("draft-rosters");
   $("draft-force").classList.toggle("hidden", !isAdmin() || myTurn);
@@ -3611,7 +3611,8 @@ function matchdayCardHtml(me) {
     ? `<div class="mt-1">
          <div class="text-xs text-slate-400">${esc(p.deadlineLabel)}</div>
          <div id="md-countdown" data-at="${p.deadlineAt}"
-              class="text-2xl font-bold text-wcgold tabular-nums">${fmtCountdown(p.deadlineAt - Date.now())}</div>
+              class="text-2xl font-bold text-wcgold scoreboard${
+                p.deadlineAt - Date.now() < 3600e3 ? " urgent" : ""}">${fmtCountdown(p.deadlineAt - Date.now())}</div>
          <div class="text-xs text-slate-400">${esc(fmtWhen(p.deadlineAt))}</div>
        </div>` : "";
   const todo = p.todo.length
@@ -3621,7 +3622,7 @@ function matchdayCardHtml(me) {
     ? `<button id="md-cta" data-act="${p.cta.act}" class="mt-3 w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2.5 text-sm font-semibold">${esc(p.cta.label)}</button>`
     : "";
   return `<div class="rounded-xl border border-wcgold/60 bg-wcred/10 p-4">
-    <div class="flex items-center gap-1 text-[11px] flex-wrap">${strip}</div>
+    <div class="flex items-center gap-1 flex-wrap eyebrow">${strip}</div>
     <div class="mt-2 flex items-baseline justify-between gap-2">
       <div class="font-semibold">${esc(p.title)}</div>
       ${p.matchweek ? `<div class="text-xs text-slate-400 shrink-0">Matchweek ${esc(p.matchweek)}</div>` : ""}
@@ -3727,7 +3728,7 @@ function openRecap() {
     body.innerHTML = `
       <div class="text-center">
         <div class="text-xs text-slate-400">Round ${r.n} complete</div>
-        <div class="text-4xl font-bold text-wcgold tabular-nums">${r.score}</div>
+        <div class="text-4xl font-bold text-wcgold scoreboard">${r.score}</div>
         <div class="text-xs text-slate-400">points</div>
       </div>
       ${res}
@@ -3768,6 +3769,7 @@ function tickMatchday() {
   if (!at) return;
   const left = at - Date.now();
   el.textContent = fmtCountdown(left);
+  el.classList.toggle("urgent", left > 0 && left < 3600e3);
   if (left <= 0) scheduleRefetch();   // deadline passed → the stage has changed
 }
 
@@ -3796,7 +3798,7 @@ function renderHomeTab() {
         <div class="text-xl font-bold">${esc(me.name)}</div>
       </div>
       <div class="text-right">
-        <div class="text-2xl font-bold text-wcgold">${myScore?.total ?? 0} pts</div>
+        <div class="text-2xl font-bold text-wcgold scoreboard">${myScore?.total ?? 0} pts</div>
         <div class="text-xs text-slate-400">#${rank} of ${scores.length}</div>
       </div>
     </div>
@@ -4708,6 +4710,11 @@ function renderBoard() {
   if (preDraft && S.boardTab !== "stats") S.boardTab = "stats";
   setBoardTab(S.boardTab || "home");
   renderBanner();
+  // The fixture ticker costs ~200px at the top of the screen. It's context for
+  // your team and the table; on Players/Activity it just pushes the real
+  // content below the fold, so show it only where it earns its place.
+  const bannerTabs = ["home", "lb", "bracket"];
+  $("board-banner").classList.toggle("hidden", !bannerTabs.includes(S.boardTab));
   const note = $("board-rules-note");
   if (note) note.textContent = boardRulesNote();
   maybeSquadReveal();
