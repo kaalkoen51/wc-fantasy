@@ -9,7 +9,11 @@
      render unstyled because a third party is slow. Palette lives in
      tailwind.config.js. -->
 <link rel="stylesheet" href="styles.css">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- Supabase client, vendored and pinned to 2.110.9 (npm run vendor:supabase).
+     Served from our own origin so a third-party CDN outage can't take the app
+     down, and so a new upstream release can't land in users' browsers
+     unannounced — upgrades are a deliberate, reviewable commit. -->
+<script src="vendor/supabase.js"></script>
 <style>
   /* Matchday banner ticker: two identical halves scroll -50% for a
      seamless loop; duration is set per-content from JS. */

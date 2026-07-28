@@ -1,4 +1,4 @@
-name: CSS build
+name: Build assets
 
 # styles.css is generated from the classes used in index.html, and it is what
 # GitHub Pages actually serves. The failure mode this guards against is silent:
@@ -8,9 +8,9 @@ name: CSS build
 
 on:
   push:
-    paths: ["index.html", "tailwind.config.js", "src.css", "styles.css", ".github/workflows/css.yml"]
+    paths: ["index.html", "tailwind.config.js", "src.css", "styles.css", "vendor/**", "package.json", ".github/workflows/css.yml"]
   pull_request:
-    paths: ["index.html", "tailwind.config.js", "src.css", "styles.css"]
+    paths: ["index.html", "tailwind.config.js", "src.css", "styles.css", "vendor/**", "package.json"]
   workflow_dispatch:
 
 jobs:
@@ -31,5 +31,20 @@ jobs:
             exit 1
           fi
           echo "styles.css is up to date."
+      - run: npm run vendor:supabase
+      - name: vendor/supabase.js must match the pinned version
+        run: |
+          if ! git diff --quiet -- vendor/supabase.js; then
+            echo "::error::vendor/supabase.js differs from the pinned package. Run 'npm run vendor:supabase' and commit."
+            exit 1
+          fi
+          echo "vendored Supabase client matches package.json."
+      - name: No third-party assets in the critical path
+        run: |
+          if grep -nE '<(script|link)[^>]+(src|href)="https?://' index.html; then
+            echo "::error::index.html loads an external asset. Vendor it instead."
+            exit 1
+          fi
+          echo "index.html loads only same-origin assets."
       - name: Logic tests
         run: node test_logic.js
