@@ -1916,13 +1916,13 @@ function renderPool(force) {
   const groups = GROUPS.filter((g) => posQuota()[g] > 0);
   const chips = ["ALL", ...groups];
   $("pool-chips").innerHTML = chips.map((c) =>
-    `<button data-chip="${c}" class="rounded-full px-3 py-1 border ${
+    `<button data-chip="${c}" class="shrink-0 rounded-full px-3 py-1 border ${
       S.poolFilter === c ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"
     }">${c}${c !== "ALL" && myTurn ? ` ${quotaLeft(onClockPicks, c)}` : ""}</button>`).join("")
-    + `<button data-slfilter class="rounded-full px-3 py-1 border ${
+    + `<button data-slfilter class="shrink-0 rounded-full px-3 py-1 border ${
       S.poolShortlistOnly ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400"
     }">★ Queue${myShortlist().length ? ` ${myShortlist().length}` : ""}</button>`
-    + `<button data-plfilter class="rounded-full px-3 py-1 border ${
+    + `<button data-plfilter class="shrink-0 rounded-full px-3 py-1 border ${
       S.poolPlannerOnly ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"
     }">🗺 Plan</button>`;
   $("pool-chips").querySelectorAll("[data-chip]").forEach((b) =>
@@ -2099,7 +2099,7 @@ function renderRosters(containerId, force) {
 /* A pick landing should be felt, not sat through: a small card fades in under
    the header for ~1.5s and never takes a click. Driven from renderDraft, which
    already re-runs on every realtime update. */
-let _lastPickSeen = null;
+let _lastPickSeen = null, _pickJustLanded = false;
 function flashPick(pk) {
   document.querySelector(".pick-flash")?.remove();
   const m = S.managers.find((x) => x.id === pk.manager_id);
@@ -2119,11 +2119,13 @@ function flashPick(pk) {
 // Announce only genuinely new picks — not the backlog on first render, and not
 // your own pick (you just made it, you know).
 function announceNewPicks() {
+  _pickJustLanded = false;
   const last = S.picks.reduce((a, b) => (a && a.pick_number > b.pick_number ? a : b), null);
   if (!last) return;
   if (_lastPickSeen === null) { _lastPickSeen = last.pick_number; return; }
   if (last.pick_number <= _lastPickSeen) return;
   _lastPickSeen = last.pick_number;
+  _pickJustLanded = true;
   flashPick(last);
 }
 
@@ -2251,6 +2253,7 @@ function renderDraftQueue(me, myTurn) {
       ${avatarHtml(r.pid, e.team, "w-6 h-6")}
       <span class="min-w-0 flex-1 truncate text-sm">${esc(e.name)}</span>
       <span class="shrink-0 text-xs pos-${e.position} rounded px-1.5 py-0.5">${e.position}</span>
+      ${myTurn ? `<button data-qpick="${esc(r.pid)}" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-2.5 text-xs font-bold">Pick</button>` : ""}
       ${movable > 1 ? `<button data-qup="${esc(r.pid)}" class="tap shrink-0 text-slate-400 ${first ? "opacity-30" : ""}" ${first ? "disabled" : ""} title="Move up">▲</button>
       <button data-qdn="${esc(r.pid)}" class="tap shrink-0 text-slate-400 ${last ? "opacity-30" : ""}" ${last ? "disabled" : ""} title="Move down">▼</button>` : ""}
     </li>`;
@@ -2275,6 +2278,15 @@ function renderDraftQueue(me, myTurn) {
     renderDraftQueue(me, myTurn);
   };
 
+  box.querySelectorAll("[data-qpick]").forEach((b) => b.onclick = () => {
+    const entry = entryForId(b.dataset.qpick);
+    if (!entry) return;
+    const info = pickInfo(S.league.current_pick);
+    const slot = slotForNewPick(managerPicks(info.manager.id), entry.position);
+    if (confirm(`Pick ${entry.name} (${entry.position}, ${entry.team})? They'll slot in as ${slot}.`))
+      makePick(entry, { ...info, pickNumber: S.league.current_pick })
+        .catch((er) => toast(er.message));
+  });
   box.querySelectorAll("[data-qup]").forEach((b) =>
     b.onclick = () => { moveShortlist(b.dataset.qup, -1); renderDraftQueue(myManager(), myTurn); markQueueMoved(b.dataset.qup); });
   box.querySelectorAll("[data-qdn]").forEach((b) =>
@@ -2347,7 +2359,21 @@ function renderDraft() {
   announceNewPicks();
   $("draft-recent").innerHTML = [...S.picks].slice(-5).reverse().map((pk, i) => {
     const m = S.managers.find((x) => x.id === pk.manager_id);
-    return `<li class="rounded px-1 ${i === 0 ? "just-landed" : ""}"><span class="text-slate-400">#${pk.pick_number % 1000}</span> ${esc(m?.name ?? "?")}: <b>${esc(pk.player_name)}</b> <span class="text-xs text-slate-400">${pk.slot}</span></li>`;
+    // Only the newest row animates, and only when a pick actually landed —
+    // it used to flash on every re-render, including a queue reorder.
+    return `<li class="flex items-center gap-2 rounded px-1 py-1 ${
+        i === 0 && _pickJustLanded ? "just-landed" : ""}">
+      <span class="w-8 shrink-0 text-xs font-mono text-slate-400">#${pk.pick_number % 1000}</span>
+      ${avatarHtml(pk.player_id, pk.team, "w-6 h-6")}
+      <span class="min-w-0 flex-1 leading-tight">
+        <span class="block truncate">${esc(pk.player_name)}</span>
+        <span class="block truncate text-xs text-slate-400">${esc(pk.team || "")}</span>
+      </span>
+      <span class="shrink-0 text-xs pos-${pk.position} rounded px-1.5 py-0.5">${pk.position}</span>
+      <span class="shrink-0 inline-flex items-center justify-center rounded w-[18px] h-[18px] text-xs font-bold leading-none"
+            style="background:${managerColor(m)}33;border:1px solid ${managerColor(m)}99"
+            title="${esc(m?.name ?? "?")}">${managerMark(m)}</span>
+    </li>`;
   }).join("") || '<li class="text-slate-400">No picks yet — the board is wide open.</li>';
 
   renderRosters("draft-rosters");   // memoised on the picks/lineup signature
