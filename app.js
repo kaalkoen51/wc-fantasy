@@ -1532,34 +1532,38 @@ const isShortlisted = (pid) => myShortlist().includes(pid);
 
 // Persist a new shortlist (optimistic, reverts on failure). Shared by the star
 // toggle and the Clean/Clear buttons. Returns true on success.
-async function setShortlist(next) {
+/* Your shortlist is private to you: nobody else's screen depends on it, so
+   there is nothing to refetch and nothing to wait for. Apply it locally and let
+   the write happen in the background — this used to block on a round trip and
+   then reload all nine tables, which is why reordering felt broken. */
+function setShortlist(next) {
   const me = myManager();
   if (!me) { toast("Join as a manager to shortlist players."); return false; }
   const cur = myShortlist();
-  me.shortlist = next;                         // optimistic, so the UI updates now
-  const { error } = await S.sb.from("managers").update({ shortlist: next }).eq("id", me.id);
-  if (error) {
-    me.shortlist = cur;                        // revert on failure
+  me.shortlist = next;
+  S.sb.from("managers").update({ shortlist: next }).eq("id", me.id).then(({ error }) => {
+    if (!error) return;
+    me.shortlist = cur;                        // put it back and say so
+    renderPredraftShortlist();
+    if (S.league?.current_pick) renderDraftQueue(myManager(), false);
     toast(/shortlist/.test(error.message)
       ? "Shortlist needs a schema update — run schema.sql." : error.message);
-    return false;
-  }
-  scheduleRefetch();
+  }, () => {});
   return true;
 }
 
 // Move a shortlisted player up or down the queue. Auto-pick takes the top
 // available entry, so this is the control that decides what you get.
-async function moveShortlist(pid, dir) {
+function moveShortlist(pid, dir) {
   const cur = myShortlist().slice();
   const i = cur.indexOf(pid);
   const j = i + dir;
   if (i < 0 || j < 0 || j >= cur.length) return;
   [cur[i], cur[j]] = [cur[j], cur[i]];
-  await setShortlist(cur);
+  setShortlist(cur);
 }
 
-async function toggleShortlist(pid) {
+function toggleShortlist(pid) {
   const cur = myShortlist();
   const next = cur.includes(pid) ? cur.filter((x) => x !== pid) : [...cur, pid];
   return setShortlist(next);
@@ -1887,7 +1891,15 @@ function tickTimer() {
   }
 }
 
-function renderPool() {
+let _poolSig = null;
+function renderPool(force) {
+  // Cheap signature of everything the pool's contents depend on.
+  const sig = [S.picks.length, S.league.current_pick, S.poolFilter, S.poolSearch,
+    S.poolSort, !!S.poolShortlistOnly, !!S.poolPlannerOnly,
+    document.getElementById("pool-team")?.value || "",
+    myShortlist().length].join("|");
+  if (!force && sig === _poolSig) return;
+  _poolSig = sig;
   const info = pickInfo(S.league.current_pick);
   const me = myManager();
   const myTurn = !!me && info.manager.id === me.id;
@@ -1906,12 +1918,12 @@ function renderPool() {
       S.poolPlannerOnly ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"
     }">🗺 planner</button>`;
   $("pool-chips").querySelectorAll("[data-chip]").forEach((b) =>
-    b.onclick = () => { S.poolFilter = b.dataset.chip; renderPool(); });
+    b.onclick = () => { S.poolFilter = b.dataset.chip; renderPool(true); });
   $("pool-chips").querySelector("[data-slfilter]").onclick = () => {
-    S.poolShortlistOnly = !S.poolShortlistOnly; renderPool();
+    S.poolShortlistOnly = !S.poolShortlistOnly; renderPool(true);
   };
   $("pool-chips").querySelector("[data-plfilter]").onclick = () => {
-    S.poolPlannerOnly = !S.poolPlannerOnly; renderPool();
+    S.poolPlannerOnly = !S.poolPlannerOnly; renderPool(true);
   };
 
   // Team dropdown, rebuilt each render (preserving the selection) so knocked-out
@@ -2001,7 +2013,12 @@ function renderPool() {
   wireStars($("pool-list"), renderPool);
 }
 
-function renderRosters(containerId) {
+const _rosterSig = {};
+function renderRosters(containerId, force) {
+  const sig = [S.picks.length, S.league?.current_pick, tradingOpen(),
+    S.managers.length, S.picks.map((p) => p.is_sub ? 1 : 0).join("")].join("|");
+  if (!force && _rosterSig[containerId] === sig) return;
+  _rosterSig[containerId] = sig;
   const open = new Set([...document.querySelectorAll(`#${containerId} details[open]`)]
     .map((d) => d.dataset.mgr));
   const me = myManager();
@@ -2128,11 +2145,11 @@ function renderPredraftShortlist() {
     ${rows ? `<ul class="divide-y divide-slate-800">${rows}</ul>`
            : '<p class="text-xs text-slate-400">Nothing yet — tap the ☆ beside a player below.</p>'}`;
   box.querySelectorAll("[data-slup]").forEach((b) =>
-    b.onclick = () => moveShortlist(b.dataset.slup, -1).then(renderPredraftShortlist));
+    b.onclick = () => { moveShortlist(b.dataset.slup, -1); renderPredraftShortlist(); });
   box.querySelectorAll("[data-sldn]").forEach((b) =>
-    b.onclick = () => moveShortlist(b.dataset.sldn, 1).then(renderPredraftShortlist));
+    b.onclick = () => { moveShortlist(b.dataset.sldn, 1); renderPredraftShortlist(); });
   box.querySelectorAll("[data-slrm]").forEach((b) =>
-    b.onclick = () => toggleShortlist(b.dataset.slrm).then(renderPredraftShortlist));
+    b.onclick = () => { toggleShortlist(b.dataset.slrm); renderPredraftShortlist(); });
 }
 
 /* What the queue should show, as data. Pure so the rules can be tested:
@@ -2228,9 +2245,9 @@ function renderDraftQueue(me, myTurn) {
         hiddenNoFit === 1 ? "player doesn't" : "players don't"} fit your remaining slots.</p>` : ""}`;
 
   box.querySelectorAll("[data-qup]").forEach((b) =>
-    b.onclick = () => moveShortlist(b.dataset.qup, -1).catch((e) => toast(e.message)));
+    b.onclick = () => { moveShortlist(b.dataset.qup, -1); renderDraftQueue(myManager(), myTurn); });
   box.querySelectorAll("[data-qdn]").forEach((b) =>
-    b.onclick = () => moveShortlist(b.dataset.qdn, 1).catch((e) => toast(e.message)));
+    b.onclick = () => { moveShortlist(b.dataset.qdn, 1); renderDraftQueue(myManager(), myTurn); });
 }
 
 function renderDraft() {
@@ -2278,7 +2295,7 @@ function renderDraft() {
   }
   renderDraftQueue(me, myTurn);
 
-  renderPool();
+  renderPool();          // memoised: rebuilds only when the pool's inputs change
 
   announceNewPicks();
   $("draft-recent").innerHTML = [...S.picks].slice(-5).reverse().map((pk, i) => {
@@ -2286,7 +2303,7 @@ function renderDraft() {
     return `<li class="rounded px-1 ${i === 0 ? "just-landed" : ""}"><span class="text-slate-400">#${pk.pick_number % 1000}</span> ${esc(m?.name ?? "?")}: <b>${esc(pk.player_name)}</b> <span class="text-xs text-slate-400">${pk.slot}</span></li>`;
   }).join("") || '<li class="text-slate-400">No picks yet — the board is wide open.</li>';
 
-  renderRosters("draft-rosters");
+  renderRosters("draft-rosters");   // memoised on the picks/lineup signature
   $("draft-force").classList.toggle("hidden", !isAdmin() || myTurn);
   $("draft-timerctl").classList.toggle("hidden", !isAdmin());
   if (isAdmin() && document.activeElement !== $("draft-timer-input"))
@@ -8672,7 +8689,16 @@ async function loadMyLeagues() {
   });
 }
 
+// Publish the sticky header's real height so anything pinned beneath it (the
+// draft clock) sits flush rather than behind it.
+function syncHeaderHeight() {
+  const h = document.querySelector("header")?.offsetHeight;
+  if (h) document.documentElement.style.setProperty("--hdr-h", h + "px");
+}
+
 function wire() {
+  syncHeaderHeight();
+  window.addEventListener("resize", syncHeaderHeight);
   $("cfg-save").onclick = () => {
     const url = $("cfg-url").value.trim().replace(/\/$/, "");
     const key = $("cfg-key").value.trim();
@@ -8717,9 +8743,9 @@ function wire() {
     toast(`League now needs ${n} managers.`);
   };
   $("lobby-join-go").onclick = () => joinFromLobby().catch((e) => toast(e.message));
-  $("pool-search").oninput = (e) => { S.poolSearch = e.target.value; renderPool(); };
-  $("pool-team").onchange = () => renderPool();
-  $("pool-sort").onchange = (e) => { S.poolSort = e.target.value; renderPool(); };
+  $("pool-search").oninput = (e) => { S.poolSearch = e.target.value; renderPool(true); };
+  $("pool-team").onchange = () => renderPool(true);
+  $("pool-sort").onchange = (e) => { S.poolSort = e.target.value; renderPool(true); };
   $("stats-search").oninput = (e) => { S.statsSearch = e.target.value; renderStatsTab(); };
   $("stats-sort").onchange = (e) => { S.statsSort = e.target.value; renderStatsTab(); };
   $("stats-round").onchange = (e) => { S.statsRound = Number(e.target.value); renderStatsTab(); };

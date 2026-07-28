@@ -109,6 +109,11 @@
     button { min-width: 38px; }
   }
 
+  /* The clock and whose-pick-it-is must stay on screen while you scroll the
+     player list. The offset is the real header height, measured at runtime —
+     a hardcoded guess left it tucked behind the header on some devices. */
+  .draft-sticky { position: sticky; top: var(--hdr-h, 3.5rem); }
+
   /* Keep the bottom bar clear of the iOS home indicator. */
   #bottom-nav { padding-bottom: env(safe-area-inset-bottom); }
   .tap { min-width: 40px; min-height: 40px; display: inline-flex;
@@ -494,7 +499,7 @@
 
   <!-- Draft room -->
   <section data-view="draft" class="hidden space-y-4">
-    <div id="draft-head" class="sticky top-[3.25rem] z-10 rounded-xl border border-slate-700 bg-slate-900 p-4 shadow-lg shadow-slate-950/60">
+    <div id="draft-head" class="draft-sticky z-10 rounded-xl border border-slate-700 bg-slate-900 p-4 shadow-lg shadow-slate-950/60">
       <div class="flex items-center justify-between gap-3">
         <div class="min-w-0">
           <div id="draft-progress" class="text-xs text-slate-400"></div>
