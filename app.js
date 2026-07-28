@@ -5766,30 +5766,46 @@ function playerDetailHtml(p, opts = {}) {
       <span class="text-slate-500">·</span><span>${per90pts} pts/90</span>${
         dots ? `<span class="text-slate-500">·</span><span class="flex items-center gap-1">Form ${dots}</span>` : ""}
     </div>` : "";
+  /* The card is three bands, in order of what you came here for: who this is,
+     what they've scored, and the detail. Previously the close button, the score
+     and the shortlist star were stacked in one right-hand column, which read as
+     three unrelated controls with the number floating between them. The close
+     button now sits out of the flow entirely, the score owns the right of the
+     identity band, and the shortlist becomes a labelled action beside the
+     season line rather than a lone glyph. */
+  const shortlisted = isShortlisted(p.player_id);
   return `
-    <div class="flex items-start gap-2">
-      ${avatarHtml(p.player_id, p.team, "w-12 h-12")}
-      <div class="min-w-0 flex-1">
-        <!-- The name wraps rather than truncating: this is a detail sheet, and
-             the one thing it must never cut off is who you're looking at. The
-             chips move to their own line so a suspension can't be clipped. -->
-        <div class="font-bold leading-tight break-words">${esc(p.name)}</div>
-        <div class="flex items-center gap-1.5 flex-wrap mt-1">
-          <span class="pos-${p.position} rounded px-1.5 py-0.5 text-xs font-semibold">${p.position}</span>
-          ${availBadges(p.player_id)}
+    <div class="relative">
+      ${opts.closeId ? `<button id="${opts.closeId}" aria-label="Close"
+        class="absolute -top-1 -right-1 tap text-slate-400 hover:text-slate-200">✕</button>` : ""}
+      <div class="flex items-center gap-3 pr-8">
+        ${avatarHtml(p.player_id, p.team, "w-14 h-14")}
+        <div class="min-w-0 flex-1">
+          <div class="font-bold text-lg leading-tight break-words">${esc(p.name)}</div>
+          <div class="flex items-center gap-1.5 flex-wrap mt-1 text-xs text-slate-400">
+            <span class="pos-${p.position} rounded px-1.5 py-0.5 font-semibold">${p.position}</span>
+            ${availBadges(p.player_id)}
+            <span>${esc(p.team)}</span>
+          </div>
+          <div class="text-xs text-slate-400 mt-0.5">${
+            owner ? `👤 ${esc(owner)}` : "free agent"}</div>
         </div>
-        <div class="text-xs text-slate-400 mt-1">${esc(p.team)}</div>
-        <div class="text-xs text-slate-400">${
-          owner ? "👤 drafted by " + esc(owner) : "free agent"}</div>
-      </div>
-      <div class="shrink-0 flex flex-col items-end gap-1">
-        ${opts.closeId ? `<button id="${opts.closeId}" class="text-slate-400">✕</button>` : ""}
-        <span class="text-2xl font-bold text-wcgold scoreboard leading-none">${total}</span>
-        ${starHtml(p.player_id)}
+        <div class="shrink-0 text-right">
+          <div class="text-3xl font-bold text-wcgold scoreboard leading-none">${total}</div>
+          <div class="eyebrow mt-1">pts</div>
+        </div>
       </div>
     </div>
+    <div class="flex items-center justify-between gap-2 border-t border-slate-800 pt-2.5">
+      <div class="min-w-0 text-xs text-slate-400">${
+        appRows.length ? `${appRows.length} app${appRows.length === 1 ? "" : "s"} · ${mins}′ · ${per90pts} pts/90${
+          dots ? "" : ""}` : "No appearances yet"}</div>
+      <button data-star="${esc(p.player_id)}" class="shrink-0 rounded-lg border px-2.5 py-1 text-xs font-semibold ${
+        shortlisted ? "border-wcgold/60 text-wcgold" : "border-slate-700 text-slate-400"}">${
+        shortlisted ? "★ Shortlisted" : "☆ Shortlist"}</button>
+    </div>
+    ${dots ? `<div class="flex items-center gap-1.5 text-xs text-slate-400"><span class="eyebrow">Form</span>${dots}</div>` : ""}
     ${fxLine}
-    ${statLine}
     ${breakdown.length ? `<table class="w-full text-xs"><tbody>
       ${breakdown.map((r) => `<tr class="border-b border-slate-800">
         <td class="py-1 text-slate-400">${r.label}</td>
