@@ -1013,12 +1013,15 @@ const teamCodeFrom = (name, code) =>
 
 // One API squad player → the app's player record. player_id = "api_<id>" so
 // stats match exactly by id later (no name/shirt guessing).
-function parseSquadPlayer(ap, teamName, teamCode) {
+function parseSquadPlayer(ap, teamName, teamCode, teamLogo) {
   return {
     player_id: "api_" + ap.id, api_id: ap.id,
     name: ap.name, position: apiPosToSlot(ap.position),
     team: teamName, team_code: teamCode,
     number: ap.number ?? null, photo: ap.photo || null,
+    // The team's API id, so club crests resolve without a separate lookup
+    // table (stored per player because the pool's `teams` is just names).
+    team_logo: teamLogo ?? null,
   };
 }
 // One API fixture → the app's fixture record (same shape as fixtures.json).
@@ -1046,7 +1049,7 @@ async function fetchCompetitionPool(key, apiLeagueId, season, onProgress) {
     onProgress && onProgress(++done, teams.length, teamName);
     const squads = await apiFootball(key, "players/squads", { team: t.team.id });
     for (const ap of (squads[0]?.players || [])) {
-      const p = parseSquadPlayer(ap, teamName, code);
+      const p = parseSquadPlayer(ap, teamName, code, t.team.id);
       if (!byId[p.player_id]) byId[p.player_id] = p;
     }
   }
@@ -5097,6 +5100,19 @@ function availText(pid) {
   return bits.length ? " · " + bits.join(" ") : "";
 }
 
+// Team name → API team id, from the pool's players (memoized on S.players
+// identity). Lets club crests resolve for API competitions, where photos.json
+// has no entries. null for the legacy WC pool (no team_logo on those players).
+let _logoMap = null, _logoMapFor = null;
+function teamLogoId(team) {
+  if (_logoMapFor !== S.players) {
+    _logoMapFor = S.players;
+    _logoMap = {};
+    for (const p of S.players || []) if (p.team_logo && !_logoMap[p.team]) _logoMap[p.team] = p.team_logo;
+  }
+  return _logoMap[team] ?? null;
+}
+
 // Player faces / team crests. API-Football competitions carry each player's
 // photo URL (and an api_<id> id) in the shared pool, so use that directly;
 // legacy WC-2026 players resolve via the optional static photos.json
@@ -5105,7 +5121,7 @@ function avatarHtml(playerId, team, size = "w-7 h-7") {
   const isTeam = String(playerId).startsWith("team:");
   let url = null;
   if (isTeam) {
-    const id = S.photos?.teams?.[team];
+    const id = S.photos?.teams?.[team] ?? teamLogoId(team);
     if (id) url = `https://media.api-sports.io/football/teams/${id}.png`;
   } else if (String(playerId).startsWith("api_")) {
     // API competition player: stored photo URL, else derived from the api id.
