@@ -454,9 +454,17 @@ S.league = {};
   check("streaks: best and worst round", [st.bestRound, st.worstRound], [70, 40]);
   check("streaks: counts a run of round wins", [st.currentWinStreak, st.longestWinStreak], [3, 3]);
   check("streaks: rising run", st.longestRisingRun, 3);
-  check("streaks: hot when the last three beat your average",
-    managerStreaks([10, 10, 40, 50, 60]).hot, true);
-  check("streaks: cold is the mirror", managerStreaks([90, 80, 10, 12, 14]).cold, true);
+  check("streaks: hot needs a clear margin over your own baseline",
+    managerStreaks([10, 10, 10, 50, 60, 55]).hot, true);
+  check("streaks: cold is the mirror", managerStreaks([90, 80, 70, 10, 12, 14]).cold, true);
+  // The bug this replaced: "below your own average" is true about half the
+  // time, so ordinary variation was flagging most of the league as cold.
+  check("streaks: ordinary variation is not a form flag",
+    [managerStreaks([50, 60, 40, 55, 45, 48]).cold,
+     managerStreaks([50, 60, 40, 55, 45, 48]).hot], [false, false]);
+  check("streaks: a short season never flags form",
+    [managerStreaks([10, 10, 90, 95, 99]).played,
+     managerStreaks([10, 90, 95, 99]).hot], [5, false]);
   check("streaks: no rounds is safe", managerStreaks([]).played, 0);
 
   const aw = seasonAwards([
