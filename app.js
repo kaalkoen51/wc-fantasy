@@ -252,7 +252,7 @@ function showView(name) {
   if (exit) exit.classList.toggle("hidden",
     !["board", "lobby", "draft", "admin"].includes(name));
   const nav = $("bottom-nav");
-  if (nav) nav.classList.toggle("hidden", name !== "board");
+  if (nav) nav.classList.toggle("hidden", name !== "board" || preDraftBrowsing());
   const gear = $("hdr-admin");
   if (gear) gear.classList.toggle("hidden",
     !(isAdmin() && ["board", "lobby", "draft"].includes(name)));
@@ -1526,6 +1526,7 @@ const managerPicks = (mgrId) => S.picks.filter((pk) => pk.manager_id === mgrId);
 
 /* ---------- shortlist (per-manager, synced; only ever shown to its owner) ---------- */
 
+const preDraftBrowsing = () => !S.league?.current_pick && !!S._browsing;
 const myShortlist = () => myManager()?.shortlist || [];
 const isShortlisted = (pid) => myShortlist().includes(pid);
 
@@ -2054,6 +2055,75 @@ function renderRosters(containerId) {
 /* Your shortlist, pinned inside the draft room. Managers fear the clock most
    when they can't see what happens if it expires — so lead with exactly that,
    then show the queue behind it with anything already taken struck through. */
+/* A pick landing should be felt, not sat through: a small card fades in under
+   the header for ~1.5s and never takes a click. Driven from renderDraft, which
+   already re-runs on every realtime update. */
+let _lastPickSeen = null;
+function flashPick(pk) {
+  document.querySelector(".pick-flash")?.remove();
+  const m = S.managers.find((x) => x.id === pk.manager_id);
+  const el = document.createElement("div");
+  el.className = "pick-flash rounded-xl border border-wcgold/70 bg-slate-900/95 backdrop-blur "
+    + "px-3 py-2 shadow-xl flex items-center gap-2 max-w-[92vw]";
+  el.innerHTML = `${avatarHtml(pk.player_id, pk.team, "w-9 h-9")}
+    <div class="min-w-0">
+      <div class="eyebrow">${esc(m?.name ?? "?")} picked</div>
+      <div class="font-bold truncate">${esc(pk.player_name)}</div>
+    </div>
+    <span class="shrink-0 rounded px-1.5 py-0.5 text-xs font-semibold pos-${pk.position}">${pk.position}</span>`;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 1600);
+}
+
+// Announce only genuinely new picks — not the backlog on first render, and not
+// your own pick (you just made it, you know).
+function announceNewPicks() {
+  const last = S.picks.reduce((a, b) => (a && a.pick_number > b.pick_number ? a : b), null);
+  if (!last) return;
+  if (_lastPickSeen === null) { _lastPickSeen = last.pick_number; return; }
+  if (last.pick_number <= _lastPickSeen) return;
+  _lastPickSeen = last.pick_number;
+  if (last.manager_id !== myManager()?.id) flashPick(last);
+}
+
+/* The shortlist, shown while you build it. Same priority rules as the in-draft
+   queue — auto-pick takes the top available name — so it's ordered and
+   reorderable here too. */
+function renderPredraftShortlist() {
+  const box = $("predraft-shortlist");
+  const me = myManager();
+  if (!box || !me) return;
+  const ids = me.shortlist || [];
+  const rows = ids.map((pid, i) => {
+    const e = entryForId(pid);
+    if (!e) return "";
+    return `<li class="flex items-center gap-1.5 py-1.5">
+      <span class="w-5 shrink-0 text-xs text-slate-400 font-mono">${i + 1}</span>
+      ${avatarHtml(pid, e.team, "w-7 h-7")}
+      <span class="min-w-0 flex-1">
+        <span class="block truncate text-sm">${esc(e.name)}</span>
+        <span class="block truncate text-xs text-slate-400">${esc(e.team || "")}</span>
+      </span>
+      <span class="shrink-0 text-xs pos-${e.position} rounded px-1.5 py-0.5">${e.position}</span>
+      ${ids.length > 1 ? `<button data-slup="${esc(pid)}" class="tap shrink-0 text-slate-400 ${i === 0 ? "opacity-30" : ""}" ${i === 0 ? "disabled" : ""} title="Move up">▲</button>
+      <button data-sldn="${esc(pid)}" class="tap shrink-0 text-slate-400 ${i === ids.length - 1 ? "opacity-30" : ""}" ${i === ids.length - 1 ? "disabled" : ""} title="Move down">▼</button>` : ""}
+      <button data-slrm="${esc(pid)}" class="tap shrink-0 text-slate-400 hover:text-wcred" title="Remove">✕</button>
+    </li>`;
+  }).join("");
+  box.innerHTML = `<div class="flex items-center justify-between gap-2">
+      <span class="text-sm font-semibold">★ Your shortlist</span>
+      <span class="text-xs text-slate-400">${ids.length} player${ids.length === 1 ? "" : "s"}</span>
+    </div>
+    ${rows ? `<ul class="divide-y divide-slate-800">${rows}</ul>`
+           : '<p class="text-xs text-slate-400">Nothing yet — tap the ☆ beside a player below.</p>'}`;
+  box.querySelectorAll("[data-slup]").forEach((b) =>
+    b.onclick = () => moveShortlist(b.dataset.slup, -1).then(renderPredraftShortlist));
+  box.querySelectorAll("[data-sldn]").forEach((b) =>
+    b.onclick = () => moveShortlist(b.dataset.sldn, 1).then(renderPredraftShortlist));
+  box.querySelectorAll("[data-slrm]").forEach((b) =>
+    b.onclick = () => toggleShortlist(b.dataset.slrm).then(renderPredraftShortlist));
+}
+
 /* What the queue should show, as data. Pure so the rules can be tested:
    - a shortlisted player still available and eligible → show, in priority order
    - taken since your last pick → show once, greyed, so you notice they went
@@ -3529,20 +3599,56 @@ function scoringHtml() {
 
 function draftRulesHtml() {
   const q = posQuota(), sq = starterQuota();
+  const flex = isFlexFormation();
+  const fb = flex ? formationBounds() : null;
+  const secs = S.league?.pick_duration_seconds;
+  const bits = [];
+
+  // Squad shape: a fixed per-position quota, or a flexible formation.
+  bits.push(`<p><b>Draft:</b> snake order (reverses every round), ${picksPerManager()} rounds. ${
+    flex
+      ? `Draft any mix you like up to a squad of ${cfgOf().squadSize ?? 15}, as long as you can field a legal XI.`
+      : `Pick any position on your turn within your quota: ${
+          GROUPS.filter((g) => q[g] > 0).map((g) => `${q[g]} ${g}`).join(", ")}.`}</p>`);
+
+  // Timer + what auto-pick actually does (it takes your shortlist in order).
+  bits.push(`<p><b>Timer:</b> ${
+    secs ? `${secs}s per pick. If it runs out you get the top player still available on your shortlist — or a random player you still need if your shortlist can't fill the slot.`
+         : "no time limit, so picks wait for you."}</p>`);
+
+  // Lineup rules follow the formation mode, the captain option and the sub cap.
   const starterLine = ["GK", "DEF", "MID", "FWD"]
     .filter((g) => sq[g] > 0).map((g) => `${sq[g]} ${g}`).join(", ");
-  return `<div class="space-y-1.5 text-xs text-slate-300 mb-3">
-    <p><b>Draft:</b> snake order (reverses every round), ${picksPerManager()} rounds.
-      Pick any position on your turn within your roster quota:
-      ${GROUPS.filter((g) => q[g] > 0).map((g) => `${q[g]} ${g}`).join(", ")}.</p>
-    <p><b>Timer:</b> miss your pick window and a random player you still need is auto-picked,
-      so stay sharp.</p>
-    <p><b>Lineup:</b> after the draft you choose your starters
-      (${starterLine}) before each round — the rest are subs.
-      Lineups (and trades) are only open between rounds and lock when the
-      admin closes the window; each matchday scores against the lineup
-      that was locked at the time.</p>
-  </div>`;
+  bits.push(`<p><b>Lineup:</b> ${
+    flex
+      ? `each round you pick a formation within DEF ${fb.DEF[0]}–${fb.DEF[1]}, MID ${fb.MID[0]}–${fb.MID[1]}, FWD ${fb.FWD[0]}–${fb.FWD[1]} (${fb.starters}-a-side).`
+      : `choose your starters (${starterLine}) before each round — the rest are subs.`}${
+    captainEnabled() ? " Name a captain for double points, and a vice-captain who takes over if the captain doesn't play." : ""}${
+    maxSubsCapped() ? ` At most ${maxSubsPerRound()} sub${maxSubsPerRound() === 1 ? "" : "s"} can come up in a round.` : ""}</p>`);
+
+  // Windows: fixture-driven or admin-controlled.
+  bits.push(`<p><b>Windows:</b> ${
+    autoWindowsEnabled()
+      ? `automatic — the trade window opens ${cfgOf().windows?.tradeOpenAfterH ?? 1}h after a matchweek ends and closes ${cfgOf().windows?.tradeCloseBeforeH ?? 24}h before the next one; lineups lock ${cfgOf().windows?.lineupLockBeforeH ?? 1}h before the first kick-off.`
+      : "the admin opens and closes trading between rounds; each matchday scores against the lineup locked at the time."}</p>`);
+
+  // Free agents and the standings format.
+  bits.push(`<p><b>Free agents:</b> ${
+    faDeferToClose()
+      ? `claims queue and resolve when the window closes, in waiver order (last place picks first)${
+          maxFaPerWindow() != null ? `, up to ${maxFaPerWindow()} per manager per window` : ""}.`
+      : `swaps apply immediately, first come first served${
+          maxFaPerWindow() != null ? `, up to ${maxFaPerWindow()} per manager per window` : ""}.`}</p>`);
+
+  if (h2hEnabled()) {
+    const c = h2hConfig();
+    bits.push(`<p><b>Format:</b> head-to-head — you play one rival each round. Win ${c.win}, draw ${c.draw}, loss ${c.loss}, plus a bonus for a big score or a narrow defeat.${
+      c.rumble ? " Leftover rounds are played as rumbles against the whole league." : ""}</p>`);
+  } else {
+    bits.push(`<p><b>Format:</b> straight points tally — every point you score counts towards the table.</p>`);
+  }
+
+  return `<div class="space-y-1.5 text-xs text-slate-300 mb-3">${bits.join("")}</div>`;
 }
 
 // Keeper-window and final-phase prompts shown at the top of the Home tab.
@@ -5254,12 +5360,23 @@ function renderBoard() {
   maybeSquadReveal();
   maybeAutoRecap();
   maybeRoundup();
+  // Pre-draft shortlisting is its own job, not a tab of the live app: there is
+  // no team, table or activity yet, and dropping someone into the full board
+  // just to star players is disorienting. Strip it back to a titled page with
+  // one way out, and put the shortlist itself on screen.
+  if (preDraft) $("board-subtabs")?.classList.add("hidden");
+  const slPanel = $("predraft-shortlist");
+  if (slPanel) slPanel.classList.toggle("hidden", !preDraft);
   if (preDraft) {
-    $("board-banner").innerHTML = `<div class="flex items-center justify-between gap-2 rounded-xl border border-wcgold/50 bg-wcred/10 px-3 py-2 text-sm">
-      <span class="min-w-0">⭐ Pre-draft — star players to build your shortlist. Auto-pick draws from it in order.</span>
-      <button id="board-tolobby" class="shrink-0 rounded-lg bg-slate-800 border border-slate-700 px-3 py-1.5 text-xs font-semibold">← Lobby</button></div>`;
+    $("board-banner").innerHTML = `<div class="rounded-xl border border-wcgold/50 bg-wcred/10 px-3 py-2.5">
+      <div class="flex items-center justify-between gap-2">
+        <span class="font-semibold">⭐ Build your shortlist</span>
+        <button id="board-tolobby" class="shrink-0 rounded-lg bg-slate-800 border border-slate-700 px-3 py-1.5 text-xs font-semibold">← Lobby</button>
+      </div>
+      <p class="text-xs text-slate-400 mt-1">Star players below. If your pick clock runs out, auto-pick takes the top name still available — so the order matters.</p></div>`;
     const btl = $("board-tolobby");
     if (btl) btl.onclick = () => { S._browsing = false; route(); };
+    renderPredraftShortlist();
   }
   renderHomeTab();
   const open = new Set([...document.querySelectorAll("#board-lb details[open]")]
@@ -6080,7 +6197,7 @@ function renderStatsTab() {
   // doesn't jump — same as tapping a player on the Home tab.
   $("stats-list").querySelectorAll("[data-sp]").forEach((b) => b.onclick = () =>
     openPlayerDetail(b.dataset.sp));
-  wireStars($("stats-list"), renderStatsTab);
+  wireStars($("stats-list"), () => { renderStatsTab(); renderPredraftShortlist(); });
 }
 
 /* ---------- roster snapshots (lineup locks) ---------- */
