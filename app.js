@@ -1503,7 +1503,7 @@ function pickInfo(p) {
 }
 
 function availableForGroup(group) {
-  const picked = new Set(S.picks.map((pk) => pk.player_id));
+  const picked = pickedIdSet();
   if (group === "TEAM") {
     return S.teams.filter((t) => !picked.has("team:" + t))
       .map((t) => ({ player_id: "team:" + t, name: t, position: "TEAM", team: t }));
@@ -1770,7 +1770,7 @@ function entryForId(pid) {
 function autoPickCandidates(manager) {
   const mgrPicks = managerPicks(manager.id);
   const openGroups = new Set(GROUPS.filter((g) => quotaLeft(mgrPicks, g) > 0));
-  const picked = new Set(S.picks.map((pk) => pk.player_id));
+  const picked = pickedIdSet();
   const eligible = (e) => !!e && openGroups.has(e.position)
     && !picked.has(e.player_id) && !isEliminated(e.team);
   const shortlist = (manager.shortlist || []).map(entryForId).filter(eligible);
@@ -1783,8 +1783,8 @@ function autoPickCandidates(manager) {
    promised managers, and what makes showing them the answer possible. Only the
    no-shortlist fallback is random, because there's no stated preference to
    honour. Returns { entry, fromShortlist } or null when nothing fits. */
-function autoPickPreview(manager) {
-  const { shortlist, pool } = autoPickCandidates(manager);
+function autoPickPreview(manager, precomputed) {
+  const { shortlist, pool } = precomputed || autoPickCandidates(manager);
   if (shortlist.length) return { entry: shortlist[0], fromShortlist: true };
   if (pool.length) return { entry: pool[Math.floor(Math.random() * pool.length)], fromShortlist: false };
   return null;
@@ -1825,8 +1825,13 @@ const botThinkMs = (pickNo) => 4200 + (pickNo * 37) % 1600;   // ~4.2–5.8s
 
 let botPickedFor = 0;
 async function botPick(info) {
-  const entry = botChoice(info.manager);
-  if (!entry) { toast("No available players fit the bot's open quota."); return; }
+  let entry = botChoice(info.manager);
+  if (!entry) {
+    // Rather than stall the room, take any free player so the draft moves on.
+    const picked = new Set(S.picks.map((pk) => pk.player_id));
+    entry = S.players.find((pl) => !picked.has(pl.player_id) && !isEliminated(pl.team));
+    if (!entry) { toast("No players left to draft."); return; }
+  }
   await makePick(entry, info);
 }
 
@@ -1854,8 +1859,14 @@ function tickTimer() {
   const onClock = pickInfo(L.current_pick);
   if (onClock.manager?.is_bot) {
     clock.textContent = "…";
-    if (botPickedFor !== L.current_pick
-        && Date.now() - Date.parse(L.pick_started_at) > botThinkMs(L.current_pick)) {
+    const waited = Date.now() - Date.parse(L.pick_started_at);
+    // The guard stops two clients racing, but it was also a deadlock: it's set
+    // before the write, so a write that doesn't land (a lost race, a bot with
+    // nothing eligible) left the draft stuck on that pick forever. Give up on
+    // the guard after a grace period so the pick is retried.
+    if (botPickedFor === L.current_pick && waited > botThinkMs(L.current_pick) + 12000)
+      botPickedFor = 0;
+    if (botPickedFor !== L.current_pick && waited > botThinkMs(L.current_pick)) {
       botPickedFor = L.current_pick;
       botPick(onClock).catch(() => { botPickedFor = 0; });
     }
@@ -2162,12 +2173,12 @@ function renderDraftQueue(me, myTurn) {
   // have already seen, so it drops off rather than growing the list forever.
   const myLast = S.picks.filter((pk) => pk.manager_id === me.id)
     .reduce((a, pk) => Math.max(a, pk.pick_number || 0), 0);
-  const { shortlist: eligible } = autoPickCandidates(me);
-  const eligibleIds = new Set(eligible.map((e) => e.player_id));
+  const cands = autoPickCandidates(me);
+  const eligibleIds = new Set(cands.shortlist.map((e) => e.player_id));
 
   const { rows, hiddenNoFit } = queuePlan(ids, takenBy, myLast, eligibleIds);
 
-  const choice = autoPickPreview(me);
+  const choice = autoPickPreview(me, cands);
   // Say WHY auto-pick would go off-list: "empty" was wrong and confusing when
   // the list was full of players who no longer fit the open slots.
   let why = "";
@@ -4388,6 +4399,15 @@ function maybeAutoRecap() {
 
 // Tick just the countdown text — a full re-render every second would fight
 // with anything the user is typing or scrolling.
+/* Should a deadline crossing trigger a refetch? Only the first time for a
+   given deadline. This is a one-line rule with an outsized failure mode: when
+   it was simply `left <= 0`, a passed deadline fired a full reload and
+   re-render every second for as long as the app stayed open. Pure, so the rule
+   is pinned by a test rather than by reading it carefully. */
+const deadlineCrossed = (at, nowMs, lastFiredAt) =>
+  at != null && nowMs >= at && lastFiredAt !== at;
+
+let _deadlinePassed = null;
 function tickMatchday() {
   const el = document.getElementById("md-countdown");
   if (!el) return;
@@ -4396,7 +4416,13 @@ function tickMatchday() {
   const left = at - Date.now();
   el.textContent = fmtCountdown(left);
   el.classList.toggle("urgent", left > 0 && left < 3600e3);
-  if (left <= 0) scheduleRefetch();   // deadline passed → the stage has changed
+  // Refetch ONCE as the deadline passes. This used to fire on every tick while
+  // the deadline was in the past, i.e. a full reload and re-render every second
+  // for as long as the app was open — which crawled, and fought the draft.
+  if (deadlineCrossed(at, Date.now(), _deadlinePassed)) {
+    _deadlinePassed = at;
+    scheduleRefetch();
+  }
 }
 
 function renderHomeTab() {
@@ -5521,7 +5547,16 @@ S.statsHideKO = false;     // Stats tab: hide knocked-out players
 
 // Set of every player_id currently on a roster (owned). Rebuilt per call;
 // cheap at this scale. Used by the "unpicked only" filters.
-const pickedIdSet = () => new Set(S.picks.map((pk) => pk.player_id));
+// Rebuilt only when the picks array changes: the draft path asks for this many
+// times per render, and it was allocating a fresh Set over every pick each time.
+let _pickedSet = null, _pickedFor = null;
+const pickedIdSet = () => {
+  if (_pickedFor !== S.picks) {
+    _pickedFor = S.picks;
+    _pickedSet = new Set(S.picks.map((pk) => pk.player_id));
+  }
+  return _pickedSet;
+};
 
 // Stats-tab ranking options: label + the match_stats key to total. "points"
 // uses the full fantasy total; the rest are raw counts from existing
