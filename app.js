@@ -3738,7 +3738,12 @@ function renderHistInto(elId, mgrId, perspectiveLabel) {
 
 // A short form flag on the table — leagues talk about runs, so name them.
 function formBadge(mgrId) {
-  const rounds = (managerHistory(mgrId).rounds || []).map((r) => r.subtotal);
+  let rounds = (managerHistory(mgrId).rounds || []).map((r) => r.subtotal);
+  // A round still being played scores near zero until the games finish, which
+  // dragged everyone's recent average down and flagged most of the league as
+  // cold every matchday. Form is about completed rounds only.
+  const ytp = computeYetToPlay()[mgrId];
+  if (ytp?.hasSnapshot && ytp.yet > 0) rounds = rounds.slice(0, -1);
   const st = managerStreaks(rounds);
   if (st.longestWinStreak >= 3 && st.currentWinStreak >= 3)
     return `<span class="shrink-0 rounded bg-orange-500/20 text-orange-300 px-1 py-0.5 font-bold" title="${st.currentWinStreak} straight rounds above the league average">🔥 ${st.currentWinStreak}</span>`;
@@ -4264,12 +4269,19 @@ function renderHomeTab() {
     ${matchdayCardHtml(me)}
     ${liveRaceHtml(me)}
     ${phaseCardsHtml(me)}
-    <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 flex items-center justify-between">
-      <div>
+    <div class="rounded-xl border bg-slate-900 p-4 flex items-center justify-between gap-2"
+         style="border-color:${managerColor(me)}55">
+      <div class="min-w-0">
         <div class="text-xs text-slate-400">Your team</div>
-        <div class="text-xl font-bold">${esc(me.name)}</div>
+        <button id="home-crest" class="flex items-center gap-2 text-left mt-0.5" title="Edit your crest and colour">
+          <span class="shrink-0 inline-flex items-center justify-center rounded-lg w-10 h-10 text-xl"
+                style="background:${managerColor(me)}26;border:1px solid ${managerColor(me)}99">${managerMark(me)}</span>
+          <span class="min-w-0">
+            <span class="block text-xl font-bold truncate">${esc(me.name)}</span>
+            <span class="block text-xs font-normal text-slate-400">tap to change crest</span>
+          </span></button>
       </div>
-      <div class="text-right">
+      <div class="text-right shrink-0">
         <div class="text-2xl font-bold text-wcgold scoreboard">${myScore?.total ?? 0} pts</div>
         <div class="text-xs text-slate-400">#${rank} of ${scores.length}</div>
       </div>
@@ -5711,15 +5723,23 @@ function playerDetailHtml(p, opts = {}) {
     <div class="flex items-start gap-2">
       ${avatarHtml(p.player_id, p.team, "w-12 h-12")}
       <div class="min-w-0 flex-1">
-        <div class="font-bold truncate">${esc(p.name)} ${availBadges(p.player_id)}</div>
-        <div class="text-xs text-slate-400">${esc(p.team)}</div>
-        <div class="text-xs text-slate-400 mt-0.5">${
+        <!-- The name wraps rather than truncating: this is a detail sheet, and
+             the one thing it must never cut off is who you're looking at. The
+             chips move to their own line so a suspension can't be clipped. -->
+        <div class="font-bold leading-tight break-words">${esc(p.name)}</div>
+        <div class="flex items-center gap-1.5 flex-wrap mt-1">
+          <span class="pos-${p.position} rounded px-1.5 py-0.5 text-xs font-semibold">${p.position}</span>
+          ${availBadges(p.player_id)}
+        </div>
+        <div class="text-xs text-slate-400 mt-1">${esc(p.team)}</div>
+        <div class="text-xs text-slate-400">${
           owner ? "👤 drafted by " + esc(owner) : "free agent"}</div>
       </div>
-      <span class="pos-${p.position} rounded px-1.5 py-0.5 text-xs font-semibold shrink-0">${p.position}</span>
-      <span class="text-xl font-bold text-wcgold shrink-0">${total}</span>
-      ${starHtml(p.player_id)}
-      ${opts.closeId ? `<button id="${opts.closeId}" class="text-slate-400 px-1 -mt-1 shrink-0">✕</button>` : ""}
+      <div class="shrink-0 flex flex-col items-end gap-1">
+        ${opts.closeId ? `<button id="${opts.closeId}" class="text-slate-400">✕</button>` : ""}
+        <span class="text-2xl font-bold text-wcgold scoreboard leading-none">${total}</span>
+        ${starHtml(p.player_id)}
+      </div>
     </div>
     ${fxLine}
     ${statLine}
@@ -6587,6 +6607,17 @@ function swapTxCard(x) {
   </div>`;
 }
 
+/* A whole season of moves in one flat list buries the ones that matter. The
+   latest window is what people are talking about, so it stays open and
+   everything older collapses behind a tap. Windows are cut at the lineup locks
+   (each window close snapshots rosters), which is the same boundary the app
+   uses everywhere else. */
+function txWindowStarts() {
+  return [...new Set((S.snapshots || [])
+    .map((sn) => Date.parse(sn.created_at || sn.effective_from))
+    .filter((t) => !isNaN(t)))].sort((a, b) => b - a);   // newest first
+}
+
 function transactionsLogHtml() {
   const entries = [];
   for (const t of S.trades.filter((t) => t.status === "accepted"))
@@ -6594,12 +6625,34 @@ function transactionsLogHtml() {
   for (const x of (S.transactions || []))
     entries.push({ when: x.created_at, html: swapTxCard(x) });
   entries.sort((a, b) => String(b.when).localeCompare(String(a.when)));
-  const body = entries.length
-    ? entries.slice(0, 50).map((e) => e.html).join("")
-    : '<p class="text-xs text-slate-400">No trades or free-agent swaps yet.</p>';
+  if (!entries.length)
+    return `<div class="mt-6 space-y-2">
+      <h3 class="font-semibold text-sm">Transactions</h3>
+      <p class="text-xs text-slate-400">No trades or free-agent swaps yet.</p></div>`;
+
+  // Everything since the most recent lock is "this window".
+  const cut = txWindowStarts()[0] ?? null;
+  const current = cut == null ? entries
+    : entries.filter((e) => Date.parse(e.when) >= cut);
+  const earlier = cut == null ? []
+    : entries.filter((e) => Date.parse(e.when) < cut);
+  // With no lock yet, or a window nobody has used, still show the recent few.
+  const shown = current.length ? current : entries.slice(0, 3);
+  const rest  = current.length ? earlier : entries.slice(3);
+
   return `<div class="mt-6 space-y-2">
-    <h3 class="font-semibold text-sm">Transactions</h3>
-    ${body}
+    <div class="flex items-baseline justify-between gap-2">
+      <h3 class="font-semibold text-sm">Transactions</h3>
+      <span class="eyebrow">${current.length ? "This window" : "Recent"}</span>
+    </div>
+    ${shown.map((e) => e.html).join("")}
+    ${rest.length ? `<details class="rounded-xl border border-slate-700 bg-slate-900">
+      <summary class="px-3 py-2.5 text-sm font-semibold cursor-pointer select-none flex items-center justify-between gap-2">
+        <span>Earlier windows</span>
+        <span class="text-xs text-slate-400">${rest.length} move${rest.length === 1 ? "" : "s"} ▾</span>
+      </summary>
+      <div class="px-3 pb-3 space-y-2">${rest.slice(0, 60).map((e) => e.html).join("")}</div>
+    </details>` : ""}
   </div>`;
 }
 
