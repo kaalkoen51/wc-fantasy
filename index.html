@@ -84,8 +84,11 @@
     90%  { opacity: 1; transform: translate(-50%, 0) scale(1) }
     100% { opacity: 0; transform: translate(-50%, -6px) scale(.99) }
   }
-  .pick-flash { position: fixed; top: 4.25rem; left: 50%; z-index: 60;
-                pointer-events: none; animation: pick-flash 3.5s ease forwards; }
+  /* Sits clear of the sticky clock bar (which occupies the band right under the
+     header) rather than on top of it, and above everything else. */
+  .pick-flash { position: fixed; top: calc(var(--hdr-h, 3.5rem) + 3.25rem);
+                left: 50%; z-index: 70; pointer-events: none;
+                animation: pick-flash 3.5s ease forwards; }
 
   /* The newest row in a list briefly warms, so you can see what just changed. */
   @keyframes row-land { from { background-color: rgba(255,199,44,.22) } to { background-color: transparent } }
