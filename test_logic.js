@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -25,7 +25,7 @@ const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcT
         phaseOneStarters, starterQuota, effectiveConfig,
         flexCounting, formationValid, DEFAULT_FORMATION,
         roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims,
-        h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith,
+        h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith,
         buildFixtureStatRows,
         fixtureWindows, matchweeksOf,
         maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs,
@@ -1157,6 +1157,30 @@ const apc2 = autoPickCandidates(apMgr);
 check("empty valid shortlist -> use pool", apc2.shortlist.length, 0);
 check("fallback pool still non-empty and KO-free",
   [apc2.pool.length > 0, apc2.pool.some((e) => e.team === "Brazil")], [true, false]);
+// A shortlist is a queue: auto-pick takes the top one still available, so the
+// draft room can honestly tell you what you'll get. (It used to pick at random,
+// which contradicted what the app told managers.)
+apMgr.shortlist = ["bra_1", "fra_1", "esp_1"];   // bra_1 is knocked out → skipped
+const pv = autoPickPreview(apMgr);
+check("auto-pick preview takes the top available shortlist entry",
+  [pv.entry.player_id, pv.fromShortlist], ["fra_1", true]);
+check("auto-pick preview is deterministic",
+  autoPickPreview(apMgr).entry.player_id, "fra_1");
+apMgr.shortlist = [];
+check("auto-pick preview falls back to the pool when the shortlist is empty",
+  autoPickPreview(apMgr).fromShortlist, false);
+
+// How many picks until you're up — the draft room's "3 picks away" cue.
+{
+  const saveM = S.managers, saveL = S.league, saveP = S.picks;
+  S.managers = [1, 2, 3, 4].map((i) => ({ id: "m" + i, name: "M" + i, draft_position: i }));
+  S.league = { num_managers: 4, current_pick: 2 };
+  S.picks = [];
+  check("picksUntilTurn: on the clock now", picksUntilTurn("m2"), 0);
+  check("picksUntilTurn: two away", picksUntilTurn("m4"), 2);
+  check("picksUntilTurn: snake turn back for M1", picksUntilTurn("m1"), 6);
+  S.managers = saveM; S.league = saveL; S.picks = saveP;
+}
 S.league = null; S.stages = []; S.managers = []; S.picks = [];
 S.playerById = {}; S.players = [];
 
