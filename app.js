@@ -247,7 +247,7 @@ const STRIPPABLE_COLUMNS = new Set([
   "home_score", "away_score", "minutes", "raw",
   "offered_player_name", "requested_player_name",
   "offered_player_id", "requested_player_id", "planner",
-  "owner_id", "user_id",
+  "owner_id", "user_id", "is_bot",
 ]);
 
 // Insert/upsert that tolerates an unapplied additive migration. Throws on
@@ -1317,7 +1317,8 @@ function renderLobby() {
   $("lobby-managers").innerHTML = S.managers.map((m) =>
     `<li class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-3 py-2">
       <span class="flex-1 min-w-0 truncate">${esc(m.name)}${
-        m.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}</span>` +
+        m.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}${
+        m.is_bot ? ' <span class="text-slate-400 text-xs">🤖 bot</span>' : ""}</span>` +
     (admin && m.id !== me?.id
       ? `<button data-kick="${esc(m.id)}" title="kick" class="tap shrink-0 text-slate-400 hover:text-wcred">✕</button>` : "") +
     "</li>").join("") || '<li class="text-slate-400">No one yet…</li>';
@@ -1349,6 +1350,47 @@ async function joinFromLobby() {
   if (error) return toast(error.message);
   setSession({ ...getSession(), managerId: data.id });
   scheduleRefetch();
+}
+
+// Fill the remaining lobby slots with bots so a draft can go ahead (or be
+// rehearsed) without waiting for every human to arrive.
+async function addBots(n) {
+  const need = n ?? Math.max(0, (S.league.num_managers || 0) - S.managers.length);
+  if (need <= 0) return toast("The lobby is already full.");
+  const taken = new Set(S.managers.map((m) => m.name.toLowerCase()));
+  const rows = [];
+  for (const name of BOT_NAMES) {
+    if (rows.length >= need) break;
+    if (taken.has(name.toLowerCase())) continue;
+    rows.push({ league_id: S.league.id, name, is_bot: true, join_token: crypto.randomUUID() });
+  }
+  const { error } = await S.sb.from("managers").insert(rows);
+  if (error) return toast(/is_bot/.test(error.message)
+    ? "Bots need a schema update — run schema.sql." : error.message);
+  toast(`Added ${rows.length} bot${rows.length === 1 ? "" : "s"}.`);
+  scheduleRefetch();
+}
+
+// One tap from the home screen: a throwaway league against bots, so you can
+// rehearse a draft (and your shortlist) before the real one.
+async function startPracticeDraft(bots) {
+  const row = {
+    name: "Practice draft", num_managers: bots + 1, pick_duration_seconds: 30,
+    invite_code: genInviteCode(), admin_token: crypto.randomUUID(), current_pick: 0,
+  };
+  if (authUid()) row.owner_id = authUid();
+  const { data: league, error } = await insertLeagueRow(row);
+  if (error) throw new Error(error.message);
+  setSession({ leagueId: league.id, adminToken: league.admin_token, managerId: null });
+  S.league = league;
+  const meRow = { league_id: league.id, name: "You", join_token: crypto.randomUUID() };
+  if (authUid()) meRow.user_id = authUid();
+  const { data: me, error: me2 } = await insertManagerRow(meRow);
+  if (me2) throw new Error(me2.message);
+  setSession({ ...getSession(), managerId: me.id });
+  S.managers = [me];
+  await addBots(bots);
+  await enterLeague();
 }
 
 // Admin removes a manager from the lobby (before the draft starts).
@@ -1704,6 +1746,39 @@ function picksUntilTurn(mgrId) {
   return null;
 }
 
+/* ---------- bot managers (practice drafts) ----------
+   Automated opponents so a league can rehearse a full draft — and test their
+   shortlists — before the real one. Bots never sign in: whichever human client
+   is in the room makes their pick. That write is guarded on current_pick, so
+   two clients racing is harmless (the loser's update simply matches no row). */
+const BOT_NAMES = ["Ada", "Bruno", "Cleo", "Dax", "Ines", "Jonas", "Kira",
+  "Milo", "Nadia", "Otto", "Pia", "Rafa", "Suri", "Tomas"];
+
+// Prefer the best available scorer; with no stats yet (pre-season) fall back to
+// the pool with some spread, so bots don't all draft the same player.
+function botChoice(manager) {
+  const { shortlist, pool } = autoPickCandidates(manager);
+  const cands = pool.length ? pool : shortlist;
+  if (!cands.length) return null;
+  const scored = cands.map((e) => ({ e, v: playerPoints(e.player_id, e.position) || 0 }));
+  if (scored.some((x) => x.v > 0)) {
+    scored.sort((a, b) => b.v - a.v);
+    return scored[Math.floor(Math.random() * Math.min(5, scored.length))].e;   // top-5 jitter
+  }
+  return cands[Math.floor(Math.random() * Math.min(12, cands.length))];
+}
+
+// A short, varied "thinking" pause so a bot draft feels like a draft rather
+// than a list appearing. Derived from the pick number so every client agrees.
+const botThinkMs = (pickNo) => 900 + (pickNo * 37) % 1600;
+
+let botPickedFor = 0;
+async function botPick(info) {
+  const entry = botChoice(info.manager);
+  if (!entry) { toast("No available players fit the bot's open quota."); return; }
+  await makePick(entry, info);
+}
+
 async function autoPick(info) {
   const choice = autoPickPreview(info.manager);
   if (!choice) { toast("No available players fit the open quota."); return; }
@@ -1718,9 +1793,21 @@ function tickTimer() {
   const L = S.league;
   const clock = $("draft-clock");
   if (!L || !L.current_pick || L.current_pick > totalPicks()) { clock.textContent = "--"; return; }
-  if (!L.pick_duration_seconds) {   // 0 = no time limit (never auto-picks)
-    clock.textContent = "∞";
+  if (!L.pick_duration_seconds && !pickInfo(L.current_pick).manager?.is_bot) {
+    clock.textContent = "∞";   // 0 = no time limit (never auto-picks)
     clock.classList.remove("text-red-400"); clock.classList.add("text-wcgold");
+    return;
+  }
+  // A bot on the clock picks after a brief think, regardless of the clock —
+  // waiting out a 60s timer for every bot would make practice drafts unusable.
+  const onClock = pickInfo(L.current_pick);
+  if (onClock.manager?.is_bot) {
+    clock.textContent = "…";
+    if (botPickedFor !== L.current_pick
+        && Date.now() - Date.parse(L.pick_started_at) > botThinkMs(L.current_pick)) {
+      botPickedFor = L.current_pick;
+      botPick(onClock).catch(() => { botPickedFor = 0; });
+    }
     return;
   }
   const deadline = Date.parse(L.pick_started_at) + L.pick_duration_seconds * 1000;
@@ -7830,6 +7917,11 @@ function wire() {
   $("join-find").onclick = () => findLeague().catch((e) => toast(e.message));
   $("join-go").onclick = () => joinLeague().catch((e) => toast(e.message));
   $("lobby-start").onclick = () => startDraft().catch((e) => toast(e.message));
+  $("lobby-addbots").onclick = () => addBots().catch((e) => toast(e.message));
+  $("home-practice").onclick = () => {
+    const n = Math.max(1, Math.min(13, Number($("practice-bots").value) || 7));
+    startPracticeDraft(n).catch((e) => toast("Practice draft failed: " + e.message));
+  };
   $("lobby-num-set").onclick = async () => {
     if (!isAdmin()) return;
     const n = Math.max(2, Math.min(15, parseInt($("lobby-num-input").value, 10) || 0));

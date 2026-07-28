@@ -149,6 +149,11 @@ alter table managers add column if not exists draft_position int;
 -- them across devices and gate admin to the creator. Nullable — legacy
 -- join-by-link leagues (no account) keep working. RLS stays open for now; these
 -- columns are what a future auth.uid()-based policy tightening would key on.
+-- Bot managers: automated opponents for practice drafts, so a league can try a
+-- full draft (and their shortlists) before the real one. Bots never sign in;
+-- whichever human client is in the room makes their pick, guarded by
+-- current_pick so two clients racing is harmless.
+alter table managers add column if not exists is_bot boolean not null default false;
 alter table leagues  add column if not exists owner_id uuid;
 alter table managers add column if not exists user_id  uuid;
 -- Per-manager shortlist of player ids (jsonb array). Synced so it follows
