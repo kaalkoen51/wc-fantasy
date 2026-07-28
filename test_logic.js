@@ -1457,12 +1457,17 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
 
   // fetchCompetitionPool: teams → squads, deduping a player in two squads.
   const savedFetch = global.fetch;
+  const seenUrls = [];
   global.fetch = async (url) => {
-    const u = new URL(url), path = u.pathname;
+    const u = new URL(url);
+    seenUrls.push(u.href);
+    // Requests go through the server-side proxy (?path=teams); fall back to the
+    // direct endpoint shape so both routes are covered.
+    const path = u.searchParams.get("path") || u.pathname.replace(/^\//, "");
     let response = [];
-    if (path === "/teams")
+    if (path === "teams")
       response = [{ team: { id: 10, name: "Arsenal", code: "ARS" } }, { team: { id: 11, name: "Chelsea", code: null } }];
-    else if (path === "/players/squads")
+    else if (path === "players/squads")
       response = u.searchParams.get("team") === "10"
         ? [{ players: [{ id: 1, name: "Saka", position: "Attacker", number: 7 }, { id: 2, name: "Rice", position: "Midfielder", number: 41 }] }]
         : [{ players: [{ id: 3, name: "Palmer", position: "Midfielder", number: 20 }, { id: 1, name: "Saka", position: "Attacker", number: 7 }] }];
@@ -1478,6 +1483,10 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
   S.league = null;
 
   const built = await fetchCompetitionPool("k", 39, 2024);
+  check("apiFootball routes through the server-side proxy",
+    /\/functions\/v1\/api-football\?path=teams/.test(seenUrls[0]), true);
+  check("apiFootball never puts the API key in the proxy URL",
+    /x-apisports|apisports-key=/.test(seenUrls[0]), false);
   check("fetchCompetitionPool dedups a player across squads", built.players.length, 3);
   check("fetchCompetitionPool sorts team names", built.teams, ["Arsenal", "Chelsea"]);
   check("fetchCompetitionPool keeps first team for a dup player",
