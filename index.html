@@ -147,13 +147,13 @@
         <option value="wc">World Cup 2026 (built-in squads)</option>
       </select>
       <div id="create-comp-api" class="hidden space-y-3 rounded-lg border border-slate-700 bg-slate-800/40 p-3">
-        <p class="text-[11px] text-slate-500">Squads &amp; fixtures are pulled from API-Football once and shared with any
-          other league on this competition. If it's already loaded, we reuse it (no key needed).</p>
+        <p class="text-[11px] text-slate-500">Squads &amp; fixtures are pulled once and shared with every other league on this
+          competition, so most of the time there's nothing to do here. A key is only needed if this server has none configured.</p>
         <div class="grid grid-cols-2 gap-3">
           <label class="block text-sm text-slate-400">Season
             <input id="create-comp-season" type="number" placeholder="2024" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></label>
-          <label class="block text-sm text-slate-400">API-Football key
-            <input id="create-api-key" placeholder="only if not loaded" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></label>
+          <label class="block text-sm text-slate-400">API-Football key <span class="text-slate-500 text-xs">(optional)</span>
+            <input id="create-api-key" placeholder="usually not needed" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></label>
         </div>
       </div>
     </div>
@@ -485,7 +485,7 @@
           re-pull), and one admin's stat pull updates them all. Leave unset for the built-in World
           Cup 2026 squads. Season = the API's season key (a domestic league's start year, e.g. 2024
           for 2024/25; a tournament's year).</p>
-        <input id="adm-api-key" placeholder="API-Football key" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+        <input id="adm-api-key" placeholder="API-Football key (optional)" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
         <div id="adm-comp-current" class="text-xs text-wcgold"></div>
         <div class="flex gap-2">
           <select id="adm-comp-select" class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm"></select>
@@ -1690,7 +1690,7 @@ async function pullCreateHistory() {
   const log = (t) => { if ($("create-pull-log")) $("create-pull-log").textContent = t; };
   if (!apiLeagueId || apiLeagueId === "wc") return toast("Pick an API competition first.");
   if (!season) return toast("Enter a season first.");
-  if (!apiKey) return toast("Enter your API-Football key in the Competition section.");
+  
   localStorage.setItem("wcf_apikey", apiKey);
   const btn = $("create-pull-history");
   btn.disabled = true;
@@ -6974,7 +6974,52 @@ const foldName = (s) => String(s || "").normalize("NFKD")
   .replace(/[̀-ͯ]/g, "").toLowerCase()
   .replace(/[^a-z0-9]+/g, " ").trim();
 
+/* API-Football access. Prefer the server-side proxy (a Supabase Edge Function
+   holding the key as a secret) so organisers never need their own key; fall
+   back to a user-pasted key when the function isn't deployed on this project.
+   _apiProxy: null = untried · true = available · false = not deployed. */
+let _apiProxy = null;
+const apiProxyUrl = () => {
+  const u = getConfig()?.url;
+  return u ? `${u}/functions/v1/api-football` : null;
+};
+const apiKeyOptional = () => _apiProxy === true;
+
+// Unwrap an API-Football payload: throws on its `errors`, else returns response.
+function apiFootballBody(data) {
+  const errs = data?.errors &&
+    (Array.isArray(data.errors) ? data.errors : Object.values(data.errors));
+  if (errs && errs.length) throw new Error(errs.join("; "));
+  return data?.response || [];
+}
+
 async function apiFootball(key, path, params) {
+  if (_apiProxy !== false) {
+    const base = apiProxyUrl(), cfg = getConfig();
+    if (base) {
+      const q = new URL(base);
+      q.searchParams.set("path", path);
+      for (const k in params) q.searchParams.set(k, params[k]);
+      try {
+        const resp = await fetch(q, {
+          headers: { Authorization: "Bearer " + cfg.key, apikey: cfg.key },
+          cache: "no-store",
+        });
+        if (resp.status === 404) {
+          _apiProxy = false;             // function not deployed → use a pasted key
+        } else {
+          const data = await resp.json();
+          _apiProxy = true;              // proxy is live; its errors are real errors
+          return apiFootballBody(data);
+        }
+      } catch (e) {
+        if (_apiProxy === true) throw e;  // genuine API/network error, not a missing proxy
+        _apiProxy = false;
+      }
+    }
+  }
+  if (!key) throw new Error(
+    "No API-Football key. Deploy the api-football function with a server key, or paste your own key.");
   const url = new URL("https://v3.football.api-sports.io/" + path);
   for (const k in params) url.searchParams.set(k, params[k]);
   // `no-store` stops the browser reusing a response (a pull during a live game
@@ -6984,10 +7029,7 @@ async function apiFootball(key, path, params) {
   // and do NOT add a cache-buster query param — API-Football validates params
   // and rejects unknown ones with "The <field> field does not exist.".
   const resp = await fetch(url, { headers: { "x-apisports-key": key }, cache: "no-store" });
-  const data = await resp.json();
-  const errs = data.errors && Object.values(data.errors);
-  if (errs && errs.length) throw new Error(errs.join("; "));
-  return data.response || [];
+  return apiFootballBody(await resp.json());
 }
 
 // API player -> players.json id. Match by NAME first (exact, then surname,
@@ -7049,7 +7091,7 @@ async function loadCompetition() {
       fixtures = existing.data.fixtures || [];
       log(`Reusing shared pool: ${players.length} players.`);
     } else {
-      if (!apiKey) { btn.disabled = false; return toast("Enter your API-Football key to pull."); }
+      
       localStorage.setItem("wcf_apikey", apiKey);
       log("Fetching teams…");
       const built = await fetchCompetitionPool(apiKey, apiLeagueId, season,
@@ -7190,7 +7232,7 @@ async function pullStatsNow() {
   const key = $("adm-api-key").value.trim();
   const date = $("adm-pull-date").value;
   const log = (t) => $("adm-pull-log").textContent = t;
-  if (!key) return toast("Enter your API-Football key first.");
+  // No key needed when the server proxy holds one; apiFootball reports if neither works.
   if (!date) return toast("Pick a date.");
   localStorage.setItem("wcf_apikey", key);
   const btn = $("adm-pull-now");
