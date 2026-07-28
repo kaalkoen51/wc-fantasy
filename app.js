@@ -4672,9 +4672,8 @@ function renderBannerDetail() {
       return `<div class="flex items-center gap-1.5 text-xs">
         ${avatarHtml(p.player_id, p.team, "w-5 h-5")}
         <span class="truncate">${esc(p.name)}</span>
-        <span class="shrink-0 ${o ? "rounded bg-slate-700 px-1 py-0.5 text-xs text-wcgold"
-                                  : "text-xs text-slate-400"}">${
-          o ? "👤 " + esc(o) : "free agent"}</span>
+        ${o ? ownerChipHtml(p.player_id)
+            : '<span class="shrink-0 text-xs text-slate-400">free</span>'}
         <span class="ml-auto text-slate-400 shrink-0">${statBits(r) || "0"}</span>
         <span class="font-mono w-7 text-right shrink-0 ${
           pts > 0 ? "text-wcgold" : "text-slate-400"}">${pts}</span>
@@ -5383,6 +5382,25 @@ const ownerOf = (pid) => {
   const pk = S.picks.find((x) => x.player_id === pid);
   return pk ? S.managers.find((m) => m.id === pk.manager_id)?.name : null;
 };
+const ownerManager = (pid) => {
+  const pk = S.picks.find((x) => x.player_id === pid);
+  return pk ? S.managers.find((m) => m.id === pk.manager_id) || null : null;
+};
+
+/* Who owns this player, as a single ~18px mark: their crest, or their initial
+   on their accent colour. A name here either truncated to "👤 …" or, once it
+   stopped shrinking, pushed the position chip off the row — and on a phone the
+   team name is worth more than spelling the owner out. The full name is in the
+   tooltip and on the player sheet. */
+function ownerChipHtml(pid) {
+  const m = ownerManager(pid);
+  if (!m) return "";
+  const c = managerColor(m);
+  const mark = managerCrest(m) || (m.name || "?").trim().charAt(0).toUpperCase();
+  return `<span class="shrink-0 inline-flex items-center justify-center rounded w-[18px] h-[18px] text-xs font-bold leading-none"
+    style="background:${c}33;border:1px solid ${c}99;color:#e2e8f0"
+    title="Owned by ${esc(m.name)}">${mark}</span>`;
+}
 
 /* ---------- availability (suspensions & injuries) and avatars ---------- */
 
@@ -5944,11 +5962,9 @@ function renderStatsTab() {
         <span class="min-w-0 flex-1">
           <span class="block truncate text-sm">${esc(p.name)} ${availBadges(p.player_id)}</span>
           <span class="flex items-center gap-1 text-xs text-slate-400">
+            ${ownerChipHtml(p.player_id)}
             <span class="truncate">${esc(p.team)}</span>${dots}${
-              per90 ? `<span class="shrink-0">· ${mins}′</span>` : ""}${
-              // The owner sits on the meta line: on a phone it was competing
-              // with the player's name and truncating to a useless "👤 …".
-              owner ? ` <span class="shrink-0 rounded bg-slate-700 px-1 py-0.5 text-wcgold">👤 ${esc(owner)}</span>` : ""}</span>
+              per90 ? `<span class="shrink-0">· ${mins}′</span>` : ""}</span>
         </span>
         <span class="pos-${p.position} rounded px-1.5 py-0.5 text-xs font-semibold shrink-0">${p.position}</span>
         <span class="shrink-0 w-10 text-right">
