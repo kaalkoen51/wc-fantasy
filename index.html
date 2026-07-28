@@ -1631,7 +1631,8 @@ async function pullCompetitionHistory(apiLeagueId, season, apiKey, key, log) {
   //    only pull squads when the shared pool is empty. Fixtures always refresh.
   const existing = await S.sb.from("competition_pools").select("players").eq("competition_key", key).maybeSingle();
   let players = existing.data?.players || [];
-  if (players.length) {
+  // Re-pull squads if the stored pool predates crest ids, so club badges fill in.
+  if (players.length && players.some((p) => p.team_logo)) {
     log(`Reusing ${players.length} already-loaded players…`);
   } else {
     log("Pulling squads (players + positions)…");
