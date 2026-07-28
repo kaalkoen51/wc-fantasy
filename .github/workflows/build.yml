@@ -8,7 +8,7 @@ name: Build assets
 
 on:
   push:
-    paths: ["index.html", "app.js", "tailwind.config.js", "src.css", "styles.css", "vendor/**", "build.js", "_headers", "package.json", ".github/workflows/css.yml"]
+    paths: ["index.html", "app.js", "tailwind.config.js", "src.css", "styles.css", "vendor/**", "build.js", "sim.js", "_headers", "package.json", ".github/workflows/build.yml"]
   pull_request:
     paths: ["index.html", "app.js", "tailwind.config.js", "src.css", "styles.css", "vendor/**", "build.js", "_headers", "package.json"]
   workflow_dispatch:
@@ -40,8 +40,9 @@ jobs:
           fi
           echo "vendored Supabase client matches package.json."
       - name: Assemble the deployable site
-        # build.js fails on external assets or an inline <script>, either of
-        # which would silently defeat the CSP in _headers.
+        # build.js fails on external assets, an inline <script> (either would
+        # silently defeat the CSP in _headers), or any trace of the dev-only
+        # simulator reaching a production bundle.
         run: npm run bundle
       - name: Logic tests
         run: node test_logic.js

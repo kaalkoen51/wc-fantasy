@@ -8,7 +8,8 @@
     "test": "node test_logic.js",
     "vendor:supabase": "cp node_modules/@supabase/supabase-js/dist/umd/supabase.js vendor/supabase.js",
     "build": "npm run build:css && npm run vendor:supabase && npm run bundle",
-    "bundle": "node build.js"
+    "bundle": "node build.js",
+    "build:dev": "npm run build:css && npm run vendor:supabase && BUILD_ENV=dev node build.js"
   },
   "devDependencies": {
     "@supabase/supabase-js": "2.110.9",
