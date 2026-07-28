@@ -43,6 +43,39 @@
   .kb-card { margin: 5px 0; }
   /* Small icon controls still need a finger-sized hit area, so pad the target
      without changing how big the glyph looks. */
+  /* ---- House style: floodlit scoreboard --------------------------------
+     The app is a stadium at night, so the numbers that matter read like a
+     scoreboard and everything else stays quiet around them. */
+
+  /* Hero numerals: tight, tabular, faintly lit. */
+  .scoreboard { font-variant-numeric: tabular-nums; letter-spacing: -.02em;
+                text-shadow: 0 0 20px rgba(255, 199, 44, .3); }
+
+  /* Uppercase micro-labels — the vernacular of a printed team sheet. */
+  .eyebrow { text-transform: uppercase; letter-spacing: .14em;
+             font-size: 10px; font-weight: 700; color: #94a3b8; }
+
+  /* Controls acknowledge a tap instead of just changing colour. */
+  button { transition: transform .12s ease, background-color .15s ease,
+                       border-color .15s ease, color .15s ease; }
+  button:active:not(:disabled) { transform: scale(.985); }
+
+  /* Rows respond on pointer devices only, so touch doesn't get a stuck state. */
+  @media (hover: hover) { .row-hover:hover { background-color: rgb(30 41 59 / .55); } }
+
+  /* A deadline inside the final hour should feel like one. */
+  @keyframes deadline-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .5 } }
+  .urgent { animation: deadline-pulse 1.7s ease-in-out infinite; }
+
+  /* Keyboard users shouldn't have to guess where they are. */
+  :focus-visible { outline: 2px solid #FFC72C; outline-offset: 2px; border-radius: 5px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .urgent { animation: none }
+    button { transition: none }
+    button:active:not(:disabled) { transform: none }
+  }
+
   /* Keep the bottom bar clear of the iOS home indicator. */
   #bottom-nav { padding-bottom: env(safe-area-inset-bottom); }
   .tap { min-width: 40px; min-height: 40px; display: inline-flex;
@@ -58,7 +91,15 @@
 <header class="sticky top-0 z-20 bg-slate-900/95 backdrop-blur border-b border-slate-800">
   <div class="h-1" style="background:linear-gradient(90deg,#C8102E 0%,#FFC72C 100%)"></div>
   <div class="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
-    <h1 id="hdr-app" class="font-bold text-lg">⚽ Fantasy <span class="text-wcgold">Draft</span></h1>
+    <h1 id="hdr-app" class="font-bold text-lg flex items-center gap-2">
+      <svg width="21" height="21" viewBox="0 0 24 24" aria-hidden="true" class="shrink-0">
+        <circle cx="12" cy="12" r="10.4" fill="none" stroke="#FFC72C" stroke-width="1.7"/>
+        <line x1="12" y1="1.6" x2="12" y2="22.4" stroke="#FFC72C" stroke-width="1.1" opacity=".5"/>
+        <circle cx="12" cy="12" r="3.7" fill="none" stroke="#FFC72C" stroke-width="1.1" opacity=".5"/>
+        <circle cx="12" cy="12" r="1.6" fill="#C8102E"/>
+      </svg>
+      <span class="tracking-tight">Fantasy<span class="text-wcgold">Draft</span></span>
+    </h1>
     <div class="flex items-center gap-2 text-xs text-slate-400">
       <span id="hdr-league" class="truncate max-w-[10rem]"></span>
       <span id="conn-dot" title="realtime connection" class="w-2 h-2 rounded-full bg-slate-600"></span>
@@ -493,7 +534,7 @@
     <div id="board-trades" class="hidden"></div>
     <div id="board-chat" class="hidden space-y-2">
       <div id="chat-threads" class="flex gap-1.5 overflow-x-auto pb-1 text-xs"></div>
-      <div id="chat-msgs" class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2 h-[55vh] overflow-y-auto"></div>
+      <div id="chat-msgs" class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2 h-[42vh] overflow-y-auto"></div>
       <div id="chat-note" class="text-[11px] text-slate-400 min-h-[1em]"></div>
       <form id="chat-form" class="flex gap-2">
         <input id="chat-input" maxlength="1000" autocomplete="off" placeholder="Message…"
