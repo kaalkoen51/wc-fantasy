@@ -17,10 +17,10 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, myManager, isAdmin, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
-const { S, pickInfo, myManager, isAdmin, calcPlayerPoints, calcTeamPoints, computeScores,
+const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores,
         scoring, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota,
         phaseOneStarters, starterQuota, effectiveConfig,
         flexCounting, formationValid, DEFAULT_FORMATION,
@@ -371,6 +371,26 @@ S.league = {};
   check("buildFixtureStatRows: MOTM = top rating ≥7.5", rows[0].motm, true);
   check("buildFixtureStatRows: rows scoped by competition key", rows[0].competition_key, "39-2024");
   check("buildFixtureStatRows: maxMin + clean-sheet diagnostics", [maxMin, cs], [90, 2]);
+}
+
+/* The board's rules footer is generated from the league's own config — it used
+   to be static World Cup text, which was wrong for any custom league. */
+{
+  S.league = {};   // defaults: TEAM pick on, no captain, fixed formation
+  const def = boardRulesNote();
+  check("rulesNote: default league describes stage bonuses", /stage bonuses/.test(def), true);
+  check("rulesNote: default league describes the sub rule", /sub scores only/.test(def), true);
+  check("rulesNote: no captain mention when captain is off", /captain/.test(def), false);
+  // A custom league: no TEAM pick, captain on, capped subs, H2H, waivers.
+  S.league = { config: { quota: { TEAM: 0 }, captain: true, maxSubs: 1,
+                         h2hEnabled: true, fa_defer_to_close: true } };
+  const cus = boardRulesNote();
+  check("rulesNote: custom league drops the TEAM stage-bonus copy", /stage bonuses/.test(cus), false);
+  check("rulesNote: mentions the captain when enabled", /captain scores double/.test(cus), true);
+  check("rulesNote: states the per-round sub cap", /up to 1 per round/.test(cus), true);
+  check("rulesNote: mentions the head-to-head log", /head-to-head log/.test(cus), true);
+  check("rulesNote: mentions waiver order", /waiver order/.test(cus), true);
+  S.league = null;
 }
 
 /* Account-aware identity: a signed-in user is matched to their manager by
