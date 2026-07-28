@@ -5097,17 +5097,27 @@ function availText(pid) {
   return bits.length ? " · " + bits.join(" ") : "";
 }
 
-// Player faces / team crests via photos.json (optional, like fixtures.json):
+// Player faces / team crests. API-Football competitions carry each player's
+// photo URL (and an api_<id> id) in the shared pool, so use that directly;
+// legacy WC-2026 players resolve via the optional static photos.json
 // { players: { "arg_10": <api id> }, teams: { "Argentina": <api id> } }.
 function avatarHtml(playerId, team, size = "w-7 h-7") {
   const isTeam = String(playerId).startsWith("team:");
-  const id = isTeam ? S.photos?.teams?.[team] : S.photos?.players?.[playerId];
-  if (!id) return `<span class="${size} rounded-full bg-slate-800 shrink-0"></span>`;
-  const url = isTeam
-    ? `https://media.api-sports.io/football/teams/${id}.png`
-    : `https://media.api-sports.io/football/players/${id}.png`;
+  let url = null;
+  if (isTeam) {
+    const id = S.photos?.teams?.[team];
+    if (id) url = `https://media.api-sports.io/football/teams/${id}.png`;
+  } else if (String(playerId).startsWith("api_")) {
+    // API competition player: stored photo URL, else derived from the api id.
+    url = S.playerById?.[playerId]?.photo
+      || `https://media.api-sports.io/football/players/${String(playerId).slice(4)}.png`;
+  } else {
+    const id = S.photos?.players?.[playerId];
+    if (id) url = `https://media.api-sports.io/football/players/${id}.png`;
+  }
+  if (!url) return `<span class="${size} rounded-full bg-slate-800 shrink-0"></span>`;
   return `<span class="${size} rounded-full bg-slate-800 overflow-hidden shrink-0 inline-flex items-center justify-center">
-    <img src="${url}" loading="lazy" onerror="this.remove()"
+    <img src="${esc(url)}" loading="lazy" onerror="this.remove()"
          class="w-full h-full ${isTeam ? "object-contain p-0.5" : "object-cover"}" alt=""></span>`;
 }
 
