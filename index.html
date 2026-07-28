@@ -14,6 +14,11 @@
     wcgreen: "#00A859",
     wcblue: "#1A7DC4",
     wcnavy: "#070B24",
+    // Semantic state — deliberately NOT the brand accent, so "this is urgent"
+    // never reads the same as "this is a button".
+    live: "#4FB286",
+    warn: "#E8B93F",
+    danger: "#E5646A",
   } } } };
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -44,6 +49,10 @@
   .kb-col:not(.kb-last) .kb-pair::after { content: ""; position: absolute; right: -18px; top: 50%;
                                           width: 18px; height: 2px; background: #475569; }
   .kb-card { margin: 5px 0; }
+  /* Small icon controls still need a finger-sized hit area, so pad the target
+     without changing how big the glyph looks. */
+  .tap { min-width: 40px; min-height: 40px; display: inline-flex;
+         align-items: center; justify-content: center; }
   /* Collapsible create-league sections: hide the native marker, rotate caret. */
   .create-sec > summary::-webkit-details-marker { display: none; }
   .create-sec .sec-caret { transition: transform .15s; }
@@ -99,21 +108,21 @@
           <span id="account-mode-title" class="text-sm font-semibold">Sign in</span>
           <button type="button" id="account-toggle" class="text-xs text-wcgold underline">Create an account</button>
         </div>
-        <p class="text-[11px] text-slate-500">Optional — sign in so your leagues and teams follow you across devices. Stay signed in until you sign out. You can still just join with an invite code.</p>
+        <p class="text-xs text-slate-400">Optional — sign in so your leagues and teams follow you across devices. Stay signed in until you sign out. You can still just join with an invite code.</p>
         <button id="account-google" type="button" class="w-full flex items-center justify-center gap-2 bg-white text-slate-800 rounded-lg py-2 text-sm font-semibold hover:bg-slate-100">
           <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
           Continue with Google
         </button>
-        <div class="flex items-center gap-2 text-[10px] text-slate-600"><div class="flex-1 h-px bg-slate-700"></div>or with email<div class="flex-1 h-px bg-slate-700"></div></div>
+        <div class="flex items-center gap-2 text-[11px] text-slate-500"><div class="flex-1 h-px bg-slate-700"></div>or with email<div class="flex-1 h-px bg-slate-700"></div></div>
         <input id="account-email" type="email" autocomplete="email" placeholder="email" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
         <input id="account-pw" type="password" autocomplete="current-password" placeholder="password" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
         <button id="account-submit" class="w-full bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg py-2 text-sm font-semibold">Sign in</button>
-        <p id="account-msg" class="text-[11px] text-slate-400"></p>
+        <p id="account-msg" class="text-xs text-slate-400"></p>
       </div>
       <!-- Signed-in: identity + sign out + your leagues -->
       <div id="account-in" class="hidden space-y-2">
         <div class="flex items-center justify-between gap-2">
-          <span class="text-sm min-w-0"><span class="text-slate-500">Signed in as</span> <span id="account-email-label" class="font-semibold truncate"></span></span>
+          <span class="text-sm min-w-0"><span class="text-slate-400">Signed in as</span> <span id="account-email-label" class="font-semibold truncate"></span></span>
           <button id="account-signout" class="shrink-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold">Sign out</button>
         </div>
         <div id="account-leagues" class="space-y-1"></div>
@@ -131,13 +140,13 @@
     </div>
     <button id="home-create" class="w-full bg-wcred hover:bg-wcred-hov rounded-xl py-4 font-semibold text-lg">Create a league</button>
     <button id="home-join" class="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl py-4 font-semibold text-lg">Join with invite code</button>
-    <button id="home-reconfig" class="w-full text-xs text-slate-500 underline pt-2">change Supabase connection</button>
+    <button id="home-reconfig" class="w-full text-xs text-slate-400 underline pt-2">change Supabase connection</button>
   </section>
 
   <!-- Create league -->
   <section data-view="create" class="hidden space-y-4">
     <h2 class="text-xl font-semibold">Create a league</h2>
-    <p class="text-xs text-slate-500 -mt-3">Pick a format to start from. You can change anything before you create it.</p>
+    <p class="text-xs text-slate-400 -mt-3">Pick a format to start from. You can change anything before you create it.</p>
 
     <!-- Preset: a working league in one tap. Everything the app can do is still
          here, one link away, rather than asked up front. -->
@@ -147,8 +156,8 @@
         <button type="button" data-preset="h2h" class="rounded-lg py-2 text-xs font-semibold border">Head-to-head</button>
         <button type="button" data-preset="custom" class="rounded-lg py-2 text-xs font-semibold border">Build your own</button>
       </div>
-      <p id="create-preset-blurb" class="text-[11px] text-slate-400"></p>
-      <button type="button" id="create-customise" class="text-[11px] text-wcgold underline">Customise settings ▾</button>
+      <p id="create-preset-blurb" class="text-xs text-slate-400"></p>
+      <button type="button" id="create-customise" class="text-xs text-wcgold underline">Customise settings ▾</button>
     </div>
 
     <!-- 1 · Basics -->
@@ -159,7 +168,7 @@
       <div class="grid grid-cols-2 gap-3">
         <label class="block text-sm text-slate-400">Managers
           <input id="create-num" type="number" min="2" max="15" value="8" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></label>
-        <label class="block text-sm text-slate-400">Seconds / pick <span class="text-slate-500">(0 = no limit)</span>
+        <label class="block text-sm text-slate-400">Seconds / pick <span class="text-slate-400">(0 = no limit)</span>
           <input id="create-dur" type="number" min="0" max="600" value="60" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></label>
       </div>
     </div>
@@ -167,17 +176,17 @@
     <!-- 2 · Competition -->
     <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
       <div class="text-sm font-semibold flex items-center gap-2">🏆 Competition</div>
-      <p class="text-[11px] text-slate-500">Who's in the draft pool.</p>
+      <p class="text-xs text-slate-400">Who's in the draft pool.</p>
       <select id="create-comp" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100">
         <option value="wc">World Cup 2026 (built-in squads)</option>
       </select>
       <div id="create-comp-api" class="hidden space-y-3 rounded-lg border border-slate-700 bg-slate-800/40 p-3">
-        <p class="text-[11px] text-slate-500">Squads &amp; fixtures are pulled once and shared with every other league on this
+        <p class="text-xs text-slate-400">Squads &amp; fixtures are pulled once and shared with every other league on this
           competition, so most of the time there's nothing to do here. A key is only needed if this server has none configured.</p>
         <div class="grid grid-cols-2 gap-3">
           <label class="block text-sm text-slate-400">Season
             <input id="create-comp-season" type="number" placeholder="2024" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></label>
-          <label class="block text-sm text-slate-400">API-Football key <span class="text-slate-500 text-xs">(optional)</span>
+          <label class="block text-sm text-slate-400">API-Football key <span class="text-slate-400 text-xs">(optional)</span>
             <input id="create-api-key" placeholder="usually not needed" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></label>
         </div>
       </div>
@@ -188,7 +197,7 @@
     <details class="create-sec rounded-xl border border-slate-700 bg-slate-900 p-4">
       <summary class="cursor-pointer select-none flex items-center justify-between gap-2 list-none">
         <span class="text-sm font-semibold">🥅 Squad</span>
-        <span class="text-xs text-slate-500 flex items-center gap-1"><span id="create-squad-summary"></span><span class="sec-caret">▾</span></span>
+        <span class="text-xs text-slate-400 flex items-center gap-1"><span id="create-squad-summary"></span><span class="sec-caret">▾</span></span>
       </summary>
       <div id="create-squad" class="pt-3 space-y-2"></div>
     </details>
@@ -197,17 +206,17 @@
     <details class="create-sec rounded-xl border border-slate-700 bg-slate-900 p-4">
       <summary class="cursor-pointer select-none flex items-center justify-between gap-2 list-none">
         <span class="text-sm font-semibold">📊 Scoring</span>
-        <span class="text-xs text-slate-500 flex items-center gap-1"><span id="create-scoring-summary"></span><span class="sec-caret">▾</span></span>
+        <span class="text-xs text-slate-400 flex items-center gap-1"><span id="create-scoring-summary"></span><span class="sec-caret">▾</span></span>
       </summary>
       <div id="create-scoring" class="pt-3 space-y-2"></div>
       <div class="mt-3 rounded-xl border border-slate-700 bg-slate-800/30 p-3 space-y-2">
-        <div class="text-xs text-slate-400 font-medium">⚖️ Balance check <span class="text-slate-500 font-normal">— live, against prior data</span></div>
+        <div class="text-xs text-slate-400 font-medium">⚖️ Balance check <span class="text-slate-400 font-normal">— live, against prior data</span></div>
         <div id="create-balance" class="space-y-2"></div>
         <div id="create-pull-wrap" class="hidden space-y-1">
-          <div id="create-pull-status" class="text-[10px] text-slate-500"></div>
+          <div id="create-pull-status" class="text-[11px] text-slate-400"></div>
           <button id="create-pull-history" type="button" class="w-full rounded-lg border border-wcgold/50 bg-wcred/10 text-wcgold px-3 py-1.5 text-xs font-semibold">⬇ Pull this competition's players + season history</button>
-          <p class="text-[10px] text-slate-500">The pull is shared and incremental — it skips matches already loaded and only fetches ones played since, so re-running it just tops up. First load of a full season can take a few minutes. Uses the API key from the Competition section.</p>
-          <pre id="create-pull-log" class="text-[10px] text-slate-500 whitespace-pre-wrap"></pre>
+          <p class="text-[11px] text-slate-400">The pull is shared and incremental — it skips matches already loaded and only fetches ones played since, so re-running it just tops up. First load of a full season can take a few minutes. Uses the API key from the Competition section.</p>
+          <pre id="create-pull-log" class="text-[11px] text-slate-400 whitespace-pre-wrap"></pre>
         </div>
       </div>
     </details>
@@ -216,10 +225,10 @@
     <details class="create-sec rounded-xl border border-slate-700 bg-slate-900 p-4">
       <summary class="cursor-pointer select-none flex items-center justify-between gap-2 list-none">
         <span class="text-sm font-semibold">🌍 Team bonus</span>
-        <span class="text-xs text-slate-500 flex items-center gap-1"><span id="create-team-summary"></span><span class="sec-caret">▾</span></span>
+        <span class="text-xs text-slate-400 flex items-center gap-1"><span id="create-team-summary"></span><span class="sec-caret">▾</span></span>
       </summary>
       <div class="pt-3 space-y-3">
-        <p class="text-[11px] text-slate-500">Each manager also drafts a <b>team</b> (national side or club) that banks bonus
+        <p class="text-xs text-slate-400">Each manager also drafts a <b>team</b> (national side or club) that banks bonus
           points as it goes deep — a fun knockout-tournament layer. Turn it off for a pure players-only league.</p>
         <div class="flex gap-2">
           <button type="button" data-teamtoggle="off" class="flex-1 rounded-lg py-2 text-sm font-semibold border border-slate-700">No team bonus</button>
@@ -227,11 +236,11 @@
         </div>
         <div id="create-team-fields" class="space-y-2 hidden">
           <div class="grid grid-cols-2 gap-2 items-end">
-            <label class="text-[11px] text-slate-400">Team picks / manager
+            <label class="text-xs text-slate-400">Team picks / manager
               <input data-cfg="quota.TEAM" type="number" step="1" value="1" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
           </div>
           <div id="create-team-bonuses" class="space-y-2"></div>
-          <p class="text-[10px] text-slate-500">Stage bonuses suit knockout competitions. Points for match <i>wins</i> vs
+          <p class="text-[11px] text-slate-400">Stage bonuses suit knockout competitions. Points for match <i>wins</i> vs
             <i>progression</i>, and league-based team scoring, are coming next.</p>
         </div>
       </div>
@@ -241,7 +250,7 @@
     <details class="create-sec rounded-xl border border-slate-700 bg-slate-900 p-4">
       <summary class="cursor-pointer select-none flex items-center justify-between gap-2 list-none">
         <span class="text-sm font-semibold">🏆 Format &amp; trades</span>
-        <span class="text-xs text-slate-500 flex items-center gap-1"><span id="create-format-summary"></span><span class="sec-caret">▾</span></span>
+        <span class="text-xs text-slate-400 flex items-center gap-1"><span id="create-format-summary"></span><span class="sec-caret">▾</span></span>
       </summary>
       <div class="pt-3 space-y-3">
         <div class="text-xs text-slate-400 font-medium">Standings format</div>
@@ -250,70 +259,70 @@
           <button type="button" data-fmt="h2h" class="flex-1 rounded-lg py-2 text-xs font-semibold border">Head-to-head league</button>
         </div>
         <div id="create-h2h-fields" class="space-y-2 hidden">
-          <p class="text-[11px] text-slate-500">Managers play a round-robin each round; the winner (higher round score) takes
+          <p class="text-xs text-slate-400">Managers play a round-robin each round; the winner (higher round score) takes
             the log points, plus bonuses — an attacking bonus for a big score and a losing bonus for a narrow defeat.</p>
           <div class="grid grid-cols-3 gap-2">
-            <label class="text-[11px] text-slate-400">Win<input data-cfg="h2h.win" type="number" value="3" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
-            <label class="text-[11px] text-slate-400">Draw<input data-cfg="h2h.draw" type="number" value="1" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
-            <label class="text-[11px] text-slate-400">Loss<input data-cfg="h2h.loss" type="number" value="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
+            <label class="text-xs text-slate-400">Win<input data-cfg="h2h.win" type="number" value="3" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
+            <label class="text-xs text-slate-400">Draw<input data-cfg="h2h.draw" type="number" value="1" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
+            <label class="text-xs text-slate-400">Loss<input data-cfg="h2h.loss" type="number" value="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
           </div>
           <div class="grid grid-cols-2 gap-2">
-            <label class="text-[11px] text-slate-400" title="Attacking bonus: score at least this many points in a round">Attacking-bonus score<input data-cfg="h2h.score_bonus" type="number" value="60" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
-            <label class="text-[11px] text-slate-400" title="Losing bonus: lose by at most this many points">Losing-bonus margin<input data-cfg="h2h.losing_margin" type="number" value="5" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
+            <label class="text-xs text-slate-400" title="Attacking bonus: score at least this many points in a round">Attacking-bonus score<input data-cfg="h2h.score_bonus" type="number" value="60" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
+            <label class="text-xs text-slate-400" title="Losing bonus: lose by at most this many points">Losing-bonus margin<input data-cfg="h2h.losing_margin" type="number" value="5" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
           </div>
-          <label class="text-[11px] text-slate-400">Rounds you expect to play <span class="text-slate-500">(e.g. matchweeks in the season)</span>
+          <label class="text-xs text-slate-400">Rounds you expect to play <span class="text-slate-400">(e.g. matchweeks in the season)</span>
             <input id="create-h2h-rounds" type="number" min="1" placeholder="how many rounds?" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
-          <label class="flex items-center gap-2 text-[11px] text-slate-300">
+          <label class="flex items-center gap-2 text-xs text-slate-300">
             <input id="create-h2h-rumble" type="checkbox" class="rounded border-slate-600 bg-slate-800">
             Play leftover rounds as <b>rumbles</b> (everyone vs everyone) to keep the log balanced</label>
           <div id="create-rumble-opts" class="hidden space-y-2 pl-5 border-l border-slate-700">
-            <div class="text-[11px] text-slate-400">How a rumble round scores:</div>
+            <div class="text-xs text-slate-400">How a rumble round scores:</div>
             <div class="flex gap-2">
-              <button type="button" data-rumsc="pairwise" class="flex-1 rounded-lg py-1.5 text-[11px] font-semibold border">Head-to-head vs all</button>
-              <button type="button" data-rumsc="placement" class="flex-1 rounded-lg py-1.5 text-[11px] font-semibold border">Placement points</button>
+              <button type="button" data-rumsc="pairwise" class="flex-1 rounded-lg py-1.5 text-xs font-semibold border">Head-to-head vs all</button>
+              <button type="button" data-rumsc="placement" class="flex-1 rounded-lg py-1.5 text-xs font-semibold border">Placement points</button>
             </div>
-            <p class="text-[10px] text-slate-500">Head-to-head vs all: you play every rival that round, banking the usual win/draw/loss points.
+            <p class="text-[11px] text-slate-400">Head-to-head vs all: you play every rival that round, banking the usual win/draw/loss points.
               Placement: managers are ranked by round score and the top finishers earn the points below (ties split evenly).</p>
-            <label id="create-rumble-points-wrap" class="hidden text-[11px] text-slate-400">Points for the top places <span class="text-slate-500">(comma-separated, best first)</span>
+            <label id="create-rumble-points-wrap" class="hidden text-xs text-slate-400">Points for the top places <span class="text-slate-400">(comma-separated, best first)</span>
               <input id="create-rumble-points" placeholder="3, 2, 1" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
           </div>
-          <div id="create-h2h-feedback" class="rounded-lg border border-slate-700 bg-slate-900/60 px-2.5 py-2 text-[11px] leading-relaxed"></div>
+          <div id="create-h2h-feedback" class="rounded-lg border border-slate-700 bg-slate-900/60 px-2.5 py-2 text-xs leading-relaxed"></div>
         </div>
         <div class="text-xs text-slate-400 font-medium pt-1">Trades &amp; free agents</div>
         <div class="flex gap-2">
           <button type="button" data-trade="instant" class="flex-1 rounded-lg py-2 text-xs font-semibold border">Instant</button>
           <button type="button" data-trade="waiver" class="flex-1 rounded-lg py-2 text-xs font-semibold border">Waiver order</button>
         </div>
-        <p class="text-[11px] text-slate-500">Instant: free-agent swaps apply immediately (first-come). Waiver: claims queue and
+        <p class="text-xs text-slate-400">Instant: free-agent swaps apply immediately (first-come). Waiver: claims queue and
           resolve when the window closes, in reverse-standings priority (last place picks first).</p>
-        <label class="text-[11px] text-slate-400">Max free-agent moves per manager, per trade window <span class="text-slate-500">(blank = unlimited)</span>
+        <label class="text-xs text-slate-400">Max free-agent moves per manager, per trade window <span class="text-slate-400">(blank = unlimited)</span>
           <input data-cfg="max_fa_per_window" type="number" min="0" placeholder="unlimited" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
-        <p class="text-[11px] text-slate-500">Applies to both modes — the number of free agents a manager can bring in
+        <p class="text-xs text-slate-400">Applies to both modes — the number of free agents a manager can bring in
           each window. Instant: swaps beyond the cap are blocked. Waiver: only that many claims are awarded per window.</p>
         <div class="text-xs text-slate-400 font-medium pt-1">Captain</div>
         <div class="flex gap-2">
           <button type="button" data-cap="off" class="flex-1 rounded-lg py-2 text-xs font-semibold border">No captain</button>
           <button type="button" data-cap="on" class="flex-1 rounded-lg py-2 text-xs font-semibold border">Captain + vice</button>
         </div>
-        <p class="text-[11px] text-slate-500">Each manager names a captain (double points that round) and a vice-captain
+        <p class="text-xs text-slate-400">Each manager names a captain (double points that round) and a vice-captain
           (doubles instead if the captain doesn't play at all). Set them in the lineup screen.</p>
         <div class="text-xs text-slate-400 font-medium pt-1">Substitutions</div>
-        <label class="text-[11px] text-slate-400">Max subs that can come up per round <span class="text-slate-500">(blank = the whole bench)</span>
+        <label class="text-xs text-slate-400">Max subs that can come up per round <span class="text-slate-400">(blank = the whole bench)</span>
           <input data-cfg="maxSubs" type="number" min="0" placeholder="whole bench" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
         <div class="text-xs text-slate-400 font-medium pt-1">Trade &amp; lineup windows</div>
         <div class="flex gap-2">
           <button type="button" data-win="manual" class="flex-1 rounded-lg py-2 text-xs font-semibold border">Manual (admin toggles)</button>
           <button type="button" data-win="auto" class="flex-1 rounded-lg py-2 text-xs font-semibold border">Automatic (fixtures)</button>
         </div>
-        <p class="text-[11px] text-slate-500">Automatic mode reads the competition's matchweek calendar: the trade window
+        <p class="text-xs text-slate-400">Automatic mode reads the competition's matchweek calendar: the trade window
           opens 1h after a matchweek's last game and closes 24h before the next one; lineups lock 1h before the next
           matchweek's first kick-off. Best with a fixture-driven competition like the Premier League.</p>
         <div id="create-auto-fields" class="hidden grid grid-cols-3 gap-2">
-          <label class="text-[11px] text-slate-400">Trade opens (h after last game)
+          <label class="text-xs text-slate-400">Trade opens (h after last game)
             <input data-cfg="windows.tradeOpenAfterH" type="number" min="0" placeholder="1" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
-          <label class="text-[11px] text-slate-400">Trade closes (h before next MW)
+          <label class="text-xs text-slate-400">Trade closes (h before next MW)
             <input data-cfg="windows.tradeCloseBeforeH" type="number" min="0" placeholder="24" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
-          <label class="text-[11px] text-slate-400">Lineup locks (h before first game)
+          <label class="text-xs text-slate-400">Lineup locks (h before first game)
             <input data-cfg="windows.lineupLockBeforeH" type="number" min="0" placeholder="1" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
         </div>
       </div>
@@ -321,19 +330,19 @@
 
     </div><!-- /create-advanced -->
 
-    <button type="button" id="create-reset" class="w-full text-xs text-slate-500 underline">reset all customisations to defaults</button>
+    <button type="button" id="create-reset" class="w-full text-xs text-slate-400 underline">reset all customisations to defaults</button>
     <button id="create-go" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2.5 font-semibold">Create league</button>
     <pre id="create-comp-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
     <div id="create-result" class="hidden rounded-xl border border-amber-600 bg-amber-950/30 p-4 space-y-2 text-sm">
       <p>League created! <b>Save these somewhere safe:</b></p>
       <p>Invite code (share with managers): <code id="create-code" class="text-amber-300 text-lg font-bold"></code>
-        <button class="copy-btn text-xs underline text-slate-400" data-copy="create-code">copy</button></p>
+        <button class="copy-btn tap text-xs underline text-slate-400" data-copy="create-code">copy</button></p>
       <p>Admin token (stats entry, keep private): <code id="create-admin" class="text-amber-300 break-all"></code>
-        <button class="copy-btn text-xs underline text-slate-400" data-copy="create-admin">copy</button></p>
+        <button class="copy-btn tap text-xs underline text-slate-400" data-copy="create-admin">copy</button></p>
       <p class="text-slate-400">You're the admin. Join as a manager below to also draft a team.</p>
       <button id="create-tolobby" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2 font-semibold">Go to lobby</button>
     </div>
-    <button class="back-btn w-full text-xs text-slate-500 underline">back</button>
+    <button class="back-btn w-full text-xs text-slate-400 underline">back</button>
   </section>
 
   <!-- Join league -->
@@ -361,7 +370,7 @@
           <input id="join-admin-token" placeholder="admin token (optional)" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100"></label>
       </div>
     </div>
-    <button class="back-btn w-full text-xs text-slate-500 underline">back</button>
+    <button class="back-btn w-full text-xs text-slate-400 underline">back</button>
   </section>
 
   <!-- Lobby -->
@@ -371,7 +380,7 @@
       <div id="lobby-name" class="text-xl font-bold"></div>
       <div class="mt-2 text-sm">Invite code:
         <code id="lobby-code" class="text-amber-300 text-lg font-bold tracking-widest"></code>
-        <button class="copy-btn text-xs underline text-slate-400" data-copy="lobby-code">copy</button>
+        <button class="copy-btn tap text-xs underline text-slate-400" data-copy="lobby-code">copy</button>
       </div>
       <div id="lobby-settings" class="text-xs text-slate-400 mt-1"></div>
     </div>
@@ -389,14 +398,14 @@
       <button id="lobby-join-go" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2 font-semibold">Join</button>
     </div>
     <div id="lobby-admin" class="hidden space-y-2">
-      <button id="lobby-start" class="w-full bg-wcred hover:bg-wcred-hov disabled:bg-slate-800 disabled:text-slate-500 rounded-xl py-3 font-semibold">Start draft</button>
+      <button id="lobby-start" class="w-full bg-wcred hover:bg-wcred-hov disabled:bg-slate-800 disabled:text-slate-400 rounded-xl py-3 font-semibold">Start draft</button>
       <div class="flex items-center gap-2 text-xs text-slate-400 justify-center">
         <span>Managers needed:</span>
         <input id="lobby-num-input" type="number" min="2" max="15" class="w-16 rounded bg-slate-800 border border-slate-700 px-2 py-1">
         <button id="lobby-num-set" class="rounded bg-slate-800 border border-slate-700 px-3 py-1 font-semibold">Set</button>
-        <span class="text-slate-500">(if someone drops out). Tap ✕ by a name to kick.</span>
+        <span class="text-slate-400">(if someone drops out). Tap ✕ by a name to kick.</span>
       </div>
-      <p class="text-xs text-slate-500 text-center">Random draft order is assigned when the draft starts. Snake order.</p>
+      <p class="text-xs text-slate-400 text-center">Random draft order is assigned when the draft starts. Snake order.</p>
     </div>
     <p id="lobby-wait" class="text-center text-sm text-slate-400">Waiting for the admin to start the draft…</p>
     <details class="rounded-xl border border-slate-700 bg-slate-900">
@@ -467,7 +476,7 @@
       <div class="flex items-center gap-2 flex-wrap text-xs">
         <select id="stats-round" class="rounded-lg bg-slate-900 border border-slate-700 px-2 py-1 text-xs"></select>
         <button id="stats-per90" class="rounded-full px-3 py-1 border border-slate-700 text-slate-400">⏱ per 90</button>
-        <span class="text-[10px] text-slate-600">Round = each team's Nth game · per 90 needs ≥90′</span>
+        <span class="text-[11px] text-slate-500">Round = each team's Nth game · per 90 needs ≥90′</span>
       </div>
       <div id="stats-filters" class="flex items-center gap-1.5 flex-wrap text-xs">
         <button id="stats-unpicked" class="rounded-full px-3 py-1 border border-slate-700 text-slate-400">🟢 Unpicked only</button>
@@ -481,14 +490,14 @@
     <div id="board-chat" class="hidden space-y-2">
       <div id="chat-threads" class="flex gap-1.5 overflow-x-auto pb-1 text-xs"></div>
       <div id="chat-msgs" class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2 h-[55vh] overflow-y-auto"></div>
-      <div id="chat-note" class="text-[10px] text-slate-500 min-h-[1em]"></div>
+      <div id="chat-note" class="text-[11px] text-slate-400 min-h-[1em]"></div>
       <form id="chat-form" class="flex gap-2">
         <input id="chat-input" maxlength="1000" autocomplete="off" placeholder="Message…"
                class="flex-1 min-w-0 rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm">
         <button type="submit" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-4 py-2 text-sm font-semibold">Send</button>
       </form>
     </div>
-    <p id="board-rules-note" class="text-xs text-slate-500 text-center"></p>
+    <p id="board-rules-note" class="text-xs text-slate-400 text-center"></p>
   </section>
 
   <!-- Admin stats entry -->
@@ -503,7 +512,7 @@
     <div id="admin-panel" class="hidden space-y-4">
       <div class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">Competition &amp; players</h3>
-        <p class="text-xs text-slate-500">Pick a competition to draft from. Its teams, squads and
+        <p class="text-xs text-slate-400">Pick a competition to draft from. Its teams, squads and
           fixtures are pulled from API-Football <b>once and shared</b> by every league on the same
           competition — if another league already loaded it, this reuses that data instantly (no
           re-pull), and one admin's stat pull updates them all. Leave unset for the built-in World
@@ -519,15 +528,15 @@
         <pre id="adm-comp-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
       </div>
       <div class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
-        <h3 class="font-semibold text-sm">Scheduled pulls <span class="text-[10px] text-slate-500 font-normal">· app admin</span></h3>
-        <p class="text-xs text-slate-500">Turn the automatic daily stat pull on or off per competition.
+        <h3 class="font-semibold text-sm">Scheduled pulls <span class="text-[11px] text-slate-400 font-normal">· app admin</span></h3>
+        <p class="text-xs text-slate-400">Turn the automatic daily stat pull on or off per competition.
           When on, the scheduled job pulls that competition's completed games into the shared stats each
           day — one pull serves every league on it. When off, use "Pull stats now" by hand.</p>
         <div id="adm-schedules" class="space-y-1.5"></div>
       </div>
       <div class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">Pull stats now</h3>
-        <p class="text-xs text-slate-500">Fetches completed matches for the chosen date straight
+        <p class="text-xs text-slate-400">Fetches completed matches for the chosen date straight
           from API-Football and writes everyone's stats — same as the 06:00 automated pull, on
           demand. In-progress games are skipped; re-pull after the final whistle.</p>
         <div class="flex gap-2">
@@ -537,7 +546,7 @@
         <pre id="adm-pull-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
       </div>
       <h2 class="text-xl font-semibold">Manual stats entry</h2>
-      <p class="text-xs text-slate-500">Fallback alongside the automated daily pull. Rows upsert on
+      <p class="text-xs text-slate-400">Fallback alongside the automated daily pull. Rows upsert on
         (player, match), so re-saving edits in place. Use the same match label format as the
         automation: <code>Home vs Away (YYYY-MM-DD)</code>.</p>
       <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
@@ -548,7 +557,7 @@
         </div>
         <input id="adm-date" type="date" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
         <input id="adm-label" placeholder="custom match label (optional, overrides above)" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
-        <div class="text-xs text-slate-500">Label: <code id="adm-label-preview"></code></div>
+        <div class="text-xs text-slate-400">Label: <code id="adm-label-preview"></code></div>
       </div>
       <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">Player</h3>
@@ -583,7 +592,7 @@
       </div>
       <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-2">
         <h3 class="font-semibold text-sm">Trading window &amp; lineup locks</h3>
-        <p class="text-xs text-slate-500">Open it between rounds (once all teams have played);
+        <p class="text-xs text-slate-400">Open it between rounds (once all teams have played);
           managers can then trade, swap free agents and change their lineups. <b>Closing it
           locks everyone's lineup in</b> for the next games — points for each matchday are
           scored against the lineup that was locked at the time, so later changes never
@@ -596,7 +605,7 @@
       </div>
       <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">Draft settings</h3>
-        <p class="text-xs text-slate-500">The draft pool can be sorted by any stat (goals, points, etc.).
+        <p class="text-xs text-slate-400">The draft pool can be sorted by any stat (goals, points, etc.).
           Switch this <b>off</b> for a blind draft where nobody can rank the pool by numbers.</p>
         <div class="flex items-center justify-between gap-3">
           <span id="adm-sort-status" class="text-sm font-semibold"></span>
@@ -605,14 +614,14 @@
       </div>
       <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">⚙️ Design your draft — scoring &amp; bonuses</h3>
-        <p class="text-xs text-slate-500">Customise how points are scored for this league. Editable until
+        <p class="text-xs text-slate-400">Customise how points are scored for this league. Editable until
           the first game is scored, then locked so past results never shift. Leave as-is for the standard
           World Cup values.</p>
         <div id="adm-config" class="space-y-2"></div>
       </div>
       <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">Redrafts &amp; final phase</h3>
-        <p class="text-xs text-slate-500">As the field narrows: (1) optionally remove trailing
+        <p class="text-xs text-slate-400">As the field narrows: (1) optionally remove trailing
           managers — their points freeze and their players return to the pool; (2) set the keeper
           rules and open keeper picks; (3) set the new squad size and hit Start — the redraft
           begins <b>immediately</b> in reverse-standings snake order, so do it when everyone's
@@ -643,7 +652,7 @@
         <div class="grid grid-cols-2 gap-2 text-sm items-end">
           <label class="text-xs text-slate-400">Fluid / flex slots (any outfield — DEF/MID/FWD, not GK)
             <input id="adm-q-flex" type="number" value="1" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <span id="adm-q-size" class="text-[10px] text-slate-500 pb-1"></span>
+          <span id="adm-q-size" class="text-[11px] text-slate-400 pb-1"></span>
         </div>
         <div class="text-xs text-slate-400">Starters per position (the rest are subs; the flex adds a starter too)</div>
         <div class="grid grid-cols-4 gap-2 text-sm">
@@ -662,7 +671,7 @@
       </div>
       <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-2">
         <h3 class="font-semibold text-sm">Team stages</h3>
-        <p class="text-xs text-slate-500">How far each national team has progressed. TEAM picks earn
+        <p class="text-xs text-slate-400">How far each national team has progressed. TEAM picks earn
           cumulative bonuses (R32 +5, R16 +10, QF +15, SF +20, Final +25, Winner +15).
           Tick <b>out</b> when a team is knocked out — their players then can't be drafted or
           swapped in and are badged 🚫 everywhere. Changes save immediately.</p>
@@ -678,13 +687,13 @@
 <div id="lineup-sheet" class="hidden fixed inset-0 z-40 bg-black/60">
   <div class="absolute bottom-0 inset-x-0 max-h-[85vh] bg-slate-900 border-t border-slate-700 rounded-t-2xl p-4 flex flex-col">
     <div class="font-semibold">Pick your team for the next games</div>
-    <p id="lineup-rule" class="text-xs text-slate-500 mt-0.5 mb-2"></p>
+    <p id="lineup-rule" class="text-xs text-slate-400 mt-0.5 mb-2"></p>
     <div id="lineup-captain" class="hidden grid grid-cols-2 gap-2 mb-2"></div>
     <div id="lineup-list" class="overflow-y-auto flex-1 min-h-0 space-y-1"></div>
     <div class="flex items-center gap-2 mt-3">
       <span id="lineup-count" class="flex-1 text-xs text-slate-400"></span>
       <button id="lineup-cancel" class="bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-sm font-semibold">Cancel</button>
-      <button id="lineup-save" class="bg-wcred hover:bg-wcred-hov disabled:bg-slate-800 disabled:text-slate-500 rounded-lg px-4 py-2 text-sm font-semibold">Save</button>
+      <button id="lineup-save" class="bg-wcred hover:bg-wcred-hov disabled:bg-slate-800 disabled:text-slate-400 rounded-lg px-4 py-2 text-sm font-semibold">Save</button>
     </div>
   </div>
 </div>
@@ -707,10 +716,10 @@
      for the league owner. Shown on the board view only. -->
 <nav id="bottom-nav" class="hidden fixed bottom-0 inset-x-0 z-30 bg-slate-900/95 backdrop-blur border-t border-slate-800 pb-[env(safe-area-inset-bottom)]">
   <div class="max-w-3xl mx-auto grid grid-cols-4">
-    <button data-nav="team"     class="nav-btn py-2.5 text-[11px] font-semibold flex flex-col items-center gap-0.5"><span class="text-lg leading-none">👕</span>Team</button>
-    <button data-nav="league"   class="nav-btn py-2.5 text-[11px] font-semibold flex flex-col items-center gap-0.5"><span class="text-lg leading-none">🏆</span>League</button>
-    <button data-nav="players"  class="nav-btn py-2.5 text-[11px] font-semibold flex flex-col items-center gap-0.5"><span class="text-lg leading-none">🔍</span>Players</button>
-    <button data-nav="activity" class="nav-btn py-2.5 text-[11px] font-semibold flex flex-col items-center gap-0.5 relative"><span class="text-lg leading-none">💬</span>Activity<span id="nav-dot" class="hidden absolute top-1.5 right-[22%] w-2 h-2 rounded-full bg-wcgold"></span></button>
+    <button data-nav="team"     class="nav-btn py-2.5 text-xs font-semibold flex flex-col items-center gap-0.5"><span class="text-lg leading-none">👕</span>Team</button>
+    <button data-nav="league"   class="nav-btn py-2.5 text-xs font-semibold flex flex-col items-center gap-0.5"><span class="text-lg leading-none">🏆</span>League</button>
+    <button data-nav="players"  class="nav-btn py-2.5 text-xs font-semibold flex flex-col items-center gap-0.5"><span class="text-lg leading-none">🔍</span>Players</button>
+    <button data-nav="activity" class="nav-btn py-2.5 text-xs font-semibold flex flex-col items-center gap-0.5 relative"><span class="text-lg leading-none">💬</span>Activity<span id="nav-dot" class="hidden absolute top-1.5 right-[22%] w-2 h-2 rounded-full bg-wcgold"></span></button>
   </div>
 </nav>
 
@@ -734,7 +743,7 @@
 <div id="chart-sheet" class="hidden fixed inset-0 z-40 bg-black/70 p-3">
   <div class="absolute inset-x-3 top-1/2 -translate-y-1/2 max-h-[90vh] bg-slate-900 border border-slate-700 rounded-2xl p-4 flex flex-col overflow-hidden">
     <div class="flex items-center justify-between gap-2 mb-2">
-      <div class="text-sm font-semibold">Points distribution by position <span class="text-slate-500 font-normal">— shared scale; dashed = average</span></div>
+      <div class="text-sm font-semibold">Points distribution by position <span class="text-slate-400 font-normal">— shared scale; dashed = average</span></div>
       <button id="chart-close" class="shrink-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm font-semibold">Close</button>
     </div>
     <div id="chart-sheet-body" class="overflow-auto"></div>
@@ -1468,11 +1477,11 @@ S._createTeamOn = true;
 function flexFieldsHtml(eff) {
   const f = eff.formation;
   const boundRow = (p) => `<div class="grid grid-cols-[3.5rem_1fr_1fr] gap-1.5 items-end">
-    <span class="text-[11px] text-slate-400 pb-1.5">${p}</span>
+    <span class="text-xs text-slate-400 pb-1.5">${p}</span>
     ${cfgNum(`formation.${p}.0`, "min", f[p][0], false)}
     ${cfgNum(`formation.${p}.1`, "max", f[p][1], false)}</div>`;
   return `
-    <p class="text-[11px] text-slate-500">Each manager drafts any mix of players (as long as they can field a valid
+    <p class="text-xs text-slate-400">Each manager drafts any mix of players (as long as they can field a valid
       XI) and picks their own formation within these bounds each round. The bench can be any positions — but an
       all-forward bench can't cover a defender, so a manager trades sub flexibility for extra attackers.</p>
     <div class="grid grid-cols-2 gap-2">
@@ -1606,11 +1615,11 @@ function updateH2HFeedback() {
   $("create-rumble-opts").classList.toggle("hidden", !rumble);
   const placement = S._createRumbleScoring === "placement";
   for (const b of document.querySelectorAll("[data-rumsc]"))
-    b.className = "flex-1 rounded-lg py-1.5 text-[11px] font-semibold border " +
+    b.className = "flex-1 rounded-lg py-1.5 text-xs font-semibold border " +
       ((b.dataset.rumsc === "placement") === placement ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400");
   $("create-rumble-points-wrap").classList.toggle("hidden", !placement);
-  if (n < 2) { box.innerHTML = '<span class="text-slate-500">Add at least 2 managers to check the schedule.</span>'; return; }
-  if (rounds < 1) { box.innerHTML = '<span class="text-slate-500">Enter how many rounds you expect to play for a fairness check.</span>'; return; }
+  if (n < 2) { box.innerHTML = '<span class="text-slate-400">Add at least 2 managers to check the schedule.</span>'; return; }
+  if (rounds < 1) { box.innerHTML = '<span class="text-slate-400">Enter how many rounds you expect to play for a fairness check.</span>'; return; }
   const plan = h2hSchedulePlan(n, rounds, { rumble });
   let html = h2hPlanMessage(plan);
   if (rumble && plan.rumble)
@@ -1632,12 +1641,12 @@ async function loadScoringPreviewData() {
   if (!season) {
     S._previewData = null;
     updateCreatePullStatus();
-    box.innerHTML = '<span class="text-[11px] text-slate-500">Enter a season above to validate against its prior data.</span>';
+    box.innerHTML = '<span class="text-xs text-slate-400">Enter a season above to validate against its prior data.</span>';
     return;
   }
   const key = `${sel.value}-${season}`;
   if (S._previewData?.key === key) { updateCreatePullStatus(); return renderCreateBalance(); }
-  box.innerHTML = '<span class="text-[11px] text-slate-500">Loading prior data…</span>';
+  box.innerHTML = '<span class="text-xs text-slate-400">Loading prior data…</span>';
   try {
     const pool = await S.sb.from("competition_pools").select("players").eq("competition_key", key).maybeSingle();
     const posOf = {}, meta = {};
@@ -2081,8 +2090,8 @@ function renderLobby() {
       <span class="flex-1 min-w-0 truncate">${esc(m.name)}${
         m.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}</span>` +
     (admin && m.id !== me?.id
-      ? `<button data-kick="${esc(m.id)}" title="kick" class="shrink-0 text-slate-500 hover:text-wcred px-1">✕</button>` : "") +
-    "</li>").join("") || '<li class="text-slate-500">No one yet…</li>';
+      ? `<button data-kick="${esc(m.id)}" title="kick" class="tap shrink-0 text-slate-400 hover:text-wcred">✕</button>` : "") +
+    "</li>").join("") || '<li class="text-slate-400">No one yet…</li>';
   if (admin) $("lobby-managers").querySelectorAll("[data-kick]").forEach((b) =>
     b.onclick = () => kickManager(b.dataset.kick));
   $("lobby-admin").classList.toggle("hidden", !admin);
@@ -2258,7 +2267,7 @@ function starHtml(pid) {
   const on = isShortlisted(pid);
   return `<button data-star="${esc(pid)}" title="${on ? "Remove from shortlist" : "Shortlist"}"
     class="shrink-0 px-1 text-base leading-none ${
-      on ? "text-wcgold" : "text-slate-600 hover:text-slate-300"}">${on ? "★" : "☆"}</button>`;
+      on ? "text-wcgold" : "text-slate-500 hover:text-slate-300"}">${on ? "★" : "☆"}</button>`;
 }
 
 function wireStars(el, rerender) {
@@ -2344,8 +2353,8 @@ function plannerBadge(pid) {
   const rank = plannerChoiceRank(pid);
   if (!rank) return "";
   return rank === 1
-    ? '<span class="rounded bg-wcgold/20 px-1 py-0.5 text-[10px] text-wcgold">1st choice</span>'
-    : '<span class="rounded bg-slate-700 px-1 py-0.5 text-[10px] text-slate-300">backup</span>';
+    ? '<span class="rounded bg-wcgold/20 px-1 py-0.5 text-[11px] text-wcgold">1st choice</span>'
+    : '<span class="rounded bg-slate-700 px-1 py-0.5 text-[11px] text-slate-300">backup</span>';
 }
 
 // Kept players (redraft keepers) fill quota slots like any other pick.
@@ -2580,7 +2589,7 @@ function renderPool() {
       ${avatarHtml(e.player_id, e.team)}
       <div class="min-w-0 flex-1">
         <div class="truncate font-medium">${esc(e.name)} ${availBadges(e.player_id)} ${plannerBadge(e.player_id)}${
-          owner ? ` <span class="rounded bg-slate-700 px-1 py-0.5 text-[10px] text-wcgold">👤 ${esc(owner)}</span>` : ""}</div>
+          owner ? ` <span class="rounded bg-slate-700 px-1 py-0.5 text-[11px] text-wcgold">👤 ${esc(owner)}</span>` : ""}</div>
         <div class="text-xs text-slate-400">${teamFixLine(e.team)}</div>
       </div>`;
     return `<li class="flex items-center py-2 gap-1.5 ${owner || ko ? "opacity-60" : ""}">
@@ -2594,13 +2603,13 @@ function renderPool() {
         ${canPick ? `<button data-pick="${esc(e.player_id)}" class="pick-btn bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-sm font-semibold">Pick</button>` : ""}
       </div>
     </li>`;
-  }).join("") || `<li class="py-4 text-sm text-slate-500">${
+  }).join("") || `<li class="py-4 text-sm text-slate-400">${
     S.poolShortlistOnly ? "No shortlisted players match — star players to add them."
     : S.poolPlannerOnly ? "No squad-planner players match — add some in Trades → Squad planner."
     : "No players match."}</li>`;
   if (entries.length > shown.length) {
     $("pool-list").insertAdjacentHTML("beforeend",
-      `<li class="py-2 text-xs text-slate-500">${entries.length - shown.length} more — search or filter to narrow.</li>`);
+      `<li class="py-2 text-xs text-slate-400">${entries.length - shown.length} more — search or filter to narrow.</li>`);
   }
   $("pool-list").querySelectorAll(".pick-btn").forEach((btn) => btn.onclick = () => {
     const entry = entries.find((e) => e.player_id === btn.dataset.pick);
@@ -2630,22 +2639,22 @@ function renderRosters(containerId) {
              ${open.has(m.id) || (!open.size && m.id === me?.id) ? "open" : ""}>
       <summary class="px-4 py-3 font-semibold cursor-pointer select-none">${esc(m.name)}${
         m.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""
-      }${m.draft_position ? ` <span class="text-xs text-slate-500">· draft pos ${m.draft_position}</span>` : ""}</summary>
+      }${m.draft_position ? ` <span class="text-xs text-slate-400">· draft pos ${m.draft_position}</span>` : ""}</summary>
       ${containerId === "board-rosters" && m.id === me?.id
         ? '<div class="px-4 pb-2"><button id="lineup-open" class="w-full bg-slate-800 border border-wcgold/60 text-wcgold rounded-lg py-2 text-sm font-semibold">Pick my team (starters & subs)</button></div>'
         : ""}
       <div class="px-4 pb-3 grid grid-cols-2 gap-1.5 text-sm">
         ${(byMgr[m.id] || []).map((pk) => {
           const swap = canSwap && m.id === me?.id && pk.slot !== "TEAM"
-            ? `<button data-swap="${pk.id}" class="ml-auto shrink-0 text-[10px] underline text-wcgold">swap</button>` : "";
+            ? `<button data-swap="${pk.id}" class="ml-auto shrink-0 text-[11px] underline text-wcgold">swap</button>` : "";
           return `<div class="rounded-lg bg-slate-800/60 px-2 py-1.5 flex items-center gap-1.5">
-            <span class="text-[10px] w-14 shrink-0 text-slate-400">${pk.slot}</span>
+            <span class="text-[11px] w-14 shrink-0 text-slate-400">${pk.slot}</span>
             ${avatarHtml(pk.player_id, pk.team, "w-5 h-5")}
             <span class="min-w-0 truncate">${esc(pk.player_name)} ${availBadges(pk.player_id)}
-              <span class="text-[10px] text-slate-500">${esc(pk.team)}</span></span>
-            <span class="ml-auto shrink-0 text-[10px] font-mono text-slate-400">${entryPoints(pk.player_id, pk.position, pk.team)}p</span>${swap}
+              <span class="text-[11px] text-slate-400">${esc(pk.team)}</span></span>
+            <span class="ml-auto shrink-0 text-[11px] font-mono text-slate-400">${entryPoints(pk.player_id, pk.position, pk.team)}p</span>${swap}
           </div>`;
-        }).join("") || '<div class="text-slate-600 text-xs col-span-2">No picks yet.</div>'}
+        }).join("") || '<div class="text-slate-500 text-xs col-span-2">No picks yet.</div>'}
       </div>
     </details>`).join("");
   $(containerId).querySelectorAll("[data-swap]").forEach((b) => b.onclick = () =>
@@ -2666,12 +2675,12 @@ function renderDraftQueue(me, myTurn) {
   const taken = new Set(S.picks.map((pk) => pk.player_id));
   const choice = autoPickPreview(me);
   const head = choice
-    ? `<div class="text-[11px] ${myTurn ? "text-amber-300" : "text-slate-400"}">
+    ? `<div class="text-xs ${myTurn ? "text-warn" : "text-slate-400"}">
          ${myTurn ? "⏱ If the clock runs out" : "If your clock runs out"} you'll get
          <b class="text-slate-100">${esc(choice.entry.name)}</b>${
-           choice.fromShortlist ? "" : ' <span class="text-slate-500">— a random eligible player, because your shortlist is empty</span>'}.
+           choice.fromShortlist ? "" : ' <span class="text-slate-400">— a random eligible player, because your shortlist is empty</span>'}.
        </div>`
-    : `<div class="text-[11px] text-slate-500">No available player fits your open slots.</div>`;
+    : `<div class="text-xs text-slate-400">No available player fits your open slots.</div>`;
   const rows = ids.slice(0, 8).map((pid) => {
     const e = entryForId(pid);
     if (!e) return "";
@@ -2679,16 +2688,16 @@ function renderDraftQueue(me, myTurn) {
     return `<li class="flex items-center gap-2 py-1 ${gone ? "opacity-40" : ""}">
       ${avatarHtml(pid, e.team, "w-6 h-6")}
       <span class="min-w-0 flex-1 truncate text-sm ${gone ? "line-through" : ""}">${esc(e.name)}</span>
-      <span class="shrink-0 text-[10px] pos-${e.position} rounded px-1.5 py-0.5">${e.position}</span>
+      <span class="shrink-0 text-[11px] pos-${e.position} rounded px-1.5 py-0.5">${e.position}</span>
     </li>`;
   }).join("");
   box.innerHTML = `<div class="flex items-center justify-between gap-2">
       <span class="text-sm font-semibold">★ Your queue</span>
-      <span class="text-[10px] text-slate-500">${ids.length ? `${ids.length} shortlisted` : "empty"}</span>
+      <span class="text-[11px] text-slate-400">${ids.length ? `${ids.length} shortlisted` : "empty"}</span>
     </div>
     ${head}
     ${rows ? `<ul class="divide-y divide-slate-800">${rows}</ul>`
-           : `<p class="text-[11px] text-slate-500">Star players on the Stats tab to build a queue — auto-pick takes the top one still available.</p>`}`;
+           : `<p class="text-xs text-slate-400">Star players on the Stats tab to build a queue — auto-pick takes the top one still available.</p>`}`;
 }
 
 function renderDraft() {
@@ -2740,8 +2749,8 @@ function renderDraft() {
 
   $("draft-recent").innerHTML = [...S.picks].slice(-5).reverse().map((pk) => {
     const m = S.managers.find((x) => x.id === pk.manager_id);
-    return `<li><span class="text-slate-500">#${pk.pick_number % 1000}</span> ${esc(m?.name ?? "?")}: <b>${esc(pk.player_name)}</b> <span class="text-xs text-slate-500">${pk.slot}</span></li>`;
-  }).join("") || '<li class="text-slate-500">No picks yet.</li>';
+    return `<li><span class="text-slate-400">#${pk.pick_number % 1000}</span> ${esc(m?.name ?? "?")}: <b>${esc(pk.player_name)}</b> <span class="text-xs text-slate-400">${pk.slot}</span></li>`;
+  }).join("") || '<li class="text-slate-400">No picks yet.</li>';
 
   renderRosters("draft-rosters");
   $("draft-force").classList.toggle("hidden", !isAdmin() || myTurn);
@@ -4027,7 +4036,7 @@ function phaseCardsHtml(me) {
           sel.has(pk.id) ? "border-wcgold bg-wcred/20" : "border-slate-700 bg-slate-800/60"
         }">
           <span class="block truncate">${sel.has(pk.id) ? "⭐ " : ""}${esc(pk.player_name)}</span>
-          <span class="block truncate text-[10px] text-slate-500">${pk.position} · ${esc(pk.team)} · ${playerPoints(pk.player_id, pk.position)}p</span>
+          <span class="block truncate text-[11px] text-slate-400">${pk.position} · ${esc(pk.team)} · ${playerPoints(pk.player_id, pk.position)}p</span>
         </button>`).join("")}
       </div>`}
     </div>`;
@@ -4048,7 +4057,7 @@ function phaseCardsHtml(me) {
                 me.final_pick === t ? "border-wcgold bg-wcred/20 text-wcgold"
                                     : "border-slate-700 bg-slate-800/60"
               }">${me.final_pick === t ? "⭐ " : ""}${esc(t)}</button>`).join("")}</div>`
-          : '<p class="text-xs text-slate-500">Waiting for the admin to mark the two finalists (Team stages → final).</p>'}
+          : '<p class="text-xs text-slate-400">Waiting for the admin to mark the two finalists (Team stages → final).</p>'}
     </div>`;
   }
   return html;
@@ -4111,23 +4120,23 @@ function lineupRowHtml(it, mgrId, former, opts = {}) {
   // round (their team's latest match), not merely since the last lineup lock.
   const played = !former && !!it.playedRound;
   const inDream = curView && !former && !bonus && currentRoundDreamIds().has(e.player_id);
-  const dreamBadge = inDream ? ` <span class="rounded bg-amber-400/20 text-amber-300 px-1 py-0.5 text-[9px] font-semibold align-middle" title="In this round's Dream XI">★ XI</span>` : "";
+  const dreamBadge = inDream ? ` <span class="rounded bg-amber-400/20 text-amber-300 px-1 py-0.5 text-[11px] font-semibold align-middle" title="In this round's Dream XI">★ XI</span>` : "";
   const fxt = tap && !former ? fixtureText(e.team) : "";
   return `<div class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-2 py-2${
       tap ? " cursor-pointer hover:bg-slate-800" : ""}"${
       tap ? ` data-hp="${esc(e.player_id)}"` : ""}>
-    <span class="text-[10px] w-12 shrink-0 ${
-      former ? "text-amber-400/70" : e.is_sub ? "text-slate-500" : "text-slate-300"}">${
+    <span class="text-[11px] w-12 shrink-0 ${
+      former ? "text-amber-400/70" : e.is_sub ? "text-slate-400" : "text-slate-300"}">${
       former ? "former" : e.slot}${e.kept ? " ⭐" : ""}</span>
     ${avatarHtml(e.player_id, e.team)}
     <span class="min-w-0 flex-1">
       <span class="block truncate text-sm ${played ? "text-wcgold" : ""}">${esc(e.player_name)}${dreamBadge} ${tap ? availBadges(e.player_id) : ""}</span>
-      <span class="block truncate text-[10px] text-slate-500">${esc(e.team)}${fxt ? ` · ${esc(fxt)}` : ""}</span>
+      <span class="block truncate text-[11px] text-slate-400">${esc(e.team)}${fxt ? ` · ${esc(fxt)}` : ""}</span>
     </span>
-    ${bonus ? "" : `<span class="pos-${e.position} rounded px-1.5 py-0.5 text-[10px] font-semibold shrink-0">${e.position}</span>`}
+    ${bonus ? "" : `<span class="pos-${e.position} rounded px-1.5 py-0.5 text-[11px] font-semibold shrink-0">${e.position}</span>`}
     <span class="shrink-0 w-10 text-right text-xs font-mono ${
       played || shownPts > 0 ? "text-wcgold" : "text-slate-400"}">${ptsStr}</span>
-    ${tap ? '<span class="shrink-0 text-slate-600 text-xs">›</span>' : ""}
+    ${tap ? '<span class="shrink-0 text-slate-500 text-xs">›</span>' : ""}
   </div>`;
 }
 
@@ -4157,10 +4166,10 @@ function historyViewHtml(mgrId) {
       (SLOT_RANK[a.entry.slot] ?? 9) - (SLOT_RANK[b.entry.slot] ?? 9));
     const rowOpts = { roundMode, curView: true };
     body = (items.map((it) => lineupRowHtml(it, mgrId, false, rowOpts)).join("")
-      || '<p class="text-sm text-slate-500 py-2">No players.</p>')
+      || '<p class="text-sm text-slate-400 py-2">No players.</p>')
       + (h.current.former.length ? `
         <details class="mt-2" data-former="${mgrId}" ${S.formerOpen[mgrId] ? "open" : ""}>
-          <summary class="cursor-pointer select-none text-[10px] uppercase tracking-wide text-slate-500 py-1">
+          <summary class="cursor-pointer select-none text-[11px] uppercase tracking-wide text-slate-400 py-1">
             Former players (traded out) · ${h.current.former.length} — banked, tap for games</summary>
           <div class="space-y-1 pt-1">${h.current.former.map((it) =>
             lineupRowHtml(it, mgrId, true, rowOpts)).join("")}</div>
@@ -4181,7 +4190,7 @@ function historyViewHtml(mgrId) {
     : "points scored this round";
   const subtotal = onCurrent ? (roundMode ? roundSubtotal : h.total) : round.subtotal;
   const olderOff = idx >= views - 1, newerOff = idx <= 0;
-  const toggle = hasRound ? `<div class="flex gap-1 rounded-lg bg-slate-800 p-0.5 text-[11px]">
+  const toggle = hasRound ? `<div class="flex gap-1 rounded-lg bg-slate-800 p-0.5 text-xs">
       <button data-scoremode="total" class="flex-1 rounded-md py-1 font-semibold ${
         !roundMode ? "bg-slate-700 text-wcgold" : "text-slate-400"}">Total</button>
       <button data-scoremode="round" class="flex-1 rounded-md py-1 font-semibold ${
@@ -4193,13 +4202,13 @@ function historyViewHtml(mgrId) {
         olderOff ? "text-slate-700" : "text-wcgold hover:bg-slate-800"}">‹</button>
       <div class="flex-1 text-center min-w-0">
         <div class="text-sm font-semibold truncate">${label}</div>
-        <div class="text-[10px] text-slate-500">${sub}</div>
+        <div class="text-[11px] text-slate-400">${sub}</div>
       </div>
       <button data-hist="newer" ${newerOff ? "disabled" : ""} class="px-2 py-1 rounded text-lg ${
         newerOff ? "text-slate-700" : "text-wcgold hover:bg-slate-800"}">›</button>
       <span class="shrink-0 w-12 text-right font-bold text-wcgold">${subtotal}</span>
     </div>
-    ${onCurrent ? "" : '<button data-hist="current" class="w-full text-[10px] text-slate-400 underline pb-1">↩ back to current lineup</button>'}
+    ${onCurrent ? "" : '<button data-hist="current" class="w-full text-[11px] text-slate-400 underline pb-1">↩ back to current lineup</button>'}
     ${toggle}
     <div class="space-y-1">${body}</div>
   </div>`;
@@ -4280,14 +4289,14 @@ function matchdayCardHtml(me) {
   const strip = MD_STAGES.map((s) => {
     const on = s === p.stage;
     return `<span class="px-1.5 py-0.5 rounded ${on
-      ? "bg-wcgold/20 text-wcgold font-semibold" : "text-slate-600"}">${MD_STAGE_LABEL[s]}</span>`;
+      ? "bg-wcgold/20 text-wcgold font-semibold" : "text-slate-500"}">${MD_STAGE_LABEL[s]}</span>`;
   }).join('<span class="text-slate-700">›</span>');
   const clock = p.deadlineAt != null
     ? `<div class="mt-1">
-         <div class="text-[11px] text-slate-400">${esc(p.deadlineLabel)}</div>
+         <div class="text-xs text-slate-400">${esc(p.deadlineLabel)}</div>
          <div id="md-countdown" data-at="${p.deadlineAt}"
               class="text-2xl font-bold text-wcgold tabular-nums">${fmtCountdown(p.deadlineAt - Date.now())}</div>
-         <div class="text-[11px] text-slate-500">${esc(fmtWhen(p.deadlineAt))}</div>
+         <div class="text-xs text-slate-400">${esc(fmtWhen(p.deadlineAt))}</div>
        </div>` : "";
   const todo = p.todo.length
     ? `<div class="mt-2 space-y-0.5">${p.todo.map((t) =>
@@ -4296,10 +4305,10 @@ function matchdayCardHtml(me) {
     ? `<button id="md-cta" data-act="${p.cta.act}" class="mt-3 w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2.5 text-sm font-semibold">${esc(p.cta.label)}</button>`
     : "";
   return `<div class="rounded-xl border border-wcgold/60 bg-wcred/10 p-4">
-    <div class="flex items-center gap-1 text-[10px] flex-wrap">${strip}</div>
+    <div class="flex items-center gap-1 text-[11px] flex-wrap">${strip}</div>
     <div class="mt-2 flex items-baseline justify-between gap-2">
       <div class="font-semibold">${esc(p.title)}</div>
-      ${p.matchweek ? `<div class="text-[11px] text-slate-400 shrink-0">Matchweek ${esc(p.matchweek)}</div>` : ""}
+      ${p.matchweek ? `<div class="text-xs text-slate-400 shrink-0">Matchweek ${esc(p.matchweek)}</div>` : ""}
     </div>
     ${clock}${todo}${cta}
   </div>`;
@@ -4317,20 +4326,20 @@ function openReveal() {
   for (const pk of mine) (byPos[pk.position] || byPos.TEAM).push(pk);
   const counts = ["DEF", "MID", "FWD"].map((g) => `${byPos[g].length}`).join("-");
   const group = (g) => byPos[g].length ? `<div>
-      <div class="text-[10px] text-slate-500 mb-1">${g}</div>
+      <div class="text-[11px] text-slate-400 mb-1">${g}</div>
       <div class="space-y-1">${byPos[g].map((pk) => `<div class="flex items-center gap-2">
         ${avatarHtml(pk.player_id, pk.team, "w-6 h-6")}
         <span class="min-w-0 flex-1 truncate text-sm">${esc(pk.player_name)}</span>
-        <span class="shrink-0 text-[10px] text-slate-500">${esc(pk.team || "")}</span>
+        <span class="shrink-0 text-[11px] text-slate-400">${esc(pk.team || "")}</span>
       </div>`).join("")}</div></div>` : "";
   body.innerHTML = `
     <div class="text-center">
-      <div class="text-[11px] text-slate-400">Draft complete</div>
+      <div class="text-xs text-slate-400">Draft complete</div>
       <div class="text-2xl font-bold">${esc(me.name)}</div>
       <div class="text-xs text-slate-400">${mine.length} players · ${counts} outfield shape</div>
     </div>
     <div class="space-y-2.5">${["GK", "DEF", "MID", "FWD", "TEAM"].map(group).join("")}</div>
-    <p class="text-[11px] text-slate-500 text-center">Set your starting XI before the first deadline — the matchday card on your team page counts it down.</p>`;
+    <p class="text-xs text-slate-400 text-center">Set your starting XI before the first deadline — the matchday card on your team page counts it down.</p>`;
   $("reveal-sheet").classList.remove("hidden");
   if (S.league?.id) localStorage.setItem("wcf_reveal_" + S.league.id, "1");
 }
@@ -4381,13 +4390,13 @@ function openRecap() {
   if (!r) { body.innerHTML = '<p class="text-sm text-slate-400">No completed rounds yet.</p>'; }
   else {
     const one = (label, val, sub) => `<div class="rounded-lg border border-slate-700 bg-slate-800/40 px-2 py-2 text-center">
-      <div class="text-[10px] text-slate-500">${label}</div>
+      <div class="text-[11px] text-slate-400">${label}</div>
       <div class="text-lg font-bold text-slate-100">${val}</div>
-      ${sub ? `<div class="text-[10px] text-slate-500">${sub}</div>` : ""}</div>`;
+      ${sub ? `<div class="text-[11px] text-slate-400">${sub}</div>` : ""}</div>`;
     const pick = (it, label) => it ? `<div class="flex items-center gap-2 rounded-lg bg-slate-800/40 px-2 py-1.5">
       ${avatarHtml(it.entry.player_id, it.entry.team, "w-7 h-7")}
       <div class="min-w-0 flex-1">
-        <div class="text-[10px] text-slate-500">${label}</div>
+        <div class="text-[11px] text-slate-400">${label}</div>
         <div class="text-sm truncate">${esc(it.entry.player_name)}</div>
       </div>
       <div class="font-mono font-bold ${(it.pts || 0) >= 0 ? "text-wcgold" : "text-red-400"}">${it.pts ?? 0}</div>
@@ -4395,19 +4404,19 @@ function openRecap() {
     const res = r.result
       ? `<div class="rounded-xl border ${r.result === "W" ? "border-emerald-500/60 bg-emerald-500/10"
           : r.result === "L" ? "border-red-500/50 bg-red-500/10" : "border-slate-600 bg-slate-800/40"} p-3 text-center">
-          <div class="text-[11px] text-slate-400">vs ${esc(r.h2h.oppName)}</div>
+          <div class="text-xs text-slate-400">vs ${esc(r.h2h.oppName)}</div>
           <div class="text-2xl font-bold">${r.result === "W" ? "Win" : r.result === "L" ? "Loss" : "Draw"}
             <span class="font-mono text-slate-300">${r.h2h.mine}–${r.h2h.theirs}</span></div>
         </div>` : "";
     body.innerHTML = `
       <div class="text-center">
-        <div class="text-[11px] text-slate-400">Round ${r.n} complete</div>
+        <div class="text-xs text-slate-400">Round ${r.n} complete</div>
         <div class="text-4xl font-bold text-wcgold tabular-nums">${r.score}</div>
         <div class="text-xs text-slate-400">points</div>
       </div>
       ${res}
       <div class="grid grid-cols-3 gap-2">
-        ${one("Rank", `${r.rank}<span class="text-xs text-slate-500">/${r.of}</span>`, "this round")}
+        ${one("Rank", `${r.rank}<span class="text-xs text-slate-400">/${r.of}</span>`, "this round")}
         ${one("League avg", Math.round(r.avg), r.score >= r.avg ? "you beat it" : "below")}
         ${one("On the bench", r.benchPts, "points left")}
       </div>
@@ -4450,14 +4459,14 @@ function renderHomeTab() {
   const me = myManager();
   const box = $("board-home");
   if (!me) {
-    box.innerHTML = '<p class="text-sm text-slate-500 py-4">Join as a manager to see your team here.</p>';
+    box.innerHTML = '<p class="text-sm text-slate-400 py-4">Join as a manager to see your team here.</p>';
     return;
   }
   const scores = computeScores().sort((a, b) => b.total - a.total);
   const rank = scores.findIndex((s) => s.manager.id === me.id) + 1;
   const myScore = scores[rank - 1];
   const squadHtml = `
-    ${me.eliminated ? "" : `<button id="home-lineup" class="w-full bg-slate-800 border ${lineupOpen() ? "border-wcgold/60 text-wcgold" : "border-slate-700 text-slate-500"} rounded-xl py-2.5 text-sm font-semibold">${
+    ${me.eliminated ? "" : `<button id="home-lineup" class="w-full bg-slate-800 border ${lineupOpen() ? "border-wcgold/60 text-wcgold" : "border-slate-700 text-slate-400"} rounded-xl py-2.5 text-sm font-semibold">${
       lineupOpen() ? "Pick my team for the next games"
                    : (autoWindowsEnabled() ? "🔒 " + lineupLockMessage()
                                            : "🔒 Lineup locked — opens with the trading window")}</button>`}
@@ -4682,15 +4691,15 @@ function bracketMatchHtml(m) {
       ${tbc ? '<span class="w-4 h-4 rounded-full bg-slate-800 shrink-0"></span>'
             : avatarHtml("team:" + team, team, "w-4 h-4")}
       <span class="truncate text-xs flex-1 ${
-        isWinner ? "font-bold text-wcgold" : tbc ? "text-slate-500 italic" : ""}">${
+        isWinner ? "font-bold text-wcgold" : tbc ? "text-slate-400 italic" : ""}">${
         tbc ? "TBC" : esc(team)}</span>
       <span class="text-xs font-mono ${isWinner ? "text-wcgold" : "text-slate-400"}">${sc}</span>
     </div>`;
   };
   const sc = m.score;
   const hs = sc ? sc[0] : "", as = sc ? sc[1] : "";
-  const foot = m.live ? '<span class="text-[9px] text-red-400 font-semibold">● LIVE</span>'
-    : sc ? "" : `<span class="text-[9px] text-slate-500">${fmtKickoff(m.kickoff)}</span>`;
+  const foot = m.live ? '<span class="text-[11px] text-red-400 font-semibold">● LIVE</span>'
+    : sc ? "" : `<span class="text-[11px] text-slate-400">${fmtKickoff(m.kickoff)}</span>`;
   return `<div class="rounded-lg border ${m.live ? "border-red-500/50" : "border-slate-700"} bg-slate-900 px-2 py-1.5 space-y-1 w-36">
     ${teamRow(m.home, hs, decided && m.winner === m.home)}
     ${teamRow(m.away, as, decided && m.winner === m.away)}
@@ -4726,16 +4735,16 @@ function renderBracket() {
         p.map((m) => `<div class="kb-card">${bracketMatchHtml(m)}</div>`).join("")}</div>`).join("");
     }
     return `<div class="kb-col${isLast ? " kb-last" : ""}">
-      <div class="text-[10px] uppercase tracking-wide text-slate-500 font-semibold text-center mb-1 px-1">${rd.label}</div>
+      <div class="text-[11px] uppercase tracking-wide text-slate-400 font-semibold text-center mb-1 px-1">${rd.label}</div>
       <div class="kb-round">${body}</div></div>`;
   };
   box.innerHTML = `
-    <p class="text-[10px] text-slate-500">Winners flow left → right; the lines join the two ties that feed each
+    <p class="text-[11px] text-slate-400">Winners flow left → right; the lines join the two ties that feed each
       next-round match. Scores update live during games and after the daily fixtures sync. Scroll sideways.</p>
     <div class="overflow-x-auto pb-2"><div class="kb">${
       rounds.map((rd, i) => col(rd, i === rounds.length - 1)).join("")}</div></div>
     ${third ? `<div class="rounded-xl border border-slate-800 bg-slate-900/50 p-2 mt-1">
-      <div class="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mb-1">Third place</div>
+      <div class="text-[11px] uppercase tracking-wide text-slate-400 font-semibold mb-1">Third place</div>
       ${bracketMatchHtml(third)}
     </div>` : ""}`;
 }
@@ -4796,13 +4805,13 @@ function renderBanner() {
     return `<div class="flex items-center gap-1.5 text-sm ${score ? "cursor-pointer" : ""}"
       ${score ? `data-ftgame="${esc(l)}" role="button"` : ""}>
       <span class="font-mono text-xs w-11 shrink-0 ${
-        isLive ? "text-red-400 font-bold" : isOver ? "text-slate-600" : "text-wcgold"
+        isLive ? "text-red-400 font-bold" : isOver ? "text-slate-500" : "text-wcgold"
       }">${isLive ? (liveMin ? liveMin + "'" : "LIVE") : isOver ? "FT" : saTime(f.kickoff_utc)}</span>
       ${avatarHtml("team:" + f.home, f.home, "w-4 h-4")}
-      <span class="truncate ${isOver ? "text-slate-500" : ""}">${esc(f.home)}${
+      <span class="truncate ${isOver ? "text-slate-400" : ""}">${esc(f.home)}${
         score ? ` <b class="text-slate-300">${score[0]} – ${score[1]}</b> ` : " – "}${esc(f.away)}</span>
       ${avatarHtml("team:" + f.away, f.away, "w-4 h-4")}
-      ${score ? '<span class="ml-auto text-slate-600 shrink-0">›</span>' : ""}
+      ${score ? '<span class="ml-auto text-slate-500 shrink-0">›</span>' : ""}
     </div>`;
   }).join("");
 
@@ -4810,7 +4819,7 @@ function renderBanner() {
   // feature. Finished games stay out of the ticker; their score and top
   // scorers live in the tap-to-expand panel on the FT fixture rows.
   const crests = (f) => `${avatarHtml("team:" + f.home, f.home, "w-4 h-4")}<span
-    class="px-0.5 text-slate-600">–</span>${avatarHtml("team:" + f.away, f.away, "w-4 h-4")}`;
+    class="px-0.5 text-slate-500">–</span>${avatarHtml("team:" + f.away, f.away, "w-4 h-4")}`;
   const items = games.map((f) => {
     if (over(f)) return "";
     const byMgr = {};
@@ -4826,21 +4835,21 @@ function renderBanner() {
     return mgrs ? `<span class="inline-flex items-center gap-1">${crests(f)}&nbsp;${mgrs}</span>` : "";
   }).filter(Boolean);
   const half = `<span class="pr-12 inline-flex items-center">${
-    items.join('<span class="text-slate-600 px-3">✦</span>')}</span>`;
+    items.join('<span class="text-slate-500 px-3">✦</span>')}</span>`;
   const ticker = items.length ? `<div class="ticker-wrap border-t border-slate-800 pt-1.5">
-      <div class="ticker text-[11px] text-slate-400">${half}${half}</div>
+      <div class="ticker text-xs text-slate-400">${half}${half}</div>
     </div>` : "";
 
   const html = `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-1.5">
     <div class="flex items-center gap-1">
       <button data-bannernav="-1" ${atStart ? "disabled" : ""} class="px-1.5 rounded text-sm ${
         atStart ? "text-slate-700" : "text-wcgold hover:bg-slate-800"}" title="Previous day">‹</button>
-      <div class="flex-1 text-center text-[10px] uppercase tracking-wide text-slate-500">${label} · SA time</div>
+      <div class="flex-1 text-center text-[11px] uppercase tracking-wide text-slate-400">${label} · SA time</div>
       <button data-bannernav="1" ${atEnd ? "disabled" : ""} class="px-1.5 rounded text-sm ${
         atEnd ? "text-slate-700" : "text-wcgold hover:bg-slate-800"}" title="Next day">›</button>
     </div>
     ${rows}<div id="banner-detail"></div>${ticker}
-    ${S.bannerDayOffset ? '<button data-bannerback class="w-full text-[10px] text-slate-400 underline pt-0.5">↩ back to today</button>' : ""}
+    ${S.bannerDayOffset ? '<button data-bannerback class="w-full text-[11px] text-slate-400 underline pt-0.5">↩ back to today</button>' : ""}
   </div>`;
   if (html !== bannerCache) {
     bannerCache = html;
@@ -4886,12 +4895,12 @@ function renderBannerDetail() {
       return `<div class="flex items-center gap-1.5 text-xs">
         ${avatarHtml(p.player_id, p.team, "w-5 h-5")}
         <span class="truncate">${esc(p.name)}</span>
-        <span class="shrink-0 ${o ? "rounded bg-slate-700 px-1 py-0.5 text-[10px] text-wcgold"
-                                  : "text-[10px] text-slate-500"}">${
+        <span class="shrink-0 ${o ? "rounded bg-slate-700 px-1 py-0.5 text-[11px] text-wcgold"
+                                  : "text-[11px] text-slate-400"}">${
           o ? "👤 " + esc(o) : "free agent"}</span>
-        <span class="ml-auto text-slate-500 shrink-0">${statBits(r) || "0"}</span>
+        <span class="ml-auto text-slate-400 shrink-0">${statBits(r) || "0"}</span>
         <span class="font-mono w-7 text-right shrink-0 ${
-          pts > 0 ? "text-wcgold" : "text-slate-500"}">${pts}</span>
+          pts > 0 ? "text-wcgold" : "text-slate-400"}">${pts}</span>
       </div>`;
     }).join("")}
   </div>`;
@@ -4994,7 +5003,7 @@ function updateTradeBadge() {
   const b = document.createElement("span");
   b.id = "trade-badge";
   b.className = "ml-1 inline-flex items-center justify-center rounded-full "
-    + "bg-wcgold text-slate-900 text-[10px] font-bold w-4 h-4 align-middle";
+    + "bg-wcgold text-slate-900 text-[11px] font-bold w-4 h-4 align-middle";
   b.textContent = String(n);
   btn.appendChild(b);
 }
@@ -5058,7 +5067,7 @@ function updateChatBadge() {
   const b = document.createElement("span");
   b.id = "chat-badge";
   b.className = "ml-1 inline-flex items-center justify-center rounded-full "
-    + "bg-wcgold text-slate-900 text-[10px] font-bold w-4 h-4 align-middle";
+    + "bg-wcgold text-slate-900 text-[11px] font-bold w-4 h-4 align-middle";
   b.textContent = n > 9 ? "9+" : String(n);
   btn.appendChild(b);
 }
@@ -5092,7 +5101,7 @@ function renderChat() {
   const me = myManager();
   if (!me) {
     $("chat-threads").innerHTML = "";
-    $("chat-msgs").innerHTML = '<p class="text-sm text-slate-500">Join as a manager to chat.</p>';
+    $("chat-msgs").innerHTML = '<p class="text-sm text-slate-400">Join as a manager to chat.</p>';
     $("chat-note").textContent = "";
     return;
   }
@@ -5110,7 +5119,7 @@ function renderChat() {
     return `<button data-chatthread="${esc(t.id)}" class="shrink-0 rounded-full px-3 py-1 border ${cls}">${
       unread ? '<span class="text-red-400 mr-0.5">●</span>' : ""}${
       t.id === "league" ? "🏟 " : "✉ "}${esc(t.name)}${
-      unread ? ` <span class="ml-0.5 inline-flex items-center justify-center rounded-full bg-wcgold text-slate-900 text-[9px] font-bold w-4 h-4 align-middle">${
+      unread ? ` <span class="ml-0.5 inline-flex items-center justify-center rounded-full bg-wcgold text-slate-900 text-[11px] font-bold w-4 h-4 align-middle">${
         unread > 9 ? "9+" : unread}</span>` : ""}</button>`;
   }).join("");
   $("chat-threads").querySelectorAll("[data-chatthread]").forEach((b) => b.onclick = () => {
@@ -5128,23 +5137,23 @@ function renderChat() {
     const reactions = Object.entries(m.reactions || {}).filter(([, ids]) => ids && ids.length);
     const pills = reactions.map(([e, ids]) => {
       const reacted = ids.includes(me.id);
-      return `<button data-react="${m.id}|${e}" class="rounded-full px-1.5 py-0.5 text-[11px] border ${
+      return `<button data-react="${m.id}|${e}" class="rounded-full px-1.5 py-0.5 text-xs border ${
         reacted ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 bg-slate-800 text-slate-300"}">${e} ${ids.length}</button>`;
     }).join("");
     const picking = S.reactPickerFor === m.id;
     const tail = picking
       ? REACT_EMOJIS.map((e) => `<button data-reactpick="${m.id}|${e}" class="text-base leading-none px-0.5">${e}</button>`).join("")
-      : `<button data-reactadd="${m.id}" title="React" class="rounded-full px-1.5 py-0.5 text-[11px] border border-slate-700 bg-slate-800/50 text-slate-500">＋</button>`;
+      : `<button data-reactadd="${m.id}" title="React" class="rounded-full px-1.5 py-0.5 text-xs border border-slate-700 bg-slate-800/50 text-slate-400">＋</button>`;
     return `<div class="flex flex-col ${mine ? "items-end" : "items-start"}">
       <div class="max-w-[80%] rounded-2xl px-3 py-1.5 ${
         mine ? "bg-wcred text-white" : "bg-slate-800 text-slate-100"}">
-        ${mine ? "" : `<div class="text-[10px] font-semibold text-wcgold">${esc(sender)}</div>`}
+        ${mine ? "" : `<div class="text-[11px] font-semibold text-wcgold">${esc(sender)}</div>`}
         <div class="text-sm whitespace-pre-wrap break-words">${esc(m.body)}</div>
-        <div class="text-[9px] opacity-60 text-right mt-0.5">${fmtChatTime(m.created_at)}</div>
+        <div class="text-[11px] opacity-60 text-right mt-0.5">${fmtChatTime(m.created_at)}</div>
       </div>
       <div class="flex items-center gap-1 mt-0.5 flex-wrap ${mine ? "justify-end" : ""}">${pills}${tail}</div>
     </div>`;
-  }).join("") || `<p class="text-sm text-slate-500">${
+  }).join("") || `<p class="text-sm text-slate-400">${
     S.chatThread === "league" ? "No messages yet — say hi to the league!"
       : "No messages yet — start the conversation."}</p>`;
   box.querySelectorAll("[data-react]").forEach((b) => b.onclick = () => {
@@ -5205,7 +5214,7 @@ function computeYetToPlay() {
 function movementIcon(delta) {
   if (delta > 0) return `<span class="text-emerald-400" title="up ${delta} since last round">▲</span>`;
   if (delta < 0) return `<span class="text-red-400" title="down ${-delta} since last round">▼</span>`;
-  return `<span class="text-slate-500" title="no change since last round">–</span>`;
+  return `<span class="text-slate-400" title="no change since last round">–</span>`;
 }
 
 // Round-over-round movement for the standings. The current round is the
@@ -5282,7 +5291,7 @@ function roundMVPs(scores) {
 function seasonChartHtml(scores, meId) {
   const { maxR, series } = seasonSeries(scores);
   if (maxR < 2 || series.length < 2)
-    return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 text-xs text-slate-500 text-center">
+    return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 text-xs text-slate-400 text-center">
       The season chart appears once a couple of rounds have been scored.</div>`;
   const cmp = S.chartCompare && series.some((s) => s.id === S.chartCompare) ? S.chartCompare : null;
   const meS = series.find((s) => s.id === meId) || null;
@@ -5328,19 +5337,19 @@ function seasonChartHtml(scores, meId) {
         : `<span class="text-slate-300">Dead even ${hh.w}–${hh.l}</span>`;
       h2h = `<div class="rounded-lg bg-slate-800/60 px-3 py-2 text-xs">
         <span class="font-semibold text-slate-200">H2H vs ${esc(cmpS.name)}:</span> ${lead}${
-          hh.t ? ` <span class="text-slate-500">· ${hh.t} tie${hh.t === 1 ? "" : "s"}</span>` : ""}
-        <span class="block text-[10px] text-slate-500 mt-0.5">Rounds each of you out-scored the other.</span>
+          hh.t ? ` <span class="text-slate-400">· ${hh.t} tie${hh.t === 1 ? "" : "s"}</span>` : ""}
+        <span class="block text-[11px] text-slate-400 mt-0.5">Rounds each of you out-scored the other.</span>
       </div>`;
     }
   }
   return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2">
     <div class="flex items-center justify-between gap-2">
-      <span class="text-sm font-semibold">Season progression <span class="text-[10px] text-slate-500 font-normal">· points by round</span></span>
+      <span class="text-sm font-semibold">Season progression <span class="text-[11px] text-slate-400 font-normal">· points by round</span></span>
       ${selector}
     </div>
     <svg viewBox="0 0 ${W} ${H}" width="100%" style="height:auto" preserveAspectRatio="xMidYMid meet">${svg}</svg>
     ${h2h}
-    ${cmp ? "" : `<p class="text-[10px] text-slate-500">${meS ? "Your line is gold." : ""} Pick a manager above to highlight your two lines and see the head-to-head.</p>`}
+    ${cmp ? "" : `<p class="text-[11px] text-slate-400">${meS ? "Your line is gold." : ""} Pick a manager above to highlight your two lines and see the head-to-head.</p>`}
   </div>`;
 }
 
@@ -5350,30 +5359,30 @@ function h2hStandingsHtml(me) {
   const nameBy = mgrNameById();
   const cfg = h2hConfig();
   const cols = "grid grid-cols-[1.4rem_1fr_1.5rem_3rem_2.6rem_2.6rem_1.8rem] gap-1 items-center";
-  const head = `<div class="${cols} text-[10px] text-slate-500 px-2 pb-0.5">
+  const head = `<div class="${cols} text-[11px] text-slate-400 px-2 pb-0.5">
     <span></span><span>Manager</span><span class="text-center">P</span><span class="text-center">W-D-L</span>
     <span class="text-right">PF</span><span class="text-right">PA</span><span class="text-right">Pts</span></div>`;
   const body = order.map((id, i) => {
     const r = rows[id];
     return `<div class="${cols} rounded-lg px-2 py-2 text-sm ${
       id === me?.id ? "bg-wcgold/10 border border-wcgold/40" : "bg-slate-900 border border-slate-700"}">
-      <span class="text-slate-500 font-mono">${i + 1}.</span>
+      <span class="text-slate-400 font-mono">${i + 1}.</span>
       <span class="truncate font-semibold">${esc(nameBy[id] || "?")}${id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}${
-        r.bonus ? ` <span class="text-[9px] text-emerald-400">+${r.bonus}b</span>` : ""}</span>
+        r.bonus ? ` <span class="text-[11px] text-emerald-400">+${r.bonus}b</span>` : ""}</span>
       <span class="text-center text-slate-400 text-xs">${r.P}</span>
       <span class="text-center text-slate-400 text-xs">${r.W}-${r.D}-${r.L}</span>
       <span class="text-right font-mono text-xs text-slate-400">${r.PF}</span>
-      <span class="text-right font-mono text-xs text-slate-500">${r.PA}</span>
+      <span class="text-right font-mono text-xs text-slate-400">${r.PA}</span>
       <span class="text-right font-mono font-bold text-wcgold">${r.logPts}</span>
     </div>`;
   }).join("");
   return `<div class="rounded-xl border border-slate-800 bg-slate-900/40 p-2 space-y-1">
     <div class="text-sm font-semibold px-1">Head-to-head log</div>
-    <p class="text-[10px] text-slate-500 px-1">Win ${cfg.win} · draw ${cfg.draw} · loss ${cfg.loss} · +1 attacking (round ≥ ${cfg.score_bonus}) · +1 losing (by ≤ ${cfg.losing_margin}). PF/PA = points for/against.${
+    <p class="text-[11px] text-slate-400 px-1">Win ${cfg.win} · draw ${cfg.draw} · loss ${cfg.loss} · +1 attacking (round ≥ ${cfg.score_bonus}) · +1 losing (by ≤ ${cfg.losing_margin}). PF/PA = points for/against.${
       cfg.rumble ? (cfg.rumble_scoring === "placement"
         ? ` ⚔️ Rumble rounds score by placement (${(cfg.rumble_points || [3, 2, 1]).join("-")}).`
         : " ⚔️ Rumble rounds pit everyone against everyone.") : ""}</p>
-    ${head}${body || '<p class="text-sm text-slate-500 px-2 py-3">No completed rounds yet.</p>'}
+    ${head}${body || '<p class="text-sm text-slate-400 px-2 py-3">No completed rounds yet.</p>'}
   </div>`;
 }
 
@@ -5411,11 +5420,11 @@ function renderBoard() {
   const toggleHtml = `
     <div class="flex gap-1 rounded-lg bg-slate-900 border border-slate-700 p-1 text-sm">
       <button data-tableview="total" class="flex-1 rounded-md py-1.5 font-semibold ${
-        !playerView ? "bg-wcred text-white" : "text-slate-400"}">🏆 Total <span class="text-[9px] font-normal opacity-80">official</span></button>
+        !playerView ? "bg-wcred text-white" : "text-slate-400"}">🏆 Total <span class="text-[11px] font-normal opacity-80">official</span></button>
       <button data-tableview="player" class="flex-1 rounded-md py-1.5 font-semibold ${
-        playerView ? "bg-wcred text-white" : "text-slate-400"}">⚽ Player pts <span class="text-[9px] font-normal opacity-80">for fun</span></button>
+        playerView ? "bg-wcred text-white" : "text-slate-400"}">⚽ Player pts <span class="text-[11px] font-normal opacity-80">for fun</span></button>
     </div>
-    ${playerView ? `<p class="text-[10px] text-amber-300/90 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-1.5">⚽ Player-points-only — just for fun. The official standings are 🏆 <b>Total</b> (national-team stage bonuses included).</p>` : ""}`;
+    ${playerView ? `<p class="text-[11px] text-amber-300/90 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-1.5">⚽ Player-points-only — just for fun. The official standings are 🏆 <b>Total</b> (national-team stage bonuses included).</p>` : ""}`;
   if (h2hEnabled()) {
     $("board-lb").innerHTML = chartHtml + h2hStandingsHtml(me);
     const cc0 = document.getElementById("chart-compare");
@@ -5426,14 +5435,14 @@ function renderBoard() {
   $("board-lb").innerHTML = chartHtml + toggleHtml + scores.map((s, i) => {
     const ytp = yetByMgr[s.manager.id];
     const ytpLine = ytp?.hasSnapshot && ytp.total > 0
-      ? `<span class="block text-[10px] font-normal text-slate-400">${ytp.yet}/${ytp.total} starters yet to play</span>`
+      ? `<span class="block text-[11px] font-normal text-slate-400">${ytp.yet}/${ytp.total} starters yet to play</span>`
       : "";
     const mvi = mv.byId[s.manager.id];
     const icon = (showMove && !s.eliminated) ? movementIcon(mvi.delta) : "";
     const rp = mvi.roundPts;
     const tallyLine = (mv.maxRound >= 1 && !s.eliminated)
-      ? `<span class="block text-[10px] font-normal ${
-          rp > 0 ? "text-emerald-400" : rp < 0 ? "text-red-400" : "text-slate-500"
+      ? `<span class="block text-[11px] font-normal ${
+          rp > 0 ? "text-emerald-400" : rp < 0 ? "text-red-400" : "text-slate-400"
         }">${rp >= 0 ? "+" : "−"}${Math.abs(rp)} this round</span>`
       : "";
     return `
@@ -5441,13 +5450,13 @@ function renderBoard() {
       s.eliminated ? "bg-slate-900/50 opacity-60" : "bg-slate-900"}"
              ${open.has(s.manager.id) ? "open" : ""}>
       <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3">
-        <span class="text-slate-500 font-mono w-6">${i + 1}.</span>
+        <span class="text-slate-400 font-mono w-6">${i + 1}.</span>
         ${showMove ? `<span class="w-3 text-center text-xs shrink-0">${icon}</span>` : ""}
         <span class="flex-1 min-w-0">
           <span class="block font-semibold truncate">${esc(s.manager.name)}${
             s.manager.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}${
-            mvps.has(s.manager.id) ? ` <span class="rounded bg-wcgold/20 text-wcgold px-1 py-0.5 text-[9px] font-bold align-middle" title="Top scorer of round ${mv.maxRound}">🏅 MVP</span>` : ""}${
-            s.eliminated ? ' <span class="text-[10px] text-red-400">eliminated</span>' : ""}</span>
+            mvps.has(s.manager.id) ? ` <span class="rounded bg-wcgold/20 text-wcgold px-1 py-0.5 text-[11px] font-bold align-middle" title="Top scorer of round ${mv.maxRound}">🏅 MVP</span>` : ""}${
+            s.eliminated ? ' <span class="text-[11px] text-red-400">eliminated</span>' : ""}</span>
           ${ytpLine}
         </span>
         <span class="shrink-0 text-right">
@@ -5457,7 +5466,7 @@ function renderBoard() {
       </summary>
       <div id="hist-lb-${s.manager.id}" class="px-4 pb-3"></div>
     </details>`;
-  }).join("") || '<p class="text-sm text-slate-500">No managers.</p>';
+  }).join("") || '<p class="text-sm text-slate-400">No managers.</p>';
   const cc = document.getElementById("chart-compare");
   if (cc) cc.onchange = () => { S.chartCompare = cc.value || null; renderBoard(); };
   $("board-lb").querySelectorAll("[data-tableview]").forEach((b) => b.onclick = () => {
@@ -5808,7 +5817,7 @@ function formDots(pid, pos) {
 function matchLogHtml(pid, position, team, managerId) {
   const labels = teamMatchLabels(team);
   if (!labels.length)
-    return '<p class="text-xs text-slate-500">No matches played yet — this fills in as games are pulled.</p>';
+    return '<p class="text-xs text-slate-400">No matches played yet — this fills in as games are pulled.</p>';
   const rowByLabel = {};
   for (const r of statRowsFor(pid)) rowByLabel[r.match_label] = r;
   return `<div class="space-y-1">${labels.map((label) => {
@@ -5825,27 +5834,27 @@ function matchLogHtml(pid, position, team, managerId) {
       const s = slotLabel(entryForManagerAt(managerId, pid, label));
       status = s === "starter" ? '<span class="text-wcgold">Starter</span>'
         : s === "sub" ? '<span class="text-sky-300">Sub</span>'
-        : '<span class="text-slate-600">not in team</span>';
+        : '<span class="text-slate-500">not in team</span>';
     } else {
       const os = ownerEntryAt(pid, label);
       status = os
-        ? `<span class="text-wcgold">${esc(os.manager.name)}</span><span class="text-slate-500"> ${
+        ? `<span class="text-wcgold">${esc(os.manager.name)}</span><span class="text-slate-400"> ${
             slotLabel(os.entry) === "sub" ? "(sub)" : "(start)"}</span>`
-        : '<span class="text-slate-600">free agent</span>';
+        : '<span class="text-slate-500">free agent</span>';
     }
     return `<div class="rounded-lg bg-slate-800/60 px-2 py-1.5">
       <div class="flex items-center gap-2 text-xs">
-        <span class="text-slate-500 shrink-0">${homeAt ? "vs" : "@"}</span>
+        <span class="text-slate-400 shrink-0">${homeAt ? "vs" : "@"}</span>
         ${avatarHtml("team:" + opp, opp, "w-4 h-4")}
         <span class="truncate text-slate-300">${esc(opp)}
-          <span class="text-slate-500">${hs}–${as}</span></span>
+          <span class="text-slate-400">${hs}–${as}</span></span>
         <span class="ml-auto shrink-0 font-mono ${
-          pts > 0 ? "text-wcgold" : pts < 0 ? "text-red-400" : "text-slate-500"}">${pts}p</span>
+          pts > 0 ? "text-wcgold" : pts < 0 ? "text-red-400" : "text-slate-400"}">${pts}p</span>
       </div>
-      <div class="flex items-center gap-2 text-[10px] mt-0.5">
+      <div class="flex items-center gap-2 text-[11px] mt-0.5">
         <span class="shrink-0">${status}</span>
-        <span class="text-slate-500 shrink-0">${mins}</span>
-        <span class="ml-auto truncate text-slate-500">${played ? (statBits(r) || "no stats") : ""}</span>
+        <span class="text-slate-400 shrink-0">${mins}</span>
+        <span class="ml-auto truncate text-slate-400">${played ? (statBits(r) || "no stats") : ""}</span>
       </div>
     </div>`;
   }).join("")}</div>`;
@@ -5861,7 +5870,7 @@ function playerDetailHtml(p, opts = {}) {
   // Next fixture: opponent crest + date/time.
   const fx = fixtureCrestHtml(p.team);
   const fxLine = fx ? `<div class="flex items-center gap-1.5 text-xs text-slate-400">
-      <span class="text-slate-500">Next:</span> ${fx}</div>` : "";
+      <span class="text-slate-400">Next:</span> ${fx}</div>` : "";
   // Depth line: appearances, minutes, points-per-90 and a recent-form sparkline.
   const appRows = statRowsFor(p.player_id).filter((r) => r.appeared);
   const mins = sumMinutes(appRows);
@@ -5869,9 +5878,9 @@ function playerDetailHtml(p, opts = {}) {
   const dots = formDots(p.player_id, p.position);
   const statLine = appRows.length ? `<div class="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
       <span>${appRows.length} app${appRows.length === 1 ? "" : "s"}</span>
-      <span class="text-slate-600">·</span><span>${mins}′</span>
-      <span class="text-slate-600">·</span><span>${per90pts} pts/90</span>${
-        dots ? `<span class="text-slate-600">·</span><span class="flex items-center gap-1">Form ${dots}</span>` : ""}
+      <span class="text-slate-500">·</span><span>${mins}′</span>
+      <span class="text-slate-500">·</span><span>${per90pts} pts/90</span>${
+        dots ? `<span class="text-slate-500">·</span><span class="flex items-center gap-1">Form ${dots}</span>` : ""}
     </div>` : "";
   return `
     <div class="flex items-start gap-2">
@@ -5879,7 +5888,7 @@ function playerDetailHtml(p, opts = {}) {
       <div class="min-w-0 flex-1">
         <div class="font-bold truncate">${esc(p.name)} ${availBadges(p.player_id)}</div>
         <div class="text-xs text-slate-400">${esc(p.team)}</div>
-        <div class="text-[10px] text-slate-500 mt-0.5">${
+        <div class="text-[11px] text-slate-400 mt-0.5">${
           owner ? "👤 drafted by " + esc(owner) : "free agent"}</div>
       </div>
       <span class="pos-${p.position} rounded px-1.5 py-0.5 text-xs font-semibold shrink-0">${p.position}</span>
@@ -5894,11 +5903,11 @@ function playerDetailHtml(p, opts = {}) {
         <td class="py-1 text-slate-400">${r.label}</td>
         <td class="py-1 text-right font-mono">×${r.count}</td>
         <td class="py-1 text-right font-mono w-12 ${
-          r.pts > 0 ? "text-wcgold" : r.pts < 0 ? "text-red-400" : "text-slate-500"
+          r.pts > 0 ? "text-wcgold" : r.pts < 0 ? "text-red-400" : "text-slate-400"
         }">${r.pts > 0 ? "+" : ""}${r.pts}</td>
       </tr>`).join("")}
     </tbody></table>` : ""}
-    <div class="text-[10px] uppercase tracking-wide text-slate-500 pt-1">Match by match${
+    <div class="text-[11px] uppercase tracking-wide text-slate-400 pt-1">Match by match${
       opts.managerId ? " · " + (opts.perspectiveLabel || "your lineup") : ""}</div>
     ${matchLogHtml(p.player_id, p.position, p.team, opts.managerId)}`;
 }
@@ -6002,13 +6011,13 @@ function renderDreamTeam(round, per90) {
       ${isFlex ? '<span class="absolute top-1 right-1 rounded bg-wcgold/20 text-wcgold text-[8px] font-bold px-1 leading-tight" title="Flex slot">FLEX</span>' : ""}
       ${avatarHtml(x.p.player_id, x.p.team, "w-10 h-10")}
       <span class="text-xs font-medium leading-tight">${esc(x.p.name)} ${availBadges(x.p.player_id)}</span>
-      <span class="text-[10px] text-slate-500 truncate w-full">${esc(x.p.team)}</span>
-      <span class="text-[10px] truncate w-full ${owner ? "text-wcgold" : "text-slate-500"}">${
+      <span class="text-[11px] text-slate-400 truncate w-full">${esc(x.p.team)}</span>
+      <span class="text-[11px] truncate w-full ${owner ? "text-wcgold" : "text-slate-400"}">${
         owner ? "👤 " + esc(owner) : "free agent"}</span>
       <span class="font-mono font-bold text-wcgold">${x.val}${per90 ? "" : "p"}</span>
     </button>`;
   };
-  const emptyCard = `<div class="w-[30%] max-w-[7.5rem] shrink-0 rounded-xl border border-dashed border-slate-800 p-2 flex items-center justify-center text-slate-600 text-sm min-h-[6rem]">—</div>`;
+  const emptyCard = `<div class="w-[30%] max-w-[7.5rem] shrink-0 rounded-xl border border-dashed border-slate-800 p-2 flex items-center justify-center text-slate-500 text-sm min-h-[6rem]">—</div>`;
   const flexN = leagueFlex();
   // Flex players sit in the row of their own position, tagged FLEX.
   const flexByPos = {};
@@ -6018,7 +6027,7 @@ function renderDreamTeam(round, per90) {
     while (cards.length < (quota[pos] || 0)) cards.push(emptyCard);
     for (const x of (flexByPos[pos] || [])) cards.push(card(x, true));
     return `<div>
-      <div class="text-[10px] uppercase tracking-wide text-slate-500 mb-1 text-center">${posName[pos]}</div>
+      <div class="text-[11px] uppercase tracking-wide text-slate-400 mb-1 text-center">${posName[pos]}</div>
       <div class="flex flex-wrap justify-center gap-2">${cards.join("")}</div>
     </div>`;
   };
@@ -6029,7 +6038,7 @@ function renderDreamTeam(round, per90) {
       <div class="text-sm font-semibold">Dream XI · ${scope}${per90 ? " · per 90" : ""}</div>
       <div class="text-sm font-mono text-wcgold">${dt.total}p</div>
     </div>
-    <p class="text-[10px] text-slate-500">Best starters (${formation}) by ${
+    <p class="text-[11px] text-slate-400">Best starters (${formation}) by ${
       per90 ? "points per 90" : "total points"}. 👤 ${
       round ? "= who owned them that round" : "= who drafted them"}. Updates after every game.</p>
     <div class="rounded-xl border border-slate-800 bg-emerald-950/20 p-3 space-y-3">
@@ -6139,22 +6148,22 @@ function renderStatsTab() {
     return `<li class="flex items-center gap-1">
       ${starHtml(p.player_id)}
       <button data-sp="${esc(p.player_id)}" class="flex-1 min-w-0 flex items-center gap-2 py-2 text-left">
-        <span class="text-slate-500 font-mono w-6 shrink-0">${q ? "" : i + 1 + "."}</span>
+        <span class="text-slate-400 font-mono w-6 shrink-0">${q ? "" : i + 1 + "."}</span>
         ${avatarHtml(p.player_id, p.team)}
         <span class="min-w-0 flex-1">
           <span class="block truncate text-sm">${esc(p.name)} ${availBadges(p.player_id)}${
-            owner ? ` <span class="rounded bg-slate-700 px-1 py-0.5 text-[10px] text-wcgold">👤 ${esc(owner)}</span>` : ""}</span>
-          <span class="flex items-center gap-1 text-[10px] text-slate-500">
+            owner ? ` <span class="rounded bg-slate-700 px-1 py-0.5 text-[11px] text-wcgold">👤 ${esc(owner)}</span>` : ""}</span>
+          <span class="flex items-center gap-1 text-[11px] text-slate-400">
             <span class="truncate">${esc(p.team)}</span>${dots}${
               per90 ? `<span class="shrink-0">· ${mins}′</span>` : ""}</span>
         </span>
-        <span class="pos-${p.position} rounded px-1.5 py-0.5 text-[10px] font-semibold shrink-0">${p.position}</span>
+        <span class="pos-${p.position} rounded px-1.5 py-0.5 text-[11px] font-semibold shrink-0">${p.position}</span>
         <span class="shrink-0 w-10 text-right">
-          <span class="block font-mono font-bold ${val > 0 ? "text-wcgold" : val < 0 ? "text-red-400" : "text-slate-500"}">${val}</span>
-          ${showSub ? `<span class="block text-[10px] text-slate-500">${sub}</span>` : ""}
+          <span class="block font-mono font-bold ${val > 0 ? "text-wcgold" : val < 0 ? "text-red-400" : "text-slate-400"}">${val}</span>
+          ${showSub ? `<span class="block text-[11px] text-slate-400">${sub}</span>` : ""}
         </span>
       </button></li>`;
-  }).join("") || `<li class="py-4 text-sm text-slate-500">${
+  }).join("") || `<li class="py-4 text-sm text-slate-400">${
     q ? "No players match."
       : per90 ? "No one has ≥90′ logged yet for a per-90 rate."
       : round ? "No stats for that round yet."
@@ -6234,7 +6243,7 @@ function renderLineup() {
     const need = starterQuota()[pk.position] || 0;
     const fb = isFlexFormation() ? formationBounds() : null;
     const header = pk.position !== lastPos
-      ? `<div class="text-[10px] text-slate-500 mt-2 first:mt-0">${pk.position} — ${
+      ? `<div class="text-[11px] text-slate-400 mt-2 first:mt-0">${pk.position} — ${
           fb ? `${fb[pk.position][0]}–${fb[pk.position][1]} in your XI` : `pick ${need} starter${need === 1 ? "" : "s"}`}</div>`
       : "";
     lastPos = pk.position;
@@ -6246,10 +6255,10 @@ function renderLineup() {
       ${avatarHtml(pk.player_id, pk.team, "w-5 h-5")}
       <span class="min-w-0 flex-1">
         <span class="block truncate text-sm">${esc(pk.player_name)} ${availBadges(pk.player_id)}</span>
-        <span class="block truncate text-[10px] text-slate-500">${esc(pk.team)}${fxt ? ` · ${esc(fxt)}` : ""}</span>
+        <span class="block truncate text-[11px] text-slate-400">${esc(pk.team)}${fxt ? ` · ${esc(fxt)}` : ""}</span>
       </span>
-      <span class="shrink-0 text-[10px] font-mono text-slate-400">${playerPoints(pk.player_id, pk.position)}p</span>
-      <span class="shrink-0 text-xs font-semibold ${starter ? "text-wcgold" : "text-slate-500"}">${starter ? "STARTER" : "sub"}</span>
+      <span class="shrink-0 text-[11px] font-mono text-slate-400">${playerPoints(pk.player_id, pk.position)}p</span>
+      <span class="shrink-0 text-xs font-semibold ${starter ? "text-wcgold" : "text-slate-400"}">${starter ? "STARTER" : "sub"}</span>
     </button>`;
   }).join("");
   $("lineup-list").querySelectorAll("[data-lineup]").forEach((b) => b.onclick = () => {
@@ -6281,9 +6290,9 @@ function renderLineup() {
     const opts = (sel) => '<option value="">— none —</option>' + starterPicks.map((pk) =>
       `<option value="${esc(pk.player_id)}"${pk.player_id === sel ? " selected" : ""}>${esc(pk.player_name)}</option>`).join("");
     capBox.innerHTML = `
-      <label class="text-[11px] text-slate-400">Captain © <span class="text-slate-500">×2</span>
+      <label class="text-xs text-slate-400">Captain © <span class="text-slate-400">×2</span>
         <select id="lineup-cap-sel" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm">${opts(S.captainDraft)}</select></label>
-      <label class="text-[11px] text-slate-400">Vice Ⓥ <span class="text-slate-500">backup</span>
+      <label class="text-xs text-slate-400">Vice Ⓥ <span class="text-slate-400">backup</span>
         <select id="lineup-vice-sel" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm">${opts(S.viceDraft)}</select></label>`;
     $("lineup-cap-sel").onchange = (e) => { S.captainDraft = e.target.value; };
     $("lineup-vice-sel").onchange = (e) => { S.viceDraft = e.target.value; };
@@ -6354,7 +6363,7 @@ function closeSwap() {
 // is available.
 function teamFixLine(team) {
   const t = fixtureText(team);
-  return esc(team) + (t ? ` <span class="text-slate-500">· ${esc(t)}</span>` : "");
+  return esc(team) + (t ? ` <span class="text-slate-400">· ${esc(t)}</span>` : "");
 }
 
 function renderSwapList() {
@@ -6386,20 +6395,20 @@ function renderSwapList() {
       </div>
       <span class="shrink-0 text-xs font-mono text-slate-400">${entryPoints(e.player_id, e.position, e.team)} pts</span>
       <button data-swapin="${esc(e.player_id)}" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-sm font-semibold">${faDeferToClose() ? "Claim" : "Swap in"}</button>
-    </li>`).join("") || '<li class="py-4 text-sm text-slate-500">No free agents match.</li>';
+    </li>`).join("") || '<li class="py-4 text-sm text-slate-400">No free agents match.</li>';
   const ownedRows = owned.map(({ pk, owner }) => `
     <li class="flex items-center py-2 gap-2">
       ${avatarHtml(pk.player_id, pk.team)}
       <div class="min-w-0 flex-1">
         <div class="truncate font-medium">${esc(pk.player_name)} ${availBadges(pk.player_id)}
-          <span class="rounded bg-slate-700 px-1.5 py-0.5 text-[10px] font-semibold text-wcgold">👤 ${esc(owner?.name ?? "?")}</span></div>
+          <span class="rounded bg-slate-700 px-1.5 py-0.5 text-[11px] font-semibold text-wcgold">👤 ${esc(owner?.name ?? "?")}</span></div>
         <div class="text-xs text-slate-400">${teamFixLine(pk.team)}</div>
       </div>
       <span class="shrink-0 text-xs font-mono text-slate-400">${entryPoints(pk.player_id, pk.position, pk.team)} pts</span>
       <button data-tradefor="${pk.id}" class="shrink-0 bg-slate-800 border border-wcgold/60 text-wcgold rounded-lg px-3 py-1.5 text-sm font-semibold">Trade</button>
     </li>`).join("");
   $("swap-list").innerHTML = freeRows + (ownedRows
-    ? `<li class="pt-3 pb-1 text-[10px] uppercase tracking-wide text-slate-500">On other rosters — tap Trade to propose a swap</li>${ownedRows}`
+    ? `<li class="pt-3 pb-1 text-[11px] uppercase tracking-wide text-slate-400">On other rosters — tap Trade to propose a swap</li>${ownedRows}`
     : "");
   $("swap-list").querySelectorAll("[data-swapin]").forEach((b) => b.onclick = () => {
     const entry = free.find((e) => e.player_id === b.dataset.swapin);
@@ -6608,15 +6617,15 @@ function builderHtml(me) {
     return `<div class="rounded-xl border border-wcgold bg-slate-900 p-4 space-y-3 mt-3">
       <h3 class="font-semibold text-sm">Free agent swap</h3>
       ${targetSelect}
-      <p class="text-xs text-slate-500">Swap any of your players for an unpicked player in the same
+      <p class="text-xs text-slate-400">Swap any of your players for an unpicked player in the same
         position. No approval needed — it happens immediately.</p>
       <div class="space-y-1">
         ${myPicks.map((p) => `<div class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-2 py-1.5 text-sm">
-          <span class="text-[10px] w-14 shrink-0 text-slate-400">${p.slot}</span>
+          <span class="text-[11px] w-14 shrink-0 text-slate-400">${p.slot}</span>
           ${avatarHtml(p.player_id, p.team, "w-5 h-5")}
           <span class="min-w-0 truncate">${esc(p.player_name)} ${availBadges(p.player_id)}
-            <span class="text-[10px] text-slate-500">${teamFixLine(p.team)}</span></span>
-          <span class="ml-auto shrink-0 text-[10px] font-mono text-slate-400">${entryPoints(p.player_id, p.position, p.team)}p</span>
+            <span class="text-[11px] text-slate-400">${teamFixLine(p.team)}</span></span>
+          <span class="ml-auto shrink-0 text-[11px] font-mono text-slate-400">${entryPoints(p.player_id, p.position, p.team)}p</span>
           <button data-faswap="${p.id}" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1 text-xs font-semibold">Swap</button>
         </div>`).join("")}
       </div>
@@ -6638,14 +6647,14 @@ function builderHtml(me) {
           ${myPicks.map((p) =>
             `<option value="${p.id}" ${pair.mine === p.id ? "selected" : ""}>${esc(optLabel(p))}</option>`).join("")}
         </select>
-        <span class="text-slate-500">⇄</span>
+        <span class="text-slate-400">⇄</span>
         <select data-theirs="${i}" class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-1.5 py-1.5 text-xs">
           <option value="">their player…</option>
           ${theirOpts.map((p) =>
             `<option value="${p.id}" ${pair.theirs === p.id ? "selected" : ""}>${esc(optLabel(p))}</option>`).join("")}
         </select>
         ${b.pairs.length > 1 ? `<button data-rmpair="${i}" class="text-red-400 text-xs px-1">✕</button>` : ""}
-      </div>${fixLine ? `<div class="text-[10px] text-slate-500 px-1 -mt-1.5">${fixLine}</div>` : ""}`;
+      </div>${fixLine ? `<div class="text-[11px] text-slate-400 px-1 -mt-1.5">${fixLine}</div>` : ""}`;
     }).join("")}
     <div class="flex gap-2">
       <button id="trade-addpair" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg py-1.5 text-xs font-semibold">+ add pair</button>
@@ -6657,7 +6666,7 @@ function builderHtml(me) {
 
 const TRADE_STATUS_STYLE = {
   proposed: "text-amber-300", accepted: "text-wcgold", rejected: "text-red-400",
-  cancelled: "text-slate-500", countered: "text-sky-300",
+  cancelled: "text-slate-400", countered: "text-sky-300",
 };
 
 function tradeSectionHtml(title, list, incoming) {
@@ -6671,9 +6680,9 @@ function tradeSectionHtml(title, list, incoming) {
       const fixLine = t.status === "proposed"
         ? [fixOf(o), fixOf(r)].filter(Boolean).join(" ⇄ ") : "";
       return `<div class="text-xs text-slate-300">
-        ${esc(o?.player_name ?? "?")} <span class="text-slate-500">(${o?.slot ?? "?"})</span>
-        ⇄ ${esc(r?.player_name ?? "?")} <span class="text-slate-500">(${r?.slot ?? "?"})</span>
-      </div>${fixLine ? `<div class="text-[10px] text-slate-500">${fixLine}</div>` : ""}`;
+        ${esc(o?.player_name ?? "?")} <span class="text-slate-400">(${o?.slot ?? "?"})</span>
+        ⇄ ${esc(r?.player_name ?? "?")} <span class="text-slate-400">(${r?.slot ?? "?"})</span>
+      </div>${fixLine ? `<div class="text-[11px] text-slate-400">${fixLine}</div>` : ""}`;
     }).join("");
     // Accept only while the window is open; Reject/Counter stay available so
     // you can still respond to (and renegotiate) pending proposals when closed.
@@ -6685,7 +6694,7 @@ function tradeSectionHtml(title, list, incoming) {
     return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2">
       <div class="flex items-center justify-between text-sm">
         <span>${incoming ? "from" : "to"} <b>${esc(other?.name ?? "?")}</b>${
-          t.parent_trade_id ? ' <span class="text-[10px] text-sky-300">(counter-offer)</span>' : ""}</span>
+          t.parent_trade_id ? ' <span class="text-[11px] text-sky-300">(counter-offer)</span>' : ""}</span>
         <span class="text-xs font-semibold ${TRADE_STATUS_STYLE[t.status] || ""}">${t.status}</span>
       </div>
       <div class="space-y-0.5">${rows}</div>
@@ -6694,7 +6703,7 @@ function tradeSectionHtml(title, list, incoming) {
   }).join("");
   return `<div class="mt-4 space-y-2">
     <h3 class="font-semibold text-sm">${title}</h3>
-    ${cards || '<p class="text-xs text-slate-500">None.</p>'}
+    ${cards || '<p class="text-xs text-slate-400">None.</p>'}
   </div>`;
 }
 
@@ -6719,19 +6728,19 @@ function tradeTxCard(t) {
       ?? pickById(it.requested_pick_id)?.player_name ?? "?";
     return `<div class="text-xs text-slate-400">
       <span class="text-slate-200">${esc(toProposer)}</span>
-      <span class="text-slate-500 mx-1">→</span>
+      <span class="text-slate-400 mx-1">→</span>
       <span>${esc(proposer?.name ?? "?")}</span>
-      <span class="text-slate-600 mx-2">·</span>
+      <span class="text-slate-500 mx-2">·</span>
       <span class="text-slate-200">${esc(toTarget)}</span>
-      <span class="text-slate-500 mx-1">→</span>
+      <span class="text-slate-400 mx-1">→</span>
       <span>${esc(target?.name ?? "?")}</span>
     </div>`;
   }).join("");
   return `<div class="rounded-xl border border-slate-800 bg-slate-900/50 p-3 space-y-1.5">
     <div class="flex items-center justify-between">
       <span class="text-sm font-semibold">${esc(proposer?.name ?? "?")} ⇄ ${esc(target?.name ?? "?")}
-        <span class="text-[10px] text-slate-500 font-normal">trade</span></span>
-      <span class="text-xs text-slate-500">${txWhen(t.updated_at)}</span>
+        <span class="text-[11px] text-slate-400 font-normal">trade</span></span>
+      <span class="text-xs text-slate-400">${txWhen(t.updated_at)}</span>
     </div>
     <div class="space-y-0.5">${pairs}</div>
   </div>`;
@@ -6742,13 +6751,13 @@ function swapTxCard(x) {
   return `<div class="rounded-xl border border-slate-800 bg-slate-900/50 p-3 space-y-1">
     <div class="flex items-center justify-between">
       <span class="text-sm font-semibold">${esc(mgr?.name ?? "?")}
-        <span class="text-[10px] text-slate-500 font-normal">free-agent swap</span></span>
-      <span class="text-xs text-slate-500">${txWhen(x.created_at)}</span>
+        <span class="text-[11px] text-slate-400 font-normal">free-agent swap</span></span>
+      <span class="text-xs text-slate-400">${txWhen(x.created_at)}</span>
     </div>
     <div class="text-xs text-slate-400">
       <span class="text-wcgreen">+ ${esc(x.in_player_name ?? "?")}</span>
-      <span class="text-slate-600 mx-2">·</span>
-      <span class="text-slate-500">− ${esc(x.out_player_name ?? "?")}</span>
+      <span class="text-slate-500 mx-2">·</span>
+      <span class="text-slate-400">− ${esc(x.out_player_name ?? "?")}</span>
     </div>
   </div>`;
 }
@@ -6762,7 +6771,7 @@ function transactionsLogHtml() {
   entries.sort((a, b) => String(b.when).localeCompare(String(a.when)));
   const body = entries.length
     ? entries.slice(0, 50).map((e) => e.html).join("")
-    : '<p class="text-xs text-slate-500">No trades or free-agent swaps yet.</p>';
+    : '<p class="text-xs text-slate-400">No trades or free-agent swaps yet.</p>';
   return `<div class="mt-6 space-y-2">
     <h3 class="font-semibold text-sm">Transactions</h3>
     ${body}
@@ -6780,8 +6789,8 @@ function shortlistSectionHtml(me) {
   if (!S.showShortlist) {
     return `<div class="mt-4">
       <button id="sl-toggle" class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm font-semibold flex items-center justify-between">
-        <span>★ View shortlist <span class="text-slate-500 font-normal">· ${allIds.length} player${allIds.length === 1 ? "" : "s"}</span></span>
-        <span class="text-slate-500">▾</span>
+        <span>★ View shortlist <span class="text-slate-400 font-normal">· ${allIds.length} player${allIds.length === 1 ? "" : "s"}</span></span>
+        <span class="text-slate-400">▾</span>
       </button>
     </div>`;
   }
@@ -6806,24 +6815,24 @@ function shortlistSectionHtml(me) {
     const ownPick = S.picks.find((pk) => pk.player_id === p.player_id);
     const owner = ownPick && S.managers.find((m) => m.id === ownPick.manager_id);
     const mine = ownPick && ownPick.manager_id === me.id;
-    const status = mine ? '<span class="text-slate-500">on your roster</span>'
-      : owner ? `<span class="rounded bg-slate-700 px-1 py-0.5 text-[10px] text-wcgold">👤 ${esc(owner.name)}</span>`
-      : '<span class="text-slate-500">free agent</span>';
+    const status = mine ? '<span class="text-slate-400">on your roster</span>'
+      : owner ? `<span class="rounded bg-slate-700 px-1 py-0.5 text-[11px] text-wcgold">👤 ${esc(owner.name)}</span>`
+      : '<span class="text-slate-400">free agent</span>';
     return `<li class="flex items-center py-2 gap-1.5">
       ${starHtml(p.player_id)}
       <button data-sldetail="${esc(p.player_id)}" class="flex-1 min-w-0 flex items-center gap-2 text-left">
         ${avatarHtml(p.player_id, p.team)}
         <span class="min-w-0 flex-1">
           <span class="block truncate font-medium text-sm">${esc(p.name)} ${availBadges(p.player_id)}</span>
-          <span class="block truncate text-[10px] text-slate-400">${esc(p.team)} · ${status}</span>
+          <span class="block truncate text-[11px] text-slate-400">${esc(p.team)} · ${status}</span>
           ${fixtureCrestHtml(p.team, "w-3 h-3")
-            ? `<span class="flex items-center gap-1 text-[10px] text-slate-500 truncate">${fixtureCrestHtml(p.team, "w-3 h-3")}</span>`
+            ? `<span class="flex items-center gap-1 text-[11px] text-slate-400 truncate">${fixtureCrestHtml(p.team, "w-3 h-3")}</span>`
             : ""}
         </span>
-        <span class="pos-${p.position} rounded px-1.5 py-0.5 text-[10px] font-semibold shrink-0">${p.position}</span>
+        <span class="pos-${p.position} rounded px-1.5 py-0.5 text-[11px] font-semibold shrink-0">${p.position}</span>
         <span class="shrink-0 w-10 text-right">
-          <span class="block font-mono font-bold ${val > 0 ? "text-wcgold" : "text-slate-500"}">${val}</span>
-          ${byPoints ? "" : `<span class="block text-[10px] text-slate-500">${pts}p</span>`}
+          <span class="block font-mono font-bold ${val > 0 ? "text-wcgold" : "text-slate-400"}">${val}</span>
+          ${byPoints ? "" : `<span class="block text-[11px] text-slate-400">${pts}p</span>`}
         </span>
       </button>
       ${!mine && open ? `<button data-sltrade="${esc(p.player_id)}" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-sm font-semibold">Trade</button>` : ""}
@@ -6833,8 +6842,8 @@ function shortlistSectionHtml(me) {
   const chips = ["ALL", ...GROUPS.slice(0, 4)];
   return `<div class="mt-4 space-y-2">
     <button id="sl-toggle" class="w-full rounded-xl border border-wcgold/60 bg-wcred/10 px-3 py-2.5 text-sm font-semibold flex items-center justify-between">
-      <span>★ My shortlist <span class="text-[10px] text-slate-400 font-normal">· only you can see this</span></span>
-      <span class="text-slate-500">▴ hide</span>
+      <span>★ My shortlist <span class="text-[11px] text-slate-400 font-normal">· only you can see this</span></span>
+      <span class="text-slate-400">▴ hide</span>
     </button>
     ${allIds.length ? `<div class="flex gap-2">
       <button id="sl-clean" class="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-300">🧹 Clean · remove knocked-out</button>
@@ -6857,7 +6866,7 @@ function shortlistSectionHtml(me) {
     </div>
     ${ranked.length
       ? `<ul class="rounded-xl border border-slate-700 bg-slate-900 px-3 divide-y divide-slate-800">${rows}</ul>`
-      : `<p class="text-xs text-slate-500">${allIds.length
+      : `<p class="text-xs text-slate-400">${allIds.length
           ? "No shortlisted players match the current filters."
           : "No players shortlisted yet — tap ☆ on a player in the Stats tab."}</p>`}
   </div>`;
@@ -6901,8 +6910,8 @@ function plannerSectionHtml(me) {
   if (!S.showPlanner) {
     return `<div class="mt-4">
       <button id="pl-toggle" class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm font-semibold flex items-center justify-between">
-        <span>🗺 Squad planner <span class="text-slate-500 font-normal">· ${activeMoves.length} planned move${activeMoves.length === 1 ? "" : "s"}</span></span>
-        <span class="text-slate-500">▾</span>
+        <span>🗺 Squad planner <span class="text-slate-400 font-normal">· ${activeMoves.length} planned move${activeMoves.length === 1 ? "" : "s"}</span></span>
+        <span class="text-slate-400">▾</span>
       </button>
     </div>`;
   }
@@ -6917,9 +6926,9 @@ function plannerSectionHtml(me) {
         ${avatarHtml(pk.player_id, pk.team, "w-5 h-5")}
         <span class="min-w-0 flex-1">
           <span class="block truncate text-sm">${esc(pk.player_name)} ${availBadges(pk.player_id)}</span>
-          <span class="flex items-center gap-1 truncate text-[10px] text-slate-500">${pk.slot} · ${esc(pk.team)}${next ? ` · ${next}` : ""}</span>
+          <span class="flex items-center gap-1 truncate text-[11px] text-slate-400">${pk.slot} · ${esc(pk.team)}${next ? ` · ${next}` : ""}</span>
         </span>
-        ${m ? "" : `<button data-plplan="${pk.id}" class="shrink-0 text-[10px] text-wcgold underline">plan replacement</button>`}
+        ${m ? "" : `<button data-plplan="${pk.id}" class="shrink-0 text-[11px] text-wcgold underline">plan replacement</button>`}
       </div>
       ${m ? plannerMoveHtml(pk, m, open) : ""}
     </li>`;
@@ -6927,13 +6936,13 @@ function plannerSectionHtml(me) {
 
   return `<div class="mt-4 space-y-2">
     <button id="pl-toggle" class="w-full rounded-xl border border-wcgold/60 bg-wcred/10 px-3 py-2.5 text-sm font-semibold flex items-center justify-between">
-      <span>🗺 Squad planner <span class="text-[10px] text-slate-400 font-normal">· only you can see this</span></span>
-      <span class="text-slate-500">▴ hide</span>
+      <span>🗺 Squad planner <span class="text-[11px] text-slate-400 font-normal">· only you can see this</span></span>
+      <span class="text-slate-400">▴ hide</span>
     </button>
-    <p class="text-[10px] text-slate-500">Plan a replacement per slot (a first choice + backups). ${
+    <p class="text-[11px] text-slate-400">Plan a replacement per slot (a first choice + backups). ${
       open ? "Window's open — execute below." : "You'll be able to execute when the trading window opens."}</p>
     <ul class="rounded-xl border border-slate-700 bg-slate-900 px-3 divide-y divide-slate-800">${rows}</ul>
-    ${plannerMoves().length ? '<button id="pl-clear" class="w-full text-[10px] text-slate-500 underline">clear planner</button>' : ""}
+    ${plannerMoves().length ? '<button id="pl-clear" class="w-full text-[11px] text-slate-400 underline">clear planner</button>' : ""}
   </div>`;
 }
 
@@ -6944,14 +6953,14 @@ function plannerMoveHtml(outPick, m, open) {
   const target = choices.find((c) => c.st.kind === "fa" || c.st.kind === "owned");
   const statusTxt = (st) => st.kind === "fa" ? '<span class="text-wcgreen">free agent</span>'
     : st.kind === "owned" ? `<span class="text-wcgold">👤 ${esc(st.manager?.name ?? "?")}</span>`
-    : st.kind === "yours" ? '<span class="text-slate-500">already yours</span>'
+    : st.kind === "yours" ? '<span class="text-slate-400">already yours</span>'
     : '<span class="text-red-400">🚫 knocked out</span>';
   const choiceRows = choices.map((c, i) => {
     const next = upNextHtml(c.p.team);
     return `
     <div class="flex items-center gap-1.5 text-xs">
-      <span class="text-[10px] text-slate-500 w-7 shrink-0">${i === 0 ? "1st" : "#" + (i + 1)}</span>
-      <span class="min-w-0 truncate flex-1">${esc(c.p.name)} ${availBadges(c.pid)} · ${statusTxt(c.st)}${next ? ` · <span class="text-slate-500">${next}</span>` : ""}</span>
+      <span class="text-[11px] text-slate-400 w-7 shrink-0">${i === 0 ? "1st" : "#" + (i + 1)}</span>
+      <span class="min-w-0 truncate flex-1">${esc(c.p.name)} ${availBadges(c.pid)} · ${statusTxt(c.st)}${next ? ` · <span class="text-slate-400">${next}</span>` : ""}</span>
       ${i > 0 ? `<button data-plup="${outPick.id}|${c.pid}" class="shrink-0 text-slate-400 px-1" title="make higher choice">↑</button>` : ""}
       <button data-plrm="${outPick.id}|${c.pid}" class="shrink-0 text-red-400 px-1">✕</button>
     </div>`;
@@ -6960,24 +6969,24 @@ function plannerMoveHtml(outPick, m, open) {
   let exec = "";
   if (open) {
     if (!target) {
-      exec = '<div class="text-[10px] text-slate-500">No available option right now.</div>';
+      exec = '<div class="text-[11px] text-slate-400">No available option right now.</div>';
     } else if (choices[0] === target) {
       exec = `<button data-plexec="${outPick.id}|${target.pid}" class="bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-xs font-semibold">${
         target.st.kind === "fa" ? "Swap in 1st: " : "Propose 1st: "}${esc(target.p.name)}</button>`;
     } else {
       exec = `<div class="space-y-1">
-        <div class="text-[10px] text-amber-400">1st choice (${esc(choices[0].p.name)}) unavailable.</div>
+        <div class="text-[11px] text-amber-400">1st choice (${esc(choices[0].p.name)}) unavailable.</div>
         <button data-plexec="${outPick.id}|${target.pid}" class="bg-slate-800 border border-wcgold/60 text-wcgold rounded-lg px-3 py-1.5 text-xs font-semibold">${
           target.st.kind === "fa" ? "Swap in backup: " : "Propose backup: "}${esc(target.p.name)}</button>
       </div>`;
     }
   }
   return `<div class="mt-1 ml-3 pl-2 border-l border-slate-700 space-y-1">
-    <div class="text-[10px] text-slate-500">Replace with:</div>
-    ${choiceRows || '<div class="text-[10px] text-slate-500">No options yet.</div>'}
+    <div class="text-[11px] text-slate-400">Replace with:</div>
+    ${choiceRows || '<div class="text-[11px] text-slate-400">No options yet.</div>'}
     <div class="flex items-center gap-3 pt-0.5">
-      <button data-pladd="${outPick.id}" class="text-[10px] text-wcgold underline">+ add option</button>
-      <button data-plrmmove="${outPick.id}" class="text-[10px] text-slate-500 underline">remove</button>
+      <button data-pladd="${outPick.id}" class="text-[11px] text-wcgold underline">+ add option</button>
+      <button data-plrmmove="${outPick.id}" class="text-[11px] text-slate-400 underline">remove</button>
     </div>
     ${exec}
   </div>`;
@@ -7088,7 +7097,7 @@ function renderPlannerPick() {
     const idx = choices.indexOf(p.player_id);
     const picked = idx >= 0;
     const badge = picked
-      ? `<span class="ml-1 rounded px-1 py-0.5 text-[10px] ${idx === 0
+      ? `<span class="ml-1 rounded px-1 py-0.5 text-[11px] ${idx === 0
           ? "bg-wcgold/20 text-wcgold" : "bg-slate-700 text-slate-300"}">${idx === 0 ? "1st choice" : "backup"}</span>`
       : "";
     return `<li class="flex items-center py-2 gap-1.5 ${picked ? "bg-wcgold/10 -mx-1 px-1 rounded" : ""}">
@@ -7097,18 +7106,18 @@ function renderPlannerPick() {
         ${avatarHtml(p.player_id, p.team, "w-6 h-6")}
         <span class="min-w-0 flex-1">
           <span class="block truncate text-sm">${esc(p.name)} ${availBadges(p.player_id)}${badge}</span>
-          <span class="flex items-center gap-1 truncate text-[10px] text-slate-500">${esc(p.team)} · ${stTxt}${next ? ` · ${next}` : ""}</span>
+          <span class="flex items-center gap-1 truncate text-[11px] text-slate-400">${esc(p.team)} · ${stTxt}${next ? ` · ${next}` : ""}</span>
         </span>
       </button>
       <span class="shrink-0 w-10 text-right">
-        <span class="block font-mono font-bold ${val > 0 ? "text-wcgold" : "text-slate-500"}">${val}</span>
-        ${byPoints ? "" : `<span class="block text-[10px] text-slate-500">${pts}p</span>`}
+        <span class="block font-mono font-bold ${val > 0 ? "text-wcgold" : "text-slate-400"}">${val}</span>
+        ${byPoints ? "" : `<span class="block text-[11px] text-slate-400">${pts}p</span>`}
       </span>
       <button data-pltoggle="${esc(p.player_id)}" class="shrink-0 rounded-lg px-3 py-1 text-xs font-semibold ${
         picked ? "bg-slate-800 border border-slate-600 text-slate-300" : "bg-wcred hover:bg-wcred-hov"}">${
         picked ? "✓ Added" : "Add"}</button>
     </li>`;
-  }).join("") || '<li class="py-4 text-sm text-slate-500">No players match these filters.</li>';
+  }).join("") || '<li class="py-4 text-sm text-slate-400">No players match these filters.</li>';
 
   $("planner-list").querySelectorAll("[data-plopen]").forEach((b) => b.onclick = () =>
     openPlayerDetail(b.dataset.plopen));
@@ -7129,18 +7138,18 @@ function faClaimsSectionHtml(me) {
     : "priority set at window open";
   const rows = mine.map((c, i) => `
     <div class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-3 py-2 text-sm">
-      <span class="text-slate-500 font-mono w-5">${i + 1}.</span>
-      <span class="flex-1 min-w-0 truncate">${esc(c.in_player_name)} <span class="text-slate-500 text-xs">for ${esc(c.out_player_name)}</span></span>
+      <span class="text-slate-400 font-mono w-5">${i + 1}.</span>
+      <span class="flex-1 min-w-0 truncate">${esc(c.in_player_name)} <span class="text-slate-400 text-xs">for ${esc(c.out_player_name)}</span></span>
       <button data-claimup="${c.id}"${i === 0 ? " disabled" : ""} class="shrink-0 text-slate-400 disabled:opacity-30 px-1">▲</button>
       <button data-claimdown="${c.id}"${i === mine.length - 1 ? " disabled" : ""} class="shrink-0 text-slate-400 disabled:opacity-30 px-1">▼</button>
-      <button data-claimx="${c.id}" class="shrink-0 text-slate-500 hover:text-wcred px-1">✕</button>
-    </div>`).join("") || '<p class="text-xs text-slate-500">No claims queued — tap “Claim” on a free agent to add one.</p>';
+      <button data-claimx="${c.id}" class="tap shrink-0 text-slate-400 hover:text-wcred">✕</button>
+    </div>`).join("") || '<p class="text-xs text-slate-400">No claims queued — tap “Claim” on a free agent to add one.</p>';
   return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2">
     <div class="flex items-center justify-between gap-2">
       <h3 class="font-semibold text-sm">⏳ Waiver claims</h3>
-      <span class="text-[11px] text-slate-400">${priority}</span>
+      <span class="text-xs text-slate-400">${priority}</span>
     </div>
-    <p class="text-[11px] text-slate-500">These resolve when the window closes, in waiver order (worst-placed picks first). Order yours by preference — the first still-available one lands.</p>
+    <p class="text-xs text-slate-400">These resolve when the window closes, in waiver order (worst-placed picks first). Order yours by preference — the first still-available one lands.</p>
     ${rows}
   </div>`;
 }
@@ -7149,7 +7158,7 @@ function renderTrades() {
   const box = $("board-trades");
   const me = myManager();
   if (!me) {
-    box.innerHTML = '<p class="text-sm text-slate-500 py-4">Join as a manager to trade.</p>';
+    box.innerHTML = '<p class="text-sm text-slate-400 py-4">Join as a manager to trade.</p>';
     return;
   }
   const open = tradingOpen();
@@ -7443,7 +7452,7 @@ function admRenderExisting() {
       S.admOpenLabels.has(label) ? "open" : ""}>
       <summary class="cursor-pointer select-none px-2 py-1.5 text-xs text-slate-300 flex items-center gap-2">
         <span class="truncate flex-1">${esc(label)}</span>
-        <span class="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400 shrink-0">${groups[label].length}</span>
+        <span class="rounded bg-slate-800 px-1.5 py-0.5 text-[11px] text-slate-400 shrink-0">${groups[label].length}</span>
       </summary>
       <div class="px-2 pb-2 pt-1">
       ${groups[label].map((r) => {
@@ -7468,7 +7477,7 @@ function admRenderExisting() {
         </div>`;
       }).join("")}
       </div>
-    </details>`).join("") || '<p class="text-slate-500">No stats rows yet.</p>';
+    </details>`).join("") || '<p class="text-slate-400">No stats rows yet.</p>';
   $("adm-existing").querySelectorAll("details[data-lbl]").forEach((d) =>
     d.ontoggle = () => {
       if (d.open) S.admOpenLabels.add(d.dataset.lbl);
@@ -7489,9 +7498,9 @@ function admRenderStages() {
     return `<div class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-2 py-1.5 text-sm ${
       isEliminated(t) ? "opacity-60" : ""}">
       <span class="truncate flex-1">${esc(t)}</span>
-      <label class="flex items-center gap-1 text-[10px] text-slate-400 shrink-0" title="knocked out">
+      <label class="flex items-center gap-1 text-[11px] text-slate-400 shrink-0" title="knocked out">
         <input type="checkbox" data-koteam="${esc(t)}" ${isEliminated(t) ? "checked" : ""}> out</label>
-      <span class="text-xs text-slate-500 font-mono">+${calcTeamPoints(stage)}</span>
+      <span class="text-xs text-slate-400 font-mono">+${calcTeamPoints(stage)}</span>
       <select data-team="${esc(t)}" class="stage-sel rounded bg-slate-900 border border-slate-700 px-1.5 py-1 text-xs">
         ${stageOrder().map((s) =>
           `<option value="${s}" ${stage === s ? "selected" : ""}>${s}</option>`).join("")}
@@ -7689,13 +7698,13 @@ async function renderScheduleManager() {
   const { data, error } = await S.sb.from("competition_pools")
     .select("competition_key, scheduled, updated_at").order("competition_key");
   if (error) {
-    box.innerHTML = `<p class="text-xs text-slate-500">${
+    box.innerHTML = `<p class="text-xs text-slate-400">${
       /scheduled|column|relation|competition_pools/.test(error.message)
         ? "Run schema.sql to enable scheduled pulls." : esc(error.message)}</p>`;
     return;
   }
   if (!data.length) {
-    box.innerHTML = `<p class="text-xs text-slate-500">No API competitions loaded yet — load one above first.</p>`;
+    box.innerHTML = `<p class="text-xs text-slate-400">No API competitions loaded yet — load one above first.</p>`;
     return;
   }
   box.innerHTML = data.map((r) => {
@@ -7704,7 +7713,7 @@ async function renderScheduleManager() {
     const on = !!r.scheduled;
     return `<div class="flex items-center justify-between gap-2 rounded-lg bg-slate-800/50 px-3 py-2">
       <span class="text-sm min-w-0 truncate"><span class="font-medium">${esc(name)}</span>
-        <span class="text-slate-500">${esc(season)}</span></span>
+        <span class="text-slate-400">${esc(season)}</span></span>
       <button data-sched="${esc(r.competition_key)}" data-on="${on}" class="shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold ${
         on ? "bg-wcgreen text-slate-900" : "bg-slate-700 text-slate-300"}">${on ? "Scheduled ✓" : "Off"}</button>
     </div>`;
@@ -8077,7 +8086,7 @@ async function startFinalPhase() {
 // Shared "design your draft" field builders. `data-cfg` keys drive
 // readConfigFromFields; `eff` is an effectiveConfig(...) so blanks never appear.
 const cfgNum = (key, label, val, locked) =>
-  `<label class="text-[11px] text-slate-400">${label}
+  `<label class="text-xs text-slate-400">${label}
     <input data-cfg="${key}" type="number" step="1" value="${val}"${locked ? " disabled" : ""}
       class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm${locked ? " opacity-60" : ""}"></label>`;
 const cfgGrid = (cells, cols = 4) => `<div class="grid grid-cols-${cols} gap-2">${cells.join("")}</div>`;
@@ -8095,16 +8104,16 @@ function renderRulesEditor(container, rules, opts = {}) {
   container.innerHTML = rules.map((rule, i) => {
     const pts = rule.perPosition
       ? `<div class="grid grid-cols-4 gap-1">${["GK", "DEF", "MID", "FWD"].map((g) =>
-          `<label class="text-[10px] text-slate-500 text-center">${g}<input data-ri="${i}" data-rk="points.${g}" type="number" step="1" value="${rule.points?.[g] ?? 0}"${dis} class="mt-0.5 w-full ${inp}"></label>`).join("")}</div>`
-      : `<label class="text-[10px] text-slate-500">Points <input data-ri="${i}" data-rk="points" type="number" step="1" value="${typeof rule.points === "number" ? rule.points : 0}"${dis} class="ml-1 w-20 ${inp}"></label>`;
+          `<label class="text-[11px] text-slate-400 text-center">${g}<input data-ri="${i}" data-rk="points.${g}" type="number" step="1" value="${rule.points?.[g] ?? 0}"${dis} class="mt-0.5 w-full ${inp}"></label>`).join("")}</div>`
+      : `<label class="text-[11px] text-slate-400">Points <input data-ri="${i}" data-rk="points" type="number" step="1" value="${typeof rule.points === "number" ? rule.points : 0}"${dis} class="ml-1 w-20 ${inp}"></label>`;
     const extra = rule.mode === "per"
-      ? `<label class="text-[10px] text-slate-500">per <input data-ri="${i}" data-rk="per" type="number" min="1" value="${rule.per ?? 1}"${dis} class="w-14 ${inp}"></label>`
+      ? `<label class="text-[11px] text-slate-400">per <input data-ri="${i}" data-rk="per" type="number" min="1" value="${rule.per ?? 1}"${dis} class="w-14 ${inp}"></label>`
       : rule.mode === "threshold"
-      ? `<label class="text-[10px] text-slate-500">if ≥ <input data-ri="${i}" data-rk="gte" type="number" value="${rule.gte ?? 0}"${dis} class="w-16 ${inp}"></label>` : "";
+      ? `<label class="text-[11px] text-slate-400">if ≥ <input data-ri="${i}" data-rk="gte" type="number" value="${rule.gte ?? 0}"${dis} class="w-16 ${inp}"></label>` : "";
     return `<div class="rounded-lg border border-slate-700 bg-slate-800/40 p-2 space-y-1.5">
       <div class="flex items-center gap-1.5">
         <select data-ri="${i}" data-rk="stat"${dis} class="flex-1 min-w-0 ${inp}">${statOpts(rule.stat)}</select>
-        ${locked ? "" : `<button type="button" data-rdel="${i}" class="shrink-0 text-slate-500 hover:text-wcred px-1" title="remove">✕</button>`}
+        ${locked ? "" : `<button type="button" data-rdel="${i}" class="tap shrink-0 text-slate-400 hover:text-wcred" title="remove">✕</button>`}
       </div>
       <div class="flex items-center gap-2 flex-wrap">
         <select data-ri="${i}" data-rk="mode"${dis} class="${inp}">
@@ -8113,8 +8122,8 @@ function renderRulesEditor(container, rules, opts = {}) {
           <option value="threshold"${rule.mode === "threshold" ? " selected" : ""}>if ≥ N</option>
         </select>
         ${extra}
-        <label class="flex items-center gap-1 text-[10px] text-slate-400"><input type="checkbox" data-ri="${i}" data-rk="perPosition"${rule.perPosition ? " checked" : ""}${dis}> per position</label>
-        <label class="flex items-center gap-1 text-[10px] text-slate-400" title="Only score if the player played at least this many minutes (e.g. 60 for a clean sheet)">min mins <input data-ri="${i}" data-rk="minMinutes" type="number" min="0" value="${rule.minMinutes ?? 0}"${dis} class="w-12 ${inp}"></label>
+        <label class="flex items-center gap-1 text-[11px] text-slate-400"><input type="checkbox" data-ri="${i}" data-rk="perPosition"${rule.perPosition ? " checked" : ""}${dis}> per position</label>
+        <label class="flex items-center gap-1 text-[11px] text-slate-400" title="Only score if the player played at least this many minutes (e.g. 60 for a clean sheet)">min mins <input data-ri="${i}" data-rk="minMinutes" type="number" min="0" value="${rule.minMinutes ?? 0}"${dis} class="w-12 ${inp}"></label>
       </div>
       ${pts}
     </div>`;
@@ -8211,21 +8220,21 @@ function renderScoringBalance(container, statRows, posOf, rules, meta) {
   if (!container) return;
   meta = meta || {};
   if (!statRows || !statRows.length) {
-    container.innerHTML = '<span class="text-[11px] text-slate-500">No prior data loaded — pick an API competition that has been pulled to validate your scoring against real games.</span>';
+    container.innerHTML = '<span class="text-xs text-slate-400">No prior data loaded — pick an API competition that has been pulled to validate your scoring against real games.</span>';
     return;
   }
   const b = scoringBalance(statRows, posOf, rules, 5);
   if (!b.count) {
-    container.innerHTML = '<span class="text-[11px] text-slate-500">No players with 5+ games in this data yet.</span>';
+    container.innerHTML = '<span class="text-xs text-slate-400">No players with 5+ games in this data yet.</span>';
     return;
   }
   const fmt = (x) => (Math.round(x * 10) / 10).toFixed(1);
   const cards = ["GK", "DEF", "MID", "FWD"].map((p) => {
     const s = b.perPos[p];
     return `<div class="rounded-lg border border-slate-700 bg-slate-800/40 px-1.5 py-1.5 text-center">
-      <div class="text-[10px] text-slate-500">${p} <span class="text-slate-600">·${s.n}</span></div>
+      <div class="text-[11px] text-slate-400">${p} <span class="text-slate-500">·${s.n}</span></div>
       <div class="text-sm font-semibold text-slate-200">${s.n ? fmt(s.mean) : "—"}</div>
-      <div class="text-[10px] text-slate-500">±${s.n ? fmt(s.sd) : "—"}</div>
+      <div class="text-[11px] text-slate-400">±${s.n ? fmt(s.sd) : "—"}</div>
     </div>`;
   }).join("");
   const verdict = b.relSpread <= 0.15
@@ -8235,26 +8244,26 @@ function renderScoringBalance(container, statRows, posOf, rules, meta) {
     : `<span class="text-rose-400">⚠ Skewed</span> — a ${fmt(b.spread)}-pt gap between position averages; one position is favoured.`;
   const rows = b.top.slice(0, 20).map((e, i) => {
     const m = meta[e.pid] || {};
-    return `<div class="flex items-center gap-2 px-2 py-1 text-[11px] ${i % 2 ? "bg-slate-800/30" : ""}">
-      <span class="w-4 text-right text-slate-500">${i + 1}</span>
-      <span class="w-7 text-slate-500">${e.pos}</span>
-      <span class="flex-1 truncate">${esc(m.name || e.pid)}${m.team ? ` <span class="text-slate-600">${esc(m.team)}</span>` : ""}</span>
-      <span class="text-slate-500">${e.games}g</span>
+    return `<div class="flex items-center gap-2 px-2 py-1 text-xs ${i % 2 ? "bg-slate-800/30" : ""}">
+      <span class="w-4 text-right text-slate-400">${i + 1}</span>
+      <span class="w-7 text-slate-400">${e.pos}</span>
+      <span class="flex-1 truncate">${esc(m.name || e.pid)}${m.team ? ` <span class="text-slate-500">${esc(m.team)}</span>` : ""}</span>
+      <span class="text-slate-400">${e.games}g</span>
       <span class="w-10 text-right font-mono font-semibold text-wcgold">${fmt(e.points)}</span>
     </div>`;
   }).join("");
   const chart = ridgelineSvg(b.top, b.perPos);
   container.innerHTML = `
     <div class="grid grid-cols-4 gap-1.5">${cards}</div>
-    <div class="text-[10px] leading-snug px-0.5">${verdict}</div>
+    <div class="text-[11px] leading-snug px-0.5">${verdict}</div>
     ${chart ? `<button type="button" data-openchart class="block w-full text-left rounded-lg border border-slate-700 bg-slate-900/40 p-2 hover:border-slate-500">
-      <div class="text-[10px] text-slate-500 mb-1 flex items-center justify-between">
-        <span>Points distribution by position <span class="text-slate-600">— shared scale; dashed line = average</span></span>
-        <span class="text-slate-500">⤢ tap to enlarge</span>
+      <div class="text-[11px] text-slate-400 mb-1 flex items-center justify-between">
+        <span>Points distribution by position <span class="text-slate-500">— shared scale; dashed line = average</span></span>
+        <span class="text-slate-400">⤢ tap to enlarge</span>
       </div>
       ${chart}</button>` : ""}
     <details>
-      <summary class="cursor-pointer text-[11px] text-slate-400 select-none">Top 20 scorers <span class="text-slate-600">(n=${b.count} with 5+ games)</span></summary>
+      <summary class="cursor-pointer text-xs text-slate-400 select-none">Top 20 scorers <span class="text-slate-500">(n=${b.count} with 5+ games)</span></summary>
       <div class="mt-1 rounded-lg border border-slate-700 overflow-hidden">${rows}</div>
     </details>`;
   container.querySelector("[data-openchart]")?.addEventListener("click", () => openChartSheet(b.top, b.perPos));
@@ -8322,11 +8331,11 @@ function renderConfigEditor() {
     <div class="text-xs text-slate-400 font-medium">Scoring rules</div>
     <div id="adm-rules" class="space-y-1.5"></div>
     <div class="rounded-xl border border-slate-700 bg-slate-800/30 p-3 space-y-2">
-      <div class="text-xs text-slate-400 font-medium">⚖️ Balance check <span class="text-slate-500 font-normal">— this league's games so far</span></div>
+      <div class="text-xs text-slate-400 font-medium">⚖️ Balance check <span class="text-slate-400 font-normal">— this league's games so far</span></div>
       <div id="adm-scoring-balance" class="space-y-2"></div>
     </div>
     ${stageBonusFieldsHtml(eff, locked)}
-    <p class="text-[10px] text-slate-500">A champion TEAM banks ${calcTeamPoints("winner")} in total.</p>
+    <p class="text-[11px] text-slate-400">A champion TEAM banks ${calcTeamPoints("winner")} in total.</p>
     ${locked ? "" : `<div class="flex gap-2 pt-1">
       <button id="adm-config-save" class="flex-1 bg-wcred hover:bg-wcred-hov rounded-lg py-2 text-sm font-semibold">Save draft design</button>
       <button id="adm-config-reset" class="shrink-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm font-semibold">Reset to WC defaults</button>
@@ -8419,13 +8428,13 @@ function renderAdmin() {
   $("adm-keeper-toggle").textContent =
     S.league.keeper_window ? "Close keeper picks" : "Open keeper picks";
   $("adm-mgr-list").innerHTML = S.managers.map((m) => m.eliminated
-    ? `<div class="flex items-center gap-2 rounded-lg bg-slate-800/40 px-2 py-1.5 text-sm text-slate-500">
+    ? `<div class="flex items-center gap-2 rounded-lg bg-slate-800/40 px-2 py-1.5 text-sm text-slate-400">
         <span class="truncate flex-1 line-through">${esc(m.name)}</span>
         <span class="text-xs">${(m.frozen_points || 0) + (managerTeamBonus(m.id)?.pts || 0)} pts${
           managerTeamBonus(m.id) ? " · TEAM live" : ""}</span></div>`
     : `<div class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-2 py-1.5 text-sm">
         <span class="truncate flex-1">${esc(m.name)}</span>${
-        S.league.keeper_window ? `<span class="text-[10px] text-slate-500 truncate max-w-[50%]">${
+        S.league.keeper_window ? `<span class="text-[11px] text-slate-400 truncate max-w-[50%]">${
           keepersOf(m).length
             ? "⭐ " + esc(keepersOf(m).map((pk) => pk.player_name).join(", "))
             : "no keepers yet"}</span>` : ""}
@@ -8498,7 +8507,7 @@ function renderAccount() {
 async function submitAccount() {
   const email = $("account-email").value.trim();
   const pw = $("account-pw").value;
-  const msg = (t, ok) => { const el = $("account-msg"); el.textContent = t; el.className = "text-[11px] " + (ok ? "text-emerald-400" : "text-slate-400"); };
+  const msg = (t, ok) => { const el = $("account-msg"); el.textContent = t; el.className = "text-xs " + (ok ? "text-emerald-400" : "text-slate-400"); };
   if (!email || !pw) return msg("Enter your email and password.");
   const btn = $("account-submit"); btn.disabled = true;
   try {
@@ -8521,7 +8530,7 @@ async function submitAccount() {
 // Google OAuth: redirects to Google and back to this page, where
 // detectSessionInUrl finishes the sign-in and onAuthStateChange updates the UI.
 async function signInWithGoogle() {
-  const msg = (t) => { const el = $("account-msg"); if (el) { el.textContent = t; el.className = "text-[11px] text-slate-400"; } };
+  const msg = (t) => { const el = $("account-msg"); if (el) { el.textContent = t; el.className = "text-xs text-slate-400"; } };
   const { error } = await S.sb.auth.signInWithOAuth({
     provider: "google",
     options: { redirectTo: location.origin + location.pathname },   // must be allowlisted in Supabase
@@ -8551,9 +8560,9 @@ async function loadMyLeagues() {
   const ids = [...new Set(mine.map((m) => m.league_id))];
   const { data: lgs } = await S.sb.from("leagues").select("id,name").in("id", ids);
   const byId = Object.fromEntries((lgs || []).map((l) => [l.id, l]));
-  box.innerHTML = `<div class="text-[11px] text-slate-500">Your leagues</div>` + mine.map((m) => {
+  box.innerHTML = `<div class="text-xs text-slate-400">Your leagues</div>` + mine.map((m) => {
     const l = byId[m.league_id];
-    return l ? `<button data-openleague="${esc(m.league_id)}" data-mgr="${esc(m.id)}" class="w-full text-left rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm hover:border-wcgold">${esc(l.name)} <span class="text-slate-500 text-xs">· as ${esc(m.name)}</span></button>` : "";
+    return l ? `<button data-openleague="${esc(m.league_id)}" data-mgr="${esc(m.id)}" class="w-full text-left rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm hover:border-wcgold">${esc(l.name)} <span class="text-slate-400 text-xs">· as ${esc(m.name)}</span></button>` : "";
   }).join("");
   box.querySelectorAll("[data-openleague]").forEach((b) => b.onclick = () => {
     setSession({ leagueId: b.dataset.openleague, managerId: b.dataset.mgr, adminToken: getSession()?.adminToken || null });
