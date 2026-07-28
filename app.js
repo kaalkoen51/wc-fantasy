@@ -214,13 +214,16 @@ function managerColor(m) {
   return MGR_COLORS[h % MGR_COLORS.length];
 }
 const managerCrest = (m) => m?.crest || "";
+// What to draw inside a manager's chip: their crest, else their initial. An
+// empty box looks like a bug; an initial looks deliberate.
+const managerMark = (m) => managerCrest(m) || (m?.name || "?").trim().charAt(0).toUpperCase();
 
 // A manager's name with their crest and accent, for lists and tables.
 function managerTag(m, opts = {}) {
   const c = managerColor(m), crest = managerCrest(m);
   return `<span class="inline-flex items-center gap-1.5 min-w-0">
     <span class="shrink-0 inline-flex items-center justify-center rounded-md ${opts.size || "w-6 h-6"} text-[13px]"
-          style="background:${c}22;border:1px solid ${c}66">${crest || "&nbsp;"}</span>
+          style="background:${c}22;border:1px solid ${c}88">${crest || managerMark(m)}</span>
     <span class="truncate">${esc(m?.name ?? "?")}</span></span>`;
 }
 
@@ -660,11 +663,15 @@ function nextFixtureFor(team) {
 function fixtureText(team) {
   if (!S.fixtures || !S.fixtures.length) return "";
   const f = nextFixtureFor(team);
-  if (!f) return "no upcoming fixture";
+  if (!f) return "";   // nothing scheduled: say nothing rather than repeat it
   const opp = f.home === team ? f.away : f.home;
-  const when = new Date(f.kickoff_utc).toLocaleString([], {
-    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
-  });
+  const d = new Date(f.kickoff_utc);
+  // "Sat 17:55" for anything this week, "31 Jul" beyond it. The old
+  // "Jul 31, 05:55 PM" was long enough that it truncated on every row.
+  const soon = d - Date.now() < 6 * 864e5;
+  const when = soon
+    ? d.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString([], { day: "numeric", month: "short" });
   return `${f.home === team ? "vs" : "@"} ${opp} · ${when}`;
 }
 
@@ -1343,7 +1350,7 @@ function renderLobby() {
   $("lobby-managers").innerHTML = S.managers.map((m) =>
     `<li class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-3 py-2">
       <span class="shrink-0 inline-flex items-center justify-center rounded-md w-6 h-6 text-[13px]"
-            style="background:${managerColor(m)}22;border:1px solid ${managerColor(m)}66">${managerCrest(m) || "&nbsp;"}</span>
+            style="background:${managerColor(m)}22;border:1px solid ${managerColor(m)}88">${managerMark(m)}</span>
       <span class="flex-1 min-w-0 truncate">${esc(m.name)}${
         m.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}${
         m.is_bot ? ' <span class="text-slate-400 text-xs">🤖 bot</span>' : ""}</span>` +
@@ -1987,7 +1994,7 @@ function renderRosters(containerId) {
              ${open.has(m.id) || (!open.size && m.id === me?.id) ? "open" : ""}>
       <summary class="px-4 py-3 font-semibold cursor-pointer select-none flex items-center gap-2">
         <span class="shrink-0 inline-flex items-center justify-center rounded-md w-6 h-6 text-[13px]"
-              style="background:${managerColor(m)}22;border:1px solid ${managerColor(m)}66">${managerCrest(m) || "&nbsp;"}</span>
+              style="background:${managerColor(m)}22;border:1px solid ${managerColor(m)}88">${managerMark(m)}</span>
         <span>${esc(m.name)}${
         m.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""
       }${m.draft_position ? ` <span class="text-xs text-slate-400">· draft pos ${m.draft_position}</span>` : ""}</span></summary>
@@ -2719,15 +2726,22 @@ function managerStreaks(rounds, ranksByRound) {
     run = up ? run + 1 : 0;
     best = Math.max(best, run);
   }
+  // Form is only worth flagging when it's unusual. Being "below your own
+  // average" happens about half the time, so an earlier version marked most of
+  // the league cold every week, which told nobody anything. Require a real
+  // sample and a clear margin over the manager's own baseline.
+  const mean = rounds.length ? rounds.reduce((a, b) => a + b, 0) / rounds.length : 0;
   const last3 = rounds.slice(-3);
+  const recent = last3.length === 3 ? last3.reduce((a, b) => a + b, 0) / 3 : null;
+  const enough = rounds.length >= 5 && mean > 0;
   return {
     played: rounds.length,
+    mean,
     bestRound: rounds.length ? Math.max(...rounds) : 0,
     worstRound: rounds.length ? Math.min(...rounds) : 0,
     currentWinStreak: winRun, longestWinStreak: bestWin, longestRisingRun: best,
-    // "Hot" = the last three rounds all beat the manager's own average.
-    hot: last3.length === 3 && last3.every((v) => v > (rounds.reduce((a, b) => a + b, 0) / rounds.length)),
-    cold: last3.length === 3 && last3.every((v) => v < (rounds.reduce((a, b) => a + b, 0) / rounds.length)),
+    hot: !!(enough && recent !== null && recent >= mean * 1.3),
+    cold: !!(enough && recent !== null && recent <= mean * 0.7),
   };
 }
 
@@ -3608,13 +3622,14 @@ function lineupRowHtml(it, mgrId, former, opts = {}) {
   return `<div class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-2 py-2${
       tap ? " cursor-pointer hover:bg-slate-800" : ""}"${
       tap ? ` data-hp="${esc(e.player_id)}"` : ""}>
-    <span class="text-xs w-12 shrink-0 ${
-      former ? "text-amber-400/70" : e.is_sub ? "text-slate-400" : "text-slate-300"}">${
-      former ? "former" : e.slot}${e.kept ? " ⭐" : ""}</span>
     ${avatarHtml(e.player_id, e.team)}
     <span class="min-w-0 flex-1">
       <span class="block truncate text-sm ${played ? "text-wcgold" : ""}">${esc(e.player_name)}${dreamBadge} ${tap ? availBadges(e.player_id) : ""}</span>
-      <span class="block truncate text-xs text-slate-400">${esc(e.team)}${fxt ? ` · ${esc(fxt)}` : ""}</span>
+      <span class="flex items-center gap-1 text-xs text-slate-400">
+        ${former ? '<span class="shrink-0 text-amber-400/70">former</span>'
+                 : e.is_sub ? '<span class="shrink-0 eyebrow">sub</span>' : ""}${
+          e.kept ? '<span class="shrink-0" title="keeper">⭐</span>' : ""}
+        <span class="truncate">${esc(e.team)}${fxt ? ` · ${esc(fxt)}` : ""}</span></span>
     </span>
     ${bonus ? "" : `<span class="pos-${e.position} rounded px-1.5 py-0.5 text-xs font-semibold shrink-0">${e.position}</span>`}
     <span class="shrink-0 w-10 text-right text-xs font-mono ${
@@ -3726,9 +3741,9 @@ function formBadge(mgrId) {
   const rounds = (managerHistory(mgrId).rounds || []).map((r) => r.subtotal);
   const st = managerStreaks(rounds);
   if (st.longestWinStreak >= 3 && st.currentWinStreak >= 3)
-    return ` <span class="rounded bg-orange-500/20 text-orange-300 px-1 py-0.5 text-xs font-bold align-middle" title="${st.currentWinStreak} straight rounds above the league average">🔥 ${st.currentWinStreak}</span>`;
-  if (st.hot) return ' <span class="rounded bg-orange-500/15 text-orange-300 px-1 py-0.5 text-xs font-bold align-middle" title="Last three rounds all above their average">🔥 hot</span>';
-  if (st.cold) return ' <span class="rounded bg-sky-500/15 text-sky-300 px-1 py-0.5 text-xs font-bold align-middle" title="Last three rounds all below their average">🧊 cold</span>';
+    return `<span class="shrink-0 rounded bg-orange-500/20 text-orange-300 px-1 py-0.5 font-bold" title="${st.currentWinStreak} straight rounds above the league average">🔥 ${st.currentWinStreak}</span>`;
+  if (st.hot) return '<span class="shrink-0 rounded bg-orange-500/15 text-orange-300 px-1 py-0.5 font-bold" title="Last three rounds well above their season average">🔥 hot</span>';
+  if (st.cold) return '<span class="shrink-0 rounded bg-sky-500/15 text-sky-300 px-1 py-0.5 font-bold" title="Last three rounds well below their season average">🧊 cold</span>';
   return "";
 }
 
@@ -5220,7 +5235,7 @@ function renderBoard() {
   $("board-lb").innerHTML = chartHtml + toggleHtml + scores.map((s, i) => {
     const ytp = yetByMgr[s.manager.id];
     const ytpLine = ytp?.hasSnapshot && ytp.total > 0
-      ? `<span class="block text-xs font-normal text-slate-400">${ytp.yet}/${ytp.total} starters yet to play</span>`
+      ? `<span class="shrink-0">${ytp.yet}/${ytp.total} yet to play</span>`
       : "";
     const mvi = mv.byId[s.manager.id];
     const icon = (showMove && !s.eliminated) ? movementIcon(mvi.delta) : "";
@@ -5238,14 +5253,15 @@ function renderBoard() {
         <span class="text-slate-400 font-mono w-6">${i + 1}.</span>
         ${showMove ? `<span class="w-3 text-center text-xs shrink-0">${icon}</span>` : ""}
         <span class="shrink-0 inline-flex items-center justify-center rounded-md w-7 h-7 text-[14px]"
-              style="background:${managerColor(s.manager)}22;border:1px solid ${managerColor(s.manager)}66">${managerCrest(s.manager) || "&nbsp;"}</span>
+              style="background:${managerColor(s.manager)}22;border:1px solid ${managerColor(s.manager)}88">${managerMark(s.manager)}</span>
         <span class="flex-1 min-w-0">
           <span class="block font-semibold truncate">${esc(s.manager.name)}${
-            s.manager.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}${
-            mvps.has(s.manager.id) ? ` <span class="rounded bg-wcgold/20 text-wcgold px-1 py-0.5 text-xs font-bold align-middle" title="Top scorer of round ${mv.maxRound}">🏅 MVP</span>` : ""}${
+            s.manager.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}</span>
+          <span class="flex items-center gap-1 flex-wrap text-xs text-slate-400">
+            ${mvps.has(s.manager.id) ? `<span class="shrink-0 rounded bg-wcgold/20 text-wcgold px-1 py-0.5 font-bold" title="Top scorer of round ${mv.maxRound}">🏅 MVP</span>` : ""}${
             formBadge(s.manager.id)}${
-            s.eliminated ? ' <span class="text-xs text-red-400">eliminated</span>' : ""}</span>
-          ${ytpLine}
+            s.eliminated ? '<span class="shrink-0 text-red-400">eliminated</span>' : ""}
+            ${ytpLine}</span>
         </span>
         <span class="shrink-0 text-right">
           <span class="block font-bold text-wcgold scoreboard" data-total="${s.manager.id}">${valueOf(s)} pts</span>
@@ -5478,7 +5494,7 @@ function availBadges(pid) {
   if (team && teamPlayingNow(team)) out += `<span title="playing now" class="text-emerald-400">⚡</span>`;
   if (team && isEliminated(team)) out += `<span title="team knocked out">🚫</span>`;
   const susp = suspendedNext(pid);
-  if (susp) out += `<span title="suspended next match (${susp})">🟥</span>`;
+  if (susp) out += `<span title="suspended next match (${susp})" class="rounded bg-red-500/25 text-red-300 px-1 text-xs font-bold align-middle">SUSP</span>`;
   const inj = injuryOf(pid);
   if (inj) out += `<span title="${esc(inj.reason || "injury")}">${
     inj.status === "out" ? "🤕" : "⚠️"}</span>`;
