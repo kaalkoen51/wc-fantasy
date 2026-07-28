@@ -16,7 +16,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -37,7 +37,7 @@ const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcT
         slotLabel, managerHistory, poolEntries, availableForGroup,
         isEliminated, computeYetToPlay, showView,
         plannerChoiceRank, choiceStatus, plannerPickPool,
-        autoPickCandidates, entryForId, botChoice, botThinkMs,
+        autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan,
         statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog,
         dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs,
         seasonSeries, headToHead,
@@ -1232,8 +1232,36 @@ check("auto-pick preview falls back to the pool when the shortlist is empty",
     picks.size > 1, true);
   check("bot think time is deterministic per pick",
     [botThinkMs(1), botThinkMs(1), botThinkMs(2) !== botThinkMs(1)], [botThinkMs(1), botThinkMs(1), true]);
-  check("bot think time stays snappy",
-    [botThinkMs(7) >= 900, botThinkMs(7) <= 2500], [true, true]);
+  // ~5s: fast enough to keep a practice draft moving, slow enough that picks
+  // land one at a time instead of the board filling itself in.
+  check("bot think time is about five seconds",
+    [botThinkMs(7) >= 4000, botThinkMs(7) <= 6000], [true, true]);
+}
+
+/* The draft queue: what stays, what greys out, what disappears. Without this
+   the list grew all draft long and told you your shortlist was "empty" when it
+   was really full of players who no longer fit. */
+{
+  const taken = {
+    old:   { pick_number: 3,  manager_id: "rival" },   // gone before my last pick
+    fresh: { pick_number: 12, manager_id: "rival" },   // gone since — worth flagging
+  };
+  const eligible = new Set(["keep1", "keep2"]);
+  const plan = queuePlan(["keep1", "old", "fresh", "nofit", "keep2"], taken, 9, eligible);
+  check("queue: drops players taken before your last pick",
+    plan.rows.some((r) => r.pid === "old"), false);
+  check("queue: keeps a recent loss visible, greyed",
+    plan.rows.filter((r) => r.gone).map((r) => r.pid), ["fresh"]);
+  check("queue: hides players who no longer fit, and counts them",
+    [plan.rows.some((r) => r.pid === "nofit"), plan.hiddenNoFit], [false, 1]);
+  check("queue: available count ignores the greyed row", plan.available, 2);
+  check("queue: keeps your priority order",
+    plan.rows.filter((r) => !r.gone).map((r) => r.pid), ["keep1", "keep2"]);
+  // The case from the screenshot: a full shortlist, none of it eligible.
+  const none = queuePlan(["a", "b", "c"], {}, 0, new Set());
+  check("queue: a full but unusable shortlist is not 'empty'",
+    [none.rows.length, none.hiddenNoFit, none.available], [0, 3, 0]);
+  check("queue: an actually empty shortlist", queuePlan([], {}, 0, new Set()).hiddenNoFit, 0);
 }
 
 // How many picks until you're up — the draft room's "3 picks away" cue.

@@ -1547,6 +1547,17 @@ async function setShortlist(next) {
   return true;
 }
 
+// Move a shortlisted player up or down the queue. Auto-pick takes the top
+// available entry, so this is the control that decides what you get.
+async function moveShortlist(pid, dir) {
+  const cur = myShortlist().slice();
+  const i = cur.indexOf(pid);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= cur.length) return;
+  [cur[i], cur[j]] = [cur[j], cur[i]];
+  await setShortlist(cur);
+}
+
 async function toggleShortlist(pid) {
   const cur = myShortlist();
   const next = cur.includes(pid) ? cur.filter((x) => x !== pid) : [...cur, pid];
@@ -1809,7 +1820,7 @@ function botChoice(manager) {
 
 // A short, varied "thinking" pause so a bot draft feels like a draft rather
 // than a list appearing. Derived from the pick number so every client agrees.
-const botThinkMs = (pickNo) => 900 + (pickNo * 37) % 1600;
+const botThinkMs = (pickNo) => 4200 + (pickNo * 37) % 1600;   // ~4.2–5.8s
 
 let botPickedFor = 0;
 async function botPick(info) {
@@ -1877,8 +1888,8 @@ function renderPool() {
       S.poolFilter === c ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"
     }">${c}${c !== "ALL" && myTurn ? ` (${quotaLeft(onClockPicks, c)})` : ""}</button>`).join("")
     + `<button data-slfilter class="rounded-full px-3 py-1 border ${
-      S.poolShortlistOnly ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"
-    }">★ shortlist</button>`
+      S.poolShortlistOnly ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400"
+    }">★ My queue${myShortlist().length ? ` (${myShortlist().length})` : ""}</button>`
     + `<button data-plfilter class="rounded-full px-3 py-1 border ${
       S.poolPlannerOnly ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"
     }">🗺 planner</button>`;
@@ -2043,69 +2054,102 @@ function renderRosters(containerId) {
 /* Your shortlist, pinned inside the draft room. Managers fear the clock most
    when they can't see what happens if it expires — so lead with exactly that,
    then show the queue behind it with anything already taken struck through. */
+/* What the queue should show, as data. Pure so the rules can be tested:
+   - a shortlisted player still available and eligible → show, in priority order
+   - taken since your last pick → show once, greyed, so you notice they went
+   - taken before that → drop; you have already seen it
+   - no longer fits your open slots → hide, but say how many
+     shortlist   : ordered player ids
+     takenBy     : { playerId: { pick_number, manager_id } }
+     myLastPickNo: your most recent pick number (0 if none yet)
+     eligibleIds : Set of ids that still fit an open position          */
+function queuePlan(shortlist, takenBy, myLastPickNo, eligibleIds) {
+  const rows = [];
+  let hiddenNoFit = 0;
+  (shortlist || []).forEach((pid, idx) => {
+    const pk = takenBy[pid];
+    if (pk) {
+      if ((pk.pick_number || 0) > (myLastPickNo || 0))
+        rows.push({ pid, idx, gone: true, byManagerId: pk.manager_id });
+      return;
+    }
+    if (!eligibleIds.has(pid)) { hiddenNoFit++; return; }
+    rows.push({ pid, idx, gone: false });
+  });
+  return { rows, hiddenNoFit, available: rows.filter((r) => !r.gone).length };
+}
+
 function renderDraftQueue(me, myTurn) {
   const box = $("draft-queue");
   if (!box) return;
   if (!me || me.eliminated) { box.classList.add("hidden"); return; }
   box.classList.remove("hidden");
+
   const ids = me.shortlist || [];
-  const taken = new Set(S.picks.map((pk) => pk.player_id));
+  const takenBy = {};
+  for (const pk of S.picks) takenBy[pk.player_id] = pk;
+  // Anything taken since your last pick is news; anything taken before it you
+  // have already seen, so it drops off rather than growing the list forever.
+  const myLast = S.picks.filter((pk) => pk.manager_id === me.id)
+    .reduce((a, pk) => Math.max(a, pk.pick_number || 0), 0);
+  const { shortlist: eligible } = autoPickCandidates(me);
+  const eligibleIds = new Set(eligible.map((e) => e.player_id));
+
+  const { rows, hiddenNoFit } = queuePlan(ids, takenBy, myLast, eligibleIds);
+
   const choice = autoPickPreview(me);
+  // Say WHY auto-pick would go off-list: "empty" was wrong and confusing when
+  // the list was full of players who no longer fit the open slots.
+  let why = "";
+  if (choice && !choice.fromShortlist)
+    why = ids.length === 0
+      ? " — a random eligible player, because your shortlist is empty."
+      : hiddenNoFit
+        ? ` — a random eligible player: none of your ${ids.length} shortlisted players fit the positions you still need.`
+        : " — a random eligible player, because everyone on your shortlist is already taken.";
   const head = choice
     ? `<div class="text-xs ${myTurn ? "text-warn" : "text-slate-400"}">
          ${myTurn ? "⏱ If the clock runs out" : "If your clock runs out"} you'll get
-         <b class="text-slate-100">${esc(choice.entry.name)}</b>${
-           choice.fromShortlist ? "" : ' <span class="text-slate-400">— a random eligible player, because your shortlist is empty</span>'}.
-       </div>`
+         <b class="text-slate-100">${esc(choice.entry.name)}</b>${why}</div>`
     : `<div class="text-xs text-slate-400">No available player fits your open slots.</div>`;
-  const rows = ids.slice(0, 8).map((pid) => {
-    const e = entryForId(pid);
+
+  const movable = rows.filter((r) => !r.gone).length;
+  const list = rows.slice(0, 10).map((r, n) => {
+    const e = entryForId(r.pid);
     if (!e) return "";
-    const gone = taken.has(pid);
-    return `<li class="flex items-center gap-2 py-1 ${gone ? "opacity-40" : ""}">
-      ${avatarHtml(pid, e.team, "w-6 h-6")}
-      <span class="min-w-0 flex-1 truncate text-sm ${gone ? "line-through" : ""}">${esc(e.name)}</span>
+    if (r.gone) return `<li class="flex items-center gap-2 py-1 opacity-45">
+        ${avatarHtml(r.pid, e.team, "w-6 h-6")}
+        <span class="min-w-0 flex-1 truncate text-sm line-through">${esc(e.name)}</span>
+        <span class="shrink-0 text-xs text-slate-400">${esc(S.managers.find((m) => m.id === r.byManagerId)?.name ?? "taken")}</span>
+      </li>`;
+    const first = n === rows.findIndex((x) => !x.gone);
+    const last  = n === rows.map((x) => !x.gone).lastIndexOf(true);
+    return `<li class="flex items-center gap-1.5 py-1">
+      <span class="w-4 shrink-0 text-xs text-slate-400 font-mono">${n + 1}</span>
+      ${avatarHtml(r.pid, e.team, "w-6 h-6")}
+      <span class="min-w-0 flex-1 truncate text-sm">${esc(e.name)}</span>
       <span class="shrink-0 text-xs pos-${e.position} rounded px-1.5 py-0.5">${e.position}</span>
+      ${movable > 1 ? `<button data-qup="${esc(r.pid)}" class="tap shrink-0 text-slate-400 ${first ? "opacity-30" : ""}" ${first ? "disabled" : ""} title="Move up">▲</button>
+      <button data-qdn="${esc(r.pid)}" class="tap shrink-0 text-slate-400 ${last ? "opacity-30" : ""}" ${last ? "disabled" : ""} title="Move down">▼</button>` : ""}
     </li>`;
   }).join("");
+
   box.innerHTML = `<div class="flex items-center justify-between gap-2">
       <span class="text-sm font-semibold">★ Your queue</span>
-      <span class="text-xs text-slate-400">${ids.length ? `${ids.length} shortlisted` : "empty"}</span>
+      <span class="text-xs text-slate-400">${ids.length ? `${movable} available` : "empty"}</span>
     </div>
     ${head}
-    ${rows ? `<ul class="divide-y divide-slate-800">${rows}</ul>`
-           : `<p class="text-xs text-slate-400">Star players on the Stats tab to build a queue — auto-pick takes the top one still available.</p>`}`;
-}
+    ${list ? `<ul class="divide-y divide-slate-800">${list}</ul>`
+           : `<p class="text-xs text-slate-400">${ids.length
+                ? "None of your shortlisted players fit the positions you still need."
+                : "Star players on the Players tab to build a queue — auto-pick takes the top one available."}</p>`}
+    ${hiddenNoFit ? `<p class="text-xs text-slate-400">${hiddenNoFit} shortlisted ${
+        hiddenNoFit === 1 ? "player doesn't" : "players don't"} fit your remaining slots.</p>` : ""}`;
 
-/* A pick landing should be felt, not sat through: a small card fades in under
-   the header for ~1.5s and never takes a click. Driven from renderDraft, which
-   already re-runs on every realtime update. */
-let _lastPickSeen = null;
-function flashPick(pk) {
-  document.querySelector(".pick-flash")?.remove();
-  const m = S.managers.find((x) => x.id === pk.manager_id);
-  const el = document.createElement("div");
-  el.className = "pick-flash rounded-xl border border-wcgold/70 bg-slate-900/95 backdrop-blur "
-    + "px-3 py-2 shadow-xl flex items-center gap-2 max-w-[92vw]";
-  el.innerHTML = `${avatarHtml(pk.player_id, pk.team, "w-9 h-9")}
-    <div class="min-w-0">
-      <div class="eyebrow">${esc(m?.name ?? "?")} picked</div>
-      <div class="font-bold truncate">${esc(pk.player_name)}</div>
-    </div>
-    <span class="shrink-0 rounded px-1.5 py-0.5 text-xs font-semibold pos-${pk.position}">${pk.position}</span>`;
-  document.body.appendChild(el);
-  setTimeout(() => el.remove(), 1600);
-}
-
-// Announce only genuinely new picks — not the backlog on first render, and not
-// your own pick (you just made it, you know).
-function announceNewPicks() {
-  const last = S.picks.reduce((a, b) => (a && a.pick_number > b.pick_number ? a : b), null);
-  if (!last) return;
-  if (_lastPickSeen === null) { _lastPickSeen = last.pick_number; return; }
-  if (last.pick_number <= _lastPickSeen) return;
-  _lastPickSeen = last.pick_number;
-  if (last.manager_id !== myManager()?.id) flashPick(last);
+  box.querySelectorAll("[data-qup]").forEach((b) =>
+    b.onclick = () => moveShortlist(b.dataset.qup, -1).catch((e) => toast(e.message)));
+  box.querySelectorAll("[data-qdn]").forEach((b) =>
+    b.onclick = () => moveShortlist(b.dataset.qdn, 1).catch((e) => toast(e.message)));
 }
 
 function renderDraft() {
@@ -5201,7 +5245,10 @@ function renderBoard() {
   // Decide per SECTION, not per pane — inside League the ticker was appearing
   // on Table and Bracket but vanishing on Squads, which just reads as a bug.
   const bannerGroups = ["team", "league"];
-  $("board-banner").classList.toggle("hidden", !bannerGroups.includes(groupOfTab(S.boardTab)));
+  // Pre-draft the banner carries the "← Lobby" button, so it must stay visible
+  // even on Players, where the fixture ticker would otherwise be hidden.
+  $("board-banner").classList.toggle("hidden",
+    !preDraft && !bannerGroups.includes(groupOfTab(S.boardTab)));
   const note = $("board-rules-note");
   if (note) note.textContent = boardRulesNote();
   maybeSquadReveal();
