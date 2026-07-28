@@ -6176,11 +6176,20 @@ function renderStatsTab() {
         <span class="text-slate-400 font-mono w-6 shrink-0">${q ? "" : i + 1 + "."}</span>
         ${avatarHtml(p.player_id, p.team)}
         <span class="min-w-0 flex-1">
-          <span class="block truncate text-sm">${esc(p.name)} ${availBadges(p.player_id)}</span>
-          <span class="flex items-center gap-1 text-xs text-slate-400">
+          <!-- The name yields, the status badge doesn't: a half-rendered "S…"
+               tells you nothing, whereas a shortened name still identifies. -->
+          <span class="flex items-center gap-1 text-sm min-w-0">
+            <span class="truncate">${esc(p.name)}</span>
+            <span class="shrink-0 flex items-center gap-1">${availBadges(p.player_id)}</span>
+          </span>
+          <span class="flex items-center gap-1.5 text-xs text-slate-400">
             ${ownerChipHtml(p.player_id)}
-            <span class="truncate">${esc(p.team)}</span>${dots}${
-              per90 ? `<span class="shrink-0">· ${mins}′</span>` : ""}</span>
+            <!-- The three-letter code, not the country name: with an owner mark,
+                 form dots and (in per-90) minutes on the same line, the full
+                 name was collapsing to "En…" / "Fr…", which says nothing. -->
+            <span class="shrink-0 font-mono" title="${esc(p.team)}">${esc(p.team_code || p.team)}</span>${
+              per90 ? `<span class="shrink-0">${mins}′</span>` : ""}
+            <span class="min-w-0 truncate">${dots}</span></span>
         </span>
         <span class="pos-${p.position} rounded px-1.5 py-0.5 text-xs font-semibold shrink-0">${p.position}</span>
         <span class="shrink-0 w-10 text-right">
