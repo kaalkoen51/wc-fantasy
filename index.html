@@ -81,6 +81,17 @@
 
   <!-- Home -->
   <section data-view="home" class="hidden space-y-4">
+    <!-- What this is, for someone arriving cold. Hidden once you're signed in. -->
+    <div id="home-hero" class="hidden rounded-xl border border-wcgold/40 bg-wcred/10 p-5 space-y-3">
+      <h2 class="text-2xl font-bold leading-tight">Run a fantasy draft league on any competition.</h2>
+      <p class="text-sm text-slate-300">Draft real squads from the Premier League, the Champions League or a World Cup — then
+        design the scoring system yourself and check it's fair <em>before</em> a ball is kicked.</p>
+      <ul class="text-xs text-slate-400 space-y-1.5">
+        <li>⚖️ Build your own points system, and backtest it against real past seasons</li>
+        <li>📅 Trade and lineup windows that follow the real fixture calendar</li>
+        <li>🏆 Head-to-head or points tally · waivers · captains · flexible formations</li>
+      </ul>
+    </div>
     <div id="home-account" class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-2">
       <!-- Signed-out: sign-in / sign-up form -->
       <div id="account-out" class="space-y-2">
@@ -126,7 +137,19 @@
   <!-- Create league -->
   <section data-view="create" class="hidden space-y-4">
     <h2 class="text-xl font-semibold">Create a league</h2>
-    <p class="text-xs text-slate-500 -mt-3">Just name it and go, or open any section to customise — everything has sensible defaults.</p>
+    <p class="text-xs text-slate-500 -mt-3">Pick a format to start from. You can change anything before you create it.</p>
+
+    <!-- Preset: a working league in one tap. Everything the app can do is still
+         here, one link away, rather than asked up front. -->
+    <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-2">
+      <div class="grid grid-cols-3 gap-2">
+        <button type="button" data-preset="classic" class="rounded-lg py-2 text-xs font-semibold border">Classic draft</button>
+        <button type="button" data-preset="h2h" class="rounded-lg py-2 text-xs font-semibold border">Head-to-head</button>
+        <button type="button" data-preset="custom" class="rounded-lg py-2 text-xs font-semibold border">Build your own</button>
+      </div>
+      <p id="create-preset-blurb" class="text-[11px] text-slate-400"></p>
+      <button type="button" id="create-customise" class="text-[11px] text-wcgold underline">Customise settings ▾</button>
+    </div>
 
     <!-- 1 · Basics -->
     <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
@@ -160,6 +183,7 @@
       </div>
     </div>
 
+    <div id="create-advanced" class="hidden space-y-4">
     <!-- 3 · Squad -->
     <details class="create-sec rounded-xl border border-slate-700 bg-slate-900 p-4">
       <summary class="cursor-pointer select-none flex items-center justify-between gap-2 list-none">
@@ -294,6 +318,8 @@
         </div>
       </div>
     </details>
+
+    </div><!-- /create-advanced -->
 
     <button type="button" id="create-reset" class="w-full text-xs text-slate-500 underline">reset all customisations to defaults</button>
     <button id="create-go" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2.5 font-semibold">Create league</button>
@@ -1726,6 +1752,55 @@ async function pullCreateHistory() {
   }
 }
 
+/* ---------- create-league presets ----------
+   Creating a league can touch a dozen systems — formations, a per-stat scoring
+   editor, team bonuses, H2H, waivers, captaincy, sub caps, automatic windows.
+   All of it is worth having and none of it should be asked before someone's
+   first game, so a preset produces a working league in one tap and everything
+   else lives one link away. */
+const CREATE_PRESETS = {
+  classic: {
+    blurb: "Snake draft, points tally, instant free agents. The straightforward one — good for a first league.",
+    apply: () => { S._createH2H = false; S._createWaiver = false; S._createCaptain = false; S._createAutoWin = false; },
+  },
+  h2h: {
+    blurb: "You play a different manager each round. Captain scores double, free agents go by waiver order, and the trade and lineup windows follow the real fixture calendar.",
+    apply: () => { S._createH2H = true; S._createWaiver = true; S._createCaptain = true; S._createAutoWin = true; },
+  },
+  custom: {
+    blurb: "Every setting, including the scoring editor — design your own points system and check it's balanced across positions against real past seasons.",
+    apply: () => {},
+  },
+};
+
+function applyCreatePreset(key) {
+  S._createPreset = key;
+  paintCreateFields();                 // back to defaults before layering the preset on
+  S._createTeamOn = true; S._createH2H = false; S._createWaiver = false;
+  S._createCaptain = false; S._createAutoWin = false; S._createRumbleScoring = "pairwise";
+  (CREATE_PRESETS[key] || CREATE_PRESETS.classic).apply();
+  S._createAdvanced = key === "custom";
+  syncCreatePreset();
+  syncCreateTeam();
+  syncCreateFormat();
+}
+
+function syncCreatePreset() {
+  for (const b of document.querySelectorAll("[data-preset]"))
+    b.className = "rounded-lg py-2 text-xs font-semibold border " +
+      (b.dataset.preset === S._createPreset
+        ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400");
+  const blurb = $("create-preset-blurb");
+  if (blurb) blurb.textContent = (CREATE_PRESETS[S._createPreset] || CREATE_PRESETS.classic).blurb;
+  const adv = $("create-advanced");
+  if (adv) adv.classList.toggle("hidden", !S._createAdvanced);
+  const link = $("create-customise");
+  if (link) {
+    link.textContent = S._createAdvanced ? "Hide settings ▴" : "Customise settings ▾";
+    link.classList.toggle("hidden", S._createPreset === "custom");
+  }
+}
+
 function renderCreateForm() {
   const sel = $("create-comp");
   if (sel.options.length <= 1)
@@ -1739,6 +1814,8 @@ function renderCreateForm() {
   syncApi();
   S._createTeamOn = true; S._createH2H = false; S._createWaiver = false; S._createCaptain = false; S._createAutoWin = false;
   S._createRumbleScoring = "pairwise";
+  S._createPreset = S._createPreset || "classic";
+  S._createAdvanced = S._createPreset === "custom";
   paintCreateFields();
   for (const b of document.querySelectorAll("[data-teamtoggle]"))
     b.onclick = () => { S._createTeamOn = b.dataset.teamtoggle === "on"; syncCreateTeam(); };
@@ -1750,6 +1827,9 @@ function renderCreateForm() {
     b.onclick = () => { S._createCaptain = b.dataset.cap === "on"; syncCreateFormat(); };
   for (const b of document.querySelectorAll("[data-win]"))
     b.onclick = () => { S._createAutoWin = b.dataset.win === "auto"; syncCreateFormat(); };
+  for (const b of document.querySelectorAll("[data-preset]"))
+    b.onclick = () => applyCreatePreset(b.dataset.preset);
+  $("create-customise").onclick = () => { S._createAdvanced = !S._createAdvanced; syncCreatePreset(); };
   // Live H2H schedule fairness feedback as the manager count / rounds change.
   $("create-num").addEventListener("input", () => { if (S._createH2H) updateH2HFeedback(); });
   $("create-h2h-rounds").addEventListener("input", updateH2HFeedback);
@@ -1757,12 +1837,13 @@ function renderCreateForm() {
   $("create-rumble-points").addEventListener("input", updateH2HFeedback);
   for (const b of document.querySelectorAll("[data-rumsc]"))
     b.onclick = () => { S._createRumbleScoring = b.dataset.rumsc; updateH2HFeedback(); };
+  syncCreatePreset();
   syncCreateTeam();
   syncCreateFormat();
   $("create-reset").onclick = () => {
     S._createTeamOn = true; S._createH2H = false; S._createWaiver = false; S._createCaptain = false; S._createAutoWin = false;
     S._createRumbleScoring = "pairwise";
-    paintCreateFields(); syncCreateTeam(); syncCreateFormat();
+    applyCreatePreset("classic");
   };
   $("create-go").disabled = false;
   $("create-result").classList.add("hidden");
@@ -8273,6 +8354,7 @@ function renderHome() {
   const has = !!sess?.leagueId;
   $("home-resume").classList.toggle("hidden", !has);
   if (has) $("home-resume-name").textContent = "Tap to rejoin your league";
+  $("home-hero").classList.toggle("hidden", !!authUser());
   renderAccount();
 }
 

@@ -17,7 +17,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, navGroups, groupOfTab, isCupCompetition, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -25,7 +25,7 @@ const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcT
         phaseOneStarters, starterQuota, effectiveConfig,
         flexCounting, formationValid, DEFAULT_FORMATION,
         roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims,
-        h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, navGroups, groupOfTab, isCupCompetition, scoringBalance, pointsHistogram, statSummary, rowPointsWith,
+        h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith,
         buildFixtureStatRows,
         fixtureWindows, matchweeksOf,
         maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs,
@@ -427,6 +427,26 @@ S.league = {};
     ["home", "lb", "rosters", "bracket", "stats", "trades", "chat"].map(groupOfTab),
     ["team", "league", "league", "league", "players", "activity", "activity"]);
   S.league = null;
+}
+
+/* Create-league presets: one tap to a working league, with everything else
+   still reachable behind "Customise settings". */
+{
+  CREATE_PRESETS.classic.apply();
+  check("preset classic: plain points tally, instant trades",
+    [S._createH2H, S._createWaiver, S._createCaptain, S._createAutoWin],
+    [false, false, false, false]);
+  CREATE_PRESETS.h2h.apply();
+  check("preset h2h: head-to-head, waivers, captain, fixture-driven windows",
+    [S._createH2H, S._createWaiver, S._createCaptain, S._createAutoWin],
+    [true, true, true, true]);
+  const before = [S._createH2H, S._createWaiver, S._createCaptain, S._createAutoWin].join();
+  CREATE_PRESETS.custom.apply();
+  check("preset custom: changes nothing on its own",
+    [S._createH2H, S._createWaiver, S._createCaptain, S._createAutoWin].join(), before);
+  check("every preset explains itself",
+    Object.values(CREATE_PRESETS).every((p) => (p.blurb || "").length > 30), true);
+  CREATE_PRESETS.classic.apply();
 }
 
 /* Round recap: the results moment, composed from one round's items. */
