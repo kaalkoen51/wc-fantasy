@@ -1,11 +1,20 @@
 const fs = require("fs");
 const src = fs.readFileSync("app.js", "utf8");
 
+// Enough of a DOM for the draft's pick-flash to actually run: it appends to
+// document.body, and it vanished once already when a region rewrite deleted it.
+const appended = [];
+const mkEl = () => ({ className: "", innerHTML: "", textContent: "", dataset: {},
+  classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+  style: {}, appendChild() {}, remove() {}, addEventListener() {},
+  querySelectorAll: () => [], querySelector: () => null });
 const stubDoc = {
   getElementById: () => null,
   querySelectorAll: () => [],
   querySelector: () => null,
   addEventListener: () => {},
+  createElement: mkEl,
+  body: { appendChild: (el) => appended.push(el) },
 };
 let scrollCalls = 0;
 const winStub = { scrollTo: () => { scrollCalls++; } };
@@ -14,6 +23,7 @@ const winStub = { scrollTo: () => { scrollCalls++; } };
 const _session = JSON.stringify({ leagueId: "L1", managerId: "m1" });
 const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
+globalThis.appended = appended;
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
   src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
@@ -1271,6 +1281,37 @@ check("auto-pick preview falls back to the pool when the shortlist is empty",
   check("queue: a full but unusable shortlist is not 'empty'",
     [none.rows.length, none.hiddenNoFit, none.available], [0, 3, 0]);
   check("queue: an actually empty shortlist", queuePlan([], {}, 0, new Set()).hiddenNoFit, 0);
+}
+
+/* The pick flash: a small card announcing each pick. It disappeared once when
+   a region rewrite silently deleted it, so pin the behaviour. */
+{
+  const saveM = S.managers, saveP = S.picks, saveL = S.league, saveById = S.playerById;
+  S.managers = [{ id: "mA", name: "Ada" }, { id: "mB", name: "Bo" }];
+  S.playerById = { px: { player_id: "px", name: "New Guy", position: "FWD", team: "Spurs" } };
+  S.league = { id: "L1", current_pick: 3 };
+  const pick = (n, mgr) => ({ id: "k" + n, manager_id: mgr, pick_number: n,
+    player_id: "px", player_name: "New Guy", position: "FWD", slot: "FWD", team: "Spurs" });
+
+  appended.length = 0;
+  S.picks = [pick(1, "mA")];
+  announceNewPicks();                       // first render just seeds the marker
+  check("flash: silent on the first render", appended.length, 0);
+
+  S.picks = [pick(1, "mA"), pick(2, "mB")];
+  announceNewPicks();
+  check("flash: fires for a new pick", appended.length, 1);
+  check("flash: names the drafter and the player",
+    /Bo picked/.test(appended[0].innerHTML) && /New Guy/.test(appended[0].innerHTML), true);
+
+  announceNewPicks();                       // same picks again — e.g. a re-render
+  check("flash: does not repeat on a re-render", appended.length, 1);
+
+  S.picks = [pick(1, "mA"), pick(2, "mB"), pick(3, "mA")];
+  announceNewPicks();
+  check("flash: fires again for the next pick", appended.length, 2);
+
+  S.managers = saveM; S.picks = saveP; S.league = saveL; S.playerById = saveById;
 }
 
 // How many picks until you're up — the draft room's "3 picks away" cue.
