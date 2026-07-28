@@ -154,6 +154,12 @@ alter table managers add column if not exists draft_position int;
 -- whichever human client is in the room makes their pick, guarded by
 -- current_pick so two clients racing is harmless.
 alter table managers add column if not exists is_bot boolean not null default false;
+-- Manager identity: an emoji crest and an accent colour, so a league looks like
+-- a league rather than a list of names. Both optional — the app derives a
+-- stable colour from the manager id when unset, so identity works with no
+-- migration and no setup.
+alter table managers add column if not exists crest text;
+alter table managers add column if not exists color text;
 alter table leagues  add column if not exists owner_id uuid;
 alter table managers add column if not exists user_id  uuid;
 -- Per-manager shortlist of player ids (jsonb array). Synced so it follows

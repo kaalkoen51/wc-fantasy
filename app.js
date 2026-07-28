@@ -198,6 +198,32 @@ async function refreshAuthUser() {
   return S.authUser;
 }
 
+/* ---------- manager identity ----------
+   A league should look like a league, not a list of names. Every manager gets a
+   stable accent colour derived from their id, so identity works immediately
+   with no setup and no migration; picking a crest or colour just overrides it. */
+const MGR_COLORS = ["#3987e5", "#d95926", "#199e70", "#c98500",
+                    "#a855f7", "#e5646a", "#14b8a6", "#f472b6"];
+const CRESTS = ["⚽", "🦁", "🐉", "🦅", "🐺", "🦈", "🐍", "🐻", "🔥", "⚡", "👑", "🌋"];
+
+function managerColor(m) {
+  if (m?.color) return m.color;
+  const id = String(m?.id ?? "");
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return MGR_COLORS[h % MGR_COLORS.length];
+}
+const managerCrest = (m) => m?.crest || "";
+
+// A manager's name with their crest and accent, for lists and tables.
+function managerTag(m, opts = {}) {
+  const c = managerColor(m), crest = managerCrest(m);
+  return `<span class="inline-flex items-center gap-1.5 min-w-0">
+    <span class="shrink-0 inline-flex items-center justify-center rounded-md ${opts.size || "w-6 h-6"} text-[13px]"
+          style="background:${c}22;border:1px solid ${c}66">${crest || "&nbsp;"}</span>
+    <span class="truncate">${esc(m?.name ?? "?")}</span></span>`;
+}
+
 function myManager() {
   // Prefer the account link: a signed-in user's manager follows them across
   // devices. Fall back to the per-device session (legacy / not signed in).
@@ -247,7 +273,7 @@ const STRIPPABLE_COLUMNS = new Set([
   "home_score", "away_score", "minutes", "raw",
   "offered_player_name", "requested_player_name",
   "offered_player_id", "requested_player_id", "planner",
-  "owner_id", "user_id", "is_bot",
+  "owner_id", "user_id", "is_bot", "crest", "color",
 ]);
 
 // Insert/upsert that tolerates an unapplied additive migration. Throws on
@@ -3682,6 +3708,38 @@ function renderHistInto(elId, mgrId, perspectiveLabel) {
     openPlayerDetail(b.dataset.hp, mgrId, perspectiveLabel));
 }
 
+// A short form flag on the table — leagues talk about runs, so name them.
+function formBadge(mgrId) {
+  const rounds = (managerHistory(mgrId).rounds || []).map((r) => r.subtotal);
+  const st = managerStreaks(rounds);
+  if (st.longestWinStreak >= 3 && st.currentWinStreak >= 3)
+    return ` <span class="rounded bg-orange-500/20 text-orange-300 px-1 py-0.5 text-[11px] font-bold align-middle" title="${st.currentWinStreak} straight rounds above the league average">🔥 ${st.currentWinStreak}</span>`;
+  if (st.hot) return ' <span class="rounded bg-orange-500/15 text-orange-300 px-1 py-0.5 text-[11px] font-bold align-middle" title="Last three rounds all above their average">🔥 hot</span>';
+  if (st.cold) return ' <span class="rounded bg-sky-500/15 text-sky-300 px-1 py-0.5 text-[11px] font-bold align-middle" title="Last three rounds all below their average">🧊 cold</span>';
+  return "";
+}
+
+// When a manager's total changes between renders, bump the number so a live
+// matchday reads as something happening rather than a static list.
+let _lastTotals = null;
+function bumpChangedTotals(scores, playerView) {
+  const now = {};
+  for (const s of scores) now[s.manager.id] = playerView ? s.total - (s.teamPts || 0) : s.total;
+  const prev = _lastTotals;
+  _lastTotals = now;
+  if (!prev) return;
+  setTimeout(() => {
+    for (const id in now) {
+      if (prev[id] === undefined || prev[id] === now[id]) continue;
+      const el = document.querySelector(`[data-total="${CSS.escape(id)}"]`);
+      if (!el) continue;
+      el.classList.remove("bumped");
+      void el.offsetWidth;          // restart the animation
+      el.classList.add("bumped");
+    }
+  }, 0);
+}
+
 /* ---------- matchday card (app side) ---------- */
 const LIVE_STATUS = ["1H", "2H", "HT", "ET", "BT", "P", "LIVE", "INT"];
 
@@ -3727,6 +3785,36 @@ function matchdayNow() {
 }
 
 // The card itself: stage strip, countdown, what's unset, one primary action.
+/* While games are on, show your round against the manager you're actually
+   playing. This is the reason to have the app open on a Saturday. */
+function liveRaceHtml(me) {
+  if (!h2hEnabled() || !me) return "";
+  const scores = h2hRoundScores();
+  const rnd = Math.max(0, ...Object.values(scores).map((a) => a.length));
+  if (!rnd) return "";
+  const ids = S.managers.map((m) => m.id);
+  const fx = h2hFixturesFor(ids, rnd).filter((f) => f.round === rnd);
+  const mine = fx.find((f) => f.home_manager_id === me.id || f.away_manager_id === me.id);
+  if (!mine || !mine.away_manager_id) return "";
+  const oppId = mine.home_manager_id === me.id ? mine.away_manager_id : mine.home_manager_id;
+  const opp = S.managers.find((m) => m.id === oppId);
+  const a = scores[me.id]?.[rnd - 1] ?? 0, b = scores[oppId]?.[rnd - 1] ?? 0;
+  const total = Math.max(1, a + b);
+  const lead = a > b ? "text-live" : a < b ? "text-danger" : "text-slate-200";
+  return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3">
+    <div class="eyebrow mb-1.5">Round ${rnd} · head to head</div>
+    <div class="flex items-center justify-between gap-2 text-sm">
+      <span class="min-w-0 flex-1">${managerTag(me)}</span>
+      <span class="shrink-0 font-bold scoreboard ${lead}">${a} – ${b}</span>
+      <span class="min-w-0 flex-1 flex justify-end">${managerTag(opp)}</span>
+    </div>
+    <div class="mt-2 h-1.5 rounded-full bg-slate-800 overflow-hidden flex">
+      <span style="width:${(a / total) * 100}%;background:${managerColor(me)}"></span>
+      <span style="width:${(b / total) * 100}%;background:${managerColor(opp)}"></span>
+    </div>
+  </div>`;
+}
+
 function matchdayCardHtml(me) {
   const p = matchdayNow();
   if (p.stage === "preseason" || me?.eliminated) return "";
@@ -3757,6 +3845,34 @@ function matchdayCardHtml(me) {
     </div>
     ${clock}${todo}${cta}
   </div>`;
+}
+
+// Pick your crest and accent — cheap, and it makes a league feel like yours.
+function openCrestPicker() {
+  const me = myManager();
+  if (!me) return;
+  const body = $("recap-body");
+  body.innerHTML = `
+    <div class="text-center"><div class="eyebrow">Your identity</div>
+      <div class="text-xl font-bold mt-1">${esc(me.name)}</div></div>
+    <div><div class="eyebrow mb-1">Crest</div>
+      <div class="grid grid-cols-6 gap-1.5">${CRESTS.map((c) =>
+        `<button data-crest="${c}" class="rounded-lg border ${me.crest === c
+          ? "border-wcgold bg-wcgold/10" : "border-slate-700 bg-slate-800"} py-2 text-lg">${c}</button>`).join("")}</div></div>
+    <div><div class="eyebrow mb-1">Colour</div>
+      <div class="grid grid-cols-8 gap-1.5">${MGR_COLORS.map((c) =>
+        `<button data-color="${c}" class="rounded-lg h-8 border-2 ${managerColor(me) === c
+          ? "border-white" : "border-transparent"}" style="background:${c}"></button>`).join("")}</div></div>`;
+  $("recap-sheet").classList.remove("hidden");
+  const save = async (patch) => {
+    Object.assign(me, patch);
+    const { error } = await S.sb.from("managers").update(patch).eq("id", me.id);
+    if (error && /crest|color|column|schema cache/.test(error.message))
+      return toast("Crests need a schema update — run schema.sql.");
+    closeRecap(); renderBoard(); scheduleRefetch();
+  };
+  body.querySelectorAll("[data-crest]").forEach((b) => b.onclick = () => save({ crest: b.dataset.crest }));
+  body.querySelectorAll("[data-color]").forEach((b) => b.onclick = () => save({ color: b.dataset.color }));
 }
 
 /* ---------- squad reveal ----------
@@ -3796,6 +3912,105 @@ function maybeSquadReveal() {
   if (localStorage.getItem("wcf_reveal_" + S.league.id)) return;
   if (!managerPicks(myManager().id).length) return;
   openReveal();
+}
+
+/* ---------- transfer roundup ----------
+   When a window closes, who actually moved the needle. Built from the
+   transactions log plus accepted trades; ranked by transferRoundup(), which
+   favours manager-to-manager deals. */
+function collectMoves(sinceMs) {
+  const nameOf = (id) => S.managers.find((m) => m.id === id)?.name || "?";
+  const pts = (pid, pos, team) => { try { return playerPoints(pid, pos) || 0; } catch { return 0; } };
+  const posOf = (pid) => S.playerById[pid]?.position || "MID";
+  const moves = [];
+  for (const t of S.transactions || []) {
+    if (sinceMs && Date.parse(t.created_at || 0) < sinceMs) continue;
+    moves.push({ kind: t.kind, manager: nameOf(t.manager_id),
+      inName: t.in_player_name, outName: t.out_player_name,
+      inPts: pts(t.in_player_id, posOf(t.in_player_id)),
+      outPts: pts(t.out_player_id, posOf(t.out_player_id)) });
+  }
+  for (const t of S.trades || []) {
+    if (t.status !== "accepted") continue;
+    if (sinceMs && Date.parse(t.created_at || 0) < sinceMs) continue;
+    for (const it of (t.trade_items || [])) {
+      const inId = it.requested_player_id, outId = it.offered_player_id;
+      moves.push({ kind: "trade", manager: nameOf(t.from_manager_id), with: nameOf(t.target_manager_id),
+        inName: it.requested_player_name, outName: it.offered_player_name,
+        inPts: pts(inId, posOf(inId)), outPts: pts(outId, posOf(outId)) });
+    }
+  }
+  return moves;
+}
+
+function openRoundup() {
+  const body = $("recap-body");
+  if (!body) return;
+  const top = transferRoundup(collectMoves(), 6);
+  body.innerHTML = `
+    <div class="text-center"><div class="eyebrow">Window closed</div>
+      <div class="text-xl font-bold mt-1">Transfer roundup</div>
+      <div class="text-xs text-slate-400">The moves that shifted the most points</div></div>
+    ${top.length ? `<ol class="space-y-1.5">${top.map((m, i) => `
+      <li class="rounded-lg border border-slate-700 bg-slate-800/50 px-2.5 py-2">
+        <div class="flex items-center gap-2">
+          <span class="text-slate-400 font-mono text-xs w-4">${i + 1}</span>
+          <span class="rounded px-1.5 py-0.5 text-[11px] font-bold ${m.isTrade
+            ? "bg-wcgold/20 text-wcgold" : "bg-slate-700 text-slate-300"}">${m.isTrade ? "TRADE" : "FREE AGENT"}</span>
+          <span class="ml-auto font-mono text-sm text-wcgold">${Math.round(m.swing)}p</span>
+        </div>
+        <div class="mt-1 text-sm"><b>${esc(m.manager)}</b>${m.with ? ` ↔ <b>${esc(m.with)}</b>` : ""}</div>
+        <div class="text-xs text-slate-400 truncate">
+          <span class="text-live">in</span> ${esc(m.inName || "?")} · <span class="text-danger">out</span> ${esc(m.outName || "?")}</div>
+      </li>`).join("")}</ol>`
+      : '<p class="text-sm text-slate-400 text-center py-3">Nobody moved. A quiet window.</p>'}`;
+  $("recap-sheet").classList.remove("hidden");
+  if (S.league?.id) localStorage.setItem("wcf_roundup_" + S.league.id, String(windowStamp()));
+}
+
+// A stable id for the current trade window, so a roundup shows once per window.
+function windowStamp() {
+  const w = autoWindowsEnabled() ? autoWindowState() : null;
+  return w?.tradeWindow?.closeAt ?? (S.league?.trading_open ? 0 : 1);
+}
+function maybeRoundup() {
+  if (!S.league?.id || !myManager() || S._roundupChecked) return;
+  if (tradingOpen()) return;                       // only once the window has shut
+  if (!$("reveal-sheet")?.classList.contains("hidden")) return;
+  if (!$("recap-sheet")?.classList.contains("hidden")) return;
+  S._roundupChecked = true;
+  const seen = localStorage.getItem("wcf_roundup_" + S.league.id);
+  if (seen === String(windowStamp())) return;
+  if (!collectMoves().length) { localStorage.setItem("wcf_roundup_" + S.league.id, String(windowStamp())); return; }
+  openRoundup();
+}
+
+/* ---------- season awards ---------- */
+function openAwards() {
+  const body = $("recap-body");
+  if (!body) return;
+  const entries = S.managers.filter((m) => !m.eliminated).map((m) => {
+    const h = managerHistory(m.id);
+    const rounds = (h.rounds || []).map((r) => r.subtotal);
+    const benchPts = (h.rounds || []).map((r) =>
+      (r.items || []).filter((it) => it.entry.is_sub && it.pts != null)
+        .reduce((a, it) => a + (it.pts || 0), 0));
+    return { id: m.id, name: m.name, rounds, benchPts };
+  });
+  const awards = seasonAwards(entries);
+  body.innerHTML = `
+    <div class="text-center"><div class="eyebrow">Season</div>
+      <div class="text-xl font-bold mt-1">🏆 Awards</div></div>
+    ${awards.length ? `<div class="space-y-1.5">${awards.map((a) => `
+      <div class="rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-2">
+        <div class="flex items-baseline justify-between gap-2">
+          <span class="font-semibold text-sm">${esc(a.label)}</span>
+          <span class="font-mono text-wcgold">${Math.round(a.value)}</span>
+        </div>
+        <div class="text-xs text-slate-400">${esc(a.manager)} · ${esc(a.note)}</div>
+      </div>`).join("")}</div>`
+      : '<p class="text-sm text-slate-400 text-center py-3">Not enough rounds played yet.</p>'}`;
+  $("recap-sheet").classList.remove("hidden");
 }
 
 /* ---------- round recap (app side) ---------- */
@@ -3879,7 +4094,12 @@ function openRecap() {
         ${one("League avg", Math.round(r.avg), r.score >= r.avg ? "you beat it" : "below")}
         ${one("On the bench", r.benchPts, "points left")}
       </div>
-      <div class="space-y-1.5">${pick(r.best, "Best pick")}${pick(r.worst, "Quietest starter")}</div>`;
+      <div class="space-y-1.5">${pick(r.best, "Best pick")}${pick(r.worst, "Quietest starter")}</div>
+      <button id="recap-share" class="w-full rounded-lg border border-wcgold/60 text-wcgold py-2 text-sm font-semibold">📤 Share this round</button>`;
+    setTimeout(() => {
+      const sb = document.getElementById("recap-share");
+      if (sb) sb.onclick = () => shareRecap().catch((e) => toast(e.message));
+    }, 0);
   }
   $("recap-sheet").classList.remove("hidden");
   if (r) countUp(document.getElementById("recap-score"), r.score);
@@ -3888,6 +4108,51 @@ function openRecap() {
   if (r2 && S.league?.id) localStorage.setItem("wcf_recap_" + S.league.id, String(r2.n));
 }
 const closeRecap = () => $("recap-sheet")?.classList.add("hidden");
+
+/* Draw the recap to a canvas and share it. Rendering by hand (rather than
+   screenshotting the DOM) keeps it dependency-free — no third-party library,
+   which also keeps the CSP intact. */
+async function shareRecap() {
+  const r = myRecap();
+  if (!r) return;
+  const W = 1080, Hh = 1080, c = document.createElement("canvas");
+  c.width = W; c.height = Hh;
+  const x = c.getContext("2d");
+  const g = x.createLinearGradient(0, 0, 0, Hh);
+  g.addColorStop(0, "#12203a"); g.addColorStop(1, "#070B24");
+  x.fillStyle = g; x.fillRect(0, 0, W, Hh);
+  x.strokeStyle = "#FFC72C55"; x.lineWidth = 6; x.strokeRect(28, 28, W - 56, Hh - 56);
+  const centre = (t, y, font, fill) => {
+    x.font = font; x.fillStyle = fill; x.textAlign = "center"; x.fillText(t, W / 2, y);
+  };
+  centre((S.league?.name || "League").toUpperCase(), 150, "600 34px system-ui, sans-serif", "#94a3b8");
+  centre(`ROUND ${r.n}`, 215, "700 40px system-ui, sans-serif", "#FFC72C");
+  centre(String(r.score), 470, "800 220px system-ui, sans-serif", "#FFC72C");
+  centre("POINTS", 530, "600 34px system-ui, sans-serif", "#94a3b8");
+  if (r.h2h) {
+    const res = r.result === "W" ? "WIN" : r.result === "L" ? "LOSS" : "DRAW";
+    centre(`${res}  ${r.h2h.mine}–${r.h2h.theirs}  vs ${r.h2h.oppName}`, 630,
+      "700 44px system-ui, sans-serif",
+      r.result === "W" ? "#4FB286" : r.result === "L" ? "#E5646A" : "#cbd5e1");
+  }
+  centre(`Rank ${r.rank} of ${r.of} this round · league average ${Math.round(r.avg)}`,
+    720, "500 32px system-ui, sans-serif", "#cbd5e1");
+  if (r.best) centre(`Best pick: ${r.best.entry.player_name} (${r.best.pts})`,
+    790, "600 34px system-ui, sans-serif", "#e2e8f0");
+  centre(`${r.benchPts} points left on the bench`, 850, "500 30px system-ui, sans-serif", "#94a3b8");
+  centre("FantasyDraft", Hh - 70, "700 30px system-ui, sans-serif", "#FFC72C");
+
+  const blob = await new Promise((res) => c.toBlob(res, "image/png"));
+  if (!blob) return toast("Could not build the image.");
+  const file = new File([blob], `round-${r.n}.png`, { type: "image/png" });
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: `Round ${r.n}` }); return; } catch { /* cancelled */ }
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = file.name; a.click();
+  URL.revokeObjectURL(a.href);
+  toast("Recap image saved.");
+}
 
 // Auto-open the recap the first time a manager sees a newly completed round —
 // this is the moment the whole week builds to, so it shouldn't need hunting for.
@@ -3934,6 +4199,7 @@ function renderHomeTab() {
     <div id="hist-home-${me.id}" class="rounded-xl border border-slate-700 bg-slate-900 p-3"></div>`;
   box.innerHTML = `
     ${matchdayCardHtml(me)}
+    ${liveRaceHtml(me)}
     ${phaseCardsHtml(me)}
     <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 flex items-center justify-between">
       <div>
@@ -3957,6 +4223,8 @@ function renderHomeTab() {
   renderHistInto("hist-home-" + me.id, me.id);   // "your lineup" perspective
   const lb = box.querySelector("#home-lineup");
   if (lb) lb.onclick = openLineup;
+  const crestBtn = box.querySelector("#home-crest");
+  if (crestBtn) crestBtn.onclick = openCrestPicker;
   const cta = box.querySelector("#md-cta");
   if (cta) cta.onclick = () => {
     const act = cta.dataset.act;
@@ -4864,6 +5132,7 @@ function renderBoard() {
   if (note) note.textContent = boardRulesNote();
   maybeSquadReveal();
   maybeAutoRecap();
+  maybeRoundup();
   if (preDraft) {
     $("board-banner").innerHTML = `<div class="flex items-center justify-between gap-2 rounded-xl border border-wcgold/50 bg-wcred/10 px-3 py-2 text-sm">
       <span class="min-w-0">⭐ Pre-draft — star players to build your shortlist. Auto-pick draws from it in order.</span>
@@ -4884,6 +5153,7 @@ function renderBoard() {
   const mv = standingsMovement(scores);
   const showMove = mv.showMovement && !playerView;   // arrows rank by Total
   const mvps = roundMVPs(scores);
+  bumpChangedTotals(scores, playerView);
   const chartHtml = seasonChartHtml(scores, me?.id);
   const toggleHtml = `
     <div class="flex gap-1 rounded-lg bg-slate-900 border border-slate-700 p-1 text-sm">
@@ -4920,21 +5190,26 @@ function renderBoard() {
       <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3">
         <span class="text-slate-400 font-mono w-6">${i + 1}.</span>
         ${showMove ? `<span class="w-3 text-center text-xs shrink-0">${icon}</span>` : ""}
+        <span class="shrink-0 inline-flex items-center justify-center rounded-md w-7 h-7 text-[14px]"
+              style="background:${managerColor(s.manager)}22;border:1px solid ${managerColor(s.manager)}66">${managerCrest(s.manager) || "&nbsp;"}</span>
         <span class="flex-1 min-w-0">
           <span class="block font-semibold truncate">${esc(s.manager.name)}${
             s.manager.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}${
             mvps.has(s.manager.id) ? ` <span class="rounded bg-wcgold/20 text-wcgold px-1 py-0.5 text-[11px] font-bold align-middle" title="Top scorer of round ${mv.maxRound}">🏅 MVP</span>` : ""}${
+            formBadge(s.manager.id)}${
             s.eliminated ? ' <span class="text-[11px] text-red-400">eliminated</span>' : ""}</span>
           ${ytpLine}
         </span>
         <span class="shrink-0 text-right">
-          <span class="block font-bold text-wcgold">${valueOf(s)} pts</span>
+          <span class="block font-bold text-wcgold scoreboard" data-total="${s.manager.id}">${valueOf(s)} pts</span>
           ${tallyLine}
         </span>
       </summary>
       <div id="hist-lb-${s.manager.id}" class="px-4 pb-3"></div>
     </details>`;
-  }).join("") || '<p class="text-sm text-slate-400">No managers.</p>';
+  }).join("") + `<button id="lb-awards" class="w-full rounded-xl border border-slate-700 bg-slate-900 py-2.5 text-sm font-semibold text-slate-300">🏆 Season awards</button>`;
+  const awb = document.getElementById("lb-awards");
+  if (awb) awb.onclick = openAwards;
   const cc = document.getElementById("chart-compare");
   if (cc) cc.onchange = () => { S.chartCompare = cc.value || null; renderBoard(); };
   $("board-lb").querySelectorAll("[data-tableview]").forEach((b) => b.onclick = () => {
