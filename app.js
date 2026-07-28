@@ -1596,11 +1596,25 @@ function starHtml(pid) {
       on ? "text-wcgold" : "text-slate-500 hover:text-slate-300"}">${on ? "★" : "☆"}</button>`;
 }
 
+// Repaint whichever shortlist views are on screen. Cheap, and it means a star
+// shows up in the queue the moment you tap it rather than at the next refetch.
+function refreshShortlistViews() {
+  const me = myManager();
+  if (!me) return;
+  if ($("draft-queue") && !$("draft-queue").classList.contains("hidden")) {
+    const info = S.league?.current_pick ? pickInfo(S.league.current_pick) : null;
+    renderDraftQueue(me, !!info && info.manager?.id === me.id);
+  }
+  if ($("predraft-shortlist") && !$("predraft-shortlist").classList.contains("hidden"))
+    renderPredraftShortlist();
+}
+
 function wireStars(el, rerender) {
   el.querySelectorAll("[data-star]").forEach((b) => b.onclick = (ev) => {
     ev.stopPropagation();
     toggleShortlist(b.dataset.star);
     rerender();
+    refreshShortlistViews();
   });
 }
 
@@ -1746,13 +1760,29 @@ async function makePick(entry, info) {
     scheduleRefetch();
     return;
   }
-  await S.sb.from("leagues")
-    .update({ current_pick: p + 1, pick_started_at: new Date().toISOString() })
+  const finished = p + 1 > totalPicks();
+  const startedAt = new Date().toISOString();
+
+  // The pick is safely in the database, so show it now. Waiting for the league
+  // update and the refetch as well meant three round trips before the room
+  // moved, which is what made every pick feel sluggish. The refetch below
+  // still reconciles, so a lost race corrects itself within a moment.
+  S.picks = [...S.picks, { ...row, id: `local-${row.pick_number}` }];
+  S.league.current_pick = p + 1;
+  S.league.pick_started_at = startedAt;
+  if (!finished && !document.querySelector('[data-view="draft"]')?.classList.contains("hidden"))
+    renderDraft();
+
+  const advance = S.sb.from("leagues")
+    .update({ current_pick: p + 1, pick_started_at: startedAt })
     .eq("id", S.league.id).eq("current_pick", p);
-  if (p + 1 > totalPicks()) {
+  if (finished) {
+    await advance;
     // Draft just finished: this client writes the baseline lineup lock.
     await refetchAll();
     await snapshotRosters();
+  } else {
+    advance.then(() => {}, () => {});
   }
   scheduleRefetch();
 }
@@ -1905,7 +1935,7 @@ function renderPool(force) {
   const sig = [S.picks.length, S.league.current_pick, S.poolFilter, S.poolSearch,
     S.poolSort, !!S.poolShortlistOnly, !!S.poolPlannerOnly,
     document.getElementById("pool-team")?.value || "",
-    myShortlist().length].join("|");
+    myShortlist().join(",")].join("|");
   if (!force && sig === _poolSig) return;
   _poolSig = sig;
   const info = pickInfo(S.league.current_pick);
