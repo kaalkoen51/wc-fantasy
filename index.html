@@ -76,6 +76,30 @@
     button:active:not(:disabled) { transform: none }
   }
 
+  /* A pick landing should register without stealing the screen: it fades in
+     under the header, holds briefly, and fades out. Never interactive. */
+  @keyframes pick-flash {
+    0%   { opacity: 0; transform: translate(-50%, -10px) scale(.96) }
+    14%  { opacity: 1; transform: translate(-50%, 0) scale(1) }
+    76%  { opacity: 1; transform: translate(-50%, 0) scale(1) }
+    100% { opacity: 0; transform: translate(-50%, -6px) scale(.99) }
+  }
+  .pick-flash { position: fixed; top: 4.25rem; left: 50%; z-index: 60;
+                pointer-events: none; animation: pick-flash 1.5s ease forwards; }
+
+  /* The newest row in a list briefly warms, so you can see what just changed. */
+  @keyframes row-land { from { background-color: rgba(255,199,44,.22) } to { background-color: transparent } }
+  .just-landed { animation: row-land 1.8s ease-out; }
+
+  /* A value that just moved. */
+  @keyframes value-bump { 0% { transform: scale(1) } 35% { transform: scale(1.14) } 100% { transform: scale(1) } }
+  .bumped { animation: value-bump .5s ease-out; display: inline-block; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pick-flash { animation: none; opacity: 1 }
+    .just-landed, .bumped { animation: none }
+  }
+
   /* Keep the bottom bar clear of the iOS home indicator. */
   #bottom-nav { padding-bottom: env(safe-area-inset-bottom); }
   .tap { min-width: 40px; min-height: 40px; display: inline-flex;

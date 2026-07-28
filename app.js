@@ -2031,6 +2031,37 @@ function renderDraftQueue(me, myTurn) {
            : `<p class="text-xs text-slate-400">Star players on the Stats tab to build a queue — auto-pick takes the top one still available.</p>`}`;
 }
 
+/* A pick landing should be felt, not sat through: a small card fades in under
+   the header for ~1.5s and never takes a click. Driven from renderDraft, which
+   already re-runs on every realtime update. */
+let _lastPickSeen = null;
+function flashPick(pk) {
+  document.querySelector(".pick-flash")?.remove();
+  const m = S.managers.find((x) => x.id === pk.manager_id);
+  const el = document.createElement("div");
+  el.className = "pick-flash rounded-xl border border-wcgold/70 bg-slate-900/95 backdrop-blur "
+    + "px-3 py-2 shadow-xl flex items-center gap-2 max-w-[92vw]";
+  el.innerHTML = `${avatarHtml(pk.player_id, pk.team, "w-9 h-9")}
+    <div class="min-w-0">
+      <div class="eyebrow">${esc(m?.name ?? "?")} picked</div>
+      <div class="font-bold truncate">${esc(pk.player_name)}</div>
+    </div>
+    <span class="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold pos-${pk.position}">${pk.position}</span>`;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 1600);
+}
+
+// Announce only genuinely new picks — not the backlog on first render, and not
+// your own pick (you just made it, you know).
+function announceNewPicks() {
+  const last = S.picks.reduce((a, b) => (a && a.pick_number > b.pick_number ? a : b), null);
+  if (!last) return;
+  if (_lastPickSeen === null) { _lastPickSeen = last.pick_number; return; }
+  if (last.pick_number <= _lastPickSeen) return;
+  _lastPickSeen = last.pick_number;
+  if (last.manager_id !== myManager()?.id) flashPick(last);
+}
+
 function renderDraft() {
   if (!S.players.length) return;
   const L = S.league;
@@ -2078,9 +2109,10 @@ function renderDraft() {
 
   renderPool();
 
-  $("draft-recent").innerHTML = [...S.picks].slice(-5).reverse().map((pk) => {
+  announceNewPicks();
+  $("draft-recent").innerHTML = [...S.picks].slice(-5).reverse().map((pk, i) => {
     const m = S.managers.find((x) => x.id === pk.manager_id);
-    return `<li><span class="text-slate-400">#${pk.pick_number % 1000}</span> ${esc(m?.name ?? "?")}: <b>${esc(pk.player_name)}</b> <span class="text-xs text-slate-400">${pk.slot}</span></li>`;
+    return `<li class="rounded px-1 ${i === 0 ? "just-landed" : ""}"><span class="text-slate-400">#${pk.pick_number % 1000}</span> ${esc(m?.name ?? "?")}: <b>${esc(pk.player_name)}</b> <span class="text-xs text-slate-400">${pk.slot}</span></li>`;
   }).join("") || '<li class="text-slate-400">No picks yet — the board is wide open.</li>';
 
   renderRosters("draft-rosters");
@@ -2625,6 +2657,87 @@ function roundRecap(round, leagueRound, h2h) {
     result: h2h ? (h2h.mine > h2h.theirs ? "W" : h2h.mine < h2h.theirs ? "L" : "D") : null,
     h2h: h2h || null,
   };
+}
+
+/* ---------- form, awards and the transfer roundup (pure) ----------
+   These give a league things to talk about. All three take plain data so they
+   can be reasoned about and tested without a database. */
+
+// A manager's run of form from their round scores, plus where they sit against
+// the league each round. `rank` is 1-based; ties share the better rank.
+//   rounds      = [subtotal, …] for this manager, oldest first
+//   ranksByRound= [rank, …] aligned to `rounds` (optional)
+function managerStreaks(rounds, ranksByRound) {
+  rounds = rounds || [];
+  let best = 0, run = 0, bestWin = 0, winRun = 0;
+  for (let i = 0; i < rounds.length; i++) {
+    // A "win" is topping the round; without ranks, beating your own average.
+    const avg = rounds.reduce((a, b) => a + b, 0) / (rounds.length || 1);
+    const won = ranksByRound ? ranksByRound[i] === 1 : rounds[i] > avg;
+    winRun = won ? winRun + 1 : 0;
+    bestWin = Math.max(bestWin, winRun);
+    const up = i > 0 && rounds[i] >= rounds[i - 1];
+    run = up ? run + 1 : 0;
+    best = Math.max(best, run);
+  }
+  const last3 = rounds.slice(-3);
+  return {
+    played: rounds.length,
+    bestRound: rounds.length ? Math.max(...rounds) : 0,
+    worstRound: rounds.length ? Math.min(...rounds) : 0,
+    currentWinStreak: winRun, longestWinStreak: bestWin, longestRisingRun: best,
+    // "Hot" = the last three rounds all beat the manager's own average.
+    hot: last3.length === 3 && last3.every((v) => v > (rounds.reduce((a, b) => a + b, 0) / rounds.length)),
+    cold: last3.length === 3 && last3.every((v) => v < (rounds.reduce((a, b) => a + b, 0) / rounds.length)),
+  };
+}
+
+// End-of-season superlatives, from each manager's rounds and bench history.
+//   entries = [{ id, name, rounds:[n], benchPts:[n], best:{name,pts} }]
+function seasonAwards(entries) {
+  entries = (entries || []).filter((e) => (e.rounds || []).length);
+  if (!entries.length) return [];
+  const out = [];
+  const pick = (label, note, fn, cmp) => {
+    let win = null, val = null;
+    for (const e of entries) {
+      const v = fn(e);
+      if (v == null) continue;
+      if (val == null || cmp(v, val)) { val = v; win = e; }
+    }
+    if (win) out.push({ label, note, manager: win.name, value: val });
+  };
+  const gt = (a, b) => a > b, lt = (a, b) => a < b;
+  pick("Best single round", "highest score in one round",
+    (e) => Math.max(...e.rounds), gt);
+  pick("Most consistent", "smallest gap between best and worst round",
+    (e) => e.rounds.length > 1 ? Math.max(...e.rounds) - Math.min(...e.rounds) : null, lt);
+  pick("Unluckiest bench", "most points left unused on the bench",
+    (e) => (e.benchPts || []).reduce((a, b) => a + b, 0), gt);
+  pick("Slowest start", "lowest opening round",
+    (e) => e.rounds[0], lt);
+  pick("Strongest finish", "highest final round",
+    (e) => e.rounds[e.rounds.length - 1], gt);
+  return out;
+}
+
+/* The biggest moves once a trade window closes. Manager-to-manager trades are
+   ranked above free-agent pickups at equal weight, because a trade needed two
+   people to agree and is the more interesting story.
+     moves = [{ kind:"trade"|"swap"|"waiver", manager, with?, inName, outName,
+                inPts, outPts }]
+   Weight is the points that actually changed hands; a trade counts both sides. */
+function transferRoundup(moves, limit) {
+  const scored = (moves || []).map((m) => {
+    const isTrade = m.kind === "trade";
+    const swing = isTrade ? (m.inPts || 0) + (m.outPts || 0)
+                          : Math.max(m.inPts || 0, m.outPts || 0);
+    return { ...m, isTrade, swing, weight: swing * (isTrade ? 1.5 : 1) };
+  }).filter((m) => m.swing > 0);
+  scored.sort((a, b) => b.weight - a.weight
+    || (b.isTrade ? 1 : 0) - (a.isTrade ? 1 : 0)
+    || String(a.inName || "").localeCompare(String(b.inName || "")));
+  return scored.slice(0, limit || 5);
 }
 
 // "2d 04h 11m" · "3h 12m 40s" · "4m 09s" — the countdown on the card.

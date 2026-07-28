@@ -16,7 +16,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
                  setItem: () => {}, removeItem: () => {} };
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
+  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -24,7 +24,7 @@ const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcT
         phaseOneStarters, starterQuota, effectiveConfig,
         flexCounting, formationValid, DEFAULT_FORMATION,
         roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims,
-        h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith,
+        h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith,
         buildFixtureStatRows,
         fixtureWindows, matchweeksOf,
         maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs,
@@ -446,6 +446,45 @@ S.league = {};
   check("every preset explains itself",
     Object.values(CREATE_PRESETS).every((p) => (p.blurb || "").length > 30), true);
   CREATE_PRESETS.classic.apply();
+}
+
+/* Form, awards and the transfer roundup — the things a league argues about. */
+{
+  const st = managerStreaks([40, 55, 60, 70], [3, 1, 1, 1]);
+  check("streaks: best and worst round", [st.bestRound, st.worstRound], [70, 40]);
+  check("streaks: counts a run of round wins", [st.currentWinStreak, st.longestWinStreak], [3, 3]);
+  check("streaks: rising run", st.longestRisingRun, 3);
+  check("streaks: hot when the last three beat your average",
+    managerStreaks([10, 10, 40, 50, 60]).hot, true);
+  check("streaks: cold is the mirror", managerStreaks([90, 80, 10, 12, 14]).cold, true);
+  check("streaks: no rounds is safe", managerStreaks([]).played, 0);
+
+  const aw = seasonAwards([
+    { id: "a", name: "You",    rounds: [30, 90, 40], benchPts: [2, 3] },
+    { id: "b", name: "Sam",    rounds: [50, 52, 51], benchPts: [40, 30] },
+    { id: "c", name: "Marcus", rounds: [20, 40, 95], benchPts: [1, 1] },
+  ]);
+  const by = Object.fromEntries(aw.map((a) => [a.label, a]));
+  check("awards: best single round", [by["Best single round"].manager, by["Best single round"].value], ["Marcus", 95]);
+  check("awards: most consistent is the smallest spread", by["Most consistent"].manager, "Sam");
+  check("awards: unluckiest bench", by["Unluckiest bench"].manager, "Sam");
+  check("awards: slowest start", by["Slowest start"].manager, "Marcus");
+  check("awards: strongest finish", by["Strongest finish"].manager, "Marcus");
+  check("awards: nothing played yields nothing", seasonAwards([{ name: "x", rounds: [] }]), []);
+
+  // A trade moving the same points as a free-agent pickup should outrank it.
+  const round = transferRoundup([
+    { kind: "swap",  manager: "You", inName: "Cheap", outName: "Old", inPts: 40, outPts: 5 },
+    { kind: "trade", manager: "Sam", with: "Priya", inName: "Star", outName: "Rock", inPts: 30, outPts: 10 },
+    { kind: "waiver", manager: "Marcus", inName: "Punt", outName: "Dud", inPts: 3, outPts: 0 },
+    { kind: "swap",  manager: "Priya", inName: "Nobody", outName: "Nobody2", inPts: 0, outPts: 0 },
+  ]);
+  check("roundup: trades are favoured over equivalent free-agent moves",
+    round[0].manager, "Sam");
+  check("roundup: a trade's swing counts both sides", round[0].swing, 40);
+  check("roundup: pointless moves are dropped", round.length, 3);
+  check("roundup: respects the limit", transferRoundup(round, 2).length, 2);
+  check("roundup: empty input is safe", transferRoundup([]), []);
 }
 
 /* Round recap: the results moment, composed from one round's items. */
