@@ -1959,18 +1959,33 @@ function renderRosters(containerId) {
       ${containerId === "board-rosters" && m.id === me?.id
         ? '<div class="px-4 pb-2"><button id="lineup-open" class="w-full bg-slate-800 border border-wcgold/60 text-wcgold rounded-lg py-2 text-sm font-semibold">Pick my team (starters & subs)</button></div>'
         : ""}
-      <div class="px-4 pb-3 grid grid-cols-2 gap-1.5 text-sm">
-        ${(byMgr[m.id] || []).map((pk) => {
-          const swap = canSwap && m.id === me?.id && pk.slot !== "TEAM"
-            ? `<button data-swap="${pk.id}" class="ml-auto shrink-0 text-[11px] underline text-wcgold">swap</button>` : "";
-          return `<div class="rounded-lg bg-slate-800/60 px-2 py-1.5 flex items-center gap-1.5">
-            <span class="text-[11px] w-14 shrink-0 text-slate-400">${pk.slot}</span>
-            ${avatarHtml(pk.player_id, pk.team, "w-5 h-5")}
-            <span class="min-w-0 truncate">${esc(pk.player_name)} ${availBadges(pk.player_id)}
-              <span class="text-[11px] text-slate-400">${esc(pk.team)}</span></span>
-            <span class="ml-auto shrink-0 text-[11px] font-mono text-slate-400">${entryPoints(pk.player_id, pk.position, pk.team)}p</span>${swap}
-          </div>`;
-        }).join("") || '<div class="text-slate-500 text-xs col-span-2">No picks yet.</div>'}
+      <div class="px-4 pb-3 grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-sm">
+        ${(() => {
+          const list = byMgr[m.id] || [];
+          if (!list.length) return '<div class="text-slate-400 text-xs sm:col-span-2">No picks yet — the board is wide open.</div>';
+          let seenSub = false;
+          return list.map((pk) => {
+            // One "Substitutes" divider beats repeating SUB_ on every row —
+            // on a phone that prefix was eating the player's name.
+            let head = "";
+            if (pk.is_sub && !seenSub) {
+              seenSub = true;
+              head = '<div class="eyebrow pt-1.5 sm:col-span-2">Substitutes</div>';
+            }
+            const swap = canSwap && m.id === me?.id && pk.slot !== "TEAM"
+              ? `<button data-swap="${pk.id}" class="tap shrink-0 text-[11px] underline text-wcgold">swap</button>` : "";
+            return head + `<div class="rounded-lg bg-slate-800/60 px-2 py-1.5 flex items-center gap-2 row-hover${
+              pk.is_sub ? " opacity-80" : ""}">
+              <span class="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold pos-${pk.position}">${pk.position}</span>
+              ${avatarHtml(pk.player_id, pk.team, "w-6 h-6")}
+              <span class="min-w-0 flex-1 leading-tight">
+                <span class="block truncate">${esc(pk.player_name)} ${availBadges(pk.player_id)}</span>
+                <span class="block truncate text-[11px] text-slate-400">${esc(pk.team || "")}</span>
+              </span>
+              <span class="shrink-0 font-mono text-slate-300">${entryPoints(pk.player_id, pk.position, pk.team)}p</span>${swap}
+            </div>`;
+          }).join("");
+        })()}
       </div>
     </details>`).join("");
   $(containerId).querySelectorAll("[data-swap]").forEach((b) => b.onclick = () =>
@@ -3700,6 +3715,20 @@ function myRecap() {
   return roundRecap(round, leagueRound, h2h);
 }
 
+// A number that represents an outcome lands better if you watch it arrive.
+// Used for the round recap, which is the moment the whole week builds to.
+function countUp(el, to, ms = 900) {
+  if (!el) return;
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) { el.textContent = to; return; }
+  const t0 = performance.now();
+  const step = (t) => {
+    const k = Math.min(1, (t - t0) / ms);
+    el.textContent = Math.round(to * (1 - Math.pow(1 - k, 3)));   // ease-out
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
 function openRecap() {
   const r = myRecap();
   const body = $("recap-body");
@@ -3728,7 +3757,7 @@ function openRecap() {
     body.innerHTML = `
       <div class="text-center">
         <div class="text-xs text-slate-400">Round ${r.n} complete</div>
-        <div class="text-4xl font-bold text-wcgold scoreboard">${r.score}</div>
+        <div id="recap-score" class="text-4xl font-bold text-wcgold scoreboard">0</div>
         <div class="text-xs text-slate-400">points</div>
       </div>
       ${res}
@@ -3740,6 +3769,7 @@ function openRecap() {
       <div class="space-y-1.5">${pick(r.best, "Best pick")}${pick(r.worst, "Quietest starter")}</div>`;
   }
   $("recap-sheet").classList.remove("hidden");
+  if (r) countUp(document.getElementById("recap-score"), r.score);
   // Only ever auto-show a given round once.
   const r2 = r || myRecap();
   if (r2 && S.league?.id) localStorage.setItem("wcf_recap_" + S.league.id, String(r2.n));
@@ -4713,8 +4743,10 @@ function renderBoard() {
   // The fixture ticker costs ~200px at the top of the screen. It's context for
   // your team and the table; on Players/Activity it just pushes the real
   // content below the fold, so show it only where it earns its place.
-  const bannerTabs = ["home", "lb", "bracket"];
-  $("board-banner").classList.toggle("hidden", !bannerTabs.includes(S.boardTab));
+  // Decide per SECTION, not per pane — inside League the ticker was appearing
+  // on Table and Bracket but vanishing on Squads, which just reads as a bug.
+  const bannerGroups = ["team", "league"];
+  $("board-banner").classList.toggle("hidden", !bannerGroups.includes(groupOfTab(S.boardTab)));
   const note = $("board-rules-note");
   if (note) note.textContent = boardRulesNote();
   maybeSquadReveal();
