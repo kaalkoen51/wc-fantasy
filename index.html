@@ -134,6 +134,15 @@
     </div>
     <button id="home-create" class="w-full bg-wcred hover:bg-wcred-hov rounded-xl py-4 font-semibold text-lg">Create a league</button>
     <button id="home-join" class="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl py-4 font-semibold text-lg">Join with invite code</button>
+    <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-2">
+      <div class="text-sm font-semibold">🤖 Practice draft</div>
+      <p class="text-xs text-slate-400">Draft against bots to try the room, the clock and your shortlist before the real thing. Nothing here affects your real leagues.</p>
+      <div class="flex items-center gap-2">
+        <label class="text-xs text-slate-400">Opponents
+          <input id="practice-bots" type="number" min="1" max="13" value="7" class="ml-1 w-16 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-sm"></label>
+        <button id="home-practice" class="flex-1 bg-slate-800 hover:bg-slate-700 border border-wcgold/50 text-wcgold rounded-lg py-2 text-sm font-semibold">Start practice draft</button>
+      </div>
+    </div>
     <button id="home-reconfig" class="w-full text-xs text-slate-400 underline pt-2">change Supabase connection</button>
   </section>
 
@@ -399,6 +408,7 @@
         <button id="lobby-num-set" class="rounded bg-slate-800 border border-slate-700 px-3 py-1 font-semibold">Set</button>
         <span class="text-slate-400">(if someone drops out). Tap ✕ by a name to kick.</span>
       </div>
+      <button id="lobby-addbots" class="w-full bg-slate-800 border border-slate-700 rounded-lg py-2 text-sm font-semibold">🤖 Fill empty slots with bots</button>
       <p class="text-xs text-slate-400 text-center">Random draft order is assigned when the draft starts. Snake order.</p>
     </div>
     <p id="lobby-wait" class="text-center text-sm text-slate-400">Waiting for the admin to start the draft…</p>
