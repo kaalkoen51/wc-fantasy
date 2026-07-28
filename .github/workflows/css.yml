@@ -1,0 +1,35 @@
+name: CSS build
+
+# styles.css is generated from the classes used in index.html, and it is what
+# GitHub Pages actually serves. The failure mode this guards against is silent:
+# someone adds a Tailwind class to index.html, forgets `npm run build:css`, and
+# that class simply has no styles in production — no error, just a broken
+# layout for users. So rebuild here and fail if the committed file is stale.
+
+on:
+  push:
+    paths: ["index.html", "tailwind.config.js", "src.css", "styles.css", ".github/workflows/css.yml"]
+  pull_request:
+    paths: ["index.html", "tailwind.config.js", "src.css", "styles.css"]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci || npm install
+      - run: npm run build:css
+      - name: styles.css must match index.html
+        run: |
+          if ! git diff --quiet -- styles.css; then
+            echo "::error::styles.css is out of date. Run 'npm run build:css' and commit the result."
+            git diff --stat -- styles.css
+            exit 1
+          fi
+          echo "styles.css is up to date."
+      - name: Logic tests
+        run: node test_logic.js

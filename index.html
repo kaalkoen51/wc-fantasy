@@ -4,23 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fantasy Draft</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<script>
-  // Product palette. (Token names are historical — these are the app's accent,
-  // supporting and ground colours, not tied to any one competition.)
-  tailwind.config = { theme: { extend: { colors: {
-    wcred: { DEFAULT: "#C8102E", hov: "#E22945" },
-    wcgold: "#FFC72C",
-    wcgreen: "#00A859",
-    wcblue: "#1A7DC4",
-    wcnavy: "#070B24",
-    // Semantic state — deliberately NOT the brand accent, so "this is urgent"
-    // never reads the same as "this is a button".
-    live: "#4FB286",
-    warn: "#E8B93F",
-    danger: "#E5646A",
-  } } } };
-</script>
+<!-- Compiled Tailwind (npm run build:css). Served from our own origin: no
+     render-blocking CDN fetch, no in-browser compile, and the app can never
+     render unstyled because a third party is slow. Palette lives in
+     tailwind.config.js. -->
+<link rel="stylesheet" href="styles.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   /* Matchday banner ticker: two identical halves scroll -50% for a
@@ -51,6 +39,8 @@
   .kb-card { margin: 5px 0; }
   /* Small icon controls still need a finger-sized hit area, so pad the target
      without changing how big the glyph looks. */
+  /* Keep the bottom bar clear of the iOS home indicator. */
+  #bottom-nav { padding-bottom: env(safe-area-inset-bottom); }
   .tap { min-width: 40px; min-height: 40px; display: inline-flex;
          align-items: center; justify-content: center; }
   /* Collapsible create-league sections: hide the native marker, rotate caret. */
@@ -714,7 +704,7 @@
 
 <!-- Primary navigation. Four destinations; Admin lives in the header and only
      for the league owner. Shown on the board view only. -->
-<nav id="bottom-nav" class="hidden fixed bottom-0 inset-x-0 z-30 bg-slate-900/95 backdrop-blur border-t border-slate-800 pb-[env(safe-area-inset-bottom)]">
+<nav id="bottom-nav" class="hidden fixed bottom-0 inset-x-0 z-30 bg-slate-900/95 backdrop-blur border-t border-slate-800">
   <div class="max-w-3xl mx-auto grid grid-cols-4">
     <button data-nav="team"     class="nav-btn py-2.5 text-xs font-semibold flex flex-col items-center gap-0.5"><span class="text-lg leading-none">👕</span>Team</button>
     <button data-nav="league"   class="nav-btn py-2.5 text-xs font-semibold flex flex-col items-center gap-0.5"><span class="text-lg leading-none">🏆</span>League</button>

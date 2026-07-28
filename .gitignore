@@ -1,5 +1,6 @@
-__pycache__/
 *.pyc
+.api_cache/
 .env
 SquadLists.pdf
-.api_cache/
+__pycache__/
+node_modules/
