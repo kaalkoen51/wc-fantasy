@@ -59,6 +59,8 @@
     <div class="flex items-center gap-2 text-xs text-slate-400">
       <span id="hdr-league" class="truncate max-w-[10rem]"></span>
       <span id="conn-dot" title="realtime connection" class="w-2 h-2 rounded-full bg-slate-600"></span>
+      <button id="hdr-admin" title="League settings"
+        class="hidden shrink-0 rounded-lg border border-slate-700 px-2 py-1 text-slate-300 hover:bg-slate-800">⚙︎</button>
       <button id="hdr-exit" title="Exit league"
         class="hidden shrink-0 rounded-lg border border-slate-700 px-2 py-1 text-slate-300 hover:bg-slate-800">Exit</button>
     </div>
@@ -416,16 +418,9 @@
   <!-- Leaderboard / rosters -->
   <section data-view="board" class="hidden space-y-4">
     <div id="board-banner"></div>
-    <div class="grid grid-cols-3 gap-2 text-sm">
-      <button id="tab-home" class="board-tab rounded-lg py-2 font-semibold" data-tab="home">Home</button>
-      <button id="tab-lb" class="board-tab rounded-lg py-2 font-semibold" data-tab="lb">Table</button>
-      <button id="tab-bracket" class="board-tab rounded-lg py-2 font-semibold" data-tab="bracket">Bracket</button>
-      <button id="tab-stats" class="board-tab rounded-lg py-2 font-semibold" data-tab="stats">Stats</button>
-      <button id="tab-rosters" class="board-tab rounded-lg py-2 font-semibold" data-tab="rosters">Rosters</button>
-      <button id="tab-trades" class="board-tab rounded-lg py-2 font-semibold" data-tab="trades">Trades</button>
-      <button id="tab-chat" class="board-tab rounded-lg py-2 font-semibold" data-tab="chat">Chat</button>
-      <button id="tab-admin" class="rounded-lg py-2 font-semibold bg-slate-800 border border-slate-700">Admin</button>
-    </div>
+    <!-- Secondary switcher: only rendered when the active section has more than
+         one view (League: Table/Squads/Bracket · Activity: Trades/Chat). -->
+    <div id="board-subtabs" class="hidden gap-1 rounded-lg bg-slate-900 border border-slate-700 p-1 text-sm"></div>
     <div id="board-home" class="space-y-3"></div>
     <div id="board-lb" class="hidden space-y-2"></div>
     <div id="board-bracket" class="hidden space-y-2"></div>
@@ -677,6 +672,18 @@
     <button id="swap-close" class="mt-3 w-full bg-slate-800 border border-slate-700 rounded-lg py-2 text-sm font-semibold">Cancel</button>
   </div>
 </div>
+
+
+<!-- Primary navigation. Four destinations; Admin lives in the header and only
+     for the league owner. Shown on the board view only. -->
+<nav id="bottom-nav" class="hidden fixed bottom-0 inset-x-0 z-30 bg-slate-900/95 backdrop-blur border-t border-slate-800 pb-[env(safe-area-inset-bottom)]">
+  <div class="max-w-3xl mx-auto grid grid-cols-4">
+    <button data-nav="team"     class="nav-btn py-2.5 text-[11px] font-semibold flex flex-col items-center gap-0.5"><span class="text-lg leading-none">👕</span>Team</button>
+    <button data-nav="league"   class="nav-btn py-2.5 text-[11px] font-semibold flex flex-col items-center gap-0.5"><span class="text-lg leading-none">🏆</span>League</button>
+    <button data-nav="players"  class="nav-btn py-2.5 text-[11px] font-semibold flex flex-col items-center gap-0.5"><span class="text-lg leading-none">🔍</span>Players</button>
+    <button data-nav="activity" class="nav-btn py-2.5 text-[11px] font-semibold flex flex-col items-center gap-0.5 relative"><span class="text-lg leading-none">💬</span>Activity<span id="nav-dot" class="hidden absolute top-1.5 right-[22%] w-2 h-2 rounded-full bg-wcgold"></span></button>
+  </div>
+</nav>
 
 <!-- Round recap: the results moment, opened from the matchday card -->
 <div id="recap-sheet" class="hidden fixed inset-0 z-40 bg-black/70 p-3">
@@ -940,6 +947,11 @@ function showView(name) {
   const exit = $("hdr-exit");
   if (exit) exit.classList.toggle("hidden",
     !["board", "lobby", "draft", "admin"].includes(name));
+  const nav = $("bottom-nav");
+  if (nav) nav.classList.toggle("hidden", name !== "board");
+  const gear = $("hdr-admin");
+  if (gear) gear.classList.toggle("hidden",
+    !(isAdmin() && ["board", "lobby", "draft"].includes(name)));
   // Only jump to top when the view actually changes — a re-render of the
   // same view (e.g. the refetch after starring a player) must preserve
   // the current scroll position.
@@ -4688,8 +4700,70 @@ function renderBannerDetail() {
   };
 }
 
+/* ---------- navigation: four destinations, not eight ----------
+   The panes are unchanged; they're grouped so the phone shows one bottom bar
+   instead of three rows of buttons, and a section only shows a secondary
+   switcher when it actually has more than one view. */
+const NAV_LABEL = { lb: "Table", rosters: "Squads", bracket: "Bracket",
+  trades: "Trades", chat: "Chat", home: "Team", stats: "Players" };
+
+// A knockout bracket is meaningless for a 38-round league season. Legacy
+// leagues (no competition) are World Cup ones, so they keep it.
+function isCupCompetition() {
+  const c = leagueCompetition();
+  if (!c) return true;
+  const meta = COMPETITIONS.find((x) => x.apiLeagueId === c.apiLeagueId);
+  return !meta || meta.kind === "cup";
+}
+function navGroups() {
+  return {
+    team: ["home"],
+    league: isCupCompetition() ? ["lb", "rosters", "bracket"] : ["lb", "rosters"],
+    players: ["stats"],
+    activity: ["trades", "chat"],
+  };
+}
+const groupOfTab = (tab) => {
+  const g = navGroups();
+  return Object.keys(g).find((k) => g[k].includes(tab)) || "team";
+};
+
+// Draw the bottom bar's active state and the section's secondary switcher.
+function renderBoardNav(tab) {
+  const groups = navGroups(), active = groupOfTab(tab);
+  document.querySelectorAll(".nav-btn").forEach((b) => {
+    const on = b.dataset.nav === active;
+    b.classList.toggle("text-wcgold", on);
+    b.classList.toggle("text-slate-400", !on);
+  });
+  const strip = $("board-subtabs");
+  if (!strip) return;
+  const panes = groups[active] || [];
+  strip.classList.toggle("hidden", panes.length < 2);
+  strip.classList.toggle("flex", panes.length >= 2);
+  if (panes.length < 2) { strip.innerHTML = ""; return; }
+  strip.innerHTML = panes.map((p) =>
+    `<button id="tab-${p}" data-tab="${p}" class="board-tab flex-1 rounded-md py-1.5 font-semibold ${
+      p === tab ? "bg-slate-700 text-wcgold" : "text-slate-400"}">${NAV_LABEL[p]}</button>`).join("");
+  strip.querySelectorAll("[data-tab]").forEach((b) =>
+    b.onclick = () => { setBoardTab(b.dataset.tab); renderBoard(); });
+}
+
+// A dot on Activity when something is waiting, since Trades and Chat are no
+// longer top-level buttons that can carry their own badge.
+function updateNavDot() {
+  const dot = $("nav-dot");
+  if (!dot) return;
+  const me = myManager();
+  const pending = me ? S.trades.filter((t) =>
+    t.target_manager_id === me.id && t.status === "proposed").length : 0;
+  const unread = me ? totalUnread(me.id) : 0;
+  dot.classList.toggle("hidden", !(pending + unread));
+}
+
 function setBoardTab(tab) {
   S.boardTab = tab;
+  (S._navLast ||= {})[groupOfTab(tab)] = tab;
   $("board-home").classList.toggle("hidden", tab !== "home");
   $("board-lb").classList.toggle("hidden", tab !== "lb");
   $("board-bracket").classList.toggle("hidden", tab !== "bracket");
@@ -4697,11 +4771,8 @@ function setBoardTab(tab) {
   $("board-rosters").classList.toggle("hidden", tab !== "rosters");
   $("board-trades").classList.toggle("hidden", tab !== "trades");
   $("board-chat").classList.toggle("hidden", tab !== "chat");
-  document.querySelectorAll(".board-tab").forEach((b) => {
-    const on = b.dataset.tab === tab;
-    b.className = "board-tab flex-1 rounded-lg py-2 font-semibold " +
-      (on ? "bg-wcred" : "bg-slate-800 border border-slate-700");
-  });
+  renderBoardNav(tab);
+  updateNavDot();
   updateTradeBadge();
   if (tab === "chat" && myManager()) markThreadSeen(S.chatThread, myManager().id);
   updateChatBadge();
@@ -8363,9 +8434,14 @@ function wire() {
     autoPickedFor = 0;
     toast(secs ? `Timer set to ${secs}s.` : "Timer off (no limit).");
   };
-  document.querySelectorAll(".board-tab").forEach((b) =>
-    b.onclick = () => { setBoardTab(b.dataset.tab); renderBoard(); });
-  $("tab-admin").onclick = () => { renderAdmin(); showView("admin"); };
+  $("hdr-admin").onclick = () => { renderAdmin(); showView("admin"); };
+  document.querySelectorAll(".nav-btn").forEach((b) => b.onclick = () => {
+    const panes = navGroups()[b.dataset.nav] || [];
+    // Returning to a section lands on the view you last used inside it.
+    const last = S._navLast?.[b.dataset.nav];
+    setBoardTab(panes.includes(last) ? last : panes[0]);
+    renderBoard();
+  });
   // Leave the admin view first, then let route() pick the phase view.
   $("admin-back").onclick = () => { showView("board"); route(); };
   $("admin-unlock").onclick = () => {
