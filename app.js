@@ -1918,13 +1918,13 @@ function renderPool(force) {
   $("pool-chips").innerHTML = chips.map((c) =>
     `<button data-chip="${c}" class="rounded-full px-3 py-1 border ${
       S.poolFilter === c ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"
-    }">${c}${c !== "ALL" && myTurn ? ` (${quotaLeft(onClockPicks, c)})` : ""}</button>`).join("")
+    }">${c}${c !== "ALL" && myTurn ? ` ${quotaLeft(onClockPicks, c)}` : ""}</button>`).join("")
     + `<button data-slfilter class="rounded-full px-3 py-1 border ${
       S.poolShortlistOnly ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400"
-    }">★ My queue${myShortlist().length ? ` (${myShortlist().length})` : ""}</button>`
+    }">★ Queue${myShortlist().length ? ` ${myShortlist().length}` : ""}</button>`
     + `<button data-plfilter class="rounded-full px-3 py-1 border ${
       S.poolPlannerOnly ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"
-    }">🗺 planner</button>`;
+    }">🗺 Plan</button>`;
   $("pool-chips").querySelectorAll("[data-chip]").forEach((b) =>
     b.onclick = () => { S.poolFilter = b.dataset.chip; renderPool(true); });
   $("pool-chips").querySelector("[data-slfilter]").onclick = () => {
@@ -1986,19 +1986,24 @@ function renderPool(force) {
     const inner = `
       ${avatarHtml(e.player_id, e.team)}
       <div class="min-w-0 flex-1">
-        <div class="truncate font-medium">${esc(e.name)} ${availBadges(e.player_id)} ${plannerBadge(e.player_id)}${
-          owner ? ` <span class="rounded bg-slate-700 px-1 py-0.5 text-xs text-wcgold">👤 ${esc(owner)}</span>` : ""}</div>
-        <div class="text-xs text-slate-400">${teamFixLine(e.team)}</div>
+        <div class="flex items-center gap-1 min-w-0">
+          <span class="truncate font-medium">${esc(e.name)}</span>
+          <span class="shrink-0 flex items-center gap-1">${availBadges(e.player_id)}${plannerBadge(e.player_id)}${
+            owner ? ownerChipHtml(e.player_id) : ""}</span>
+        </div>
+        <div class="truncate text-xs text-slate-400">${
+          teamF ? (fixtureText(e.team) || "&nbsp;") : teamFixLine(e.team)}</div>
       </div>`;
     return `<li class="flex items-center py-2 gap-1.5 ${owner || ko ? "opacity-60" : ""}">
       ${starHtml(e.player_id)}
       ${tappable
         ? `<button data-pooldetail="${esc(e.player_id)}" class="flex-1 min-w-0 flex items-center gap-1.5 text-left">${inner}</button>`
         : `<div class="flex-1 min-w-0 flex items-center gap-1.5">${inner}</div>`}
-      <div class="flex items-center gap-2 shrink-0">
-        <span class="text-xs font-mono text-slate-400">${entryPoints(e.player_id, e.position, e.team)} pts</span>
+      <div class="flex items-center gap-1.5 shrink-0">
+        ${(() => { const v = entryPoints(e.player_id, e.position, e.team);
+                   return v ? `<span class="text-xs font-mono text-slate-400">${v}</span>` : ""; })()}
         <span class="pos-${e.position} rounded px-1.5 py-0.5 text-xs font-semibold">${e.position}</span>
-        ${canPick ? `<button data-pick="${esc(e.player_id)}" class="pick-btn bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-sm font-semibold">Pick</button>` : ""}
+        ${canPick ? `<button data-pick="${esc(e.player_id)}" class="pick-btn bg-wcred hover:bg-wcred-hov rounded-lg px-2.5 text-xs font-bold">Pick</button>` : ""}
       </div>
     </li>`;
   }).join("") || `<li class="py-4 text-sm text-slate-400">${
