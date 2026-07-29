@@ -1638,6 +1638,21 @@ function shortlistCoverage(count, managers, rounds, draftPos) {
   };
 }
 
+/* Apply a reordering of a VISIBLE subset back onto the full list.
+
+   The draft queue shows only the shortlisted players who are still available
+   and still fit a slot, so dragging the third visible row to the top must not
+   disturb the hidden entries around it. The slots the visible items occupied
+   stay exactly where they are; only which item sits in each slot changes. */
+function applyVisibleOrder(full, visibleNew) {
+  const wanted = new Set(visibleNew);
+  const slots = [];
+  full.forEach((id, i) => { if (wanted.has(id)) slots.push(i); });
+  const out = full.slice();
+  slots.forEach((slot, k) => { if (k < visibleNew.length) out[slot] = visibleNew[k]; });
+  return out;
+}
+
 // Says what the coverage number means in the language of the draft.
 function coverageHint(cov, rounds) {
   if (cov.through >= rounds) return `covers all ${rounds} picks ⭐`;
@@ -2305,7 +2320,8 @@ function renderPredraftShortlist() {
     </div>
     ${ids.length ? `<div class="flex items-center gap-1 flex-wrap">${pips}</div>` : ""}
     ${rows ? `<ul class="divide-y divide-slate-800">${rows}</ul>
-      <p class="text-xs text-slate-400 pt-1">#1 is who auto-pick takes if your clock runs out.</p>`
+      <p class="text-xs text-slate-400 pt-1">#1 is who auto-pick takes if your clock runs out.${
+        ids.length > 1 ? " Hold a row to drag it anywhere in the list." : ""}</p>`
            : '<p class="text-xs text-slate-400">Nothing yet — tap the ☆ beside a player below.</p>'}`;
   // Keep the banner's coverage meter honest without re-rendering the board.
   const per = picksPerManager();
@@ -2324,6 +2340,10 @@ function renderPredraftShortlist() {
   };
   box.querySelectorAll("[data-slup]").forEach((b) => b.onclick = () => slide(b.dataset.slup, -1));
   box.querySelectorAll("[data-sldn]").forEach((b) => b.onclick = () => slide(b.dataset.sldn, 1));
+  makeReorderable(box, "data-slrow", (order, moved) => {
+    setShortlist(applyVisibleOrder(myShortlist(), order));
+    animateReorder("predraft-shortlist", "data-slrow", renderPredraftShortlist, moved);
+  });
   box.querySelectorAll("[data-slrm]").forEach((b) =>
     b.onclick = () => { toggleShortlist(b.dataset.slrm); renderPredraftShortlist(); });
 }
@@ -2351,6 +2371,120 @@ function queuePlan(shortlist, takenBy, myLastPickNo, eligibleIds) {
     rows.push({ pid, idx, gone: false });
   });
   return { rows, hiddenNoFit, available: rows.filter((r) => !r.gone).length };
+}
+
+/* Press and hold a row to pick it up, then drag it as far as you like.
+
+   The ▲▼ buttons are fine for a nudge and miserable for moving a name from
+   14th to 2nd, which is exactly the move you want most often. They stay — they
+   are the keyboard-and-screen-reader path, and the precise one — but a hold
+   now lifts the row out of the list and the rest of it reflows live around it.
+
+   Holding still is the signal. A press that moves before the timer fires is a
+   scroll, so it cancels; once the row IS lifted the page is frozen, because a
+   drag and a scroll are the same finger travelling the same direction and the
+   browser will happily do both at once otherwise.
+
+     box     : the container element (persists across its own re-renders)
+     rowAttr : attribute marking a draggable row, e.g. "data-slrow"
+     commit  : (newVisibleIds, movedId) => void — persist and re-render      */
+const HOLD_MS = 320, SLOP_PX = 8;
+
+function makeReorderable(box, rowAttr, commit) {
+  if (!box || box._reorderAttr === rowAttr) return;   // already wired
+  box._reorderAttr = rowAttr;
+
+  let timer = null, drag = null, startY = 0, pressed = null, pid = null;
+
+  const rowsOf = () => [...box.querySelectorAll(`[${rowAttr}]`)];
+  const cancelPress = () => { clearTimeout(timer); timer = null; pressed = null; };
+
+  const lift = () => {
+    const rows = rowsOf();
+    const i0 = rows.indexOf(pressed);
+    if (i0 < 0 || rows.length < 2) return cancelPress();
+    const rects = rows.map((el) => el.getBoundingClientRect());
+    // The distance a row travels when one row leaves its slot: measured from
+    // the neighbours rather than assumed, since these lists have different gaps.
+    const slot = i0 + 1 < rects.length ? rects[i0 + 1].top - rects[i0].top
+               : rects[i0].top - rects[i0 - 1].top;
+    drag = { rows, rects, i0, slot, ins: i0,
+      ids: rows.map((el) => el.getAttribute(rowAttr)) };
+    box.classList.add("drag-active");
+    pressed.classList.add("drag-lift");
+    rows.forEach((el, i) => { if (i !== i0) el.classList.add("drag-shift"); });
+    navigator.vibrate?.(12);
+    document.documentElement.classList.add("drag-lock");
+  };
+
+  const onMove = (ev) => {
+    const y = ev.clientY ?? ev.touches?.[0]?.clientY ?? 0;
+    if (!drag) {
+      if (timer && Math.abs(y - startY) > SLOP_PX) cancelPress();   // a scroll
+      return;
+    }
+    ev.preventDefault?.();
+    const dy = y - startY;
+    const { rows, rects, i0, slot } = drag;
+    pressed.style.transform = `translateY(${dy}px) scale(1.03)`;
+    const centre = rects[i0].top + rects[i0].height / 2 + dy;
+    // Where the held row would land: the first remaining row whose (post-gap)
+    // midpoint sits below the held row's centre.
+    let ins = rows.length - 1;
+    let seen = 0;
+    for (let i = 0; i < rows.length; i++) {
+      if (i === i0) continue;
+      const mid = rects[i].top + rects[i].height / 2 - (i > i0 ? slot : 0);
+      if (centre < mid) { ins = seen; break; }
+      seen++;
+      ins = seen;
+    }
+    drag.ins = ins;
+    seen = 0;
+    for (let i = 0; i < rows.length; i++) {
+      if (i === i0) continue;
+      const shift = seen < ins && i > i0 ? -slot : seen >= ins && i < i0 ? slot : 0;
+      rows[i].style.transform = shift ? `translateY(${shift}px)` : "";
+      seen++;
+    }
+  };
+
+  const finish = () => {
+    clearTimeout(timer); timer = null;
+    document.documentElement.classList.remove("drag-lock");
+    if (!drag) { pressed = null; return; }
+    const { rows, ids, i0, ins } = drag;
+    const moved = ids[i0];
+    const rest = ids.filter((_, i) => i !== i0);
+    rest.splice(ins, 0, moved);
+    box.classList.remove("drag-active");
+    rows.forEach((el) => {
+      el.classList.remove("drag-lift", "drag-shift");
+      el.style.transform = "";
+    });
+    drag = null; pressed = null;
+    const changed = rest.some((id, i) => id !== ids[i]);
+    if (changed) commit(rest, moved);
+  };
+
+  box.addEventListener("pointerdown", (ev) => {
+    if (ev.button != null && ev.button !== 0) return;
+    // Buttons inside a row keep their own behaviour — a hold on ▲ is still ▲.
+    if (ev.target?.closest?.("button, a, input, select")) return;
+    const row = ev.target?.closest?.(`[${rowAttr}]`);
+    if (!row || !box.contains(row)) return;
+    pressed = row; startY = ev.clientY; pid = ev.pointerId;
+    clearTimeout(timer);
+    timer = setTimeout(lift, HOLD_MS);
+  });
+  box.addEventListener("pointermove", onMove);
+  // Non-passive: while a row is lifted this is what stops the page scrolling
+  // out from under it on touch.
+  box.addEventListener("touchmove", (ev) => { if (drag) ev.preventDefault(); },
+    { passive: false });
+  box.addEventListener("pointerup", finish);
+  box.addEventListener("pointercancel", finish);
+  box.addEventListener("lostpointercapture", finish);
 }
 
 /* Reorder a list and animate it. The rows are rebuilt by `rerender`, so their
@@ -2455,7 +2589,8 @@ function renderDraftQueue(me, myTurn) {
                 ? "None of your shortlisted players fit the positions you still need."
                 : "Star players on the Players tab to build a queue — auto-pick takes the top one available."}</p>`)}
     ${!collapsed && hiddenNoFit ? `<p class="text-xs text-slate-400">${hiddenNoFit} shortlisted ${
-        hiddenNoFit === 1 ? "player doesn't" : "players don't"} fit your remaining slots.</p>` : ""}`;
+        hiddenNoFit === 1 ? "player doesn't" : "players don't"} fit your remaining slots.</p>` : ""}
+    ${!collapsed && movable > 1 ? '<p class="text-xs text-slate-400 pt-0.5">Hold a row to drag it anywhere in the queue.</p>' : ""}`;
 
   const tog = box.querySelector("#queue-toggle");
   if (tog) tog.onclick = () => {
@@ -2472,13 +2607,17 @@ function renderDraftQueue(me, myTurn) {
       makePick(entry, { ...info, pickNumber: S.league.current_pick })
         .catch((er) => toast(er.message));
   });
+  const redraw = () => renderDraftQueue(myManager(), myTurn);
   const slide = (pid, dir) => {
     moveShortlist(pid, dir);
-    animateReorder("draft-queue", "data-qrow",
-      () => renderDraftQueue(myManager(), myTurn), pid);
+    animateReorder("draft-queue", "data-qrow", redraw, pid);
   };
   box.querySelectorAll("[data-qup]").forEach((b) => b.onclick = () => slide(b.dataset.qup, -1));
   box.querySelectorAll("[data-qdn]").forEach((b) => b.onclick = () => slide(b.dataset.qdn, 1));
+  makeReorderable(box, "data-qrow", (order, moved) => {
+    setShortlist(applyVisibleOrder(myShortlist(), order));
+    animateReorder("draft-queue", "data-qrow", redraw, moved);
+  });
 }
 
 /* The clock and whose turn it is must never be off screen. `position: sticky`
@@ -7452,7 +7591,7 @@ function renderLineup() {
     <div class="mt-2">
       <div class="flex items-baseline justify-between gap-2 mb-1">
         <span class="eyebrow">Bench · ${bench.length}</span>
-        ${editing && bench.length > 1 ? '<span class="text-xs text-slate-400">order = sub priority</span>' : ""}
+        ${editing && bench.length > 1 ? '<span class="text-xs text-slate-400">hold to drag · order = sub priority</span>' : ""}
       </div>
       <div id="lineup-bench" class="space-y-1">${bench.map(benchRow).join("")
         || '<p class="text-xs text-slate-400">Nobody on the bench.</p>'}</div>
@@ -7463,6 +7602,13 @@ function renderLineup() {
     benchInOrder(mine.filter((pk) => !S.lineupDraft.has(pk.id))).map(benchRow).join("");
 
   wireLineupControls($("lineup-list"));
+  if (editing) makeReorderable($("lineup-bench"), "data-brow", (order, moved) => {
+    S.benchDraft = order;
+    animateReorder("lineup-bench", "data-brow", () => {
+      $("lineup-bench").innerHTML = _benchListHtml();
+      wireLineupControls($("lineup-bench"));
+    }, moved);
+  });
 
   const counts = lineupCounts();
   const total = counts.GK + counts.DEF + counts.MID + counts.FWD;

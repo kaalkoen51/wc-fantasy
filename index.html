@@ -113,6 +113,33 @@
   @keyframes queue-move { 0% { background-color: rgba(255,199,44,.28); transform: translateX(-4px) }
                           100% { background-color: transparent; transform: none } }
   .queue-moved { animation: queue-move .45s ease-out; }
+  /* Hold-to-drag reordering (see makeReorderable). The held row lifts off the
+     list and the rest slide out of its way; the page is frozen for the
+     duration, because a drag and a scroll are the same finger travelling the
+     same direction. */
+  .drag-lock { overflow: hidden; touch-action: none; }
+  .drag-active { user-select: none; -webkit-user-select: none; }
+  .drag-active .drag-shift { transition: transform .18s cubic-bezier(.2,.8,.3,1); }
+  .drag-lift {
+    position: relative; z-index: 30; cursor: grabbing;
+    box-shadow: 0 10px 24px rgba(0,0,0,.55);
+    outline: 1px solid rgba(255,199,44,.75);
+    /* Clearly lighter than any row surface, so the held row reads as picked up
+       and nothing inside it (avatars, chips) merges with its own background. */
+    border-radius: 8px; background-color: #33415e;
+    transition: box-shadow .15s ease, background-color .15s ease;
+  }
+  /* Everything that isn't being held recedes, so it's obvious what you've got.
+     Targeted at the rows themselves: dimming a wrapper would dim the lifted
+     row along with it, since opacity multiplies down the tree. */
+  .drag-active [data-slrow], .drag-active [data-qrow], .drag-active [data-brow] {
+    opacity: .6; transition: opacity .15s ease;
+  }
+  .drag-active .drag-lift { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) {
+    .drag-active .drag-shift, .drag-lift { transition: none }
+  }
+
   /* Colour only — for rows whose movement is already being animated by FLIP. */
   @keyframes row-flash { 0% { background-color: rgba(255,199,44,.28) }
                          100% { background-color: rgba(30,41,59,.6) } }
