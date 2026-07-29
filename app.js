@@ -1976,14 +1976,19 @@ function plannerRemoveChoice(outPickId, pid) {
   const m = moveFor(outPickId);
   return m ? plannerSetMove(outPickId, m.choices.filter((c) => c !== pid)) : Promise.resolve();
 }
-function plannerPromoteChoice(outPickId, pid) {
+function plannerMoveChoice(outPickId, pid, dir) {
   const m = moveFor(outPickId);
   const i = m ? m.choices.indexOf(pid) : -1;
-  if (i <= 0) return Promise.resolve();
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= m.choices.length) return Promise.resolve();
   const choices = [...m.choices];
-  [choices[i - 1], choices[i]] = [choices[i], choices[i - 1]];
+  [choices[j], choices[i]] = [choices[i], choices[j]];
   return plannerSetMove(outPickId, choices);
 }
+const plannerPromoteChoice = (outPickId, pid) => plannerMoveChoice(outPickId, pid, -1);
+
+// Reorder a plan's choices to an arbitrary sequence (hold-to-drag).
+const plannerSetChoiceOrder = (outPickId, order) => plannerSetMove(outPickId, order);
 const plannerRemoveMove = (outPickId) =>
   setPlanner(plannerMoves().filter((m) => m.out !== outPickId));
 
@@ -6835,6 +6840,7 @@ async function toggleReaction(msgId, emoji) {
 }
 S.admOpenLabels = null; // admin stats history: which match groups are expanded
 S.tradeTab = "deals";      // Trades tab: deals | planner | watch | history
+S.wlPos = "ALL"; S.wlTeam = ""; S.wlSort = "points"; S.wlPer90 = false; S.wlFree = false;
 
 S.poolPlannerOnly = false; // draft pool: filter to planner choices
 S.plannerPickFor = null;   // out pick id the choice picker is adding to
@@ -7863,12 +7869,14 @@ function pitchRowsHtml(byPos, opts = {}) {
            ><span class="rounded-full bg-wcred text-white text-sm font-bold w-5 h-5 inline-flex items-center justify-center leading-none shadow ring-2 ring-slate-900/60">−</span></button>` : "";
     return `<div class="relative flex justify-center">
       ${rm}
-      <button type="button" ${tap} class="pp ${e.dim ? "opacity-50" : ""}">
+      <button type="button" ${tap} class="pp ${e.dim ? "opacity-50" : ""} ${e.planned ? "pp-planned" : ""}">
         <span class="relative inline-flex">
           ${avatarHtml(e.player_id, e.team, av)}
           ${opts.crests && teamCrestHtml(e.team) ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${teamCrestHtml(e.team, "w-3.5 h-3.5")}</span>` : ""}
           ${e.badge ? `<span class="absolute -top-1 -right-1 rounded-full bg-wcgold text-slate-900 text-[10px] font-bold w-4 h-4 inline-flex items-center justify-center">${e.badge}</span>` : ""}
           ${e.note != null ? `<span class="pp-pts">${e.note}</span>` : ""}
+          ${e.swapFor ? `<span class="absolute -bottom-1 -right-2 inline-flex items-center rounded-full bg-slate-900/95 ring-1 ring-wcgold/70 p-0.5"
+             title="replacing">${avatarHtml(e.swapFor, "", "w-4 h-4")}</span>` : ""}
         </span>
         <span class="pp-name">${esc(shortName(e.name))}</span>
         ${e.opp ? `<span class="pp-opp">${esc(e.opp)}</span>` : ""}
@@ -8408,9 +8416,12 @@ const pickById = (id) => S.picks.find((p) => p.id === id);
 // Both sides of a trade pair must be in the same position group; subs and
 // starters mix freely within a group (SUB_GK ↔ GK is fine). TEAM picks
 // are never tradable.
+/* Any position for any position. Same-position-only was a house rule the app
+   invented; real leagues trade a keeper for a striker and live with the hole.
+   The squad quota is checked when you next pick a line-up, which is where the
+   consequence actually bites. TEAM picks still can't be traded. */
 function pairValid(a, b) {
-  return !!a && !!b && a.slot !== "TEAM" && b.slot !== "TEAM"
-    && slotGroup(a.slot) === slotGroup(b.slot);
+  return !!a && !!b && a.slot !== "TEAM" && b.slot !== "TEAM";
 }
 
 // pairs: [{ mine: pick, theirs: pick }] -> error message, or null if valid.
@@ -8419,8 +8430,7 @@ function tradeError(pairs) {
   const offered = new Set(), requested = new Set();
   for (const { mine, theirs } of pairs) {
     if (!mine || !theirs) return "Every pair needs a player on both sides.";
-    if (!pairValid(mine, theirs))
-      return "Pairs must match position groups (GK↔GK, DEF↔DEF, MID↔MID, FWD↔FWD).";
+    if (!pairValid(mine, theirs)) return "TEAM picks can't be traded.";
     if (offered.has(mine.id) || requested.has(theirs.id))
       return "A player can only appear in one pair.";
     offered.add(mine.id);
@@ -8433,6 +8443,7 @@ function openBuilder(targetId = "", parentId = null, pairs = null) {
   S.builder = { target: targetId, parent: parentId,
                 pairs: pairs || [{ mine: "", theirs: "" }] };
   setBoardTab("trades");
+  S.tradeTab = "deals";   // the builder lives here; without this it opened unseen
   renderTrades();
 }
 
@@ -8469,20 +8480,32 @@ function squadChooserHtml(mgrId, opts = {}) {
     </div>` : ""}`;
 }
 
-/* The league's waiver order, so "your priority: #4" means something. */
+/* The league's waiver order, so "you're #4" means something. Top-down, because
+   an order is a ranking and a horizontal strip that scrolls off the edge hides
+   exactly the part you want — who is ahead of you. Folded away by default. */
 function waiverOrderHtml(me) {
   const ranked = activeManagers()
     .filter((m) => m.waiver_order != null)
     .sort((a, b) => a.waiver_order - b.waiver_order);
   if (!ranked.length) return "";
-  return `<div class="flex items-center gap-1.5 overflow-x-auto pb-0.5">
-    ${ranked.map((m, i) => `<span class="shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs ${
-      m.id === me?.id ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400"}">
-      <span class="font-mono">${i + 1}</span>
-      <span class="inline-flex items-center justify-center rounded w-4 h-4 text-[10px]"
-            style="background:${managerColor(m)}26;border:1px solid ${managerColor(m)}88">${managerMark(m)}</span>
-      <span>${esc(shortName(m.name))}</span></span>`).join("")}
-  </div>`;
+  const mine = ranked.findIndex((m) => m.id === me?.id) + 1;
+  return `<details class="rounded-lg border border-slate-700 bg-slate-800/40">
+    <summary class="px-2.5 py-2 cursor-pointer select-none flex items-center justify-between gap-2">
+      <span class="eyebrow">Waiver order</span>
+      <span class="text-xs text-slate-400">${mine ? `you're #${mine} of ${ranked.length}` : `${ranked.length} managers`} ▾</span>
+    </summary>
+    <ol class="px-2 pb-2 space-y-1">
+      ${ranked.map((m, i) => `<li class="flex items-center gap-2 rounded-lg px-2 py-1.5 ${
+        m.id === me?.id ? "bg-wcgold/10 border border-wcgold/40" : "bg-slate-900/60"}">
+        <span class="w-5 shrink-0 font-mono text-xs ${i === 0 ? "text-wcgold" : "text-slate-400"}">${i + 1}</span>
+        <span class="shrink-0 inline-flex items-center justify-center rounded-md w-6 h-6 text-xs"
+              style="background:${managerColor(m)}26;border:1px solid ${managerColor(m)}99">${managerMark(m)}</span>
+        <span class="min-w-0 flex-1 truncate text-sm">${esc(m.name)}${
+          m.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}</span>
+        ${i === 0 ? '<span class="shrink-0 text-[10px] text-wcgold">first refusal</span>' : ""}
+      </li>`).join("")}
+    </ol>
+  </details>`;
 }
 
 /* The trade builder, as two squads you tap rather than a stack of dropdowns.
@@ -8570,9 +8593,9 @@ function builderHtml(me) {
            <span class="min-w-0 flex-1 text-sm truncate">You give <b>${esc(mineSel.player_name)}</b></span>
            <button data-clearmine="1" class="shrink-0 text-xs text-slate-400 underline">change</button>
          </div>
-         <p class="text-xs text-slate-400">Now tap the <b class="text-slate-200">${esc(partner?.name || "their")}</b> player you want — same position.</p>
+         <p class="text-xs text-slate-400">Now tap the <b class="text-slate-200">${esc(partner?.name || "their")}</b> player you want — any position.</p>
          ${squadChooserHtml(b.target, { tapAttr: "data-picktheirs",
-           eligible: (pk) => !paired.has(pk.id) && slotGroup(pk.slot) === slotGroup(mineSel.slot) })}
+           eligible: (pk) => !paired.has(pk.id) })}
        </div>`;
 
   return `<div class="rounded-xl border border-wcgold bg-slate-900 p-3 space-y-2 mt-3">
@@ -8661,59 +8684,63 @@ function txWhen(ts) {
     { day: "numeric", month: "short", timeZone: SA_TZ });
 }
 
+/* History cards. Every move in the league, told as a move: who was involved,
+   which faces went which way, and when. The old cards were three lines of 12px
+   grey text with arrows in them. */
+const txAvatar = (pid, name, tint) => `<span class="flex items-center gap-1.5 min-w-0">
+    ${avatarHtml(pid || "", "", "w-7 h-7")}
+    <span class="min-w-0 leading-tight">
+      <span class="block truncate text-xs">${esc(shortName(name || "?"))}</span>
+      <span class="block text-[10px] ${tint}">${tint.includes("red") ? "out" : "in"}</span>
+    </span></span>`;
+
+const txMgrChip = (m) => `<span class="inline-flex items-center gap-1 min-w-0">
+    <span class="shrink-0 inline-flex items-center justify-center rounded w-5 h-5 text-[11px]"
+          style="background:${managerColor(m)}26;border:1px solid ${managerColor(m)}99">${managerMark(m)}</span>
+    <span class="truncate text-xs">${esc(m?.name ?? "?")}</span></span>`;
+
+function txShell(icon, headline, when, body, accent) {
+  return `<div class="rounded-xl border bg-slate-900 overflow-hidden" style="border-color:${accent}44">
+    <div class="flex items-center gap-2 px-3 py-2" style="background:${accent}14">
+      <span class="shrink-0 text-base leading-none">${icon}</span>
+      <span class="min-w-0 flex-1 text-xs">${headline}</span>
+      <span class="shrink-0 text-[10px] text-slate-500">${esc(when)}</span>
+    </div>
+    <div class="px-3 py-2 space-y-1">${body}</div>
+  </div>`;
+}
+
 function tradeTxCard(t) {
   const proposer = S.managers.find((m) => m.id === t.proposer_manager_id);
   const target   = S.managers.find((m) => m.id === t.target_manager_id);
   const pairs = (t.trade_items || []).map((it) => {
-    const toProposer = it.requested_player_name
-      ?? pickById(it.offered_pick_id)?.player_name ?? "?";
-    const toTarget = it.offered_player_name
-      ?? pickById(it.requested_pick_id)?.player_name ?? "?";
-    return `<div class="text-xs text-slate-400">
-      <span class="text-slate-200">${esc(toProposer)}</span>
-      <span class="text-slate-400 mx-1">→</span>
-      <span>${esc(proposer?.name ?? "?")}</span>
-      <span class="text-slate-500 mx-2">·</span>
-      <span class="text-slate-200">${esc(toTarget)}</span>
-      <span class="text-slate-400 mx-1">→</span>
-      <span>${esc(target?.name ?? "?")}</span>
+    const toProposer = it.requested_player_name ?? pickById(it.offered_pick_id)?.player_name;
+    const toTarget   = it.offered_player_name   ?? pickById(it.requested_pick_id)?.player_name;
+    return `<div class="grid grid-cols-[1fr_auto_1fr] items-center gap-1 rounded-lg bg-slate-800/50 px-2 py-1.5">
+      ${txAvatar(it.offered_player_id, toTarget, "text-red-300/70")}
+      <span class="shrink-0 text-slate-500 text-xs">⇄</span>
+      <span class="flex justify-end min-w-0">${txAvatar(it.requested_player_id, toProposer, "text-live/70")}</span>
     </div>`;
   }).join("");
-  return `<div class="rounded-xl border border-slate-800 bg-slate-900/50 p-3 space-y-1.5">
-    <div class="flex items-center justify-between">
-      <span class="text-sm font-semibold">${esc(proposer?.name ?? "?")} ⇄ ${esc(target?.name ?? "?")}
-        <span class="text-xs text-slate-400 font-normal">trade</span></span>
-      <span class="text-xs text-slate-400">${txWhen(t.updated_at)}</span>
-    </div>
-    <div class="space-y-0.5">${pairs}</div>
-  </div>`;
+  return txShell("🤝",
+    `<span class="flex items-center gap-1.5 min-w-0">${txMgrChip(proposer)}
+       <span class="shrink-0 text-slate-500">⇄</span>${txMgrChip(target)}</span>`,
+    txWhen(t.updated_at), pairs, managerColor(proposer));
 }
 
 function swapTxCard(x) {
   const mgr = S.managers.find((m) => m.id === x.manager_id);
-  return `<div class="rounded-xl border border-slate-800 bg-slate-900/50 p-3 space-y-1">
-    <div class="flex items-center justify-between">
-      <span class="text-sm font-semibold">${esc(mgr?.name ?? "?")}
-        <span class="text-xs text-slate-400 font-normal">free-agent swap</span></span>
-      <span class="text-xs text-slate-400">${txWhen(x.created_at)}</span>
-    </div>
-    <div class="text-xs text-slate-400">
-      <span class="text-wcgreen">+ ${esc(x.in_player_name ?? "?")}</span>
-      <span class="text-slate-500 mx-2">·</span>
-      <span class="text-slate-400">− ${esc(x.out_player_name ?? "?")}</span>
-    </div>
-  </div>`;
-}
-
-/* A whole season of moves in one flat list buries the ones that matter. The
-   latest window is what people are talking about, so it stays open and
-   everything older collapses behind a tap. Windows are cut at the lineup locks
-   (each window close snapshots rosters), which is the same boundary the app
-   uses everywhere else. */
-function txWindowStarts() {
-  return [...new Set((S.snapshots || [])
-    .map((sn) => Date.parse(sn.created_at || sn.effective_from))
-    .filter((t) => !isNaN(t)))].sort((a, b) => b - a);   // newest first
+  const waiver = x.kind === "waiver";
+  return txShell(waiver ? "⏳" : "🔁",
+    `<span class="flex items-center gap-1.5 min-w-0">${txMgrChip(mgr)}
+       <span class="shrink-0 text-slate-400">${waiver ? "won a waiver claim" : "took a free agent"}</span></span>`,
+    txWhen(x.created_at),
+    `<div class="grid grid-cols-[1fr_auto_1fr] items-center gap-1 rounded-lg bg-slate-800/50 px-2 py-1.5">
+       ${txAvatar(x.out_player_id, x.out_player_name, "text-red-300/70")}
+       <span class="shrink-0 text-slate-500 text-xs">→</span>
+       <span class="flex justify-end min-w-0">${txAvatar(x.in_player_id, x.in_player_name, "text-live/70")}</span>
+     </div>`,
+    managerColor(mgr));
 }
 
 function transactionsLogHtml() {
@@ -8724,9 +8751,10 @@ function transactionsLogHtml() {
     entries.push({ when: x.created_at, html: swapTxCard(x) });
   entries.sort((a, b) => String(b.when).localeCompare(String(a.when)));
   if (!entries.length)
-    return `<div class="mt-6 space-y-2">
-      <h3 class="font-semibold text-sm">Transactions</h3>
-      <p class="text-xs text-slate-400">No trades or free-agent swaps yet.</p></div>`;
+    return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-6 text-center space-y-2">
+      <div class="text-3xl">📜</div>
+      <p class="text-sm text-slate-300">Nothing has moved yet.</p>
+      <p class="text-xs text-slate-500">Trades, free agents and waiver claims all land here.</p></div>`;
 
   // Everything since the most recent lock is "this window".
   const cut = txWindowStarts()[0] ?? null;
@@ -8738,10 +8766,10 @@ function transactionsLogHtml() {
   const shown = current.length ? current : entries.slice(0, 3);
   const rest  = current.length ? earlier : entries.slice(3);
 
-  return `<div class="mt-6 space-y-2">
-    <div class="flex items-baseline justify-between gap-2">
-      <h3 class="font-semibold text-sm">Transactions</h3>
-      <span class="eyebrow">${current.length ? "This window" : "Recent"}</span>
+  return `<div class="space-y-2">
+    <div class="flex items-baseline justify-between gap-2 px-1">
+      <h3 class="font-semibold text-sm">Every move</h3>
+      <span class="eyebrow">${current.length ? "this window" : "recent"}</span>
     </div>
     ${shown.map((e) => e.html).join("")}
     ${rest.length ? `<details class="rounded-xl border border-slate-700 bg-slate-900">
@@ -8762,15 +8790,37 @@ function transactionsLogHtml() {
    unpicked / hide-KO toggles — a second, worse copy of the Players page bolted
    under a collapsed header. A shortlist is a short list: it needs the same row
    as everywhere else and nothing around it. */
+/* The watchlist: the Players page's row, plus the filters that page has —
+   club, position, sort (including per 90), and free-agents-only — because a
+   28-name list is a list you need to narrow. Form dots come along too. */
 function shortlistSectionHtml(me) {
   const open = tradingOpen();
-  const ids = myShortlist();
+  const allIds = myShortlist();
   const owned = pickedIdSet();
+  const per90 = !!S.wlPer90;
+  const sortKey = S.wlSort || "points";
 
-  const rows = ids.map((pid) => S.playerById[pid]).filter(Boolean).map((p) => {
+  let players = allIds.map((pid) => S.playerById[pid]).filter(Boolean);
+  const teams = [...new Set(players.map((p) => p.team).filter(Boolean))].sort();
+  if (S.wlTeam) players = players.filter((p) => p.team === S.wlTeam);
+  if (S.wlPos && S.wlPos !== "ALL") players = players.filter((p) => p.position === S.wlPos);
+  if (S.wlFree) players = players.filter((p) => !owned.has(p.player_id));
+
+  const ranked = players.map((p) => {
+    const rows = statsScopedRows(p.player_id, p.team, 0);
+    const mins = sumMinutes(rows);
+    const raw = sortKey === "points" ? playerPoints(p.player_id, p.position)
+                                     : playerStatTotal(p.player_id, sortKey);
+    const val = per90 && mins > 0 ? Math.round((raw / mins) * 90 * 10) / 10 : raw;
+    return { p, val, mins };
+  }).sort((a, b) => b.val - a.val || a.p.name.localeCompare(b.p.name));
+
+  const chip = (on) => `rounded-full px-2.5 py-1 border text-xs ${
+    on ? "border-wcgold text-wcgold bg-wcgold/10" : "border-slate-700 text-slate-400"}`;
+
+  const rows = ranked.map(({ p, val, mins }) => {
     const ownPick = S.picks.find((pk) => pk.player_id === p.player_id);
     const mine = ownPick && ownPick.manager_id === me.id;
-    const val = playerPoints(p.player_id, p.position);
     return `<li class="flex items-center gap-1">
       ${starHtml(p.player_id)}
       <button data-sldetail="${esc(p.player_id)}" class="flex-1 min-w-0 flex items-center gap-2 py-2 text-left">
@@ -8783,33 +8833,55 @@ function shortlistSectionHtml(me) {
           <span class="flex items-center gap-1.5 text-xs text-slate-400 min-w-0">
             ${mine ? '<span class="shrink-0 text-wcgold">yours</span>'
                    : ownerChipHtml(p.player_id) || '<span class="shrink-0 text-live">free</span>'}
-            ${teamCrestHtml(p.team, "w-3.5 h-3.5")}<span class="truncate">${esc(p.team)}</span>
+            ${teamCrestHtml(p.team, "w-3.5 h-3.5")}<span class="truncate">${esc(p.team_code || p.team)}</span>
+            <span class="min-w-0 truncate">${formDots(p.player_id, p.position)}</span>
           </span>
         </span>
         <span class="pos-${p.position} rounded px-1.5 py-0.5 text-xs font-semibold shrink-0">${p.position}</span>
-        <span class="shrink-0 w-8 text-right font-mono font-bold ${val > 0 ? "text-wcgold" : "text-slate-400"}">${val}</span>
+        <span class="shrink-0 w-9 text-right leading-tight">
+          <span class="block font-mono font-bold ${val > 0 ? "text-wcgold" : "text-slate-400"}">${val}</span>
+          ${per90 ? `<span class="block text-[10px] text-slate-500">${mins}′</span>` : ""}
+        </span>
       </button>
       ${!mine && open ? `<button data-sltrade="${esc(p.player_id)}" class="shrink-0 rounded-lg bg-wcred hover:bg-wcred-hov px-2.5 py-1.5 text-xs font-semibold">${
-        owned.has(p.player_id) ? "Offer" : "Claim"}</button>` : ""}
+        owned.has(p.player_id) ? "Offer" : (faDeferToClose() ? "Claim" : "Swap")}</button>` : ""}
     </li>`;
   }).join("");
 
   return `<div class="space-y-2">
     <div class="flex items-baseline justify-between gap-2 px-1">
       <span class="text-sm font-semibold">★ Watchlist</span>
-      <span class="text-xs text-slate-400">only you can see this</span>
+      <span class="text-xs text-slate-400">${ranked.length} of ${allIds.length} · only you</span>
     </div>
+    ${allIds.length ? `
+      <div class="flex gap-1.5 overflow-x-auto whitespace-nowrap pb-0.5">
+        ${["ALL", ...GROUPS.slice(0, 4)].map((g) =>
+          `<button data-wlpos="${g}" class="shrink-0 ${chip((S.wlPos || "ALL") === g)}">${g}</button>`).join("")}
+        <button data-wlfree="1" class="shrink-0 ${chip(!!S.wlFree)}">🟢 Free only</button>
+        <button data-wl90="1" class="shrink-0 ${chip(per90)}">⏱ per 90</button>
+      </div>
+      <div class="flex gap-2">
+        <select id="wl-team" class="min-w-0 flex-1 rounded-lg bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
+          <option value="">All clubs</option>
+          ${teams.map((tm) => `<option value="${esc(tm)}" ${S.wlTeam === tm ? "selected" : ""}>${esc(tm)}</option>`).join("")}
+        </select>
+        <select id="wl-sort" class="min-w-0 flex-1 rounded-lg bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
+          ${STAT_SORTS.map(([k, lbl]) => `<option value="${k}" ${sortKey === k ? "selected" : ""}>${lbl}</option>`).join("")}
+        </select>
+      </div>` : ""}
     ${rows
       ? `<ul class="rounded-xl border border-slate-700 bg-slate-900 px-3 divide-y divide-slate-800">${rows}</ul>
          <div class="flex gap-2">
            ${isCupCompetition() ? '<button id="sl-clean" class="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-300">🧹 Drop knocked-out</button>' : ""}
            <button id="sl-clear" class="flex-1 rounded-lg border border-red-500/40 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-red-400">Clear all</button>
          </div>`
-      : `<div class="rounded-xl border border-slate-700 bg-slate-900 p-6 text-center space-y-2">
-           <div class="text-3xl">★</div>
-           <p class="text-sm text-slate-300">Nothing on your watchlist.</p>
-           <p class="text-xs text-slate-500">Tap ☆ next to any player on the Players tab to keep an eye on them.</p>
-         </div>`}
+      : allIds.length
+        ? '<p class="text-xs text-slate-400 text-center py-4">Nothing matches those filters.</p>'
+        : `<div class="rounded-xl border border-slate-700 bg-slate-900 p-6 text-center space-y-2">
+             <div class="text-3xl">★</div>
+             <p class="text-sm text-slate-300">Nothing on your watchlist.</p>
+             <p class="text-xs text-slate-500">Tap ☆ next to any player on the Players tab to keep an eye on them.</p>
+           </div>`}
   </div>`;
 }
 
@@ -8855,13 +8927,24 @@ function plannerSectionHtml(me) {
   const planned = plannerMoves().filter((m) => myPickIds.has(m.out));
   const plannedFor = new Set(planned.map((m) => m.out));
 
+  /* A planned slot shows the player you INTEND to have there, with the one
+     they'd replace shrunk into the corner. Seeing the plan as the team it
+     would produce is the point of planning it. */
+  const firstChoice = (pk) => {
+    const m = plannerMoves().find((x) => x.out === pk.id);
+    const pid = m?.choices?.[0];
+    return pid ? S.playerById[pid] : null;
+  };
   const picks = orderedRoster(me).filter((pk) => pk.slot !== "TEAM");
   const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
   const bench = [];
   for (const pk of picks) {
-    const e = { id: pk.id, player_id: pk.player_id, name: pk.player_name, team: pk.team,
-      position: pk.position, opp: oppShort(pk.team),
-      badge: plannedFor.has(pk.id) ? "🗺" : "" };
+    const inc = firstChoice(pk);
+    const e = inc
+      ? { id: pk.id, player_id: inc.player_id, name: inc.name, team: inc.team,
+          position: pk.position, opp: oppShort(inc.team), swapFor: pk.player_id, planned: true }
+      : { id: pk.id, player_id: pk.player_id, name: pk.player_name, team: pk.team,
+          position: pk.position, opp: oppShort(pk.team) };
     if (pk.is_sub) bench.push(e); else if (byPos[pk.position]) byPos[pk.position].push(e);
   }
 
@@ -8899,42 +8982,49 @@ function plannerMoveHtml(outPick, m, open) {
   const choices = (m.choices || []).map((pid) => ({ pid, p: S.playerById[pid], st: choiceStatus(pid) }))
     .filter((c) => c.p);
   const target = choices.find((c) => c.st.kind === "fa" || c.st.kind === "owned");
-  const statusTxt = (st) => st.kind === "fa" ? '<span class="text-wcgreen">free agent</span>'
-    : st.kind === "owned" ? `<span class="text-wcgold">👤 ${esc(st.manager?.name ?? "?")}</span>`
+  const statusTxt = (st) => st.kind === "fa" ? '<span class="text-live">free agent</span>'
+    : st.kind === "owned" ? `<span class="text-wcgold">${esc(st.manager?.name ?? "?")}</span>`
     : st.kind === "yours" ? '<span class="text-slate-400">already yours</span>'
-    : '<span class="text-red-400">🚫 knocked out</span>';
-  const choiceRows = choices.map((c, i) => {
-    const next = upNextHtml(c.p.team);
-    return `
-    <div class="flex items-center gap-1.5 text-xs">
-      <span class="text-xs text-slate-400 w-7 shrink-0">${i === 0 ? "1st" : "#" + (i + 1)}</span>
-      <span class="min-w-0 truncate flex-1">${esc(c.p.name)} ${availBadges(c.pid)} · ${statusTxt(c.st)}${next ? ` · <span class="text-slate-400">${next}</span>` : ""}</span>
-      ${i > 0 ? `<button data-plup="${outPick.id}|${c.pid}" class="shrink-0 text-slate-400 px-1" title="make higher choice">↑</button>` : ""}
-      <button data-plrm="${outPick.id}|${c.pid}" class="shrink-0 text-red-400 px-1">✕</button>
-    </div>`;
-  }).join("");
+    : '<span class="text-red-400">knocked out</span>';
+
+  /* Same reorder mechanics as every other queue: a stacked arrow column and
+     hold-to-drag. It used to be a single "↑" that promoted one place per tap
+     and rebuilt the whole planner each time, which is why it crawled. */
+  const choiceRows = choices.map((c, i) => `
+    <div data-plrow="${esc(c.pid)}" class="flex items-center gap-1.5 rounded-lg bg-slate-900/60 px-1.5 py-1">
+      <span class="w-4 shrink-0 font-mono text-xs ${i === 0 ? "text-wcgold font-bold" : "text-slate-400"}">${i + 1}</span>
+      ${avatarHtml(c.pid, c.p.team, "w-6 h-6")}
+      <span class="min-w-0 flex-1 leading-tight">
+        <span class="flex items-center gap-1 min-w-0">
+          <span class="truncate text-xs">${esc(c.p.name)}</span>
+          <span class="shrink-0">${availBadges(c.pid)}</span>
+        </span>
+        <span class="block truncate text-[10px]">${statusTxt(c.st)}</span>
+      </span>
+      ${choices.length > 1 ? `<span class="nudge-col shrink-0 leading-none">
+        <button data-plup="${outPick.id}|${c.pid}" ${i === 0 ? "disabled" : ""} class="nudge text-slate-400 ${i === 0 ? "opacity-30" : ""}" aria-label="Higher choice">▲</button>
+        <button data-pldn="${outPick.id}|${c.pid}" ${i === choices.length - 1 ? "disabled" : ""} class="nudge text-slate-400 ${i === choices.length - 1 ? "opacity-30" : ""}" aria-label="Lower choice">▼</button>
+      </span>` : ""}
+      <button data-plrm="${outPick.id}|${c.pid}" class="tap shrink-0 text-slate-500 hover:text-wcred" aria-label="Remove">✕</button>
+    </div>`).join("");
 
   let exec = "";
-  if (open) {
-    if (!target) {
-      exec = '<div class="text-xs text-slate-400">No available option right now.</div>';
-    } else if (choices[0] === target) {
-      exec = `<button data-plexec="${outPick.id}|${target.pid}" class="bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-xs font-semibold">${
-        target.st.kind === "fa" ? "Swap in 1st: " : "Propose 1st: "}${esc(target.p.name)}</button>`;
-    } else {
-      exec = `<div class="space-y-1">
-        <div class="text-xs text-amber-400">1st choice (${esc(choices[0].p.name)}) unavailable.</div>
-        <button data-plexec="${outPick.id}|${target.pid}" class="bg-slate-800 border border-wcgold/60 text-wcgold rounded-lg px-3 py-1.5 text-xs font-semibold">${
-          target.st.kind === "fa" ? "Swap in backup: " : "Propose backup: "}${esc(target.p.name)}</button>
-      </div>`;
-    }
+  if (open && target) {
+    const backup = choices[0] !== target;
+    const verb = target.st.kind === "fa" ? (faDeferToClose() ? "Claim" : "Swap in") : "Offer for";
+    exec = `<button data-plexec="${outPick.id}|${target.pid}" class="w-full ${
+      backup ? "bg-slate-800 border border-wcgold/60 text-wcgold" : "bg-wcred hover:bg-wcred-hov"
+    } rounded-lg py-2 text-xs font-semibold">${verb} ${esc(shortName(target.p.name))}${
+      backup ? " (backup — 1st is gone)" : ""}</button>`;
+  } else if (open) {
+    exec = '<div class="text-xs text-slate-400 text-center">Nothing on this list is available right now.</div>';
   }
-  return `<div class="mt-1 ml-3 pl-2 border-l border-slate-700 space-y-1">
-    <div class="text-xs text-slate-400">Replace with:</div>
+
+  return `<div id="pl-choices-${esc(outPick.id)}" class="space-y-1">
     ${choiceRows || '<div class="text-xs text-slate-400">No options yet.</div>'}
-    <div class="flex items-center gap-3 pt-0.5">
+    <div class="flex items-center gap-3">
       <button data-pladd="${outPick.id}" class="text-xs text-wcgold underline">+ add option</button>
-      <button data-plrmmove="${outPick.id}" class="text-xs text-slate-400 underline">remove</button>
+      <button data-plrmmove="${outPick.id}" class="text-xs text-slate-400 underline ml-auto">remove plan</button>
     </div>
     ${exec}
   </div>`;
@@ -8948,8 +9038,13 @@ function plannerExec(outPickId, pid) {
   if (!p) return;
   const st = choiceStatus(pid);
   if (st.kind === "fa") {
-    if (confirm(`Swap out ${outPick.player_name} for ${p.name} (free agent)?`))
-      doSwap(outPick, { player_id: pid, name: p.name, team: p.team }).catch((e) => toast(e.message));
+    const waiver = faDeferToClose();
+    const msg = waiver
+      ? `Queue a waiver claim — ${p.name} for ${outPick.player_name}? It resolves at window close, in waiver order.`
+      : `Swap out ${outPick.player_name} for ${p.name} (free agent)?`;
+    if (confirm(msg))
+      swapOrClaim(outPick, { player_id: pid, name: p.name, team: p.team })
+        .catch((e) => toast(e.message));
   } else if (st.kind === "owned") {
     openBuilder(st.pick.manager_id, null, [{ mine: outPick.id, theirs: st.pick.id }]);
   } else {
@@ -9088,12 +9183,19 @@ function faClaimsSectionHtml(me) {
     : "priority set at window open";
   // Same control as every other ordered list in the app: stacked arrows, and
   // hold a row to drag it. This IS a priority queue, so it should feel like one.
+  const face = (pid, name, tint) => `<span class="flex items-center gap-1.5 min-w-0">
+      ${avatarHtml(pid, "", "w-7 h-7")}
+      <span class="min-w-0 leading-tight">
+        <span class="block truncate text-sm">${esc(shortName(name || "?"))}</span>
+        <span class="block text-[10px] ${tint}">${tint.includes("red") ? "out" : "in"}</span>
+      </span></span>`;
   const rows = mine.map((c, i) => `
     <div data-clrow="${esc(c.id)}" class="flex items-center gap-1.5 rounded-lg bg-slate-800/60 px-2 py-1.5 text-sm">
-      <span class="text-slate-400 font-mono w-5 shrink-0 ${i === 0 ? "text-wcgold font-bold" : ""}">${i + 1}</span>
-      <span class="flex-1 min-w-0 leading-tight">
-        <span class="block truncate">${esc(c.in_player_name)}</span>
-        <span class="block truncate text-xs text-slate-400">for ${esc(c.out_player_name)}</span>
+      <span class="font-mono w-5 shrink-0 ${i === 0 ? "text-wcgold font-bold" : "text-slate-400"}">${i + 1}</span>
+      <span class="flex-1 min-w-0 grid grid-cols-[1fr_auto_1fr] items-center gap-1">
+        ${face(c.out_player_id, c.out_player_name, "text-red-300/70")}
+        <span class="shrink-0 text-slate-500 text-xs">→</span>
+        ${face(c.in_player_id, c.in_player_name, "text-live/70")}
       </span>
       ${mine.length > 1 ? `<span class="nudge-col shrink-0 leading-none">
         <button data-claimup="${c.id}"${i === 0 ? " disabled" : ""} class="nudge text-slate-400 ${i === 0 ? "opacity-30" : ""}" aria-label="Higher priority">▲</button>
@@ -9107,10 +9209,7 @@ function faClaimsSectionHtml(me) {
       <span class="text-xs text-slate-400">${priority}</span>
     </div>
     <p class="text-xs text-slate-400">These resolve when the window closes, in waiver order (worst-placed picks first). Order yours by preference — the first still-available one lands.</p>
-    <div>
-      <div class="eyebrow mb-1">Waiver order</div>
-      ${waiverOrderHtml(me)}
-    </div>
+    ${waiverOrderHtml(me)}
     <div id="fa-claim-list" class="space-y-1">${rows}</div>
     ${mine.length > 1 ? '<p class="text-xs text-slate-400">Hold a row to drag it anywhere in the queue.</p>' : ""}
   </div>`;
@@ -9191,7 +9290,7 @@ function renderTrades() {
     body += transactionsLogHtml();
   }
 
-  box.innerHTML = nav + banner + `<div class="space-y-3 mt-3">${body}</div>`;
+  box.innerHTML = `<div class="space-y-2">${nav}${banner}</div>` + `<div class="space-y-3 mt-3">${body}</div>`;
   box.querySelectorAll("[data-tradetab]").forEach((b) => b.onclick = () => {
     S.tradeTab = b.dataset.tradetab; renderTrades();
   });
@@ -9210,6 +9309,17 @@ function wireTrades(me) {
     setClaimOrder(order);
     animateReorder("fa-claim-list", "data-clrow", renderTrades, moved);
   });
+  box.querySelectorAll("[data-wlpos]").forEach((b) => b.onclick = () => {
+    S.wlPos = b.dataset.wlpos; renderTrades();
+  });
+  const wlFree = box.querySelector("[data-wlfree]");
+  if (wlFree) wlFree.onclick = () => { S.wlFree = !S.wlFree; renderTrades(); };
+  const wl90 = box.querySelector("[data-wl90]");
+  if (wl90) wl90.onclick = () => { S.wlPer90 = !S.wlPer90; renderTrades(); };
+  const wlTeam = box.querySelector("#wl-team");
+  if (wlTeam) wlTeam.onchange = () => { S.wlTeam = wlTeam.value || ""; renderTrades(); };
+  const wlSort = box.querySelector("#wl-sort");
+  if (wlSort) wlSort.onchange = () => { S.wlSort = wlSort.value; renderTrades(); };
   const slClean = box.querySelector("#sl-clean");
   if (slClean) slClean.onclick = () => cleanShortlist().catch((e) => toast(e.message));
   const slClear = box.querySelector("#sl-clear");
@@ -9230,8 +9340,21 @@ function wireTrades(me) {
   const split = (v) => { const i = v.indexOf("|"); return [v.slice(0, i), v.slice(i + 1)]; };
   box.querySelectorAll("[data-plrm]").forEach((b) => b.onclick = () =>
     plannerRemoveChoice(...split(b.dataset.plrm)));
+  const slidePlan = (outId, pid, dir) => {
+    plannerMoveChoice(outId, pid, dir);
+    animateReorder("pl-choices-" + outId, "data-plrow", renderTrades, pid);
+  };
   box.querySelectorAll("[data-plup]").forEach((b) => b.onclick = () =>
-    plannerPromoteChoice(...split(b.dataset.plup)));
+    slidePlan(...split(b.dataset.plup), -1));
+  box.querySelectorAll("[data-pldn]").forEach((b) => b.onclick = () =>
+    slidePlan(...split(b.dataset.pldn), 1));
+  plannerMoves().forEach((m) => {
+    const el = box.querySelector("#pl-choices-" + CSS.escape(m.out));
+    if (el) makeReorderable(el, "data-plrow", (order, moved) => {
+      plannerSetChoiceOrder(m.out, order);
+      animateReorder("pl-choices-" + m.out, "data-plrow", renderTrades, moved);
+    });
+  });
   box.querySelectorAll("[data-plexec]").forEach((b) => b.onclick = () =>
     plannerExec(...split(b.dataset.plexec)));
   const newBtn = box.querySelector("#trade-new");
@@ -9315,8 +9438,10 @@ async function submitTrade(me) {
       .update({ status: "countered", updated_at: new Date().toISOString() })
       .eq("id", b.parent).eq("status", "proposed");
   }
-  toast(b.parent ? "Counter-offer sent." : "Proposal sent.");
+  toast(b.parent ? "Counter-offer sent — they'll see it in their Deals tab."
+                 : "Offer sent — it's now waiting on them.");
   S.builder = null;
+  renderTrades();          // don't wait on the refetch to show it went
   scheduleRefetch();
 }
 

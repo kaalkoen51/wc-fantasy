@@ -795,7 +795,10 @@ check("DEF and MID differ", slotGroup("DEF") === slotGroup("MID"), false);
 const pick = (id, slot) => ({ id, slot, player_name: id });
 check("GK ⇄ SUB_GK valid", pairValid(pick("a", "GK"), pick("b", "SUB_GK")), true);
 check("SUB_DEF ⇄ SUB_DEF valid", pairValid(pick("a", "SUB_DEF"), pick("b", "SUB_DEF")), true);
-check("DEF ⇄ MID invalid", pairValid(pick("a", "DEF"), pick("b", "MID")), false);
+// Any position for any position: a keeper for a striker is a legal deal,
+// and the hole it leaves is caught when that manager next picks an XI.
+check("DEF ⇄ MID is allowed", pairValid(pick("a", "DEF"), pick("b", "MID")), true);
+check("GK ⇄ FWD is allowed", pairValid(pick("a", "GK"), pick("b", "FWD")), true);
 check("TEAM never tradable", pairValid(pick("a", "TEAM"), pick("b", "TEAM")), false);
 
 /* trading: whole-trade validity */
@@ -806,8 +809,11 @@ check("valid multi pair", tradeError([
   { mine: P("a", "GK"), theirs: P("b", "GK") },
   { mine: P("c", "FWD"), theirs: P("d", "SUB_FWD") },
 ]), null);
-check("mismatched pair rejected", tradeError([
+check("cross-position pair accepted", tradeError([
   { mine: P("a", "DEF"), theirs: P("b", "FWD") },
+]), null);
+check("a TEAM pick is still refused", tradeError([
+  { mine: P("a", "TEAM"), theirs: P("b", "FWD") },
 ]) !== null, true);
 check("incomplete pair rejected", tradeError([
   { mine: P("a", "DEF"), theirs: null },

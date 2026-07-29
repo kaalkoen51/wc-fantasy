@@ -314,11 +314,21 @@ begin
                 and b.player_id is distinct from item.requested_player_id) then
             raise exception 'this trade is no longer valid — a player in it was traded away';
         end if;
+        -- Position travels with the player. Trades are no longer restricted to
+        -- matching positions, so leaving it behind would score a striker as
+        -- whatever the slot he landed in used to be. The slot keeps its
+        -- starter/sub status and takes the incoming player's position.
         update picks set player_id = 'tmp:' || item.id where id = a.id;
         update picks set player_id = a.player_id, player_name = a.player_name,
-                         team = a.team where id = b.id;
+                         team = a.team, position = a.position,
+                         slot = case when b.is_sub then 'SUB_' || a.position
+                                     else a.position end
+                     where id = b.id;
         update picks set player_id = b.player_id, player_name = b.player_name,
-                         team = b.team where id = a.id;
+                         team = b.team, position = b.position,
+                         slot = case when a.is_sub then 'SUB_' || b.position
+                                     else b.position end
+                     where id = a.id;
     end loop;
 end
 $fn$;
