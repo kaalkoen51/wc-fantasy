@@ -158,6 +158,10 @@ alter table managers add column if not exists is_bot boolean not null default fa
 -- a league rather than a list of names. Both optional — the app derives a
 -- stable colour from the manager id when unset, so identity works with no
 -- migration and no setup.
+-- Sub priority: the pick ids of your bench, in the order you want them to come
+-- on. The auto-sub engine promotes the first eligible bench player, so this is
+-- what decides who covers a no-show. Null = draft order, as before.
+alter table managers add column if not exists bench_order jsonb;
 alter table managers add column if not exists crest text;
 alter table managers add column if not exists color text;
 alter table leagues  add column if not exists owner_id uuid;
