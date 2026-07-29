@@ -2171,24 +2171,54 @@ function renderPredraftShortlist() {
     const e = entryForId(pid);
     if (!e) return "";
     return `<li data-slrow="${esc(pid)}" class="flex items-center gap-1.5 py-1.5 rounded">
-      <span class="w-5 shrink-0 text-xs text-slate-400 font-mono">${i + 1}</span>
+      <span class="w-5 shrink-0 text-xs font-mono ${
+        i === 0 ? "text-wcgold font-bold" : "text-slate-400"}">${i + 1}</span>
       ${avatarHtml(pid, e.team, "w-7 h-7")}
       <span class="min-w-0 flex-1">
         <span class="block truncate text-sm">${esc(e.name)}</span>
         <span class="block truncate text-xs text-slate-400">${esc(e.team || "")}</span>
       </span>
       <span class="shrink-0 text-xs pos-${e.position} rounded px-1.5 py-0.5">${e.position}</span>
-      ${ids.length > 1 ? `<button data-slup="${esc(pid)}" class="tap shrink-0 text-slate-400 ${i === 0 ? "opacity-30" : ""}" ${i === 0 ? "disabled" : ""} title="Move up">▲</button>
-      <button data-sldn="${esc(pid)}" class="tap shrink-0 text-slate-400 ${i === ids.length - 1 ? "opacity-30" : ""}" ${i === ids.length - 1 ? "disabled" : ""} title="Move down">▼</button>` : ""}
-      <button data-slrm="${esc(pid)}" class="tap shrink-0 text-slate-400 hover:text-wcred" title="Remove">✕</button>
+      ${ids.length > 1 ? `<span class="shrink-0 flex flex-col w-7 leading-none">
+        <button data-slup="${esc(pid)}" class="nudge text-slate-400 ${i === 0 ? "opacity-30" : ""}" ${i === 0 ? "disabled" : ""} aria-label="Move up">▲</button>
+        <button data-sldn="${esc(pid)}" class="nudge text-slate-400 ${i === ids.length - 1 ? "opacity-30" : ""}" ${i === ids.length - 1 ? "disabled" : ""} aria-label="Move down">▼</button>
+      </span>` : ""}
+      <button data-slrm="${esc(pid)}" class="tap shrink-0 text-slate-400 hover:text-wcred" aria-label="Remove">✕</button>
     </li>`;
   }).join("");
+  // What the board actually covers, by position. A shortlist of eleven
+  // strikers is a bad board and the count alone never tells you that.
+  const tally = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+  for (const pid of ids) {
+    const e = entryForId(pid);
+    if (e && tally[e.position] != null) tally[e.position]++;
+  }
+  const quota = posQuota();
+  const pips = GROUPS.slice(0, 4).map((g) => {
+    const short = (quota[g] || 0) > 0 && tally[g] < quota[g];
+    return `<span class="rounded px-1.5 py-0.5 text-xs font-semibold pos-${g} ${
+      short ? "opacity-50" : ""}" title="${tally[g]} starred${
+      quota[g] ? ` · you need ${quota[g]}` : ""}">${g} ${tally[g]}</span>`;
+  }).join("");
+
   box.innerHTML = `<div class="flex items-center justify-between gap-2">
       <span class="text-sm font-semibold">★ Your shortlist</span>
       <span class="text-xs text-slate-400">${ids.length} player${ids.length === 1 ? "" : "s"}</span>
     </div>
-    ${rows ? `<ul class="divide-y divide-slate-800">${rows}</ul>`
+    ${ids.length ? `<div class="flex items-center gap-1 flex-wrap">${pips}</div>` : ""}
+    ${rows ? `<ul class="divide-y divide-slate-800">${rows}</ul>
+      <p class="text-xs text-slate-400 pt-1">#1 is who auto-pick takes if your clock runs out.</p>`
            : '<p class="text-xs text-slate-400">Nothing yet — tap the ☆ beside a player below.</p>'}`;
+  // Keep the banner's progress meter honest without re-rendering the board.
+  const per = picksPerManager();
+  const haveEl = $("predraft-have"), barEl = $("predraft-bar"), hintEl = $("predraft-hint");
+  if (haveEl) haveEl.textContent = `${ids.length} of ${per} starred`;
+  if (hintEl) hintEl.textContent = ids.length >= per ? "board ready ⭐" : "aim for one name per round";
+  if (barEl) {
+    barEl.style.width = Math.min(100, Math.round((ids.length / Math.max(1, per)) * 100)) + "%";
+    barEl.className = "block h-full rounded-full " + (ids.length >= per ? "bg-live" : "bg-wcgold");
+  }
+
   box.querySelectorAll("[data-slup]").forEach((b) =>
     b.onclick = () => { moveShortlist(b.dataset.slup, -1); renderPredraftShortlist(); markQueueMoved(b.dataset.slup); });
   box.querySelectorAll("[data-sldn]").forEach((b) =>
@@ -5861,7 +5891,10 @@ function renderBoard() {
     // Team carries "How points are scored" and League carries "How the log is
     // scored"; on both, this footer repeated them a centimetre lower and
     // unboxed, as if it had fallen out of the card.
-    note.classList.toggle("hidden", ["team", "league"].includes(groupOfTab(S.boardTab)));
+    // ...and pre-draft it describes subs, stage bonuses and redrafts, none of
+    // which has happened yet or helps you star a striker.
+    note.classList.toggle("hidden",
+      preDraft || ["team", "league"].includes(groupOfTab(S.boardTab)));
   }
   maybeSquadReveal();
   maybeAutoRecap();
@@ -5874,12 +5907,44 @@ function renderBoard() {
   const slPanel = $("predraft-shortlist");
   if (slPanel) slPanel.classList.toggle("hidden", !preDraft);
   if (preDraft) {
-    $("board-banner").innerHTML = `<div class="rounded-xl border border-wcgold/50 bg-wcred/10 px-3 py-2.5">
-      <div class="flex items-center justify-between gap-2">
-        <span class="font-semibold">⭐ Build your shortlist</span>
+    // The last screen before the draft should feel like the moment before
+    // kick-off, not a filter panel: your pick number, the size of the squad
+    // you're about to build, and how far along your board is.
+    const meP = myManager();
+    const seats = S.managers.length;
+    const per = picksPerManager();
+    const have = (meP?.shortlist || []).length;
+    const pct = Math.min(100, Math.round((have / Math.max(1, per)) * 100));
+    const slot = meP?.draft_position;
+    $("board-banner").innerHTML = `<div class="rounded-xl border border-wcgold/50 bg-gradient-to-br from-wcred/25 via-slate-900 to-slate-900 p-3">
+      <div class="flex items-start justify-between gap-2">
+        <div class="min-w-0">
+          <div class="eyebrow text-wcgold">Scouting room</div>
+          <div class="text-xl font-bold leading-tight">Build your board</div>
+        </div>
         <button id="board-tolobby" class="shrink-0 rounded-lg bg-slate-800 border border-slate-700 px-3 py-1.5 text-xs font-semibold">← Lobby</button>
       </div>
-      <p class="text-xs text-slate-400 mt-1">Star players below. If your pick clock runs out, auto-pick takes the top name still available — so the order matters.</p></div>`;
+      <div class="mt-2 grid grid-cols-3 gap-1.5 text-center">
+        <div class="rounded-lg bg-slate-800/70 py-1.5">
+          <div class="text-lg font-bold scoreboard leading-none">${slot ? "#" + slot : "—"}</div>
+          <div class="eyebrow">your pick</div></div>
+        <div class="rounded-lg bg-slate-800/70 py-1.5">
+          <div class="text-lg font-bold scoreboard leading-none">${seats}</div>
+          <div class="eyebrow">managers</div></div>
+        <div class="rounded-lg bg-slate-800/70 py-1.5">
+          <div class="text-lg font-bold scoreboard leading-none">${per}</div>
+          <div class="eyebrow">rounds</div></div>
+      </div>
+      <div class="mt-2">
+        <div class="flex items-baseline justify-between gap-2 text-xs">
+          <span id="predraft-have" class="text-slate-300">${have} of ${per} starred</span>
+          <span id="predraft-hint" class="text-slate-400">${have >= per ? "board ready ⭐" : "aim for one name per round"}</span>
+        </div>
+        <div class="mt-1 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+          <span id="predraft-bar" class="block h-full rounded-full ${have >= per ? "bg-live" : "bg-wcgold"}" style="width:${pct}%"></span>
+        </div>
+      </div>
+      <p class="text-xs text-slate-400 mt-2">Star players below. If your pick clock runs out, auto-pick takes the top name still available — so the order matters.</p></div>`;
     const btl = $("board-tolobby");
     if (btl) btl.onclick = () => { S._browsing = false; route(); };
     renderPredraftShortlist();
@@ -5988,6 +6053,7 @@ S.statsSort = "points";
 S.statsPer90 = false;   // Stats tab: show per-90 rates instead of totals
 S.statsRound = 0;       // Stats tab: scope to a round (0 = whole tournament)
 S.statsView = "list";   // Stats tab: "list" leaderboard or "dream" best XI
+S.statsTeam = "";       // Stats tab: club filter ("" = all clubs)
 S.histIdxByMgr = {};   // manager id -> history pager index (0 = current)
 S.chartCompare = null; // Table season chart: manager id to compare against (H2H)
 S.tableView = "total"; // Table: "total" (official, incl. teams) or "player" (for fun)
@@ -6599,8 +6665,75 @@ function renderDreamTeam(round, per90) {
     openPlayerDetail(b.dataset.sp));
 }
 
+/* The pre-draft player list: no ranking, no points column, just the pool laid
+   out so you can walk it and star people. Rows are grouped by club when sorted
+   that way, because "who's left at Arsenal" is the question you actually ask
+   while building a shortlist. */
+const SCOUT_CAP = 120;
+
+function renderScoutList(pool, sortKey) {
+  const posRank = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
+  const byName = (a, b) => a.name.localeCompare(b.name);
+  pool.sort(
+    sortKey === "pos" ? ((a, b) => (posRank[a.position] ?? 9) - (posRank[b.position] ?? 9) || byName(a, b))
+    : sortKey === "name" ? byName
+    : ((a, b) => (a.team || "").localeCompare(b.team || "")
+        || (posRank[a.position] ?? 9) - (posRank[b.position] ?? 9) || byName(a, b)));
+
+  const shown = pool.slice(0, SCOUT_CAP);
+  const starred = new Set(myManager()?.shortlist || []);
+  let lastTeam = null;
+  $("stats-list").innerHTML = shown.map((p) => {
+    // A club divider whenever the club changes, so the list reads as squads.
+    const hdr = sortKey === "team" && p.team !== lastTeam
+      ? `<li class="flex items-center gap-2 pt-3 pb-1 sticky top-0 bg-slate-900 z-10">
+           ${teamCrestHtml(p.team, "w-5 h-5")}
+           <span class="eyebrow">${esc(p.team || "")}</span></li>` : "";
+    lastTeam = p.team;
+    return hdr + `<li class="flex items-center gap-1 ${starred.has(p.player_id) ? "bg-wcgold/5" : ""}">
+      ${starHtml(p.player_id)}
+      <button data-sp="${esc(p.player_id)}" class="flex-1 min-w-0 flex items-center gap-2 py-2 text-left">
+        ${avatarHtml(p.player_id, p.team)}
+        <span class="min-w-0 flex-1">
+          <span class="flex items-center gap-1 text-sm min-w-0">
+            <span class="truncate">${esc(p.name)}</span>
+            <span class="shrink-0 flex items-center gap-1">${availBadges(p.player_id)}</span>
+          </span>
+          <span class="flex items-center gap-1.5 text-xs text-slate-400">${
+            // Under a club divider the club name on every row is just noise.
+            sortKey === "team" ? "" :
+            `${teamCrestHtml(p.team, "w-3.5 h-3.5")}<span class="truncate">${esc(p.team || "")}</span>`}
+            ${p.number ? `<span class="shrink-0 font-mono">#${esc(p.number)}</span>` : ""}
+          </span>
+        </span>
+        <span class="pos-${p.position} rounded px-1.5 py-0.5 text-xs font-semibold shrink-0">${p.position}</span>
+      </button></li>`;
+  }).join("") || `<li class="py-4 text-sm text-slate-400">No players match.</li>`;
+
+  const note = $("stats-count");
+  note.classList.remove("hidden");
+  note.textContent = pool.length > SCOUT_CAP
+    ? `Showing ${SCOUT_CAP} of ${pool.length} — pick a club or search to see the rest.`
+    : `${pool.length} player${pool.length === 1 ? "" : "s"}`;
+
+  $("stats-list").querySelectorAll("[data-sp]").forEach((b) => b.onclick = () =>
+    openPlayerDetail(b.dataset.sp));
+  wireStars($("stats-list"), () => { renderStatsTab(); renderPredraftShortlist(); });
+}
+
 function renderStatsTab() {
-  const dream = S.statsView === "dream";
+  /* Before a ball is kicked this tab is a scouting sheet, not a leaderboard.
+     Everything here that is derived from match data — the Dream XI, the round
+     picker, per-90 rates, "hide knocked-out", and the ranking itself — has
+     nothing to rank yet, and a screen of dead controls above an empty list is
+     a bad first impression of the app. In that mode the page becomes: search,
+     position, club, and every player in the competition. */
+  const scouting = preDraftBrowsing();
+  const dream = S.statsView === "dream" && !scouting;
+  if (scouting) S.statsView = "list";
+  $("stats-view").classList.toggle("hidden", scouting);
+  $("stats-scope").classList.toggle("hidden", scouting || dream);
+  $("stats-filters").classList.toggle("hidden", scouting || dream);
   // View toggle (Leaderboard / Dream XI): active-state visuals + wiring.
   $("stats-view").querySelectorAll("[data-statsview]").forEach((b) => {
     const on = b.dataset.statsview === S.statsView;
@@ -6613,6 +6746,15 @@ function renderStatsTab() {
   $("stats-listctl").classList.toggle("hidden", dream);
   $("stats-list").classList.toggle("hidden", dream);
   $("stats-dream").classList.toggle("hidden", !dream);
+  $("stats-search").placeholder = scouting
+    ? "Search any player or club…" : "Search any player or country…";
+
+  // Club filter. Useful all season, essential when scouting — it is the only
+  // way to walk a 20-club, 600-player pool squad by squad.
+  const teams = [...new Set(S.players.map((p) => p.team).filter(Boolean))].sort();
+  $("stats-team").innerHTML = '<option value="">All clubs</option>' + teams.map((t) =>
+    `<option value="${esc(t)}" ${S.statsTeam === t ? "selected" : ""}>${esc(t)}</option>`).join("");
+  $("stats-team").onchange = () => { S.statsTeam = $("stats-team").value || ""; renderStatsTab(); };
 
   const chips = ["ALL", ...GROUPS.slice(0, 4)];
   $("stats-chips").innerHTML = chips.map((c) =>
@@ -6622,7 +6764,13 @@ function renderStatsTab() {
   $("stats-chips").querySelectorAll("[data-chip]").forEach((b) =>
     b.onclick = () => { S.statsPos = b.dataset.chip; renderStatsTab(); });
   // Sort dropdown = the shared stat options plus a Stats-tab-only "Form".
-  const sortOpts = [...STAT_SORTS, ["form", "Form · avg last 5"]];
+  // Scouting has no stats to sort by, so it offers the orderings that exist
+  // before kickoff: by club, by position, by name.
+  const sortOpts = scouting
+    ? [["team", "By club"], ["pos", "By position"], ["name", "A–Z"]]
+    : [...STAT_SORTS, ["form", "Form · avg last 5"]];
+  if (scouting && !sortOpts.some(([k]) => k === S.statsSort)) S.statsSort = "team";
+  if (!scouting && sortOpts.every(([k]) => k !== S.statsSort)) S.statsSort = "points";
   $("stats-sort").innerHTML = sortOpts.map(([k, lbl]) =>
     `<option value="${k}" ${S.statsSort === k ? "selected" : ""}>${lbl}</option>`).join("");
 
@@ -6643,12 +6791,12 @@ function renderStatsTab() {
   $("stats-per90").className = "rounded-full px-3 py-1 border " +
     (per90 ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400") +
     (isForm ? " opacity-40 pointer-events-none" : "");
-  $("stats-filters").classList.toggle("hidden", dream);
   $("stats-unpicked").className = "rounded-full px-3 py-1 border " +
     (S.statsUnpicked ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400");
   $("stats-hideko").className = "rounded-full px-3 py-1 border " +
     (S.statsHideKO ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400");
 
+  $("stats-count").classList.add("hidden");
   if (dream) { renderDreamTeam(round, per90); return; }
 
   const q = S.statsSearch.trim().toLowerCase();
@@ -6656,17 +6804,22 @@ function renderStatsTab() {
   if (q) {
     pool = S.players.filter((p) =>
       p.name.toLowerCase().includes(q) || p.team.toLowerCase().includes(q));
+  } else if (scouting) {
+    pool = S.players.slice();          // everyone: nobody has a stats row yet
   } else {
     // default view: everyone who has a stats row, ranked
     const ids = new Set((S.stats || []).map((r) => r.player_id));
     pool = [...ids].map((id) => S.playerById[id]).filter(Boolean);
   }
   if (S.statsPos !== "ALL") pool = pool.filter((p) => p.position === S.statsPos);
-  if (S.statsHideKO) pool = pool.filter((p) => !isEliminated(p.team));
-  if (S.statsUnpicked) {
+  if (S.statsTeam) pool = pool.filter((p) => p.team === S.statsTeam);
+  if (!scouting && S.statsHideKO) pool = pool.filter((p) => !isEliminated(p.team));
+  if (!scouting && S.statsUnpicked) {
     const owned = pickedIdSet();
     pool = pool.filter((p) => !owned.has(p.player_id));
   }
+
+  if (scouting) { renderScoutList(pool, sortKey); return; }
 
   const rawVal = (p, rows) => sortKey === "points"
     ? rows.reduce((s, r) => s + calcPlayerPoints(r, p.position), 0)
