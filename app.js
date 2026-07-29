@@ -4209,6 +4209,7 @@ function openH2HPreview() {
       ? "Points shown are this round only."
       : "Line-ups lock when the window closes — these can still change."}</p>`;
   $("recap-sheet").classList.remove("hidden");
+  lockScroll(true);
 }
 
 function matchdayCardHtml(me) {
@@ -4304,6 +4305,7 @@ function openCrestPicker() {
   if (!myManager()) return;
   renderCrestPicker();
   $("recap-sheet").classList.remove("hidden");
+  lockScroll(true);
 }
 
 /* ---------- squad reveal ----------
@@ -4396,6 +4398,7 @@ function openRoundup() {
       </li>`).join("")}</ol>`
       : '<p class="text-sm text-slate-400 text-center py-3">Nobody moved. A quiet window.</p>'}`;
   $("recap-sheet").classList.remove("hidden");
+  lockScroll(true);
   if (S.league?.id) localStorage.setItem("wcf_roundup_" + S.league.id, String(windowStamp()));
 }
 
@@ -4442,6 +4445,7 @@ function openAwards() {
       </div>`).join("")}</div>`
       : '<p class="text-sm text-slate-400 text-center py-3">Not enough rounds played yet.</p>'}`;
   $("recap-sheet").classList.remove("hidden");
+  lockScroll(true);
 }
 
 /* ---------- round recap (app side) ---------- */
@@ -4533,12 +4537,13 @@ function openRecap() {
     }, 0);
   }
   $("recap-sheet").classList.remove("hidden");
+  lockScroll(true);
   if (r) countUp(document.getElementById("recap-score"), r.score);
   // Only ever auto-show a given round once.
   const r2 = r || myRecap();
   if (r2 && S.league?.id) localStorage.setItem("wcf_recap_" + S.league.id, String(r2.n));
 }
-const closeRecap = () => $("recap-sheet")?.classList.add("hidden");
+const closeRecap = () => { $("recap-sheet")?.classList.add("hidden"); lockScroll(false); };
 
 /* Draw the recap to a canvas and share it. Rendering by hand (rather than
    screenshotting the DOM) keeps it dependency-free — no third-party library,
@@ -6472,6 +6477,8 @@ async function snapshotRosters() {
 /* ---------- lineup picker ---------- */
 
 function openLineup() {
+  S.lineupEdit = false;           // opens read-only; Edit lineup turns it on
+  lockScroll(true);
   const me = myManager();
   if (!me) return;
   if (!lineupOpen())
@@ -6483,10 +6490,8 @@ function openLineup() {
   S.captainDraft = me.captain_id || "";
   S.viceDraft = me.vice_id || "";
   const sq = starterQuota(), flex = leagueFlex();
-  $("lineup-rule").textContent = "Starters: " + ["GK", "DEF", "MID", "FWD"]
-    .filter((g) => sq[g] > 0).map((g) => `${sq[g]} ${g}`).join(", ")
-    + (flex ? ` + ${flex} flex (any of DEF/MID/FWD)` : "")
-    + ". The rest are subs — a sub only scores in rounds their starter doesn't play.";
+  $("lineup-rule").textContent =
+    "Pick an eligible starting XI. The rest are subs — a sub only scores when their starter doesn't play.";
   renderLineup();
   $("lineup-sheet").classList.remove("hidden");
 }
@@ -6518,6 +6523,17 @@ function teamCrestHtml(team, size = "w-4 h-4") {
 
 // "Bruno Fernandes" → "Fernandes"; single-word names stay whole. Pitch chips
 // are ~62px wide, so a surname is all that fits and all that's needed.
+// "v BUR" / "@ NEW" — the next opponent in the least space that still says
+// who and where. Empty when nothing is scheduled.
+function oppShort(team) {
+  const f = nextFixtureFor(team);
+  if (!f) return "";
+  const opp = f.home === team ? f.away : f.home;
+  const code = S.players.find((p) => p.team === opp)?.team_code
+    || String(opp).slice(0, 3).toUpperCase();
+  return `${f.home === team ? "v" : "@"} ${code}`;
+}
+
 function shortName(name) {
   const parts = String(name || "").trim().split(/\s+/);
   return parts.length > 1 ? parts[parts.length - 1] : (parts[0] || "");
@@ -6535,9 +6551,12 @@ function pitchHtml(byPos, opts = {}) {
     return `<button type="button" ${tap} class="pp ${e.dim ? "opacity-50" : ""}">
       <span class="relative inline-flex">
         ${avatarHtml(e.player_id, e.team, av)}
+        ${opts.crests && teamCrestHtml(e.team) ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${teamCrestHtml(e.team, "w-3.5 h-3.5")}</span>` : ""}
         ${e.badge ? `<span class="absolute -top-1 -right-1 rounded-full bg-wcgold text-slate-900 text-[10px] font-bold w-4 h-4 inline-flex items-center justify-center">${e.badge}</span>` : ""}
+        ${e.remove ? '<span class="absolute -top-1 -left-1 rounded-full bg-wcred text-white text-[11px] font-bold w-4 h-4 inline-flex items-center justify-center leading-none">−</span>' : ""}
       </span>
       <span class="pp-name">${esc(shortName(e.name))}</span>
+      ${e.opp ? `<span class="pp-opp">${esc(e.opp)}</span>` : ""}
       ${e.note != null ? `<span class="text-[11px] font-mono font-bold text-wcgold leading-none">${e.note}</span>` : ""}
     </button>`;
   };
@@ -6550,25 +6569,34 @@ function pitchHtml(byPos, opts = {}) {
   </div>`;
 }
 
+// While a full-screen sheet is open the page behind it must not scroll, or a
+// swipe that overshoots drags the board around underneath.
+function lockScroll(on) {
+  document.body.style.overflow = on ? "hidden" : "";
+}
+
 function renderLineup() {
   const me = myManager();
   const mine = managerPicks(me.id).filter((pk) => pk.slot !== "TEAM");
   const order = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
   mine.sort((a, b) => order[a.position] - order[b.position] || a.pick_number - b.pick_number);
   // Starters go on the pitch; everyone else sits on the bench beneath it.
-  // Tapping either moves a player between the two, which is the whole job of
-  // this screen — the old list made you read a column of STARTER/sub labels.
+  // The page opens in view mode — tapping a player tells you about them — and
+  // only becomes editable when you ask, so a stray tap can't wreck your XI.
+  const editing = !!S.lineupEdit;
   const starters = mine.filter((pk) => S.lineupDraft.has(pk.id));
   const bench = mine.filter((pk) => !S.lineupDraft.has(pk.id));
   const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
   for (const pk of starters) {
     (byPos[pk.position] ||= []).push({
       id: pk.id, player_id: pk.player_id, name: pk.player_name, team: pk.team,
+      opp: oppShort(pk.team),
+      remove: editing,
       badge: captainEnabled() && S.captainDraft === pk.player_id ? "C"
            : captainEnabled() && S.viceDraft === pk.player_id ? "V" : "",
     });
   }
-  const benchRow = (pk) => `<button data-lineup="${pk.id}"
+  const benchRow = (pk) => `<button data-${editing ? "lineup" : "peek"}="${editing ? pk.id : pk.player_id}"
       class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left border border-slate-700 bg-slate-800/60">
       ${avatarHtml(pk.player_id, pk.team, "w-7 h-7")}
       <span class="min-w-0 flex-1 leading-tight">
@@ -6577,21 +6605,24 @@ function renderLineup() {
           <span class="shrink-0 flex items-center gap-1">${availBadges(pk.player_id)}</span>
         </span>
         <span class="flex items-center gap-1 truncate text-xs text-slate-400">
-          ${teamCrestHtml(pk.team, "w-3.5 h-3.5")}${esc(pk.team)}${
-            fixtureText(pk.team) ? ` · ${esc(fixtureText(pk.team))}` : ""}</span>
+          ${teamCrestHtml(pk.team, "w-3.5 h-3.5")}<span class="truncate">${esc(pk.team)}</span>
+          ${oppShort(pk.team) ? `<span class="shrink-0">· ${esc(oppShort(pk.team))}</span>` : ""}</span>
       </span>
       <span class="shrink-0 text-xs pos-${pk.position} rounded px-1.5 py-0.5">${pk.position}</span>
-      <span class="shrink-0 text-xs font-semibold text-wcgold">+</span>
+      ${editing ? '<span class="shrink-0 text-sm font-bold text-wcgold">+</span>' : ""}
     </button>`;
 
   $("lineup-list").innerHTML = `
-    ${pitchHtml(byPos, { tapAttr: "data-lineup" })}
-    <p class="text-xs text-slate-400 mt-2">Tap a player on the pitch to bench them, or a sub below to bring them on.</p>
+    ${pitchHtml(byPos, { tapAttr: editing ? "data-lineup" : "data-peek", crests: true })}
     <div class="mt-2">
       <div class="eyebrow mb-1">Bench · ${bench.length}</div>
       <div class="space-y-1">${bench.map(benchRow).join("")
         || '<p class="text-xs text-slate-400">Nobody on the bench.</p>'}</div>
     </div>`;
+
+  // View mode: a tap opens the player's card instead of changing the team.
+  $("lineup-list").querySelectorAll("[data-peek]").forEach((b) => b.onclick = () =>
+    openPlayerDetail(b.dataset.peek));
 
   $("lineup-list").querySelectorAll("[data-lineup]").forEach((b) => b.onclick = () => {
     const id = b.dataset.lineup;
@@ -6599,20 +6630,21 @@ function renderLineup() {
     else S.lineupDraft.add(id);
     renderLineup();
   });
+  $("lineup-edit").textContent = editing ? "Done editing" : "Edit lineup";
+  $("lineup-edit").className = "rounded-lg border px-3 py-1.5 text-xs font-semibold "
+    + (editing ? "border-wcgold text-wcgold bg-wcgold/10" : "border-slate-700 bg-slate-800");
   const counts = lineupCounts();
   const total = counts.GK + counts.DEF + counts.MID + counts.FWD;
-  if (isFlexFormation()) {
-    const f = formationBounds();
-    $("lineup-count").textContent = `Starting XI ${total}/${f.starters} — build any valid formation: `
-      + ["GK", "DEF", "MID", "FWD"].map((g) => `${counts[g]} ${g}`).join(" · ")
-      + (lineupValid(counts) ? " ✓" : "");
-  } else {
-    const sq = starterQuota(), flex = lineupFlex();
-    const need = (sq.GK || 0) + (sq.DEF || 0) + (sq.MID || 0) + (sq.FWD || 0) + flex;
-    $("lineup-count").textContent = `Starters ${total}/${need}: ` + ["GK", "DEF", "MID", "FWD"]
-      .filter((g) => (sq[g] || 0) > 0 || counts[g] > 0)
-      .map((g) => `${counts[g]} ${g}`).join(" · ") + (flex ? " · +flex outfield" : "");
-  }
+  const ok = lineupValid(counts);
+  const need = isFlexFormation()
+    ? formationBounds().starters
+    : ["GK", "DEF", "MID", "FWD"].reduce((a, g) => a + (starterQuota()[g] || 0), 0) + lineupFlex();
+  // Outfield shape only — "3-4-3" is how anyone actually describes a formation.
+  $("lineup-formation").textContent = `${counts.DEF}-${counts.MID}-${counts.FWD}`;
+  $("lineup-formation").className = "text-3xl font-bold scoreboard tracking-tight "
+    + (ok ? "text-wcgold" : "text-danger");
+  $("lineup-count").textContent = `${total}/${need} picked${counts.GK !== 1 ? " · needs a keeper" : ""}`;
+  $("lineup-count").className = "text-xs " + (ok ? "text-slate-400" : "text-danger");
   $("lineup-save").disabled = !lineupValid(counts);
   // Captain / vice pickers (only among the chosen starters).
   const capBox = $("lineup-captain");
@@ -6626,8 +6658,10 @@ function renderLineup() {
         <select id="lineup-cap-sel" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm">${opts(S.captainDraft)}</select></label>
       <label class="text-xs text-slate-400">Vice Ⓥ <span class="text-slate-400">backup</span>
         <select id="lineup-vice-sel" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm">${opts(S.viceDraft)}</select></label>`;
-    $("lineup-cap-sel").onchange = (e) => { S.captainDraft = e.target.value; };
-    $("lineup-vice-sel").onchange = (e) => { S.viceDraft = e.target.value; };
+    // Re-render so the armband on the pitch follows the selection — it used to
+    // only update on the next full render, which read as nothing happening.
+    $("lineup-cap-sel").onchange = (e) => { S.captainDraft = e.target.value; renderLineup(); };
+    $("lineup-vice-sel").onchange = (e) => { S.viceDraft = e.target.value; renderLineup(); };
   } else capBox.classList.add("hidden");
 }
 
@@ -6657,6 +6691,7 @@ async function saveLineup() {
   }
   toast(changes.length ? "Lineup saved." : "Lineup unchanged.");
   $("lineup-sheet").classList.add("hidden");
+  lockScroll(false);
   scheduleRefetch();
 }
 
@@ -9068,8 +9103,9 @@ function wire() {
   $("chart-sheet").onclick = (e) => { if (e.target.id === "chart-sheet") closeChartSheet(); };  // tap backdrop
   $("swap-search").oninput = renderSwapList;
   $("swap-team").onchange = renderSwapList;
-  $("lineup-cancel").onclick = () => $("lineup-sheet").classList.add("hidden");
+  $("lineup-cancel").onclick = () => { $("lineup-sheet").classList.add("hidden"); lockScroll(false); };
   $("lineup-save").onclick = () => saveLineup().catch((e) => toast(e.message));
+  $("lineup-edit").onclick = () => { S.lineupEdit = !S.lineupEdit; renderLineup(); };
   ["adm-home", "adm-away", "adm-date", "adm-label"].forEach((id) =>
     $(id).onchange = () => $("adm-label-preview").textContent = admLabel());
   $("adm-save").onclick = () => admSave().catch((e) => toast(e.message));

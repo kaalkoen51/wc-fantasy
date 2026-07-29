@@ -165,6 +165,8 @@
   .pitch-row { display: flex; justify-content: space-evenly; align-items: flex-start; gap: 2px; }
   .pp { display: flex; flex-direction: column; align-items: center; gap: 2px;
         width: 62px; min-width: 0; background: none; border: 0; padding: 0; }
+  .pp-opp { font-size: 10px; line-height: 1.1; color: #cbd5e1;
+            text-shadow: 0 1px 2px rgba(0,0,0,.9); }
   .pp-name { max-width: 62px; font-size: 11px; line-height: 1.15; text-align: center;
     background: rgba(2,6,23,.74); border-radius: 4px; padding: 1px 4px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -831,15 +833,22 @@
 
 <!-- Lineup picker bottom sheet -->
 <div id="lineup-sheet" class="hidden fixed inset-0 z-40 bg-black/60">
-  <div class="absolute bottom-0 inset-x-0 max-h-[85vh] bg-slate-900 border-t border-slate-700 rounded-t-2xl p-4 flex flex-col">
-    <div class="font-semibold">Pick your team for the next games</div>
+  <div class="absolute bottom-0 inset-x-0 max-h-[92vh] bg-slate-900 border-t border-slate-700 rounded-t-2xl p-4 flex flex-col">
+    <div class="flex items-center justify-between gap-2">
+      <span class="font-semibold">Your team</span>
+      <button id="lineup-edit" class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold">Edit lineup</button>
+    </div>
+    <!-- The formation is the thing you're actually deciding, so it leads. -->
+    <div class="flex items-baseline gap-2 mt-1">
+      <span id="lineup-formation" class="text-3xl font-bold scoreboard tracking-tight">—</span>
+      <span id="lineup-count" class="text-xs text-slate-400"></span>
+    </div>
     <p id="lineup-rule" class="text-xs text-slate-400 mt-0.5 mb-2"></p>
     <div id="lineup-captain" class="hidden grid grid-cols-2 gap-2 mb-2"></div>
-    <div id="lineup-list" class="overflow-y-auto flex-1 min-h-0 space-y-1"></div>
+    <div id="lineup-list" class="overflow-y-auto overscroll-contain flex-1 min-h-0 space-y-1"></div>
     <div class="flex items-center gap-2 mt-3">
-      <span id="lineup-count" class="flex-1 text-xs text-slate-400"></span>
-      <button id="lineup-cancel" class="bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-sm font-semibold">Cancel</button>
-      <button id="lineup-save" class="bg-wcred hover:bg-wcred-hov disabled:bg-slate-800 disabled:text-slate-400 rounded-lg px-4 py-2 text-sm font-semibold">Save</button>
+      <button id="lineup-cancel" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-sm font-semibold">Cancel</button>
+      <button id="lineup-save" class="flex-1 bg-wcred hover:bg-wcred-hov disabled:bg-slate-800 disabled:text-slate-400 rounded-lg px-4 py-2 text-sm font-semibold">Save</button>
     </div>
   </div>
 </div>
