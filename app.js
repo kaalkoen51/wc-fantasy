@@ -450,6 +450,19 @@ async function refetchAll({ initial = false } = {}) {
   const l = await S.sb.from("leagues").select("*").eq("id", id).maybeSingle();
   if (l.error) return bail(l.error.message);
   if (!l.data) { toast("League not found."); setSession(null); showView("home"); return false; }
+  /* A draft only ever moves forward. A read issued before our advance landed
+     reports the PREVIOUS pick, and applying it rewinds the room: whose turn it
+     is goes backwards and pick_started_at reverts to a deadline that has
+     already expired, so the clock reads 0:00 and auto-pick fires a second time
+     within seconds. Hold our position unless the compare-and-swap told us we
+     genuinely lost the race. */
+  const prevLeague = S.league;
+  if (prevLeague && prevLeague.id === l.data.id
+      && keepLocalPick(prevLeague.current_pick, l.data.current_pick, forcePickResync)) {
+    l.data.current_pick = prevLeague.current_pick;
+    l.data.pick_started_at = prevLeague.pick_started_at;
+  }
+  forcePickResync = false;
   S.league = l.data;
   const compKey = competitionKey();
   // Stats outgrow Supabase's 1000-row request cap, so page through them.
@@ -538,6 +551,17 @@ function markConnection(ok, msg) {
    each of them reading a row we were in the middle of replacing. Holding the
    refetch until our own writes have landed removes both the wasted round trips
    and the window the stale-read bounce lived in. */
+/* Whose pick pointer to believe when a read disagrees with what we hold.
+   The draft only ever moves forward, so a read reporting an EARLIER pick was
+   issued before our advance landed and is stale by definition — applying it
+   rewinds the room onto an already-expired clock. The exception is `forced`:
+   a compare-and-swap that matched nothing means another client got there
+   first, and then the server is right and we are not. */
+const keepLocalPick = (mine, theirs, forced) =>
+  !forced && (mine || 0) > (theirs || 0);
+
+// Set when that CAS tells us we lost, so the next read may move us backwards.
+let forcePickResync = false;
 let refetchTimer, _refetchWanted = false;
 const scheduleRefetch = () => {
   clearTimeout(refetchTimer);
@@ -1544,6 +1568,15 @@ S.poolSort = "";            // draft pool: sort by a stat ("" = default order)
 S.bannerDayOffset = 0;      // matchday banner: 0 = default day, -1 = prev, etc.
 S.poolShortlistOnly = false;
 let autoPickedFor = 0;
+// How long past the deadline an unlanded auto-pick waits before being retried.
+const AUTOPICK_RETRY_S = 10;
+
+/* Has an auto-pick been claimed for the pick we're still sitting on, long
+   enough past the deadline that it plainly never landed? The guard is set
+   before the write, so without this a pick that fails silently freezes the
+   room at 0:00 for good. */
+const autoPickStale = (guardedPick, currentPick, remainS, retryS = AUTOPICK_RETRY_S) =>
+  !!guardedPick && guardedPick === currentPick && remainS <= -retryS;
 
 function draftOrderManagers() {
   return activeManagers().sort(
@@ -1957,10 +1990,14 @@ function needsSummary(mgrPicks) {
 
 async function makePick(entry, info) {
   const p = S.league.current_pick;
-  if (info.pickNumber && info.pickNumber !== p) return;
+  /* Every early return here abandons a pick that something is waiting on. The
+     auto-pick guard is set before the call, so leaving it set means the clock
+     sits at 0:00 and nothing ever tries again — release it on the way out. */
+  const giveUp = (msg) => { autoPickedFor = 0; if (msg) toast(msg); };
+  if (info.pickNumber && info.pickNumber !== p) return giveUp();
   const mgrPicks = managerPicks(info.manager.id);
   if (quotaLeft(mgrPicks, entry.position) <= 0)
-    return toast(`${info.manager.name} already has the maximum ${entry.position}s.`);
+    return giveUp(`${info.manager.name} already has the maximum ${entry.position}s.`);
   const slot = slotForNewPick(mgrPicks, entry.position);
   const row = {
     league_id: S.league.id, manager_id: info.manager.id,
@@ -1974,7 +2011,8 @@ async function makePick(entry, info) {
   const { error } = await S.sb.from("picks").insert(row);
   if (error) {
     // 23505 = someone else's pick landed first; just resync.
-    if (error.code !== "23505") toast(error.message);
+    giveUp(error.code === "23505" ? "" : error.message);
+    forcePickResync = true;         // their pick number is the real one now
     scheduleRefetch();
     return;
   }
@@ -1991,16 +2029,30 @@ async function makePick(entry, info) {
   if (!finished && !document.querySelector('[data-view="draft"]')?.classList.contains("hidden"))
     renderDraft();
 
+  // Compare-and-swap: only advance the room if it is still on pick `p`.
   const advance = S.sb.from("leagues")
     .update({ current_pick: p + 1, pick_started_at: startedAt })
-    .eq("id", S.league.id).eq("current_pick", p);
+    .eq("id", S.league.id).eq("current_pick", p)
+    .select("current_pick");
+
+  /* The result of that CAS used to be thrown away. If it matched no rows we
+     had already lost the race, yet the client went on believing it had moved
+     the room — and then held that belief against every refetch. Knowing we
+     lost is the only way to hand the position back. */
+  const settleAdvance = ({ data, error } = {}) => {
+    if (error) return;                       // network: the refetch reconciles
+    if (data && data.length) return;         // we did advance the room
+    forcePickResync = true;
+    scheduleRefetch();
+  };
+
   if (finished) {
-    await advance;
+    settleAdvance(await advance);
     // Draft just finished: this client writes the baseline lineup lock.
     await refetchAll();
     await snapshotRosters();
   } else {
-    advance.then(() => {}, () => {});
+    advance.then(settleAdvance, () => {});
   }
   scheduleRefetch();
 }
@@ -2138,12 +2190,18 @@ function tickTimer() {
   }
   clock.classList.toggle("text-red-400", remain <= 10);
   clock.classList.toggle("text-wcgold", remain > 10);
+  /* The same watchdog the bot path has, and for the same reason: the guard is
+     set BEFORE the write, so an auto-pick that doesn't land — a lost race, a
+     stale pick number, a quota that filled underneath it — left the room
+     frozen on an expired clock with nothing to retry it. This is the state
+     that reads as "the draft got stuck". */
+  if (autoPickStale(autoPickedFor, L.current_pick, remain)) autoPickedFor = 0;
   if (remain > 0 || autoPickedFor === L.current_pick) return;
   const info = pickInfo(L.current_pick);
   const mine = info.manager.id === myManager()?.id;
   if (mine || (isAdmin() && remain <= -4)) {
     autoPickedFor = L.current_pick;
-    autoPick(info).catch((e) => toast(e.message));
+    autoPick(info).catch((e) => { autoPickedFor = 0; toast(e.message); });
   }
 }
 
