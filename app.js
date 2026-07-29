@@ -2239,8 +2239,10 @@ function renderPool(force) {
           <span class="shrink-0 flex items-center gap-1">${availBadges(e.player_id)}${plannerBadge(e.player_id)}${
             owner ? ownerChipHtml(e.player_id) : ""}</span>
         </div>
-        <div class="truncate text-xs text-slate-400">${
-          teamF ? (fixtureText(e.team) || "&nbsp;") : teamFixLine(e.team)}</div>
+        <!-- The club stays even when you've filtered to one. Dropping it made
+             the row unable to identify its own player, and when no fixture was
+             known the line collapsed to a blank. -->
+        <div class="truncate text-xs text-slate-400">${teamFixLine(e.team)}</div>
       </div>`;
     return `<li class="flex items-center py-2 gap-1.5 ${owner || ko ? "opacity-60" : ""}">
       ${starHtml(e.player_id)}
