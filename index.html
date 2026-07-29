@@ -137,6 +137,38 @@
      a hardcoded guess left it tucked behind the header on some devices. */
   .draft-sticky { position: sticky; top: var(--hdr-h, 3.5rem); }
 
+  /* ---- The pitch ------------------------------------------------------
+     Used by the lineup picker, the head-to-head preview and the post-round
+     comparison. Mown stripes and markings are drawn in CSS so there's no
+     image to load and it recolours with the theme. */
+  .pitch { position: relative; border-radius: 14px; overflow: hidden; min-height: 240px;
+    background:
+      repeating-linear-gradient(0deg, rgba(255,255,255,.04) 0 7.5%, transparent 7.5% 15%),
+      linear-gradient(180deg, #14512f 0%, #0c3a22 55%, #0a2f1c 100%);
+    border: 1px solid rgba(255,255,255,.14); }
+  .pitch::before { content: ""; position: absolute; inset: 6px;
+    border: 2px solid rgba(255,255,255,.16); border-radius: 8px; pointer-events: none; }
+  .pitch::after { content: ""; position: absolute; left: 50%; top: 50%; width: 24%;
+    aspect-ratio: 1; transform: translate(-50%,-50%);
+    border: 2px solid rgba(255,255,255,.16); border-radius: 50%; pointer-events: none; }
+  .pitch-half { position: absolute; left: 6px; right: 6px; top: 50%;
+    border-top: 2px solid rgba(255,255,255,.16); pointer-events: none; }
+  .pitch-box { position: absolute; left: 22%; right: 22%; height: 13%;
+    border: 2px solid rgba(255,255,255,.16); pointer-events: none; }
+  .pitch-box.b { bottom: 6px; border-bottom: none; }
+  .pitch-box.t { top: 6px; border-top: none; }
+  /* column-reverse so the keeper sits at the bottom and attackers at the top. */
+  /* Height follows the rows rather than a fixed aspect ratio: with a fixed
+     ratio a narrow (half-width) pitch clipped its own keeper row. */
+  .pitch-rows { position: relative; display: flex; flex-direction: column-reverse;
+    justify-content: space-around; padding: 14px 4px; gap: 10px; }
+  .pitch-row { display: flex; justify-content: space-evenly; align-items: flex-start; gap: 2px; }
+  .pp { display: flex; flex-direction: column; align-items: center; gap: 2px;
+        width: 62px; min-width: 0; background: none; border: 0; padding: 0; }
+  .pp-name { max-width: 62px; font-size: 11px; line-height: 1.15; text-align: center;
+    background: rgba(2,6,23,.74); border-radius: 4px; padding: 1px 4px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
   /* Keep the bottom bar clear of the iOS home indicator. */
   #bottom-nav { padding-bottom: env(safe-area-inset-bottom); }
   .tap { min-width: 40px; min-height: 40px; display: inline-flex;
