@@ -4100,34 +4100,115 @@ function matchdayNow() {
 }
 
 // The card itself: stage strip, countdown, what's unset, one primary action.
-/* While games are on, show your round against the manager you're actually
-   playing. This is the reason to have the app open on a Saturday. */
-function liveRaceHtml(me) {
-  if (!h2hEnabled() || !me) return "";
-  const scores = h2hRoundScores();
-  const rnd = Math.max(0, ...Object.values(scores).map((a) => a.length));
-  if (!rnd) return "";
+/* Head-to-head: who you're playing, how it's going, and both line-ups.
+   Previously the only sign of an opponent was a score bar that appeared once
+   points existed — so before a round started you couldn't see who you'd drawn. */
+
+// Your opponent in a given round; null for a bye or a non-H2H league.
+function h2hOpponentFor(me, roundNo) {
+  if (!h2hEnabled() || !me) return null;
   const ids = S.managers.map((m) => m.id);
-  const fx = h2hFixturesFor(ids, rnd).filter((f) => f.round === rnd);
+  const cfg = h2hConfig();
+  const plan = cfg.rumble ? h2hSchedulePlan(ids.length, cfg.rounds || roundNo, { rumble: true }) : null;
+  const opts = plan && plan.valid && plan.rumble && cfg.rumble_scoring !== "placement"
+    ? { rumbleFrom: plan.rumbleFrom } : {};
+  const fx = h2hFixturesFor(ids, roundNo, opts).filter((f) => f.round === roundNo);
   const mine = fx.find((f) => f.home_manager_id === me.id || f.away_manager_id === me.id);
-  if (!mine || !mine.away_manager_id) return "";
+  if (!mine || !mine.away_manager_id || !mine.home_manager_id) return null;
   const oppId = mine.home_manager_id === me.id ? mine.away_manager_id : mine.home_manager_id;
-  const opp = S.managers.find((m) => m.id === oppId);
-  const a = scores[me.id]?.[rnd - 1] ?? 0, b = scores[oppId]?.[rnd - 1] ?? 0;
-  const total = Math.max(1, a + b);
-  const lead = a > b ? "text-live" : a < b ? "text-danger" : "text-slate-200";
-  return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3">
-    <div class="eyebrow mb-1.5">Round ${rnd} · head to head</div>
-    <div class="flex items-center justify-between gap-2 text-sm">
+  return S.managers.find((m) => m.id === oppId) || null;
+}
+
+// The round the fixture card should be about: the one in progress, else the
+// first one, so a fixture is visible before any points exist.
+function h2hCurrentRound() {
+  const scores = h2hRoundScores();
+  return Math.max(1, ...Object.values(scores).map((a) => a.length));
+}
+
+function h2hFixtureCardHtml(me) {
+  if (!h2hEnabled() || !me) return "";
+  const rnd = h2hCurrentRound();
+  const opp = h2hOpponentFor(me, rnd);
+  if (!opp) return h2hEnabled()
+    ? `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 text-xs text-slate-400">
+         Round ${rnd} · you have a bye this round.</div>` : "";
+  const scores = h2hRoundScores();
+  const a = scores[me.id]?.[rnd - 1], b = scores[opp.id]?.[rnd - 1];
+  const live = a != null && b != null;
+  const total = Math.max(1, (a || 0) + (b || 0));
+  const lead = !live ? "text-slate-200" : a > b ? "text-live" : a < b ? "text-danger" : "text-slate-200";
+  return `<button id="h2h-fixture" class="w-full text-left rounded-xl border border-slate-700 bg-slate-900 p-3 hover:border-slate-500">
+    <div class="flex items-center justify-between gap-2">
+      <span class="eyebrow">Round ${rnd} · head to head</span>
+      <span class="text-xs text-wcgold">View line-ups →</span>
+    </div>
+    <div class="mt-1.5 flex items-center justify-between gap-2 text-sm">
       <span class="min-w-0 flex-1">${managerTag(me)}</span>
-      <span class="shrink-0 font-bold scoreboard ${lead}">${a} – ${b}</span>
+      <span class="shrink-0 font-bold scoreboard ${lead}">${live ? `${a} – ${b}` : "vs"}</span>
       <span class="min-w-0 flex-1 flex justify-end">${managerTag(opp)}</span>
     </div>
-    <div class="mt-2 h-1.5 rounded-full bg-slate-800 overflow-hidden flex">
+    ${live ? `<div class="mt-2 h-1.5 rounded-full bg-slate-800 overflow-hidden flex">
       <span style="width:${(a / total) * 100}%;background:${managerColor(me)}"></span>
       <span style="width:${(b / total) * 100}%;background:${managerColor(opp)}"></span>
+    </div>` : ""}
+  </button>`;
+}
+
+// Both line-ups on pitches, with each player's points once the round has been
+// played. This is the "how did we actually match up" view.
+function openH2HPreview() {
+  const me = myManager();
+  if (!me) return;
+  const rnd = h2hCurrentRound();
+  const opp = h2hOpponentFor(me, rnd);
+  const body = $("recap-body");
+  if (!opp || !body) return;
+
+  // Prefer the locked round's roster (with points); fall back to the live XI.
+  const sideFor = (m) => {
+    const round = (managerHistory(m.id).rounds || []).find((r) => r.n === rnd);
+    const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+    let total = 0;
+    if (round) {
+      for (const it of round.items) {
+        const e = it.entry;
+        if (e.is_sub || e.position === "TEAM" || !byPos[e.position]) continue;
+        byPos[e.position].push({ id: e.player_id, player_id: e.player_id,
+          name: e.player_name, team: e.team, note: it.pts ?? 0 });
+        total += it.pts || 0;
+      }
+    } else {
+      for (const pk of managerPicks(m.id)) {
+        if (pk.is_sub || pk.slot === "TEAM" || !byPos[pk.position]) continue;
+        byPos[pk.position].push({ id: pk.player_id, player_id: pk.player_id,
+          name: pk.player_name, team: pk.team });
+      }
+    }
+    return { byPos, total, played: !!round };
+  };
+  const mine = sideFor(me), theirs = sideFor(opp);
+  const side = (m, s) => `<div class="min-w-0">
+      <div class="flex items-center justify-between gap-2 mb-1">
+        <span class="min-w-0 text-sm">${managerTag(m)}</span>
+        ${s.played ? `<span class="shrink-0 font-bold text-wcgold scoreboard">${s.total}</span>` : ""}
+      </div>
+      ${pitchHtml(s.byPos, { small: true, aspect: "aspect-[3/4]" })}
+    </div>`;
+
+  body.innerHTML = `
+    <div class="text-center">
+      <div class="eyebrow">Round ${rnd}</div>
+      <div class="text-lg font-bold mt-0.5">${esc(me.name)} vs ${esc(opp.name)}</div>
+      ${mine.played ? `<div class="text-2xl font-bold scoreboard ${
+        mine.total > theirs.total ? "text-live" : mine.total < theirs.total ? "text-danger" : "text-slate-200"
+      }">${mine.total} – ${theirs.total}</div>` : '<div class="text-xs text-slate-400">Not played yet</div>'}
     </div>
-  </div>`;
+    <div class="grid grid-cols-2 gap-2">${side(me, mine)}${side(opp, theirs)}</div>
+    <p class="text-xs text-slate-400 text-center">${mine.played
+      ? "Points shown are this round only."
+      : "Line-ups lock when the window closes — these can still change."}</p>`;
+  $("recap-sheet").classList.remove("hidden");
 }
 
 function matchdayCardHtml(me) {
@@ -4564,7 +4645,7 @@ function renderHomeTab() {
     <div id="hist-home-${me.id}" class="rounded-xl border border-slate-700 bg-slate-900 p-3"></div>`;
   box.innerHTML = `
     ${matchdayCardHtml(me)}
-    ${liveRaceHtml(me)}
+    ${h2hFixtureCardHtml(me)}
     ${phaseCardsHtml(me)}
     <div class="rounded-xl border bg-slate-900 p-4 flex items-center justify-between gap-2"
          style="border-color:${managerColor(me)}55">
@@ -4595,6 +4676,8 @@ function renderHomeTab() {
   renderHistInto("hist-home-" + me.id, me.id);   // "your lineup" perspective
   const lb = box.querySelector("#home-lineup");
   if (lb) lb.onclick = openLineup;
+  const h2hBtn = box.querySelector("#h2h-fixture");
+  if (h2hBtn) h2hBtn.onclick = openH2HPreview;
   const crestBtn = box.querySelector("#home-crest");
   if (crestBtn) crestBtn.onclick = openCrestPicker;
   const cta = box.querySelector("#md-cta");
@@ -6058,7 +6141,7 @@ function playerDetailHtml(p, opts = {}) {
           <div class="flex items-center gap-1.5 flex-wrap mt-1 text-xs text-slate-400">
             <span class="pos-${p.position} rounded px-1.5 py-0.5 font-semibold">${p.position}</span>
             ${availBadges(p.player_id)}
-            <span>${esc(p.team)}</span>
+            <span class="inline-flex items-center gap-1">${teamCrestHtml(p.team, "w-4 h-4")}${esc(p.team)}</span>
           </div>
           <div class="text-xs text-slate-400 mt-0.5">${
             owner ? `👤 ${esc(owner)}` : "free agent"}</div>
@@ -6423,34 +6506,93 @@ function lineupValid(counts) {
   return flexComplete(counts, starterQuota(), lineupFlex());
 }
 
+/* Club crest for a team. API competitions carry the id on every player; the
+   legacy WC pool has it in photos.json. Empty string when unknown, so callers
+   can drop it in without guarding. */
+function teamCrestHtml(team, size = "w-4 h-4") {
+  const id = S.photos?.teams?.[team] ?? teamLogoId(team);
+  if (!id) return "";
+  return `<img src="https://media.api-sports.io/football/teams/${id}.png" loading="lazy" data-avatar
+    class="${size} inline-block object-contain shrink-0 align-[-2px]" alt="" title="${esc(team)}">`;
+}
+
+// "Bruno Fernandes" → "Fernandes"; single-word names stay whole. Pitch chips
+// are ~62px wide, so a surname is all that fits and all that's needed.
+function shortName(name) {
+  const parts = String(name || "").trim().split(/\s+/);
+  return parts.length > 1 ? parts[parts.length - 1] : (parts[0] || "");
+}
+
+/* The XI laid out on a pitch. Shared by the lineup picker, the head-to-head
+   preview and the post-round comparison, so it takes plain rows and leaves
+   interaction to the caller via `tapAttr`.
+     byPos : { GK:[e], DEF:[e], MID:[e], FWD:[e] }
+     e     : { id, player_id, name, team, badge?, note?, dim? }              */
+function pitchHtml(byPos, opts = {}) {
+  const av = opts.small ? "w-8 h-8" : "w-10 h-10";
+  const chip = (e) => {
+    const tap = opts.tapAttr ? `${opts.tapAttr}="${esc(e.id)}"` : "";
+    return `<button type="button" ${tap} class="pp ${e.dim ? "opacity-50" : ""}">
+      <span class="relative inline-flex">
+        ${avatarHtml(e.player_id, e.team, av)}
+        ${e.badge ? `<span class="absolute -top-1 -right-1 rounded-full bg-wcgold text-slate-900 text-[10px] font-bold w-4 h-4 inline-flex items-center justify-center">${e.badge}</span>` : ""}
+      </span>
+      <span class="pp-name">${esc(shortName(e.name))}</span>
+      ${e.note != null ? `<span class="text-[11px] font-mono font-bold text-wcgold leading-none">${e.note}</span>` : ""}
+    </button>`;
+  };
+  return `<div class="pitch">
+    <div class="pitch-half"></div><div class="pitch-box b"></div><div class="pitch-box t"></div>
+    <div class="pitch-rows">
+      ${["GK", "DEF", "MID", "FWD"].map((g) =>
+        `<div class="pitch-row">${(byPos[g] || []).map(chip).join("")}</div>`).join("")}
+    </div>
+  </div>`;
+}
+
 function renderLineup() {
   const me = myManager();
   const mine = managerPicks(me.id).filter((pk) => pk.slot !== "TEAM");
   const order = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
   mine.sort((a, b) => order[a.position] - order[b.position] || a.pick_number - b.pick_number);
-  let lastPos = "";
-  $("lineup-list").innerHTML = mine.map((pk) => {
-    const need = starterQuota()[pk.position] || 0;
-    const fb = isFlexFormation() ? formationBounds() : null;
-    const header = pk.position !== lastPos
-      ? `<div class="text-xs text-slate-400 mt-2 first:mt-0">${pk.position} — ${
-          fb ? `${fb[pk.position][0]}–${fb[pk.position][1]} in your XI` : `pick ${need} starter${need === 1 ? "" : "s"}`}</div>`
-      : "";
-    lastPos = pk.position;
-    const starter = S.lineupDraft.has(pk.id);
-    const fxt = fixtureText(pk.team);
-    return `${header}<button data-lineup="${pk.id}" class="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left border ${
-      starter ? "border-wcgold bg-wcred/10" : "border-slate-700 bg-slate-800/60"
-    }">
-      ${avatarHtml(pk.player_id, pk.team, "w-5 h-5")}
-      <span class="min-w-0 flex-1">
-        <span class="block truncate text-sm">${esc(pk.player_name)} ${availBadges(pk.player_id)}</span>
-        <span class="block truncate text-xs text-slate-400">${esc(pk.team)}${fxt ? ` · ${esc(fxt)}` : ""}</span>
+  // Starters go on the pitch; everyone else sits on the bench beneath it.
+  // Tapping either moves a player between the two, which is the whole job of
+  // this screen — the old list made you read a column of STARTER/sub labels.
+  const starters = mine.filter((pk) => S.lineupDraft.has(pk.id));
+  const bench = mine.filter((pk) => !S.lineupDraft.has(pk.id));
+  const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+  for (const pk of starters) {
+    (byPos[pk.position] ||= []).push({
+      id: pk.id, player_id: pk.player_id, name: pk.player_name, team: pk.team,
+      badge: captainEnabled() && S.captainDraft === pk.player_id ? "C"
+           : captainEnabled() && S.viceDraft === pk.player_id ? "V" : "",
+    });
+  }
+  const benchRow = (pk) => `<button data-lineup="${pk.id}"
+      class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left border border-slate-700 bg-slate-800/60">
+      ${avatarHtml(pk.player_id, pk.team, "w-7 h-7")}
+      <span class="min-w-0 flex-1 leading-tight">
+        <span class="flex items-center gap-1 min-w-0">
+          <span class="truncate text-sm">${esc(pk.player_name)}</span>
+          <span class="shrink-0 flex items-center gap-1">${availBadges(pk.player_id)}</span>
+        </span>
+        <span class="flex items-center gap-1 truncate text-xs text-slate-400">
+          ${teamCrestHtml(pk.team, "w-3.5 h-3.5")}${esc(pk.team)}${
+            fixtureText(pk.team) ? ` · ${esc(fixtureText(pk.team))}` : ""}</span>
       </span>
-      <span class="shrink-0 text-xs font-mono text-slate-400">${playerPoints(pk.player_id, pk.position)}p</span>
-      <span class="shrink-0 text-xs font-semibold ${starter ? "text-wcgold" : "text-slate-400"}">${starter ? "STARTER" : "sub"}</span>
+      <span class="shrink-0 text-xs pos-${pk.position} rounded px-1.5 py-0.5">${pk.position}</span>
+      <span class="shrink-0 text-xs font-semibold text-wcgold">+</span>
     </button>`;
-  }).join("");
+
+  $("lineup-list").innerHTML = `
+    ${pitchHtml(byPos, { tapAttr: "data-lineup" })}
+    <p class="text-xs text-slate-400 mt-2">Tap a player on the pitch to bench them, or a sub below to bring them on.</p>
+    <div class="mt-2">
+      <div class="eyebrow mb-1">Bench · ${bench.length}</div>
+      <div class="space-y-1">${bench.map(benchRow).join("")
+        || '<p class="text-xs text-slate-400">Nobody on the bench.</p>'}</div>
+    </div>`;
+
   $("lineup-list").querySelectorAll("[data-lineup]").forEach((b) => b.onclick = () => {
     const id = b.dataset.lineup;
     if (S.lineupDraft.has(id)) S.lineupDraft.delete(id);
