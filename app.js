@@ -1377,7 +1377,7 @@ function renderLobby() {
     !!me || S.managers.length >= L.num_managers);
   $("lobby-browse").classList.toggle("hidden", !me);
   $("lobby-browse").onclick = () => { S._browsing = true; renderBoard(); showView("board"); };
-  $("lobby-rules").innerHTML = draftRulesHtml() + scoringHtml();
+  $("lobby-rules").innerHTML = lobbyRulesHtml();
 }
 
 async function joinFromLobby() {
@@ -3943,58 +3943,99 @@ function openScoringSheet() {
   lockScroll(true);
 }
 
-function draftRulesHtml() {
+/* The rules as a handful of one-idea cards rather than six paragraphs.
+   Everyone who joins a league reads this once, on a phone, and a wall of prose
+   is read by nobody — so each rule gets an icon, a three-word headline and a
+   single sentence, and can be skimmed in any order. */
+function draftFactCards() {
   const q = posQuota(), sq = starterQuota();
   const flex = isFlexFormation();
   const fb = flex ? formationBounds() : null;
   const secs = S.league?.pick_duration_seconds;
-  const bits = [];
+  const cards = [];
 
-  // Squad shape: a fixed per-position quota, or a flexible formation.
-  bits.push(`<p><b>Draft:</b> snake order (reverses every round), ${picksPerManager()} rounds. ${
-    flex
-      ? `Draft any mix you like up to a squad of ${cfgOf().squadSize ?? 15}, as long as you can field a legal XI.`
-      : `Pick any position on your turn within your quota: ${
-          GROUPS.filter((g) => q[g] > 0).map((g) => `${q[g]} ${g}`).join(", ")}.`}</p>`);
+  cards.push(["🐍", "Snake order", `${picksPerManager()} rounds, and the order reverses every round — last pick in round one picks first in round two.`]);
 
-  // Timer + what auto-pick actually does (it takes your shortlist in order).
-  bits.push(`<p><b>Timer:</b> ${
-    secs ? `${secs}s per pick. If it runs out you get the top player still available on your shortlist — or a random player you still need if your shortlist can't fill the slot.`
-         : "no time limit, so picks wait for you."}</p>`);
+  cards.push(["👕", "Your squad", flex
+    ? `Draft any mix you like up to ${cfgOf().squadSize ?? 15} players, as long as you can field a legal XI.`
+    : `Pick any position on your turn within your quota: ${
+        GROUPS.filter((g) => q[g] > 0).map((g) => `${q[g]} ${g}`).join(", ")}.`]);
 
-  // Lineup rules follow the formation mode, the captain option and the sub cap.
+  cards.push(["⏱", secs ? `${secs} seconds a pick` : "No pick clock", secs
+    ? "Run out and auto-pick takes the top name still available on your shortlist — which is why the order of it matters."
+    : "Picks wait for you; there's no clock."]);
+
   const starterLine = ["GK", "DEF", "MID", "FWD"]
     .filter((g) => sq[g] > 0).map((g) => `${sq[g]} ${g}`).join(", ");
-  bits.push(`<p><b>Lineup:</b> ${
-    flex
-      ? `each round you pick a formation within DEF ${fb.DEF[0]}–${fb.DEF[1]}, MID ${fb.MID[0]}–${fb.MID[1]}, FWD ${fb.FWD[0]}–${fb.FWD[1]} (${fb.starters}-a-side).`
-      : `choose your starters (${starterLine}) before each round — the rest are subs.`}${
-    captainEnabled() ? " Name a captain for double points, and a vice-captain who takes over if the captain doesn't play." : ""}${
-    maxSubsCapped() ? ` At most ${maxSubsPerRound()} sub${maxSubsPerRound() === 1 ? "" : "s"} can come up in a round.` : ""}</p>`);
+  cards.push(["⚡", "Starting XI", (flex
+    ? `Each round you pick a formation within DEF ${fb.DEF[0]}–${fb.DEF[1]}, MID ${fb.MID[0]}–${fb.MID[1]}, FWD ${fb.FWD[0]}–${fb.FWD[1]} (${fb.starters}-a-side).`
+    : `Name your starters (${starterLine}) before each round — everyone else is a sub.`)
+    + (captainEnabled() ? " Your captain scores double, with a vice-captain who takes over if they don't play." : "")
+    + (maxSubsCapped() ? ` At most ${maxSubsPerRound()} sub${maxSubsPerRound() === 1 ? "" : "s"} can come on in a round.` : "")]);
 
-  // Windows: fixture-driven or admin-controlled.
-  bits.push(`<p><b>Windows:</b> ${
-    autoWindowsEnabled()
-      ? `automatic — the trade window opens ${cfgOf().windows?.tradeOpenAfterH ?? 1}h after a matchweek ends and closes ${cfgOf().windows?.tradeCloseBeforeH ?? 24}h before the next one; lineups lock ${cfgOf().windows?.lineupLockBeforeH ?? 1}h before the first kick-off.`
-      : "the admin opens and closes trading between rounds; each matchday scores against the lineup locked at the time."}</p>`);
+  cards.push(["🔁", "Transfer windows", autoWindowsEnabled()
+    ? `Automatic: trading opens ${cfgOf().windows?.tradeOpenAfterH ?? 1}h after a matchweek ends and closes ${cfgOf().windows?.tradeCloseBeforeH ?? 24}h before the next; line-ups lock ${cfgOf().windows?.lineupLockBeforeH ?? 1}h before the first kick-off.`
+    : "The admin opens and closes trading between rounds. Each matchday scores against whatever line-up was locked at the time."]);
 
-  // Free agents and the standings format.
-  bits.push(`<p><b>Free agents:</b> ${
-    faDeferToClose()
-      ? `claims queue and resolve when the window closes, in waiver order (last place picks first)${
-          maxFaPerWindow() != null ? `, up to ${maxFaPerWindow()} per manager per window` : ""}.`
-      : `swaps apply immediately, first come first served${
-          maxFaPerWindow() != null ? `, up to ${maxFaPerWindow()} per manager per window` : ""}.`}</p>`);
+  const faCap = maxFaPerWindow() != null
+    ? ` Up to ${maxFaPerWindow()} per manager per window.` : "";
+  cards.push(["🎯", "Free agents", (faDeferToClose()
+    ? "Claims queue up and resolve when the window closes, in waiver order — last place gets first refusal."
+    : "Swaps apply immediately: first come, first served.") + faCap]);
 
   if (h2hEnabled()) {
     const c = h2hConfig();
-    bits.push(`<p><b>Format:</b> head-to-head — you play one rival each round. Win ${c.win}, draw ${c.draw}, loss ${c.loss}, plus a bonus for a big score or a narrow defeat.${
-      c.rumble ? " Leftover rounds are played as rumbles against the whole league." : ""}</p>`);
+    cards.push(["🏆", "Head to head", `You play one rival each round. Win ${c.win}, draw ${c.draw}, loss ${c.loss}, plus a bonus for a big score or a narrow defeat.${
+      c.rumble ? " Leftover rounds are rumbles against the whole league." : ""}`]);
   } else {
-    bits.push(`<p><b>Format:</b> straight points tally — every point you score counts towards the table.</p>`);
+    cards.push(["🏆", "Points tally", "Every point you score counts towards the table — no fixtures, just the running total."]);
   }
+  return cards;
+}
 
-  return `<div class="space-y-1.5 text-xs text-slate-300 mb-3">${bits.join("")}</div>`;
+function draftRulesHtml() {
+  return `<div class="space-y-1.5">${draftFactCards().map(([icon, title, body]) =>
+    `<div class="flex gap-2.5 rounded-lg bg-slate-800/50 px-3 py-2">
+      <span class="shrink-0 text-base leading-none mt-0.5">${icon}</span>
+      <span class="min-w-0">
+        <span class="block text-xs font-semibold text-slate-200">${title}</span>
+        <span class="block text-xs text-slate-400 leading-snug">${body}</span>
+      </span>
+    </div>`).join("")}</div>`;
+}
+
+/* The lobby version: the numbers you want at a glance, then the rules, then
+   scoring as the per-position matrix — the same table the scouting room uses,
+   because "what does a goal cost a keeper" is the question in both places. */
+function lobbyRulesHtml() {
+  const sq = starterQuota();
+  const starters = isFlexFormation()
+    ? formationBounds().starters
+    : ["GK", "DEF", "MID", "FWD"].reduce((a, g) => a + (sq[g] || 0), 0) + lineupFlex();
+  const secs = S.league?.pick_duration_seconds;
+  // Rounds and squad size are the same number here (one pick a round), so the
+  // fourth slot goes to the league size instead of saying it twice.
+  const tiles = [
+    [picksPerManager(), "squad"],
+    [starters, "starters"],
+    [S.managers.length || "—", "managers"],
+    [secs ? secs + "s" : "∞", "a pick"],
+  ];
+  return `
+    <div class="grid grid-cols-4 gap-1.5 text-center mb-3">
+      ${tiles.map(([v, k]) => `<div class="rounded-lg bg-slate-800/70 py-2">
+        <div class="text-lg font-bold scoreboard leading-none">${v}</div>
+        <div class="eyebrow">${k}</div></div>`).join("")}
+    </div>
+    ${draftRulesHtml()}
+    <div class="mt-3">
+      <div class="eyebrow mb-1.5">Points by position</div>
+      <div class="rounded-lg bg-slate-800/50 p-2.5 overflow-x-auto">${scoringByPositionHtml()}</div>
+    </div>
+    <details class="mt-2 rounded-lg bg-slate-800/50">
+      <summary class="px-3 py-2 cursor-pointer select-none text-xs uppercase tracking-wide text-slate-400">Bonuses and the small print</summary>
+      <div class="px-3 pb-3">${scoringHtml()}</div>
+    </details>`;
 }
 
 // Keeper-window and final-phase prompts shown at the top of the Home tab.
