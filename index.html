@@ -113,6 +113,10 @@
   @keyframes queue-move { 0% { background-color: rgba(255,199,44,.28); transform: translateX(-4px) }
                           100% { background-color: transparent; transform: none } }
   .queue-moved { animation: queue-move .45s ease-out; }
+  /* Colour only — for rows whose movement is already being animated by FLIP. */
+  @keyframes row-flash { 0% { background-color: rgba(255,199,44,.28) }
+                         100% { background-color: rgba(30,41,59,.6) } }
+  .row-flash { animation: row-flash .45s ease-out; }
 
   /* A value that just moved. */
   @keyframes value-bump { 0% { transform: scale(1) } 35% { transform: scale(1.14) } 100% { transform: scale(1) } }
@@ -120,7 +124,7 @@
 
   @media (prefers-reduced-motion: reduce) {
     .pick-flash { animation: none; opacity: 1 }
-    .just-landed, .bumped, .queue-moved { animation: none }
+    .just-landed, .bumped, .queue-moved, .row-flash { animation: none }
   }
 
   /* Mobile-first: every control gets a finger-sized hit area. Filter chips,
@@ -173,6 +177,14 @@
      ratio a narrow (half-width) pitch clipped its own keeper row. */
   .pitch-rows { position: relative; display: flex; flex-direction: column-reverse;
     justify-content: space-around; padding: 14px 4px; gap: 10px; }
+  /* Head-to-head: two squads stacked on one pitch. The top half runs
+     keeper-first so that side is attacking downwards, which puts the two
+     attacks either side of the halfway line — the layout you'd see on TV. */
+  .pitch-vs { display: flex; flex-direction: column; }
+  /* Two squads means twice the rows, so this pitch breathes less than a single
+     one — otherwise the fixture doesn't fit on a phone without scrolling. */
+  .pitch-vs .pitch-rows { flex: 1 1 0; padding: 8px 4px; gap: 5px; }
+  .pitch-rows-down { flex-direction: column; }
   .pitch-row { display: flex; justify-content: space-evenly; align-items: flex-start; gap: 2px; }
   .pp { display: flex; flex-direction: column; align-items: center; gap: 2px;
         width: 62px; min-width: 0; background: none; border: 0; padding: 0; }

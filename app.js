@@ -2226,11 +2226,16 @@ function queuePlan(shortlist, takenBy, myLastPickNo, eligibleIds) {
 // the change is something you have to infer by re-reading the order.
 function markQueueMoved(pid) {
   const row = document.querySelector(`[data-qrow="${CSS.escape(pid)}"]`)
-           || document.querySelector(`[data-slrow="${CSS.escape(pid)}"]`);
+           || document.querySelector(`[data-slrow="${CSS.escape(pid)}"]`)
+           || document.querySelector(`[data-brow="${CSS.escape(pid)}"]`);
   if (!row) return;
-  row.classList.remove("queue-moved");
+  // Bench rows are already being slid into place by flipRows, and a keyframe
+  // animation outranks the inline transform that FLIP relies on — so they get
+  // the colour half of the cue only.
+  const cls = row.dataset.brow ? "row-flash" : "queue-moved";
+  row.classList.remove(cls);
   void row.offsetWidth;
-  row.classList.add("queue-moved");
+  row.classList.add(cls);
 }
 
 function renderDraftQueue(me, myTurn) {
@@ -3889,7 +3894,7 @@ async function setFinalPick(team) {
 // TEAM/champion bonus line. `former` marks a banked traded-out player.
 // it.played (set by managerHistory for current items) drives yellow highlight.
 function lineupRowHtml(it, mgrId, former, opts = {}) {
-  const { roundMode = false, curView = false } = opts;
+  const { roundMode = false, curView = false, hideSub = false } = opts;
   const e = it.entry;
   const bonus = e.slot === "TEAM" || e.slot === "WIN";
   const tap = !bonus;
@@ -3909,7 +3914,7 @@ function lineupRowHtml(it, mgrId, former, opts = {}) {
       <span class="block truncate text-sm ${played ? "text-wcgold" : ""}">${esc(e.player_name)}${dreamBadge} ${tap ? availBadges(e.player_id) : ""}</span>
       <span class="flex items-center gap-1 text-xs text-slate-400">
         ${former ? '<span class="shrink-0 text-amber-400/70">former</span>'
-                 : e.is_sub ? '<span class="shrink-0 eyebrow">sub</span>' : ""}${
+                 : e.is_sub && !hideSub ? '<span class="shrink-0 eyebrow">sub</span>' : ""}${
           e.kept ? '<span class="shrink-0" title="keeper">⭐</span>' : ""}
         <span class="truncate">${esc(e.team)}${fxt ? ` · ${esc(fxt)}` : ""}</span></span>
     </span>
@@ -3918,6 +3923,65 @@ function lineupRowHtml(it, mgrId, former, opts = {}) {
       played || shownPts > 0 ? "text-wcgold" : "text-slate-400"}">${ptsStr}</span>
     ${tap ? '<span class="shrink-0 text-slate-500 text-xs">›</span>' : ""}
   </div>`;
+}
+
+/* A squad the way it actually lines up: the XI on a pitch, the bench beneath
+   it in sub-priority order, and the full numeric list folded away underneath.
+   The list is still the only place where every badge and points column fits,
+   so it is kept — it just isn't the first thing you meet any more. */
+function squadBoardHtml(items, mgrId, opts = {}) {
+  const { roundMode = false, curView = false, order = [] } = opts;
+  const mgr = S.managers.find((m) => m.id === mgrId);
+  const isPlayer = (it) => it.entry.position && it.entry.position !== "TEAM"
+    && it.entry.slot !== "WIN" && it.entry.slot !== "—";
+  const play = items.filter(isPlayer);
+  const bonus = items.filter((it) => !isPlayer(it));
+  const ptsOf = (it) => (roundMode ? it.roundPts : it.pts);
+  const anyPts = play.some((it) => (ptsOf(it) || 0) > 0);
+
+  const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+  for (const it of play) {
+    const e = it.entry;
+    if (e.is_sub || !byPos[e.position]) continue;
+    byPos[e.position].push({
+      id: e.player_id, player_id: e.player_id, name: e.player_name, team: e.team,
+      opp: oppShort(e.team),
+      note: anyPts ? (ptsOf(it) || 0) : undefined,
+      badge: !captainEnabled() ? "" : mgr?.captain_id === e.player_id ? "C"
+           : mgr?.vice_id === e.player_id ? "V" : "",
+    });
+  }
+  // Locked rounds are snapshotted in sub order already; the live view sorts by
+  // the manager's saved bench_order so the pitch and the picker agree.
+  const rank = new Map(order.map((id, i) => [id, i]));
+  const subs = play.filter((it) => it.entry.is_sub);
+  if (order.length) subs.sort((a, b) =>
+    (rank.has(a.entry.id) ? rank.get(a.entry.id) : 1e6)
+    - (rank.has(b.entry.id) ? rank.get(b.entry.id) : 1e6));
+
+  const rowOpts = { roundMode, curView };
+  return `
+    ${pitchHtml(byPos, { tapAttr: "data-hp", crests: true })}
+    ${subs.length ? `<div class="mt-2">
+      <div class="flex items-baseline justify-between gap-2 mb-1">
+        <span class="eyebrow">Bench · ${subs.length}</span>
+        <span class="text-[11px] text-slate-400">first on when a starter doesn't play</span>
+      </div>
+      <div class="space-y-1">${subs.map((it, i) =>
+        `<div class="flex items-center gap-1.5">
+           <span class="w-4 shrink-0 text-xs font-mono text-slate-400">${i + 1}</span>
+           <div class="min-w-0 flex-1">${lineupRowHtml(it, mgrId, false, { ...rowOpts, hideSub: true })}</div>
+         </div>`).join("")}</div>
+    </div>` : ""}
+    ${bonus.length ? `<div class="mt-2 space-y-1">${bonus.map((it) =>
+      lineupRowHtml(it, mgrId, false, rowOpts)).join("")}</div>` : ""}
+    <details class="mt-2">
+      <summary class="cursor-pointer select-none text-xs uppercase tracking-wide text-slate-400 py-1">
+        All ${play.length} players &amp; points</summary>
+      <div class="space-y-1 pt-1">${[...play].sort((a, b) =>
+        (SLOT_RANK[a.entry.slot] ?? 9) - (SLOT_RANK[b.entry.slot] ?? 9))
+        .map((it) => lineupRowHtml(it, mgrId, false, rowOpts)).join("")}</div>
+    </details>`;
 }
 
 // The current-or-past lineup card for a manager, paged by S.histIdxByMgr
@@ -3942,11 +4006,12 @@ function historyViewHtml(mgrId) {
       Total <b class="text-slate-200">${h.total} pts</b>.</p>`
       + (teamItem ? lineupRowHtml(teamItem, mgrId, false, { curView: false }) : "");
   } else if (onCurrent) {
-    const items = [...h.current.items].sort((a, b) =>
-      (SLOT_RANK[a.entry.slot] ?? 9) - (SLOT_RANK[b.entry.slot] ?? 9));
     const rowOpts = { roundMode, curView: true };
-    body = (items.map((it) => lineupRowHtml(it, mgrId, false, rowOpts)).join("")
-      || '<p class="text-sm text-slate-400 py-2">No players.</p>')
+    const mgr = S.managers.find((m) => m.id === mgrId);
+    body = (h.current.items.length
+        ? squadBoardHtml(h.current.items, mgrId,
+            { ...rowOpts, order: (mgrId === myManager()?.id && S.benchDraft) || mgr?.bench_order || [] })
+        : '<p class="text-sm text-slate-400 py-2">No players.</p>')
       + (h.current.former.length ? `
         <details class="mt-2" data-former="${mgrId}" ${S.formerOpen[mgrId] ? "open" : ""}>
           <summary class="cursor-pointer select-none text-xs uppercase tracking-wide text-slate-400 py-1">
@@ -3955,19 +4020,18 @@ function historyViewHtml(mgrId) {
             lineupRowHtml(it, mgrId, true, rowOpts)).join("")}</div>
         </details>` : "");
   } else {
-    const items = [...round.items].sort((a, b) =>
-      (SLOT_RANK[a.entry.slot] ?? 9) - (SLOT_RANK[b.entry.slot] ?? 9));
-    body = items.map((it) => lineupRowHtml(it, mgrId)).join("");
+    body = squadBoardHtml(round.items, mgrId, {});
   }
 
   const roundSubtotal = h.eliminated ? 0
     : h.current.items.reduce((s, it) => s + (it.roundPts || 0), 0)
       + h.current.former.reduce((s, it) => s + (it.roundPts || 0), 0);
-  const label = onCurrent ? "Current lineup" : `Round ${round.n} · ${fmtDateRange(round.dates)}`;
+  const label = onCurrent ? "Current lineup" : `Round ${round.n}`;
+  // A two-line caption wrapped between the pager arrows and squeezed the title
+  // it was explaining. The pitch below already says "tap a player".
   const sub = onCurrent
-    ? (h.eliminated ? "" : roundMode ? `round ${h.curRound} · your live lineup`
-        : "credited to you · tap a player for their games")
-    : "points scored this round";
+    ? (h.eliminated ? "" : roundMode ? `round ${h.curRound}` : "season to date")
+    : fmtDateRange(round.dates);
   const subtotal = onCurrent ? (roundMode ? roundSubtotal : h.total) : round.subtotal;
   const olderOff = idx >= views - 1, newerOff = idx <= 0;
   const toggle = hasRound ? `<div class="flex gap-1 rounded-lg bg-slate-800 p-0.5 text-xs">
@@ -4169,45 +4233,75 @@ function openH2HPreview() {
   const sideFor = (m) => {
     const round = (managerHistory(m.id).rounds || []).find((r) => r.n === rnd);
     const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+    const bench = [];
     let total = 0;
+    const add = (e, pts) => {
+      const chip = { id: e.player_id, player_id: e.player_id, name: e.player_name,
+        team: e.team, opp: oppShort(e.team), note: pts };
+      if (e.is_sub) bench.push({ ...chip, position: e.position, pts });
+      else if (byPos[e.position]) byPos[e.position].push(chip);
+    };
     if (round) {
       for (const it of round.items) {
         const e = it.entry;
-        if (e.is_sub || e.position === "TEAM" || !byPos[e.position]) continue;
-        byPos[e.position].push({ id: e.player_id, player_id: e.player_id,
-          name: e.player_name, team: e.team, note: it.pts ?? 0 });
-        total += it.pts || 0;
+        if (e.position === "TEAM") continue;
+        add(e, it.pts ?? 0);
+        if (!e.is_sub) total += it.pts || 0;
       }
     } else {
-      for (const pk of managerPicks(m.id)) {
-        if (pk.is_sub || pk.slot === "TEAM" || !byPos[pk.position]) continue;
-        byPos[pk.position].push({ id: pk.player_id, player_id: pk.player_id,
-          name: pk.player_name, team: pk.team });
+      // Live view: the bench is in the manager's own sub-priority order.
+      for (const pk of orderedRoster(m)) {
+        if (pk.slot === "TEAM") continue;
+        add(pk, undefined);
       }
     }
-    return { byPos, total, played: !!round };
+    return { byPos, bench, total, played: !!round };
   };
   const mine = sideFor(me), theirs = sideFor(opp);
-  const side = (m, s) => `<div class="min-w-0">
-      <div class="flex items-center justify-between gap-2 mb-1">
-        <span class="min-w-0 text-sm">${managerTag(m)}</span>
-        ${s.played ? `<span class="shrink-0 font-bold text-wcgold scoreboard">${s.total}</span>` : ""}
-      </div>
-      ${pitchHtml(s.byPos, { small: true, aspect: "aspect-[3/4]" })}
+  const lead = !mine.played ? "text-slate-200"
+    : mine.total > theirs.total ? "text-live"
+    : mine.total < theirs.total ? "text-danger" : "text-slate-200";
+
+  // Whose half is whose has to be readable at a glance, so each side gets a
+  // name bar hard against its own end of the pitch.
+  const bar = (m, s) => `<div class="flex items-center justify-between gap-2 px-0.5">
+      <span class="min-w-0 text-sm truncate">${managerTag(m)}</span>
+      ${s.played ? `<span class="shrink-0 font-bold text-wcgold scoreboard">${s.total}</span>` : ""}
+    </div>`;
+  const benchList = (m, s) => `<div class="min-w-0">
+      <div class="eyebrow mb-1 truncate">${esc(m.name)}</div>
+      <div class="space-y-1">${s.bench.length ? s.bench.map((b) =>
+        `<button data-vsp="${esc(b.player_id)}" class="w-full flex items-center gap-1.5 rounded-lg px-1.5 py-1 border border-slate-700 bg-slate-800/60 text-left">
+           ${avatarHtml(b.player_id, b.team, "w-6 h-6")}
+           <span class="min-w-0 flex-1 truncate text-xs">${esc(shortName(b.name))}</span>
+           <span class="shrink-0 text-[10px] pos-${b.position} rounded px-1 py-0.5">${b.position}</span>
+           ${b.pts != null ? `<span class="shrink-0 w-6 text-right text-[11px] font-mono text-wcgold">${b.pts}</span>` : ""}
+         </button>`).join("")
+        : '<p class="text-xs text-slate-400">No bench.</p>'}</div>
     </div>`;
 
   body.innerHTML = `
     <div class="text-center">
       <div class="eyebrow">Round ${rnd}</div>
-      <div class="text-lg font-bold mt-0.5">${esc(me.name)} vs ${esc(opp.name)}</div>
-      ${mine.played ? `<div class="text-2xl font-bold scoreboard ${
-        mine.total > theirs.total ? "text-live" : mine.total < theirs.total ? "text-danger" : "text-slate-200"
-      }">${mine.total} – ${theirs.total}</div>` : '<div class="text-xs text-slate-400">Not played yet</div>'}
+      ${mine.played
+        ? `<div class="text-3xl font-bold scoreboard mt-0.5 ${lead}">${mine.total} – ${theirs.total}</div>`
+        : '<div class="text-xs text-slate-400 mt-0.5">Not played yet</div>'}
     </div>
-    <div class="grid grid-cols-2 gap-2">${side(me, mine)}${side(opp, theirs)}</div>
+    <div class="space-y-1">
+      ${bar(opp, theirs)}
+      ${pitchFacingHtml(theirs.byPos, mine.byPos, { small: true, tapAttr: "data-vsp", crests: true,
+        topColor: managerColor(opp), botColor: managerColor(me) })}
+      ${bar(me, mine)}
+    </div>
+    <details class="rounded-xl border border-slate-700 bg-slate-900/60">
+      <summary class="px-3 py-2 cursor-pointer select-none text-xs uppercase tracking-wide text-slate-400">Benches</summary>
+      <div class="grid grid-cols-2 gap-2 px-3 pb-3">${benchList(opp, theirs)}${benchList(me, mine)}</div>
+    </details>
     <p class="text-xs text-slate-400 text-center">${mine.played
       ? "Points shown are this round only."
       : "Line-ups lock when the window closes — these can still change."}</p>`;
+  body.querySelectorAll("[data-vsp]").forEach((b) => b.onclick = () =>
+    openPlayerDetail(b.dataset.vsp));
   $("recap-sheet").classList.remove("hidden");
   lockScroll(true);
 }
@@ -4215,11 +4309,14 @@ function openH2HPreview() {
 function matchdayCardHtml(me) {
   const p = matchdayNow();
   if (p.stage === "preseason" || me?.eliminated) return "";
-  const strip = MD_STAGES.map((s) => {
-    const on = s === p.stage;
-    return `<span class="px-1.5 py-0.5 rounded ${on
-      ? "bg-wcgold/20 text-wcgold font-semibold" : "text-slate-500"}">${MD_STAGE_LABEL[s]}</span>`;
-  }).join('<span class="text-slate-700">›</span>');
+  // Five spelled-out stage names wrapped onto two lines and drowned the thing
+  // they were labelling. The current stage is named; the rest are a progress
+  // track, which is all they were ever telling you.
+  const here = MD_STAGES.indexOf(p.stage);
+  const strip = `<span class="eyebrow text-wcgold">${MD_STAGE_LABEL[p.stage]}</span>
+    <span class="flex items-center gap-1 shrink-0" aria-hidden="true">${MD_STAGES.map((s, i) =>
+      `<span class="rounded-full h-1.5 ${i === here ? "w-4 bg-wcgold"
+        : i < here ? "w-1.5 bg-slate-500" : "w-1.5 bg-slate-700"}"></span>`).join("")}</span>`;
   const clock = p.deadlineAt != null
     ? `<div class="mt-1">
          <div class="text-xs text-slate-400">${esc(p.deadlineLabel)}</div>
@@ -4235,13 +4332,20 @@ function matchdayCardHtml(me) {
     ? `<button id="md-cta" data-act="${p.cta.act}" class="mt-3 w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2.5 text-sm font-semibold">${esc(p.cta.label)}</button>`
     : "";
   return `<div class="rounded-xl border border-wcgold/60 bg-wcred/10 p-4">
-    <div class="flex items-center gap-1 flex-wrap eyebrow">${strip}</div>
+    <div class="flex items-center justify-between gap-2">${strip}</div>
     <div class="mt-2 flex items-baseline justify-between gap-2">
       <div class="font-semibold">${esc(p.title)}</div>
       ${p.matchweek ? `<div class="text-xs text-slate-400 shrink-0">Matchweek ${esc(p.matchweek)}</div>` : ""}
     </div>
     ${clock}${todo}${cta}
   </div>`;
+}
+
+// Which action the matchday card is already offering, so the rest of the tab
+// doesn't repeat it. Two buttons for one job read as two different jobs.
+function matchdayCtaAct() {
+  const p = matchdayNow();
+  return (p.stage === "preseason" ? null : p.cta?.act) || null;
 }
 
 /* Pick your crest and accent. Editable at any time — before the draft, mid
@@ -4642,33 +4746,38 @@ function renderHomeTab() {
   const scores = computeScores().sort((a, b) => b.total - a.total);
   const rank = scores.findIndex((s) => s.manager.id === me.id) + 1;
   const myScore = scores[rank - 1];
+  /* Order of the tab, top to bottom: who you are, what you owe the game right
+     now, who you're playing, then your actual team. Identity leads because it
+     is the one thing that is always true; the deadline card is second because
+     it is the only part that is ever urgent. The old order buried the crest
+     below two calls to action and repeated the lineup button twice. */
+  const lineupCtaShown = matchdayCtaAct() === "lineup";
   const squadHtml = `
-    ${me.eliminated ? "" : `<button id="home-lineup" class="w-full bg-slate-800 border ${lineupOpen() ? "border-wcgold/60 text-wcgold" : "border-slate-700 text-slate-400"} rounded-xl py-2.5 text-sm font-semibold">${
+    ${me.eliminated || lineupCtaShown ? "" : `<button id="home-lineup" class="w-full bg-slate-800 border ${lineupOpen() ? "border-wcgold/60 text-wcgold" : "border-slate-700 text-slate-400"} rounded-xl py-2.5 text-sm font-semibold">${
       lineupOpen() ? "Pick my team for the next games"
                    : (autoWindowsEnabled() ? "🔒 " + lineupLockMessage()
                                            : "🔒 Lineup locked — opens with the trading window")}</button>`}
     <div id="hist-home-${me.id}" class="rounded-xl border border-slate-700 bg-slate-900 p-3"></div>`;
   box.innerHTML = `
+    <div class="rounded-xl border bg-slate-900 p-3 flex items-center gap-3"
+         style="border-color:${managerColor(me)}55">
+      <button id="home-crest" class="relative shrink-0" title="Edit your crest and colour">
+        <span class="inline-flex items-center justify-center rounded-xl w-12 h-12 text-2xl"
+              style="background:${managerColor(me)}26;border:1px solid ${managerColor(me)}99">${managerMark(me)}</span>
+        <span class="absolute -bottom-1 -right-1 rounded-full bg-slate-800 border border-slate-600 text-[10px] w-4 h-4 inline-flex items-center justify-center leading-none">✎</span>
+      </button>
+      <div class="min-w-0 flex-1">
+        <div class="text-lg font-bold truncate leading-tight">${esc(me.name)}</div>
+        <div class="text-xs text-slate-400 flex items-center gap-1.5">#${rank} of ${scores.length} ${formBadge(me.id)}</div>
+      </div>
+      <div class="text-right shrink-0">
+        <div class="text-2xl font-bold text-wcgold scoreboard leading-none">${myScore?.total ?? 0}</div>
+        <div class="eyebrow">points</div>
+      </div>
+    </div>
     ${matchdayCardHtml(me)}
     ${h2hFixtureCardHtml(me)}
     ${phaseCardsHtml(me)}
-    <div class="rounded-xl border bg-slate-900 p-4 flex items-center justify-between gap-2"
-         style="border-color:${managerColor(me)}55">
-      <div class="min-w-0">
-        <div class="text-xs text-slate-400">Your team</div>
-        <button id="home-crest" class="flex items-center gap-2 text-left mt-0.5" title="Edit your crest and colour">
-          <span class="shrink-0 inline-flex items-center justify-center rounded-lg w-10 h-10 text-xl"
-                style="background:${managerColor(me)}26;border:1px solid ${managerColor(me)}99">${managerMark(me)}</span>
-          <span class="min-w-0">
-            <span class="block text-xl font-bold truncate">${esc(me.name)}</span>
-            <span class="block text-xs font-normal text-slate-400">tap to change crest</span>
-          </span></button>
-      </div>
-      <div class="text-right shrink-0">
-        <div class="text-2xl font-bold text-wcgold scoreboard">${myScore?.total ?? 0} pts</div>
-        <div class="text-xs text-slate-400">#${rank} of ${scores.length}</div>
-      </div>
-    </div>
     ${squadHtml}
     <details class="rounded-xl border border-slate-700 bg-slate-900">
       <summary class="px-4 py-3 font-semibold cursor-pointer select-none text-sm">How points are scored</summary>
@@ -5591,7 +5700,12 @@ function renderBoard() {
   $("board-banner").classList.toggle("hidden",
     !preDraft && !bannerGroups.includes(groupOfTab(S.boardTab)));
   const note = $("board-rules-note");
-  if (note) note.textContent = boardRulesNote();
+  if (note) {
+    note.textContent = boardRulesNote();
+    // Team already carries "How points are scored"; the footer repeated most of
+    // it a centimetre lower, unboxed, as if it had fallen out of the card.
+    note.classList.toggle("hidden", S.boardTab === "home");
+  }
   maybeSquadReveal();
   maybeAutoRecap();
   maybeRoundup();
@@ -6583,6 +6697,34 @@ function shortName(name) {
      byPos : { GK:[e], DEF:[e], MID:[e], FWD:[e] }
      e     : { id, player_id, name, team, badge?, note?, dim? }              */
 function pitchHtml(byPos, opts = {}) {
+  return `<div class="pitch">
+    ${PITCH_MARKS}
+    <div class="pitch-rows">${pitchRowsHtml(byPos, opts)}</div>
+  </div>`;
+}
+
+/* Two squads on one pitch, facing each other the way a television graphic
+   shows them: the top half is drawn keeper-first so that side attacks
+   downwards, the bottom half keeps the normal keeper-at-the-back layout, and
+   the two attacks meet on the halfway line. Reads as a fixture rather than as
+   two unrelated lists. */
+function pitchFacingHtml(topByPos, botByPos, opts = {}) {
+  // A faint wash of each manager's colour over their own half: without it the
+  // two halves are identical green and you have to re-read the name bars to
+  // work out which end is yours.
+  const wash = (c, dir) => c
+    ? ` style="background:linear-gradient(${dir},${c}2e,transparent 70%)"` : "";
+  return `<div class="pitch pitch-vs">
+    ${PITCH_MARKS}
+    <div class="pitch-rows pitch-rows-down"${wash(opts.topColor, "180deg")}>${pitchRowsHtml(topByPos, opts)}</div>
+    <div class="pitch-rows"${wash(opts.botColor, "0deg")}>${pitchRowsHtml(botByPos, opts)}</div>
+  </div>`;
+}
+
+const PITCH_MARKS =
+  '<div class="pitch-half"></div><div class="pitch-box b"></div><div class="pitch-box t"></div>';
+
+function pitchRowsHtml(byPos, opts = {}) {
   const av = opts.small ? "w-8 h-8" : "w-10 h-10";
   const chip = (e) => {
     const tap = opts.tapAttr ? `${opts.tapAttr}="${esc(e.id)}"` : "";
@@ -6608,13 +6750,8 @@ function pitchHtml(byPos, opts = {}) {
       </button>
     </div>`;
   };
-  return `<div class="pitch">
-    <div class="pitch-half"></div><div class="pitch-box b"></div><div class="pitch-box t"></div>
-    <div class="pitch-rows">
-      ${["GK", "DEF", "MID", "FWD"].map((g) =>
-        `<div class="pitch-row">${(byPos[g] || []).map(chip).join("")}</div>`).join("")}
-    </div>
-  </div>`;
+  return ["GK", "DEF", "MID", "FWD"].map((g) =>
+    `<div class="pitch-row">${(byPos[g] || []).map(chip).join("")}</div>`).join("");
 }
 
 // While a full-screen sheet is open the page behind it must not scroll, or a
@@ -6634,6 +6771,47 @@ function benchInOrder(subs) {
     (rank.has(a.id) ? rank.get(a.id) : 1e6) - (rank.has(b.id) ? rank.get(b.id) : 1e6));
 }
 
+// A tap on ▲/▼ used to repaint the entire sheet — pitch, formation, captain
+// pickers and all — which made a two-row swap feel like a page load. Only the
+// bench list can change, so only the bench list is rebuilt.
+let _benchListHtml = null;
+
+function wireLineupControls(root) {
+  // A tap on any player — pitch or bench, either mode — opens their card.
+  root.querySelectorAll("[data-peek]").forEach((b) => b.onclick = () =>
+    openPlayerDetail(b.dataset.peek));
+  root.querySelectorAll("[data-bup]").forEach((b) => b.onclick = () =>
+    moveBench(b.dataset.bup, -1));
+  root.querySelectorAll("[data-bdn]").forEach((b) => b.onclick = () =>
+    moveBench(b.dataset.bdn, 1));
+  root.querySelectorAll("[data-lineup]").forEach((b) => b.onclick = () => {
+    const id = b.dataset.lineup;
+    if (S.lineupDraft.has(id)) S.lineupDraft.delete(id);
+    else S.lineupDraft.add(id);
+    renderLineup();
+  });
+}
+
+/* FLIP. The rows have already been rebuilt in their new order, so put each one
+   back where it just was and let the compositor animate the gap to zero: the
+   two swapped rows visibly trade places instead of teleporting, and nothing
+   re-lays out mid-animation. */
+function flipRows(box, was) {
+  if (globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
+  box.querySelectorAll("[data-brow]").forEach((r) => {
+    const y0 = was.get(r.dataset.brow);
+    if (y0 == null) return;
+    const dy = y0 - r.getBoundingClientRect().top;
+    if (!dy) return;
+    r.style.transition = "none";
+    r.style.transform = `translateY(${dy}px)`;
+    requestAnimationFrame(() => {
+      r.style.transition = "transform .2s cubic-bezier(.2,.8,.3,1)";
+      r.style.transform = "";
+    });
+  });
+}
+
 function moveBench(pickId, dir) {
   const me = myManager();
   if (!me) return;
@@ -6643,7 +6821,14 @@ function moveBench(pickId, dir) {
   if (i < 0 || j < 0 || j >= cur.length) return;
   [cur[i], cur[j]] = [cur[j], cur[i]];
   S.benchDraft = cur;
-  renderLineup();
+  const box = document.getElementById("lineup-bench");
+  if (!box || !_benchListHtml) { renderLineup(); return; }
+  const was = new Map();
+  box.querySelectorAll("[data-brow]").forEach((r) =>
+    was.set(r.dataset.brow, r.getBoundingClientRect().top));
+  box.innerHTML = _benchListHtml();
+  wireLineupControls(box);
+  flipRows(box, was);
   markQueueMoved(pickId);
 }
 
@@ -6669,7 +6854,7 @@ function renderLineup() {
            : captainEnabled() && S.viceDraft === pk.player_id ? "V" : "",
     });
   }
-  const benchRow = (pk, i) => `<div class="flex items-center gap-1.5 rounded-lg px-2 py-1.5 border border-slate-700 bg-slate-800/60">
+  const benchRow = (pk, i, arr) => `<div data-brow="${esc(pk.id)}" class="flex items-center gap-1.5 rounded-lg px-2 py-1.5 border border-slate-700 bg-slate-800/60">
       ${editing ? `<span class="w-4 shrink-0 text-xs font-mono text-slate-400">${i + 1}</span>` : ""}
       <button data-peek="${esc(pk.player_id)}" class="min-w-0 flex-1 flex items-center gap-2 text-left">
         ${avatarHtml(pk.player_id, pk.team, "w-7 h-7")}
@@ -6687,7 +6872,7 @@ function renderLineup() {
       ${editing ? `
         <span class="shrink-0 flex flex-col w-7 leading-none">
           <button data-bup="${esc(pk.id)}" class="nudge text-slate-400 ${i === 0 ? "opacity-30" : ""}" ${i === 0 ? "disabled" : ""} aria-label="Higher sub priority">▲</button>
-          <button data-bdn="${esc(pk.id)}" class="nudge text-slate-400 ${i === bench.length - 1 ? "opacity-30" : ""}" ${i === bench.length - 1 ? "disabled" : ""} aria-label="Lower sub priority">▼</button>
+          <button data-bdn="${esc(pk.id)}" class="nudge text-slate-400 ${i === arr.length - 1 ? "opacity-30" : ""}" ${i === arr.length - 1 ? "disabled" : ""} aria-label="Lower sub priority">▼</button>
         </span>
         <button data-lineup="${esc(pk.id)}" aria-label="Add to lineup"
           class="shrink-0 inline-flex items-center justify-center w-9 h-9"
@@ -6701,24 +6886,15 @@ function renderLineup() {
         <span class="eyebrow">Bench · ${bench.length}</span>
         ${editing && bench.length > 1 ? '<span class="text-xs text-slate-400">order = sub priority</span>' : ""}
       </div>
-      <div class="space-y-1">${bench.map(benchRow).join("")
+      <div id="lineup-bench" class="space-y-1">${bench.map(benchRow).join("")
         || '<p class="text-xs text-slate-400">Nobody on the bench.</p>'}</div>
     </div>`;
+  // Reordering the bench repaints only this list (see moveBench), so the markup
+  // has to be reproducible — and re-sorted — without re-running the whole render.
+  _benchListHtml = () =>
+    benchInOrder(mine.filter((pk) => !S.lineupDraft.has(pk.id))).map(benchRow).join("");
 
-  // A tap on any player — pitch or bench, either mode — opens their card.
-  $("lineup-list").querySelectorAll("[data-peek]").forEach((b) => b.onclick = () =>
-    openPlayerDetail(b.dataset.peek));
-  $("lineup-list").querySelectorAll("[data-bup]").forEach((b) => b.onclick = () =>
-    moveBench(b.dataset.bup, -1));
-  $("lineup-list").querySelectorAll("[data-bdn]").forEach((b) => b.onclick = () =>
-    moveBench(b.dataset.bdn, 1));
-
-  $("lineup-list").querySelectorAll("[data-lineup]").forEach((b) => b.onclick = () => {
-    const id = b.dataset.lineup;
-    if (S.lineupDraft.has(id)) S.lineupDraft.delete(id);
-    else S.lineupDraft.add(id);
-    renderLineup();
-  });
+  wireLineupControls($("lineup-list"));
 
   const counts = lineupCounts();
   const total = counts.GK + counts.DEF + counts.MID + counts.FWD;
