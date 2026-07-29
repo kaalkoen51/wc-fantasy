@@ -245,6 +245,9 @@ function isAdmin() {
 
 let _shownView = null;
 function showView(name) {
+  // Belt and braces: a view change can never leave the page scroll-locked by
+  // an abandoned drag, whatever route the code took to get here.
+  document.documentElement.classList.remove("drag-lock");
   document.querySelectorAll("[data-view]").forEach(
     (el) => el.classList.toggle("hidden", el.dataset.view !== name));
   // The header "Exit league" button only makes sense once you're in a league.
@@ -426,14 +429,27 @@ async function loadPlayers() {
   S.playerById = Object.fromEntries(S.players.map((p) => [p.player_id, p]));
 }
 
-async function refetchAll() {
+/* Reload everything.
+
+   `initial` separates the first load from a background refresh, because they
+   need opposite failure behaviour. A background refresh that fails must leave
+   the working UI alone and say so quietly; the FIRST load failing used to
+   toast and return, which left every view hidden — a bare header, forever,
+   and the same again after a reload. That is the blank screen. Now it throws
+   so the caller can show something a person can act on. */
+async function refetchAll({ initial = false } = {}) {
   const id = getSession()?.leagueId;
-  if (!id) return;
+  if (!id) return false;
+  const bail = (msg) => {
+    if (initial) throw new Error(msg);
+    markConnection(false, msg);
+    return false;
+  };
   // The league row first, so we know its competition before choosing the stats
   // source (competition-shared vs legacy per-league).
   const l = await S.sb.from("leagues").select("*").eq("id", id).maybeSingle();
-  if (l.error) { toast("Load failed: " + l.error.message); return; }
-  if (!l.data) { toast("League not found."); setSession(null); showView("home"); return; }
+  if (l.error) return bail(l.error.message);
+  if (!l.data) { toast("League not found."); setSession(null); showView("home"); return false; }
   S.league = l.data;
   const compKey = competitionKey();
   // Stats outgrow Supabase's 1000-row request cap, so page through them.
@@ -470,7 +486,7 @@ async function refetchAll() {
     S.sb.from("fa_claims").select("*").eq("league_id", id).order("rank"),
   ]);
   const err = m.error || p.error || st.error || tg.error || tr.error;
-  if (err) { toast("Load failed: " + err.message); return; }
+  if (err) return bail(err.message);
   S.managers = m.data;
   applyLocalOverrides();   // a read that started before our last write is stale
   S.picks = p.data;
@@ -486,11 +502,40 @@ async function refetchAll() {
   // fa_claims likewise optional (waiver mode); empty if not migrated.
   S.faClaims = fac && !fac.error ? (fac.data || []) : [];
   ptsCache = null;
+  markConnection(true);
   route();
+  return true;
+}
+
+/* Say whether the app is talking to the server. Going quiet is the failure
+   mode people describe as "it stopped working", so it gets a visible state:
+   the header dot turns amber and pulses, and a stale connection retries on its
+   own with a backoff rather than waiting for the user to guess. */
+let _connRetry = 0, _connTimer = null;
+function markConnection(ok, msg) {
+  const dot = $("conn-dot");
+  if (ok) {
+    _connRetry = 0;
+    clearTimeout(_connTimer); _connTimer = null;
+    if (dot) { dot.className = "w-2 h-2 rounded-full bg-wcgreen"; dot.title = "connected"; }
+    return;
+  }
+  if (dot) {
+    dot.className = "w-2 h-2 rounded-full bg-amber-400 stale";
+    dot.title = "Reconnecting… " + (msg || "");
+  }
+  if (_connRetry === 0) toast("Connection lost — retrying…");
+  // 1s, 2s, 4s, 8s, capped at 15s. Cheap, and it recovers without a reload.
+  const wait = Math.min(15000, 1000 * 2 ** _connRetry++);
+  clearTimeout(_connTimer);
+  _connTimer = setTimeout(() => { refetchAll().catch(() => {}); }, wait);
 }
 
 let refetchTimer;
-const scheduleRefetch = () => { clearTimeout(refetchTimer); refetchTimer = setTimeout(refetchAll, 250); };
+const scheduleRefetch = () => {
+  clearTimeout(refetchTimer);
+  refetchTimer = setTimeout(() => { refetchAll().catch(() => {}); }, 250);
+};
 
 function subscribeRealtime() {
   const id = getSession()?.leagueId;
@@ -602,6 +647,9 @@ const picksPerManager = () =>
 const totalPicks = () => draftSequence().length;
 
 function route() {
+  // A refetch landing mid-drag would replace the row under the user's finger.
+  // Hold the repaint until they let go rather than pulling the rug.
+  if (!afterDrag(route)) return;
   if (!S.league) { showView("home"); return; }
   $("hdr-league").textContent = S.league.name;
   // Keep the admin on their screen across realtime refreshes.
@@ -726,8 +774,23 @@ async function loadExtras() {
 
 async function enterLeague() {
   await Promise.all([loadPlayers(), loadFixtures(), loadExtras()]);
-  await refetchAll();
+  await refetchAll({ initial: true });
   subscribeRealtime();
+}
+
+/* The first load, with something on screen for every outcome. It used to be a
+   bare `await enterLeague()` whose failure path showed nothing at all. */
+async function enterLeagueWithFeedback() {
+  showView("loading");
+  const msg = $("loading-msg");
+  if (msg) msg.textContent = "Loading your league…";
+  try {
+    await enterLeague();
+  } catch (e) {
+    const box = $("error-msg");
+    if (box) box.textContent = String(e?.message || e || "Unknown error");
+    showView("error");
+  }
 }
 
 /* ---------- create / join / lobby ---------- */
@@ -1693,6 +1756,7 @@ function starHtml(pid) {
 function refreshShortlistViews() {
   const me = myManager();
   if (!me) return;
+  if (!afterDrag(refreshShortlistViews)) return;
   if ($("draft-queue") && !$("draft-queue").classList.contains("hidden")) {
     const info = S.league?.current_pick ? pickInfo(S.league.current_pick) : null;
     renderDraftQueue(me, !!info && info.manager?.id === me.id);
@@ -2279,6 +2343,8 @@ function renderPredraftShortlist() {
   const box = $("predraft-shortlist");
   const me = myManager();
   if (!box || !me) return;
+  // Never rebuild these rows while one of them is in the air.
+  if (!afterDrag(renderPredraftShortlist)) return;
   const ids = me.shortlist || [];
   const rows = ids.map((pid, i) => {
     const e = entryForId(pid);
@@ -2390,6 +2456,63 @@ function queuePlan(shortlist, takenBy, myLastPickNo, eligibleIds) {
      commit  : (newVisibleIds, movedId) => void — persist and re-render      */
 const HOLD_MS = 320, SLOP_PX = 8;
 
+/* True while a row is lifted anywhere in the app.
+
+   This is load-bearing, not bookkeeping. A re-render that replaces the row
+   under your finger detaches it, so its pointerup never reaches the listener,
+   so the drag never ends and the page stays scroll-locked — which is what a
+   frozen app looks like from the outside. Renders are deferred while it's set
+   (see route), and a release anywhere on the window ends the drag regardless
+   of what happened to the row. */
+let _dragging = false;
+let _endDrag = null;          // set by whichever list currently owns the drag
+const dragActive = () => _dragging;
+
+// Last-resort releases: letting go anywhere, leaving the tab, or simply
+// holding for longer than any real gesture all end the drag. A frozen page is
+// so much worse than a dropped reorder that this is worth being blunt about.
+const DRAG_MAX_MS = 12000;
+let _dragWatchdog = null;
+function armDragWatchdog() {
+  clearTimeout(_dragWatchdog);
+  _dragWatchdog = setTimeout(() => {
+    if (!_dragging) return;
+    _endDrag?.();
+    // If whichever list owned it is gone, unfreeze the page by hand.
+    _dragging = false; _endDrag = null;
+    document.documentElement?.classList.remove("drag-lock");
+    document.querySelectorAll?.(".drag-active").forEach?.(
+      (el) => el.classList.remove("drag-active"));
+    flushDeferredRender();
+  }, DRAG_MAX_MS);
+}
+
+if (typeof window !== "undefined" && window.addEventListener) {
+  const bail = () => _endDrag?.();
+  window.addEventListener("pointerup", bail, true);
+  window.addEventListener("pointercancel", bail, true);
+  window.addEventListener("blur", bail);
+  document.addEventListener?.("visibilitychange", () => {
+    if (document.hidden) bail();
+  });
+}
+
+/* Renders that arrive mid-drag are held until the finger comes up.
+   Returns true if the caller may proceed now, false if it has been deferred —
+   so the guard reads `if (!afterDrag(thisFn)) return;`. It must NOT invoke
+   `fn` on the idle path: callers pass themselves, and doing so recurses. */
+let _deferredRender = null;
+function afterDrag(fn) {
+  if (!_dragging) return true;
+  _deferredRender = fn;
+  return false;
+}
+function flushDeferredRender() {
+  const fn = _deferredRender;
+  _deferredRender = null;
+  if (fn) fn();
+}
+
 function makeReorderable(box, rowAttr, commit) {
   if (!box || box._reorderAttr === rowAttr) return;   // already wired
   box._reorderAttr = rowAttr;
@@ -2415,6 +2538,9 @@ function makeReorderable(box, rowAttr, commit) {
     rows.forEach((el, i) => { if (i !== i0) el.classList.add("drag-shift"); });
     navigator.vibrate?.(12);
     document.documentElement.classList.add("drag-lock");
+    _dragging = true;
+    _endDrag = finish;
+    armDragWatchdog();
   };
 
   const onMove = (ev) => {
@@ -2463,8 +2589,12 @@ function makeReorderable(box, rowAttr, commit) {
       el.style.transform = "";
     });
     drag = null; pressed = null;
+    _dragging = false; _endDrag = null;
+    clearTimeout(_dragWatchdog);
     const changed = rest.some((id, i) => id !== ids[i]);
     if (changed) commit(rest, moved);
+    // Anything that wanted to repaint while the row was in the air happens now.
+    flushDeferredRender();
   };
 
   box.addEventListener("pointerdown", (ev) => {
@@ -2525,6 +2655,7 @@ function markQueueMoved(pid) {
 function renderDraftQueue(me, myTurn) {
   const box = $("draft-queue");
   if (!box) return;
+  if (!afterDrag(() => renderDraftQueue(me, myTurn))) return;
   if (!me || me.eliminated) { box.classList.add("hidden"); return; }
   box.classList.remove("hidden");
 
@@ -9960,7 +10091,7 @@ async function loadMyLeagues() {
   }).join("");
   box.querySelectorAll("[data-openleague]").forEach((b) => b.onclick = () => {
     setSession({ leagueId: b.dataset.openleague, managerId: b.dataset.mgr, adminToken: getSession()?.adminToken || null });
-    enterLeague().catch(() => showView("home"));
+    enterLeagueWithFeedback();
   });
 }
 
@@ -9998,10 +10129,12 @@ function wire() {
   // Built-in creds mean the config screen is never auto-shown; let
   // "Reconfigure" open it on demand to override with a different project.
   $("home-reconfig").onclick = () => { localStorage.removeItem("wcf_config"); showView("config"); };
-  $("home-resume-go").onclick = () => enterLeague().catch((e) => toast(e.message));
+  $("home-resume-go").onclick = () => enterLeagueWithFeedback();
   $("home-resume-leave").onclick = leaveLeague;
+  $("error-retry").onclick = () => enterLeagueWithFeedback();
+  $("error-home").onclick = () => { leaveLeague(); showView("home"); };
   $("create-go").onclick = () => createLeague().catch((e) => toast(e.message));
-  $("create-tolobby").onclick = () => enterLeague().catch((e) => toast(e.message));
+  $("create-tolobby").onclick = () => enterLeagueWithFeedback();
   $("join-find").onclick = () => findLeague().catch((e) => toast(e.message));
   $("join-go").onclick = () => joinLeague().catch((e) => toast(e.message));
   $("lobby-start").onclick = () => startDraft().catch((e) => toast(e.message));
@@ -10142,11 +10275,8 @@ async function init() {
   });
   renderHome();
   const sess = getSession();
-  if (sess?.leagueId) {
-    try { await enterLeague(); } catch { showView("home"); }
-  } else {
-    showView("home");
-  }
+  if (sess?.leagueId) await enterLeagueWithFeedback();
+  else showView("home");
 }
 
 document.addEventListener("DOMContentLoaded", init);
