@@ -502,7 +502,7 @@ async function refetchAll({ initial = false } = {}) {
   if (err) return bail(err.message);
   S.managers = m.data;
   applyLocalOverrides();   // a read that started before our last write is stale
-  S.picks = p.data;
+  S.picks = mergeOptimisticPicks(p.data, S.picks, Date.now());
   S.stats = st.data;
   S.stages = tg.data;
   S.trades = tr.data;
@@ -559,6 +559,30 @@ function markConnection(ok, msg) {
    first, and then the server is right and we are not. */
 const keepLocalPick = (mine, theirs, forced) =>
   !forced && (mine || 0) > (theirs || 0);
+
+/* Merge a fresh read of the picks with the ones we've written but not yet read
+   back. Same stale-read problem, on the list everyone is watching: a read
+   issued before our insert committed comes back without it, and replacing the
+   list wholesale makes the pick vanish from Recent picks and the player pop
+   back into every queue — then reappear a moment later when the next read
+   catches up. That is the frantic jumping.
+
+   Only rows this client added optimistically are ever preserved, and only
+   until the server returns them, so a genuine deletion (a redraft, a manager
+   removed) is never resurrected. The age cap stops a failed insert leaving a
+   ghost in the list. */
+const PICK_GHOST_MAX_MS = 20000;
+const pickKey = (pk) => `${pk.pick_number}:${pk.player_id}`;
+
+function mergeOptimisticPicks(fresh, local, nowMs) {
+  const pending = (local || []).filter((pk) => String(pk.id).startsWith("local-"));
+  if (!pending.length) return fresh;
+  const have = new Set(fresh.map(pickKey));
+  const keep = pending.filter((pk) =>
+    !have.has(pickKey(pk)) && nowMs - (pk._at || 0) <= PICK_GHOST_MAX_MS);
+  if (!keep.length) return fresh;
+  return [...fresh, ...keep].sort((a, b) => a.pick_number - b.pick_number);
+}
 
 // Set when that CAS tells us we lost, so the next read may move us backwards.
 let forcePickResync = false;
@@ -2008,11 +2032,18 @@ async function makePick(entry, info) {
     pick_number: (leaguePhase() - 1) * 1000 + p,
     is_sub: slot.startsWith("SUB_"), slot,
   };
+  /* Hold refetches until this pick has landed. Reading the picks table while
+     our own insert is still in flight can only return the list without it. */
+  const wkey = `picks:${row.pick_number}`;
+  _pendingWrites.add(wkey);
+  const writeDone = () => writeSettled(wkey);
+
   const { error } = await S.sb.from("picks").insert(row);
   if (error) {
     // 23505 = someone else's pick landed first; just resync.
     giveUp(error.code === "23505" ? "" : error.message);
     forcePickResync = true;         // their pick number is the real one now
+    writeDone();
     scheduleRefetch();
     return;
   }
@@ -2023,7 +2054,7 @@ async function makePick(entry, info) {
   // update and the refetch as well meant three round trips before the room
   // moved, which is what made every pick feel sluggish. The refetch below
   // still reconciles, so a lost race corrects itself within a moment.
-  S.picks = [...S.picks, { ...row, id: `local-${row.pick_number}` }];
+  S.picks = [...S.picks, { ...row, id: `local-${row.pick_number}`, _at: Date.now() }];
   S.league.current_pick = p + 1;
   S.league.pick_started_at = startedAt;
   if (!finished && !document.querySelector('[data-view="draft"]')?.classList.contains("hidden"))
@@ -2048,11 +2079,12 @@ async function makePick(entry, info) {
 
   if (finished) {
     settleAdvance(await advance);
+    writeDone();
     // Draft just finished: this client writes the baseline lineup lock.
     await refetchAll();
     await snapshotRosters();
   } else {
-    advance.then(settleAdvance, () => {});
+    advance.then((r) => { settleAdvance(r); writeDone(); }, writeDone);
   }
   scheduleRefetch();
 }
