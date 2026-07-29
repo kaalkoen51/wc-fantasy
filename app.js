@@ -204,7 +204,14 @@ async function refreshAuthUser() {
    with no setup and no migration; picking a crest or colour just overrides it. */
 const MGR_COLORS = ["#3987e5", "#d95926", "#199e70", "#c98500",
                     "#a855f7", "#e5646a", "#14b8a6", "#f472b6"];
+/* The twelve that fit on one row of the picker, and the rest behind "More".
+   Two dozen more without making the first choice a scrolling chore. */
 const CRESTS = ["⚽", "🦁", "🐉", "🦅", "🐺", "🦈", "🐍", "🐻", "🔥", "⚡", "👑", "🌋"];
+const CRESTS_MORE = [
+  "🐅", "🐆", "🦊", "🦌", "🐗", "🦏", "🦣", "🐘", "🦧", "🦬", "🐴", "🦄",
+  "🦉", "🦇", "🐙", "🦑", "🦂", "🕷", "🐝", "🦋", "🌪", "☄️", "💎", "🎯",
+  "🚀", "🛡", "⚔️", "🏹", "🎸", "🍀", "🌊", "❄️", "🌟", "💀", "🤖", "👽",
+];
 
 function managerColor(m) {
   if (m?.color) return m.color;
@@ -1700,7 +1707,8 @@ function overrideStillWins(serverValue, rec, pending, nowMs, maxMs = OVERRIDE_MA
 }
 
 // Which local collection a table's overrides apply to.
-const OVERRIDE_TABLES = { managers: () => S.managers, picks: () => S.picks };
+const OVERRIDE_TABLES = { managers: () => S.managers, picks: () => S.picks,
+  fa_claims: () => S.faClaims };
 
 function applyLocalOverrides() {
   const now = Date.now();
@@ -5090,8 +5098,12 @@ function renderCrestPicker() {
     <div>
       <div class="eyebrow mb-1.5">Crest</div>
       <div class="grid grid-cols-6 gap-1.5">
-        ${CRESTS.map((c) => `<button data-crest="${c}" class="rounded-lg border py-2 text-lg ${
+        ${(S._crestsMore || CRESTS_MORE.includes(me.crest)
+            ? [...CRESTS, ...CRESTS_MORE] : CRESTS).map((c) =>
+          `<button data-crest="${c}" class="rounded-lg border py-2 text-lg ${
           me.crest === c ? "border-wcgold bg-wcgold/10" : "border-slate-700 bg-slate-800"}">${c}</button>`).join("")}
+        ${S._crestsMore || CRESTS_MORE.includes(me.crest) ? "" :
+          '<button id="crest-more" class="col-span-6 rounded-lg border border-slate-700 bg-slate-800 py-1.5 text-xs text-slate-300">More crests ▾</button>'}
         <button data-crest="" class="col-span-6 rounded-lg border border-slate-700 bg-slate-800 py-1.5 text-xs text-slate-400">No crest</button>
       </div>
     </div>
@@ -5117,6 +5129,8 @@ function renderCrestPicker() {
         scheduleRefetch();               // the refetch puts the server's value back
       });
   };
+  const more = document.getElementById("crest-more");
+  if (more) more.onclick = () => { S._crestsMore = true; renderCrestPicker(); };
   body.querySelectorAll("[data-crest]").forEach((b) =>
     b.onclick = () => apply({ crest: b.dataset.crest || null }));
   body.querySelectorAll("[data-color]").forEach((b) =>
@@ -6167,9 +6181,16 @@ function renderChat() {
   const msgs = messagesForThread(S.chatThread, me.id);
   const box = $("chat-msgs");
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
-  box.innerHTML = msgs.map((m) => {
+  /* Bubbles carry the sender's face and colour, and a run of messages from
+     the same person collapses into one block — a league room is a conversation
+     between people you can see, not a log of "Name:" prefixes. */
+  box.innerHTML = msgs.map((m, i) => {
     const mine = m.sender_id === me.id;
-    const sender = mine ? "You" : (nameBy[m.sender_id] || "unknown");
+    const sender = S.managers.find((x) => x.id === m.sender_id);
+    const prev = msgs[i - 1];
+    const grouped = prev && prev.sender_id === m.sender_id
+      && Date.parse(m.created_at) - Date.parse(prev.created_at) < 5 * 60000;
+    const col = managerColor(sender);
     const reactions = Object.entries(m.reactions || {}).filter(([, ids]) => ids && ids.length);
     const pills = reactions.map(([e, ids]) => {
       const reacted = ids.includes(me.id);
@@ -6180,18 +6201,31 @@ function renderChat() {
     const tail = picking
       ? REACT_EMOJIS.map((e) => `<button data-reactpick="${m.id}|${e}" class="text-base leading-none px-0.5">${e}</button>`).join("")
       : `<button data-reactadd="${m.id}" title="React" class="rounded-full px-1.5 py-0.5 text-xs border border-slate-700 bg-slate-800/50 text-slate-400">＋</button>`;
-    return `<div class="flex flex-col ${mine ? "items-end" : "items-start"}">
-      <div class="max-w-[80%] rounded-2xl px-3 py-1.5 ${
-        mine ? "bg-wcred text-white" : "bg-slate-800 text-slate-100"}">
-        ${mine ? "" : `<div class="text-xs font-semibold text-wcgold">${esc(sender)}</div>`}
-        <div class="text-sm whitespace-pre-wrap break-words">${esc(m.body)}</div>
-        <div class="text-xs opacity-60 text-right mt-0.5">${fmtChatTime(m.created_at)}</div>
+    const face = mine ? "" : `<span class="shrink-0 w-7">${grouped ? "" :
+      `<span class="inline-flex items-center justify-center rounded-lg w-7 h-7 text-sm"
+             style="background:${col}26;border:1px solid ${col}99">${managerMark(sender)}</span>`}</span>`;
+    return `<div class="flex items-start gap-1.5 ${mine ? "flex-row-reverse" : ""} ${grouped ? "mt-0.5" : "mt-2"}">
+      ${face}
+      <div class="min-w-0 max-w-[78%] flex flex-col ${mine ? "items-end" : "items-start"}">
+        ${!mine && !grouped ? `<span class="text-xs font-semibold mb-0.5" style="color:${col}">${esc(sender?.name || "unknown")}</span>` : ""}
+        <div class="rounded-2xl px-3 py-1.5 ${mine
+          ? "bg-wcred text-white rounded-br-sm"
+          : "bg-slate-800 text-slate-100 rounded-bl-sm"}"${
+          mine ? "" : ` style="border-left:2px solid ${col}"`}>
+          <div class="text-sm whitespace-pre-wrap break-words">${esc(m.body)}</div>
+          <div class="text-[10px] opacity-60 text-right mt-0.5">${fmtChatTime(m.created_at)}</div>
+        </div>
+        <div class="flex items-center gap-1 mt-0.5 flex-wrap ${mine ? "justify-end" : ""}">${pills}${tail}</div>
       </div>
-      <div class="flex items-center gap-1 mt-0.5 flex-wrap ${mine ? "justify-end" : ""}">${pills}${tail}</div>
     </div>`;
-  }).join("") || `<p class="text-sm text-slate-400">${
-    S.chatThread === "league" ? "No messages yet — say hi to the league!"
-      : "No messages yet — start the conversation."}</p>`;
+  }).join("") || `<div class="h-full flex flex-col items-center justify-center text-center gap-2 py-8">
+      <span class="text-3xl">${S.chatThread === "league" ? "🏟" : "👋"}</span>
+      <p class="text-sm text-slate-300">${S.chatThread === "league"
+        ? "Nobody's said anything yet." : "No messages yet."}</p>
+      <p class="text-xs text-slate-500">${S.chatThread === "league"
+        ? "Start the trash talk — the league can all see this room."
+        : "Open a negotiation, or just wind them up."}</p>
+    </div>`;
   box.querySelectorAll("[data-react]").forEach((b) => b.onclick = () => {
     const i = b.dataset.react.indexOf("|");
     toggleReaction(b.dataset.react.slice(0, i), b.dataset.react.slice(i + 1));
@@ -8018,17 +8052,30 @@ function renderLineup() {
   if (captainEnabled()) {
     capBox.classList.remove("hidden");
     const starterPicks = mine.filter((pk) => S.lineupDraft.has(pk.id));
-    const opts = (sel) => '<option value="">— none —</option>' + starterPicks.map((pk) =>
-      `<option value="${esc(pk.player_id)}"${pk.player_id === sel ? " selected" : ""}>${esc(pk.player_name)}</option>`).join("");
-    capBox.innerHTML = `
-      <label class="text-xs text-slate-400">Captain © <span class="text-slate-400">×2</span>
-        <select id="lineup-cap-sel" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm">${opts(S.captainDraft)}</select></label>
-      <label class="text-xs text-slate-400">Vice Ⓥ <span class="text-slate-400">backup</span>
-        <select id="lineup-vice-sel" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm">${opts(S.viceDraft)}</select></label>`;
-    // Re-render so the armband on the pitch follows the selection — it used to
-    // only update on the next full render, which read as nothing happening.
-    $("lineup-cap-sel").onchange = (e) => { S.captainDraft = e.target.value; renderLineup(); };
-    $("lineup-vice-sel").onchange = (e) => { S.viceDraft = e.target.value; renderLineup(); };
+    const nameOf = (pid) => starterPicks.find((pk) => pk.player_id === pid)?.player_name;
+    if (!editing) {
+      /* Read-only outside edit mode. The dropdowns were live in the view, so
+         you could change the armband with no Save button anywhere on screen —
+         the change looked applied and was thrown away on the next render. */
+      const shown = (label, mark, pid) => `<div class="rounded-lg bg-slate-800/60 px-2 py-1.5">
+        <div class="eyebrow">${label} ${mark}</div>
+        <div class="text-sm truncate ${pid ? "" : "text-slate-500"}">${
+          pid ? esc(nameOf(pid) || "—") : "not set"}</div></div>`;
+      capBox.innerHTML = shown("Captain", "© ×2", S.captainDraft)
+        + shown("Vice", "Ⓥ backup", S.viceDraft);
+    } else {
+      const opts = (sel) => '<option value="">— none —</option>' + starterPicks.map((pk) =>
+        `<option value="${esc(pk.player_id)}"${pk.player_id === sel ? " selected" : ""}>${esc(pk.player_name)}</option>`).join("");
+      capBox.innerHTML = `
+        <label class="text-xs text-slate-400">Captain © <span class="text-slate-400">×2</span>
+          <select id="lineup-cap-sel" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm">${opts(S.captainDraft)}</select></label>
+        <label class="text-xs text-slate-400">Vice Ⓥ <span class="text-slate-400">backup</span>
+          <select id="lineup-vice-sel" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm">${opts(S.viceDraft)}</select></label>`;
+      // Re-render so the armband on the pitch follows the selection — it used to
+      // only update on the next full render, which read as nothing happening.
+      $("lineup-cap-sel").onchange = (e) => { S.captainDraft = e.target.value; renderLineup(); };
+      $("lineup-vice-sel").onchange = (e) => { S.viceDraft = e.target.value; renderLineup(); };
+    }
   } else capBox.classList.add("hidden");
 }
 
@@ -8259,13 +8306,28 @@ async function submitFaClaim(pick, entry) {
   scheduleRefetch();
 }
 
+/* Reorder claims to an arbitrary new sequence of ids — a nudge is just the
+   two-element case. Applied locally first so the list moves under the finger,
+   then the ranks are rewritten to match. */
+async function setClaimOrder(ids) {
+  const list = myClaims();
+  const ranks = list.map((c) => c.rank).sort((a, b) => a - b);
+  const byId = new Map(list.map((c) => [c.id, c]));
+  const next = ids.map((id) => byId.get(id)).filter(Boolean);
+  if (next.length !== list.length) return;
+  next.forEach((c, i) => { c.rank = ranks[i]; });      // optimistic
+  renderTrades();
+  for (const c of next) queueFieldWrite("fa_claims", c.id, "rank", c.rank);
+}
+
 async function reorderClaim(id, dir) {
   const list = myClaims();
   const i = list.findIndex((c) => c.id === id), j = i + dir;
   if (i < 0 || j < 0 || j >= list.length) return;
-  await S.sb.from("fa_claims").update({ rank: list[j].rank }).eq("id", list[i].id);
-  await S.sb.from("fa_claims").update({ rank: list[i].rank }).eq("id", list[j].id);
-  scheduleRefetch();
+  const ids = list.map((c) => c.id);
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  await setClaimOrder(ids);
+  animateReorder("fa-claim-list", "data-clrow", renderTrades, id);
 }
 
 async function cancelClaim(id) {
@@ -8917,13 +8979,20 @@ function faClaimsSectionHtml(me) {
   const priority = me.waiver_order != null
     ? `Your priority: <b class="text-wcgold">#${me.waiver_order + 1}</b>`
     : "priority set at window open";
+  // Same control as every other ordered list in the app: stacked arrows, and
+  // hold a row to drag it. This IS a priority queue, so it should feel like one.
   const rows = mine.map((c, i) => `
-    <div class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-3 py-2 text-sm">
-      <span class="text-slate-400 font-mono w-5">${i + 1}.</span>
-      <span class="flex-1 min-w-0 truncate">${esc(c.in_player_name)} <span class="text-slate-400 text-xs">for ${esc(c.out_player_name)}</span></span>
-      <button data-claimup="${c.id}"${i === 0 ? " disabled" : ""} class="shrink-0 text-slate-400 disabled:opacity-30 px-1">▲</button>
-      <button data-claimdown="${c.id}"${i === mine.length - 1 ? " disabled" : ""} class="shrink-0 text-slate-400 disabled:opacity-30 px-1">▼</button>
-      <button data-claimx="${c.id}" class="tap shrink-0 text-slate-400 hover:text-wcred">✕</button>
+    <div data-clrow="${esc(c.id)}" class="flex items-center gap-1.5 rounded-lg bg-slate-800/60 px-2 py-1.5 text-sm">
+      <span class="text-slate-400 font-mono w-5 shrink-0 ${i === 0 ? "text-wcgold font-bold" : ""}">${i + 1}</span>
+      <span class="flex-1 min-w-0 leading-tight">
+        <span class="block truncate">${esc(c.in_player_name)}</span>
+        <span class="block truncate text-xs text-slate-400">for ${esc(c.out_player_name)}</span>
+      </span>
+      ${mine.length > 1 ? `<span class="nudge-col shrink-0 leading-none">
+        <button data-claimup="${c.id}"${i === 0 ? " disabled" : ""} class="nudge text-slate-400 ${i === 0 ? "opacity-30" : ""}" aria-label="Higher priority">▲</button>
+        <button data-claimdown="${c.id}"${i === mine.length - 1 ? " disabled" : ""} class="nudge text-slate-400 ${i === mine.length - 1 ? "opacity-30" : ""}" aria-label="Lower priority">▼</button>
+      </span>` : ""}
+      <button data-claimx="${c.id}" class="tap shrink-0 text-slate-400 hover:text-wcred" aria-label="Cancel claim">✕</button>
     </div>`).join("") || '<p class="text-xs text-slate-400">No claims queued — tap “Claim” on a free agent to add one.</p>';
   return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2">
     <div class="flex items-center justify-between gap-2">
@@ -8931,7 +9000,8 @@ function faClaimsSectionHtml(me) {
       <span class="text-xs text-slate-400">${priority}</span>
     </div>
     <p class="text-xs text-slate-400">These resolve when the window closes, in waiver order (worst-placed picks first). Order yours by preference — the first still-available one lands.</p>
-    ${rows}
+    <div id="fa-claim-list" class="space-y-1">${rows}</div>
+    ${mine.length > 1 ? '<p class="text-xs text-slate-400">Hold a row to drag it anywhere in the queue.</p>' : ""}
   </div>`;
 }
 
@@ -8943,10 +9013,21 @@ function renderTrades() {
     return;
   }
   const open = tradingOpen();
-  let html = `<div class="rounded-xl border ${open ? "border-wcgold/60 bg-wcred/10" : "border-slate-700 bg-slate-900"} p-3 text-sm flex items-center justify-between gap-2">
-    <span>${open ? "Trading window is <b>open</b>."
-                 : "Trading is closed — you can still respond to pending proposals."}</span>
-    ${open && !S.builder ? '<button id="trade-new" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 font-semibold">New trade</button>' : ""}
+  // The header answers the two questions you open this tab with: can I move
+  // right now, and how long have I got.
+  const when = autoWindowsEnabled()
+    ? (open ? lineupLockMessage() : tradeWindowMessage()) : "";
+  let html = `<div class="rounded-xl border ${open ? "border-wcgold/60 bg-wcred/10" : "border-slate-700 bg-slate-900"} p-3">
+    <div class="flex items-center justify-between gap-2">
+      <span class="min-w-0">
+        <span class="block text-sm font-semibold">${open ? "🔓 Window open" : "🔒 Window closed"}</span>
+        <span class="block text-xs text-slate-400">${open
+          ? "Trade, swap free agents and change your line-up."
+          : "You can still reply to pending proposals."}</span>
+      </span>
+      ${open && !S.builder ? '<button id="trade-new" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-sm font-semibold">New trade</button>' : ""}
+    </div>
+    ${when ? `<div class="mt-2 text-xs text-wcgold border-t border-white/10 pt-1.5">${esc(when)}</div>` : ""}
   </div>`;
   if (faDeferToClose()) html += faClaimsSectionHtml(me);
   if (S.builder) html += builderHtml(me);
@@ -8974,6 +9055,11 @@ function wireTrades(me) {
   box.querySelectorAll("[data-claimup]").forEach((b) => b.onclick = () => reorderClaim(b.dataset.claimup, -1).catch((e) => toast(e.message)));
   box.querySelectorAll("[data-claimdown]").forEach((b) => b.onclick = () => reorderClaim(b.dataset.claimdown, 1).catch((e) => toast(e.message)));
   box.querySelectorAll("[data-claimx]").forEach((b) => b.onclick = () => cancelClaim(b.dataset.claimx).catch((e) => toast(e.message)));
+  const claimBox = box.querySelector("#fa-claim-list");
+  if (claimBox) makeReorderable(claimBox, "data-clrow", (order, moved) => {
+    setClaimOrder(order);
+    animateReorder("fa-claim-list", "data-clrow", renderTrades, moved);
+  });
   const slToggle = box.querySelector("#sl-toggle");
   if (slToggle) slToggle.onclick = () => { S.showShortlist = !S.showShortlist; renderTrades(); };
   const slClean = box.querySelector("#sl-clean");
@@ -10159,8 +10245,25 @@ function renderAdmin() {
   $("admin-panel").classList.toggle("hidden", !ok);
   if (!ok) return;
   // Stages and redrafts are knockout machinery: a league season never has a
-  // team "out", so the whole card is meaningless there.
+  // team "out", so the whole section is meaningless there.
+  $("adm-sec-ko")?.classList.toggle("hidden", !isCupCompetition());
   $("adm-stages-card")?.classList.toggle("hidden", !isCupCompetition());
+
+  /* Trading windows: fixture-driven or admin-driven, switchable mid-season.
+     Switching to manual pins the CURRENT automatic answer into trading_open
+     first, so the window can't spring open or slam shut the instant the mode
+     changes — the state carries over rather than jumping. */
+  const autoWin = autoWindowsEnabled();
+  $("admin-panel").querySelectorAll("[data-winmode]").forEach((b) => {
+    const on = (b.dataset.winmode === "auto") === autoWin;
+    b.className = "flex-1 rounded-md py-1.5 font-semibold "
+      + (on ? "bg-wcred text-white" : "text-slate-400");
+    b.onclick = () => setWindowMode(b.dataset.winmode === "auto");
+  });
+  const wnote = $("adm-winmode-note");
+  if (wnote) wnote.textContent = autoWin
+    ? "Trading opens and closes itself around each matchweek, and line-ups lock before the first kick-off. The button below is ignored."
+    : "You open and close the window yourself with the button below. Line-ups stay editable until you close it — including during matches, so close it before kick-off.";
   renderConfigEditor();
   // Competition selector + current-pool status.
   if (!$("adm-comp-select").options.length)
@@ -10238,6 +10341,36 @@ async function toggleDraftSort() {
   if (error) return toast(/draft_stat_sort/.test(error.message)
     ? "Draft-sort toggle needs a schema update — run schema.sql." : error.message);
   toast(next ? "Draft sort turned on." : "Draft sort turned off — blind draft.");
+  scheduleRefetch();
+}
+
+/* Switch trading windows between fixture-driven and admin-driven, mid-season.
+
+   The hazard is the handover, not the modes. Going manual, `trading_open` may
+   hold a value from whenever it was last touched — possibly months ago — and
+   the moment the mode flips that stale flag becomes the truth, so the window
+   can spring open or slam shut for no reason a manager can see. So the current
+   automatic answer is written into it first: whatever the calendar says right
+   now is what carries over.
+
+   Going back to automatic needs no such care — the calendar is recomputed from
+   the fixtures and `trading_open` stops being read at all. */
+async function setWindowMode(auto) {
+  if (auto === autoWindowsEnabled()) return;
+  const cfg = { ...(S.league.config || {}) };
+  const openNow = tradingOpen();
+  if (auto) cfg.autoWindows = true;
+  else delete cfg.autoWindows;
+  const patch = { config: cfg };
+  if (!auto) patch.trading_open = openNow;      // carry the state across
+  const { error } = await S.sb.from("leagues").update(patch).eq("id", S.league.id);
+  if (error) return toast(error.message);
+  S.league.config = cfg;
+  if (!auto) S.league.trading_open = openNow;
+  toast(auto
+    ? "Windows are automatic again — the fixture calendar decides."
+    : `Manual windows — the window is ${openNow ? "open" : "closed"}, and stays that way until you change it.`);
+  renderAdmin(); renderBoard();
   scheduleRefetch();
 }
 

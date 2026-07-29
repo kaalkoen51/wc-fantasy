@@ -801,8 +801,51 @@
       <input id="admin-token-input" placeholder="admin token" class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2">
       <button id="admin-unlock" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2 font-semibold">Unlock</button>
     </div>
-    <div id="admin-panel" class="hidden space-y-4">
-      <div class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
+    <div id="admin-panel" class="hidden space-y-3">
+      <details id="adm-sec-season" class="rounded-xl border border-slate-700 bg-slate-900/40" open>
+        <summary class="px-4 py-3 cursor-pointer select-none flex items-baseline justify-between gap-2">
+          <span class="font-semibold text-sm">🗓 Run the season</span>
+          <span class="text-xs text-slate-400">week to week</span></summary>
+        <div class="px-2 pb-2 space-y-3">
+<div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-2">
+        <h3 class="font-semibold text-sm">Trading window &amp; lineup locks</h3>
+        <p class="text-xs text-slate-400">Open it between rounds (once all teams have played);
+          managers can then trade, swap free agents and change their lineups. <b>Closing it
+          locks everyone's lineup in</b> for the next games — points for each matchday are
+          scored against the lineup that was locked at the time, so later changes never
+          rewrite earlier rounds. Close it before kickoff.</p>
+        <!-- Automatic (fixture-driven) or manual (this button). Switchable
+             mid-season; renderAdmin explains what changes. -->
+        <div class="flex gap-1 rounded-lg bg-slate-800 p-1 text-xs">
+          <button data-winmode="auto" class="flex-1 rounded-md py-1.5 font-semibold">🤖 Automatic</button>
+          <button data-winmode="manual" class="flex-1 rounded-md py-1.5 font-semibold">✋ Manual</button>
+        </div>
+        <p id="adm-winmode-note" class="text-xs text-slate-400"></p>
+        <div class="flex items-center justify-between gap-3">
+          <span id="adm-trading-status" class="text-sm font-semibold"></span>
+          <button id="adm-trading-toggle" class="rounded-lg px-4 py-2 text-sm font-semibold bg-wcred hover:bg-wcred-hov"></button>
+        </div>
+        <button id="adm-snapshot" class="w-full bg-slate-800 border border-slate-700 rounded-lg py-1.5 text-xs font-semibold">Re-lock current lineups now (fallback)</button>
+      </div>
+<div class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
+        <h3 class="font-semibold text-sm">Pull stats now</h3>
+        <p class="text-xs text-slate-400">Fetches completed matches for the chosen date straight
+          from API-Football and writes everyone's stats — same as the 06:00 automated pull, on
+          demand. In-progress games are skipped; re-pull after the final whistle.</p>
+        <div class="flex gap-2">
+          <input id="adm-pull-date" type="date" class="flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+          <button id="adm-pull-now" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-4 py-2 text-sm font-semibold">Pull stats now</button>
+        </div>
+        <pre id="adm-pull-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
+      </div>
+        </div>
+      </details>
+      <details id="adm-sec-setup" class="rounded-xl border border-slate-700 bg-slate-900/40">
+        <summary class="px-4 py-3 cursor-pointer select-none flex items-baseline justify-between gap-2">
+          <span class="font-semibold text-sm">⚽ League setup</span>
+          <span class="text-xs text-slate-400">competition, scoring, draft</span></summary>
+        <div class="px-2 pb-2 space-y-3">
+<div class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">Competition &amp; players</h3>
         <p class="text-xs text-slate-400">Pick a competition to draft from. Its teams, squads and
           fixtures are pulled from API-Football <b>once and shared</b> by every league on the same
@@ -819,83 +862,14 @@
         <button id="adm-comp-load" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg px-4 py-2 text-sm font-semibold">Load competition from API</button>
         <pre id="adm-comp-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
       </div>
-      <div class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
-        <h3 class="font-semibold text-sm">Scheduled pulls <span class="text-xs text-slate-400 font-normal">· app admin</span></h3>
-        <p class="text-xs text-slate-400">Turn the automatic daily stat pull on or off per competition.
-          When on, the scheduled job pulls that competition's completed games into the shared stats each
-          day — one pull serves every league on it. When off, use "Pull stats now" by hand.</p>
-        <div id="adm-schedules" class="space-y-1.5"></div>
+<div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
+        <h3 class="font-semibold text-sm">⚙️ Design your draft — scoring &amp; bonuses</h3>
+        <p class="text-xs text-slate-400">Customise how points are scored for this league. Editable until
+          the first game is scored, then locked so past results never shift. Leave as-is for the standard
+          World Cup values.</p>
+        <div id="adm-config" class="space-y-2"></div>
       </div>
-      <div class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
-        <h3 class="font-semibold text-sm">Pull stats now</h3>
-        <p class="text-xs text-slate-400">Fetches completed matches for the chosen date straight
-          from API-Football and writes everyone's stats — same as the 06:00 automated pull, on
-          demand. In-progress games are skipped; re-pull after the final whistle.</p>
-        <div class="flex gap-2">
-          <input id="adm-pull-date" type="date" class="flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
-          <button id="adm-pull-now" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-4 py-2 text-sm font-semibold">Pull stats now</button>
-        </div>
-        <pre id="adm-pull-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
-      </div>
-      <h2 class="text-xl font-semibold">Manual stats entry</h2>
-      <p class="text-xs text-slate-400">Fallback alongside the automated daily pull. Rows upsert on
-        (player, match), so re-saving edits in place. Use the same match label format as the
-        automation: <code>Home vs Away (YYYY-MM-DD)</code>.</p>
-      <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
-        <h3 class="font-semibold text-sm">Match</h3>
-        <div class="grid grid-cols-2 gap-2">
-          <select id="adm-home" class="rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm"></select>
-          <select id="adm-away" class="rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm"></select>
-        </div>
-        <input id="adm-date" type="date" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
-        <input id="adm-label" placeholder="custom match label (optional, overrides above)" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
-        <div class="text-xs text-slate-400">Label: <code id="adm-label-preview"></code></div>
-      </div>
-      <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
-        <h3 class="font-semibold text-sm">Player</h3>
-        <label class="flex items-center gap-2 text-xs text-slate-400">
-          <input id="adm-drafted" type="checkbox" checked> drafted players only</label>
-        <input id="adm-psearch" placeholder="Search player…" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
-        <div id="adm-presults" class="space-y-1 text-sm"></div>
-        <div id="adm-selplayer" class="text-sm font-semibold text-wcgold"></div>
-      </div>
-      <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
-        <h3 class="font-semibold text-sm">Stats</h3>
-        <div class="grid grid-cols-3 gap-2 text-sm">
-          <label class="text-xs text-slate-400">Goals<input id="adm-goals" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">Assists<input id="adm-assists" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">Saves (GK)<input id="adm-saves" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">Yellows<input id="adm-yc" type="number" value="0" min="0" max="2" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">Reds<input id="adm-rc" type="number" value="0" min="0" max="1" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">Pens saved<input id="adm-ps" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">Pens missed<input id="adm-pm" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-          <label class="text-xs text-slate-400">Def. actions<input id="adm-da" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
-        </div>
-        <div class="flex flex-wrap gap-4 text-sm">
-          <label class="flex items-center gap-1.5"><input id="adm-appeared" type="checkbox" checked> appeared</label>
-          <label class="flex items-center gap-1.5"><input id="adm-cs" type="checkbox"> clean sheet (≥60min)</label>
-          <label class="flex items-center gap-1.5"><input id="adm-motm" type="checkbox"> MOTM</label>
-        </div>
-        <button id="adm-save" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2 font-semibold">Save stats row</button>
-      </div>
-      <div class="rounded-xl border border-slate-700 bg-slate-900 p-4">
-        <h3 class="font-semibold text-sm mb-2">Existing rows</h3>
-        <div id="adm-existing" class="space-y-3 text-sm"></div>
-      </div>
-      <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-2">
-        <h3 class="font-semibold text-sm">Trading window &amp; lineup locks</h3>
-        <p class="text-xs text-slate-400">Open it between rounds (once all teams have played);
-          managers can then trade, swap free agents and change their lineups. <b>Closing it
-          locks everyone's lineup in</b> for the next games — points for each matchday are
-          scored against the lineup that was locked at the time, so later changes never
-          rewrite earlier rounds. Close it before kickoff.</p>
-        <div class="flex items-center justify-between gap-3">
-          <span id="adm-trading-status" class="text-sm font-semibold"></span>
-          <button id="adm-trading-toggle" class="rounded-lg px-4 py-2 text-sm font-semibold bg-wcred hover:bg-wcred-hov"></button>
-        </div>
-        <button id="adm-snapshot" class="w-full bg-slate-800 border border-slate-700 rounded-lg py-1.5 text-xs font-semibold">Re-lock current lineups now (fallback)</button>
-      </div>
-      <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
+<div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">Draft settings</h3>
         <p class="text-xs text-slate-400">The draft pool can be sorted by any stat (goals, points, etc.).
           Switch this <b>off</b> for a blind draft where nobody can rank the pool by numbers.</p>
@@ -904,14 +878,28 @@
           <button id="adm-sort-toggle" class="rounded-lg px-4 py-2 text-sm font-semibold bg-wcred hover:bg-wcred-hov"></button>
         </div>
       </div>
-      <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
-        <h3 class="font-semibold text-sm">⚙️ Design your draft — scoring &amp; bonuses</h3>
-        <p class="text-xs text-slate-400">Customise how points are scored for this league. Editable until
-          the first game is scored, then locked so past results never shift. Leave as-is for the standard
-          World Cup values.</p>
-        <div id="adm-config" class="space-y-2"></div>
+        </div>
+      </details>
+      <details id="adm-sec-auto" class="rounded-xl border border-slate-700 bg-slate-900/40">
+        <summary class="px-4 py-3 cursor-pointer select-none flex items-baseline justify-between gap-2">
+          <span class="font-semibold text-sm">🤖 Automation</span>
+          <span class="text-xs text-slate-400">scheduled stat pulls</span></summary>
+        <div class="px-2 pb-2 space-y-3">
+<div class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
+        <h3 class="font-semibold text-sm">Scheduled pulls <span class="text-xs text-slate-400 font-normal">· app admin</span></h3>
+        <p class="text-xs text-slate-400">Turn the automatic daily stat pull on or off per competition.
+          When on, the scheduled job pulls that competition's completed games into the shared stats each
+          day — one pull serves every league on it. When off, use "Pull stats now" by hand.</p>
+        <div id="adm-schedules" class="space-y-1.5"></div>
       </div>
-      <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
+        </div>
+      </details>
+      <details id="adm-sec-ko" class="rounded-xl border border-slate-700 bg-slate-900/40">
+        <summary class="px-4 py-3 cursor-pointer select-none flex items-baseline justify-between gap-2">
+          <span class="font-semibold text-sm">🏆 Knockout &amp; redrafts</span>
+          <span class="text-xs text-slate-400">cup competitions only</span></summary>
+        <div class="px-2 pb-2 space-y-3">
+<div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">Redrafts &amp; final phase</h3>
         <p class="text-xs text-slate-400">As the field narrows: (1) optionally remove trailing
           managers — their points freeze and their players return to the pool; (2) set the keeper
@@ -961,7 +949,7 @@
         <button id="adm-redraft" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2 text-sm font-semibold">Start redraft now</button>
         <button id="adm-final" class="w-full bg-slate-800 border border-wcgold/60 text-wcgold rounded-lg py-2 text-sm font-semibold">Start final phase (champion picks, +5)</button>
       </div>
-      <div id="adm-stages-card" class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-2">
+<div id="adm-stages-card" class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-2">
         <h3 class="font-semibold text-sm">Team stages</h3>
         <p class="text-xs text-slate-400">How far each national team has progressed. TEAM picks earn
           cumulative bonuses (R32 +5, R16 +10, QF +15, SF +20, Final +25, Winner +15).
@@ -970,6 +958,57 @@
         <input id="adm-tsearch" placeholder="Filter teams…" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
         <div id="adm-stages" class="space-y-1 max-h-[40vh] overflow-y-auto"></div>
       </div>
+        </div>
+      </details>
+      <details id="adm-sec-manual" class="rounded-xl border border-slate-700 bg-slate-900/40">
+        <summary class="px-4 py-3 cursor-pointer select-none flex items-baseline justify-between gap-2">
+          <span class="font-semibold text-sm">✍️ Manual stats entry</span>
+          <span class="text-xs text-slate-400">only if a pull misses something</span></summary>
+        <div class="px-2 pb-2 space-y-3">
+          <p class="px-2 text-xs text-slate-400">Fallback alongside the daily pull. Rows upsert on (player, match), so re-saving edits in place. Use the automation's label format: <code>Home vs Away (YYYY-MM-DD)</code>.</p>
+<div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
+        <h3 class="font-semibold text-sm">Match</h3>
+        <div class="grid grid-cols-2 gap-2">
+          <select id="adm-home" class="rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm"></select>
+          <select id="adm-away" class="rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm"></select>
+        </div>
+        <input id="adm-date" type="date" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+        <input id="adm-label" placeholder="custom match label (optional, overrides above)" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+        <div class="text-xs text-slate-400">Label: <code id="adm-label-preview"></code></div>
+      </div>
+<div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
+        <h3 class="font-semibold text-sm">Player</h3>
+        <label class="flex items-center gap-2 text-xs text-slate-400">
+          <input id="adm-drafted" type="checkbox" checked> drafted players only</label>
+        <input id="adm-psearch" placeholder="Search player…" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+        <div id="adm-presults" class="space-y-1 text-sm"></div>
+        <div id="adm-selplayer" class="text-sm font-semibold text-wcgold"></div>
+      </div>
+<div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
+        <h3 class="font-semibold text-sm">Stats</h3>
+        <div class="grid grid-cols-3 gap-2 text-sm">
+          <label class="text-xs text-slate-400">Goals<input id="adm-goals" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Assists<input id="adm-assists" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Saves (GK)<input id="adm-saves" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Yellows<input id="adm-yc" type="number" value="0" min="0" max="2" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Reds<input id="adm-rc" type="number" value="0" min="0" max="1" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Pens saved<input id="adm-ps" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Pens missed<input id="adm-pm" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+          <label class="text-xs text-slate-400">Def. actions<input id="adm-da" type="number" value="0" min="0" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5"></label>
+        </div>
+        <div class="flex flex-wrap gap-4 text-sm">
+          <label class="flex items-center gap-1.5"><input id="adm-appeared" type="checkbox" checked> appeared</label>
+          <label class="flex items-center gap-1.5"><input id="adm-cs" type="checkbox"> clean sheet (≥60min)</label>
+          <label class="flex items-center gap-1.5"><input id="adm-motm" type="checkbox"> MOTM</label>
+        </div>
+        <button id="adm-save" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2 font-semibold">Save stats row</button>
+      </div>
+<div class="rounded-xl border border-slate-700 bg-slate-900 p-4">
+        <h3 class="font-semibold text-sm mb-2">Existing rows</h3>
+        <div id="adm-existing" class="space-y-3 text-sm"></div>
+      </div>
+        </div>
+      </details>
     </div>
   </section>
 
