@@ -3965,13 +3965,13 @@ function squadBoardHtml(items, mgrId, opts = {}) {
     ${subs.length ? `<div class="mt-2">
       <div class="flex items-baseline justify-between gap-2 mb-1">
         <span class="eyebrow">Bench · ${subs.length}</span>
-        <span class="text-[11px] text-slate-400">first on when a starter doesn't play</span>
+        <span class="text-[11px] text-slate-400">in the order they come on</span>
       </div>
-      <div class="space-y-1">${subs.map((it, i) =>
-        `<div class="flex items-center gap-1.5">
-           <span class="w-4 shrink-0 text-xs font-mono text-slate-400">${i + 1}</span>
-           <div class="min-w-0 flex-1">${lineupRowHtml(it, mgrId, false, { ...rowOpts, hideSub: true })}</div>
-         </div>`).join("")}</div>
+      ${dugoutHtml(subs.map((it) => ({
+        player_id: it.entry.player_id, name: it.entry.player_name,
+        team: it.entry.team, position: it.entry.position,
+        note: anyPts ? (ptsOf(it) || 0) : undefined,
+      })), { tapAttr: "data-hp" })}
     </div>` : ""}
     ${bonus.length ? `<div class="mt-2 space-y-1">${bonus.map((it) =>
       lineupRowHtml(it, mgrId, false, rowOpts)).join("")}</div>` : ""}
@@ -4207,10 +4207,10 @@ function h2hFixtureCardHtml(me) {
       <span class="eyebrow">Round ${rnd} · head to head</span>
       <span class="text-xs text-wcgold">View line-ups →</span>
     </div>
-    <div class="mt-1.5 flex items-center justify-between gap-2 text-sm">
-      <span class="min-w-0 flex-1">${managerTag(me)}</span>
-      <span class="shrink-0 font-bold scoreboard ${lead}">${live ? `${a} – ${b}` : "vs"}</span>
-      <span class="min-w-0 flex-1 flex justify-end">${managerTag(opp)}</span>
+    <div class="mt-1.5 grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-sm">
+      <span class="min-w-0 overflow-hidden">${managerTag(me)}</span>
+      <span class="font-bold scoreboard ${lead}">${live ? `${a} – ${b}` : "vs"}</span>
+      <span class="min-w-0 overflow-hidden flex justify-end">${managerTag(opp)}</span>
     </div>
     ${live ? `<div class="mt-2 h-1.5 rounded-full bg-slate-800 overflow-hidden flex">
       <span style="width:${(a / total) * 100}%;background:${managerColor(me)}"></span>
@@ -4219,15 +4219,22 @@ function h2hFixtureCardHtml(me) {
   </button>`;
 }
 
-// Both line-ups on pitches, with each player's points once the round has been
-// played. This is the "how did we actually match up" view.
 function openH2HPreview() {
   const me = myManager();
   if (!me) return;
   const rnd = h2hCurrentRound();
   const opp = h2hOpponentFor(me, rnd);
+  if (opp) openH2HFixture(rnd, me.id, opp.id);
+}
+
+/* Both line-ups on one pitch, facing, with each player's points once the round
+   has been played. `botId` is the side drawn at your end — your own team when
+   you're in the fixture, the home manager otherwise. */
+function openH2HFixture(rnd, botId, topId) {
+  const me = S.managers.find((m) => m.id === botId);
+  const opp = S.managers.find((m) => m.id === topId);
   const body = $("recap-body");
-  if (!opp || !body) return;
+  if (!me || !opp || !body) return;
 
   // Prefer the locked round's roster (with points); fall back to the live XI.
   const sideFor = (m) => {
@@ -4270,14 +4277,8 @@ function openH2HPreview() {
     </div>`;
   const benchList = (m, s) => `<div class="min-w-0">
       <div class="eyebrow mb-1 truncate">${esc(m.name)}</div>
-      <div class="space-y-1">${s.bench.length ? s.bench.map((b) =>
-        `<button data-vsp="${esc(b.player_id)}" class="w-full flex items-center gap-1.5 rounded-lg px-1.5 py-1 border border-slate-700 bg-slate-800/60 text-left">
-           ${avatarHtml(b.player_id, b.team, "w-6 h-6")}
-           <span class="min-w-0 flex-1 truncate text-xs">${esc(shortName(b.name))}</span>
-           <span class="shrink-0 text-[10px] pos-${b.position} rounded px-1 py-0.5">${b.position}</span>
-           ${b.pts != null ? `<span class="shrink-0 w-6 text-right text-[11px] font-mono text-wcgold">${b.pts}</span>` : ""}
-         </button>`).join("")
-        : '<p class="text-xs text-slate-400">No bench.</p>'}</div>
+      ${s.bench.length ? dugoutHtml(s.bench, { tapAttr: "data-vsp" })
+        : '<p class="text-xs text-slate-400">No bench.</p>'}
     </div>`;
 
   body.innerHTML = `
@@ -4295,7 +4296,7 @@ function openH2HPreview() {
     </div>
     <details class="rounded-xl border border-slate-700 bg-slate-900/60">
       <summary class="px-3 py-2 cursor-pointer select-none text-xs uppercase tracking-wide text-slate-400">Benches</summary>
-      <div class="grid grid-cols-2 gap-2 px-3 pb-3">${benchList(opp, theirs)}${benchList(me, mine)}</div>
+      <div class="space-y-2 px-3 pb-3">${benchList(opp, theirs)}${benchList(me, mine)}</div>
     </details>
     <p class="text-xs text-slate-400 text-center">${mine.played
       ? "Points shown are this round only."
@@ -5211,7 +5212,7 @@ function renderBannerDetail() {
    The panes are unchanged; they're grouped so the phone shows one bottom bar
    instead of three rows of buttons, and a section only shows a secondary
    switcher when it actually has more than one view. */
-const NAV_LABEL = { lb: "Table", rosters: "Squads", bracket: "Bracket",
+const NAV_LABEL = { lb: "Table", fixtures: "Fixtures", rosters: "Squads", bracket: "Bracket",
   trades: "Trades", chat: "Chat", home: "Team", stats: "Players" };
 
 // A knockout bracket is meaningless for a 38-round league season. Legacy
@@ -5225,7 +5226,12 @@ function isCupCompetition() {
 function navGroups() {
   return {
     team: ["home"],
-    league: isCupCompetition() ? ["lb", "rosters", "bracket"] : ["lb", "rosters"],
+    league: [
+      "lb",
+      ...(h2hEnabled() ? ["fixtures"] : []),
+      "rosters",
+      ...(isCupCompetition() ? ["bracket"] : []),
+    ],
     players: ["stats"],
     activity: ["trades", "chat"],
   };
@@ -5269,10 +5275,14 @@ function updateNavDot() {
 }
 
 function setBoardTab(tab) {
+  // Fixtures only exists in a head-to-head league, and Bracket only in a cup.
+  // Landing on a pane the league no longer has would show an empty screen.
+  if (!Object.values(navGroups()).some((g) => g.includes(tab))) tab = "home";
   S.boardTab = tab;
   (S._navLast ||= {})[groupOfTab(tab)] = tab;
   $("board-home").classList.toggle("hidden", tab !== "home");
   $("board-lb").classList.toggle("hidden", tab !== "lb");
+  $("board-fixtures").classList.toggle("hidden", tab !== "fixtures");
   $("board-bracket").classList.toggle("hidden", tab !== "bracket");
   $("board-stats").classList.toggle("hidden", tab !== "stats");
   $("board-rosters").classList.toggle("hidden", tab !== "rosters");
@@ -5650,36 +5660,182 @@ function seasonChartHtml(scores, meId) {
   </div>`;
 }
 
+/* ---------- head-to-head fixtures tab ---------- */
+
+// How many rounds the season is planned for — the configured length when the
+// admin set one, otherwise however far the results have got.
+const h2hTotalRounds = () =>
+  Math.max(1, Number(h2hConfig().rounds) || h2hCurrentRound());
+
+// The pairings for one round, plus whether that round is scored by placement
+// (a rumble with no pairwise fixtures at all).
+function h2hRoundFixtures(rnd) {
+  const ids = S.managers.map((m) => m.id);
+  const cfg = h2hConfig();
+  const plan = cfg.rumble
+    ? h2hSchedulePlan(ids.length, h2hTotalRounds(), { rumble: true }) : null;
+  const rumbling = plan && plan.valid && plan.rumble && rnd >= plan.rumbleFrom;
+  if (rumbling && cfg.rumble_scoring === "placement")
+    return { placement: true, rumble: true, fixtures: [] };
+  const opts = rumbling ? { rumbleFrom: plan.rumbleFrom } : {};
+  return { placement: false, rumble: !!rumbling,
+    fixtures: h2hFixturesFor(ids, rnd, opts).filter((f) => f.round === rnd) };
+}
+
+/* Who plays whom, round by round. The Table says where everyone stands; this
+   says what is about to happen, which is the thing you check in for. Past
+   rounds carry their scores, future rounds carry the pairing, and either way
+   the row opens the two line-ups. */
+function renderFixturesTab() {
+  const box = $("board-fixtures");
+  if (!box) return;
+  if (!h2hEnabled()) { box.innerHTML = ""; return; }
+  const me = myManager();
+  const total = h2hTotalRounds();
+  const played = h2hCurrentRound();
+  const rnd = Math.min(total, Math.max(1, S.fixRound || played));
+  S.fixRound = rnd;
+  const scores = h2hRoundScores();
+  const done = (id) => scores[id]?.[rnd - 1];
+  const { fixtures, placement, rumble } = h2hRoundFixtures(rnd);
+  const nameOf = (id) => S.managers.find((m) => m.id === id);
+
+  const row = (f) => {
+    const a = nameOf(f.home_manager_id), b = nameOf(f.away_manager_id);
+    if (!a) return "";
+    if (!b) return `<div class="rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2.5 flex items-center gap-2">
+      ${managerTag(a)}<span class="ml-auto text-xs text-slate-400">bye this round</span></div>`;
+    const sa = done(a.id), sb = done(b.id);
+    const live = sa != null && sb != null;
+    const mine = me && (a.id === me.id || b.id === me.id);
+    const win = (x, y) => live && x > y ? "text-live font-bold" : live && x < y ? "text-slate-400" : "text-slate-200";
+    return `<button data-fix="${esc(a.id)}|${esc(b.id)}" class="w-full text-left rounded-xl border px-3 py-2.5 ${
+      mine ? "border-wcgold/50 bg-wcgold/5" : "border-slate-700 bg-slate-900"}">
+      <div class="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+        <span class="min-w-0 overflow-hidden ${win(sa, sb)}">${managerTag(a)}</span>
+        <span class="scoreboard font-bold text-sm ${live ? "text-wcgold" : "text-slate-500"}">${
+          live ? `${sa} – ${sb}` : "vs"}</span>
+        <span class="min-w-0 overflow-hidden flex justify-end ${win(sb, sa)}">${managerTag(b)}</span>
+      </div>
+      ${live ? `<div class="mt-1.5 h-1.5 rounded-full bg-slate-800 overflow-hidden flex">
+        <span style="width:${(sa / Math.max(1, sa + sb)) * 100}%;background:${managerColor(a)}"></span>
+        <span style="width:${(sb / Math.max(1, sa + sb)) * 100}%;background:${managerColor(b)}"></span>
+      </div>` : ""}
+      <div class="mt-1 text-[11px] ${mine ? "text-wcgold" : "text-slate-400"}">${
+        live ? "View line-ups & points →" : "View line-ups →"}</div>
+    </button>`;
+  };
+
+  const state = rnd < played ? "final" : rnd === played ? "in progress" : "upcoming";
+  box.innerHTML = `
+    <div class="flex items-center gap-1">
+      <button data-fixnav="-1" ${rnd <= 1 ? "disabled" : ""} class="px-2 py-1 rounded text-lg ${
+        rnd <= 1 ? "text-slate-700" : "text-wcgold hover:bg-slate-800"}">‹</button>
+      <div class="flex-1 text-center min-w-0">
+        <div class="text-sm font-semibold">Round ${rnd}${rumble ? " ⚔️" : ""}</div>
+        <div class="text-xs text-slate-400">${state} · round ${rnd} of ${total}</div>
+      </div>
+      <button data-fixnav="1" ${rnd >= total ? "disabled" : ""} class="px-2 py-1 rounded text-lg ${
+        rnd >= total ? "text-slate-700" : "text-wcgold hover:bg-slate-800"}">›</button>
+    </div>
+    ${placement
+      ? `<p class="rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm text-slate-400">⚔️ Rumble round — everyone is scored against the whole league by placement, so there are no pairings.</p>`
+      : (fixtures.map(row).join("")
+        || '<p class="rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm text-slate-400">No fixtures for this round.</p>')}
+    ${rumble && !placement ? '<p class="text-xs text-slate-400 text-center">⚔️ Rumble round — everyone plays everyone.</p>' : ""}`;
+
+  box.querySelectorAll("[data-fixnav]").forEach((b) => b.onclick = () => {
+    S.fixRound = rnd + Number(b.dataset.fixnav);
+    renderFixturesTab();
+  });
+  box.querySelectorAll("[data-fix]").forEach((b) => b.onclick = () => {
+    const [aId, bId] = b.dataset.fix.split("|");
+    // Draw whichever side is yours at your end of the pitch.
+    const bot = me && bId === me.id ? bId : aId;
+    openH2HFixture(rnd, bot, bot === aId ? bId : aId);
+  });
+}
+
 // The head-to-head log table (shown in the Table tab when H2H is enabled).
+/* A manager's last five head-to-head results, newest last — the one column
+   that makes a league table feel like something is happening rather than a
+   list of totals. */
+function h2hFormOf(mgrId, maxRound) {
+  const scores = h2hRoundScores();
+  const out = [];
+  for (let r = 1; r <= maxRound; r++) {
+    const { fixtures } = h2hRoundFixtures(r);
+    const f = fixtures.find((x) =>
+      x.home_manager_id === mgrId || x.away_manager_id === mgrId);
+    if (!f || !f.home_manager_id || !f.away_manager_id) continue;
+    const other = f.home_manager_id === mgrId ? f.away_manager_id : f.home_manager_id;
+    const a = scores[mgrId]?.[r - 1], b = scores[other]?.[r - 1];
+    if (a == null || b == null) continue;
+    out.push(a > b ? "W" : a < b ? "L" : "D");
+  }
+  return out.slice(-5);
+}
+
+const FORM_STYLE = { W: "bg-emerald-500/25 text-emerald-300 border-emerald-500/40",
+  D: "bg-slate-600/30 text-slate-300 border-slate-500/40",
+  L: "bg-red-500/20 text-red-300 border-red-500/40" };
+
 function h2hStandingsHtml(me) {
   const { rows, order } = h2hStandings();
-  const nameBy = mgrNameById();
   const cfg = h2hConfig();
-  const cols = "grid grid-cols-[1.4rem_1fr_1.5rem_3rem_2.6rem_2.6rem_1.8rem] gap-1 items-center";
-  const head = `<div class="${cols} text-xs text-slate-400 px-2 pb-0.5">
-    <span></span><span>Manager</span><span class="text-center">P</span><span class="text-center">W-D-L</span>
-    <span class="text-right">PF</span><span class="text-right">PA</span><span class="text-right">Pts</span></div>`;
+  const played = h2hCurrentRound();
+  const mgrOf = (id) => S.managers.find((m) => m.id === id);
+  const anyPlayed = order.some((id) => rows[id].P > 0);
+
   const body = order.map((id, i) => {
-    const r = rows[id];
-    return `<div class="${cols} rounded-lg px-2 py-2 text-sm ${
-      id === me?.id ? "bg-wcgold/10 border border-wcgold/40" : "bg-slate-900 border border-slate-700"}">
-      <span class="text-slate-400 font-mono">${i + 1}.</span>
-      <span class="truncate font-semibold">${esc(nameBy[id] || "?")}${id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}${
-        r.bonus ? ` <span class="text-xs text-emerald-400">+${r.bonus}b</span>` : ""}</span>
-      <span class="text-center text-slate-400 text-xs">${r.P}</span>
-      <span class="text-center text-slate-400 text-xs">${r.W}-${r.D}-${r.L}</span>
-      <span class="text-right font-mono text-xs text-slate-400">${r.PF}</span>
-      <span class="text-right font-mono text-xs text-slate-400">${r.PA}</span>
-      <span class="text-right font-mono font-bold text-wcgold">${r.logPts}</span>
-    </div>`;
+    const r = rows[id], m = mgrOf(id);
+    const form = anyPlayed ? h2hFormOf(id, played) : [];
+    return `<details data-mgr="${esc(id)}" class="rounded-xl border ${
+      id === me?.id ? "border-wcgold/40 bg-wcgold/5" : "border-slate-700 bg-slate-900"}">
+      <summary class="px-3 py-2.5 cursor-pointer select-none flex items-center gap-2">
+        <span class="w-5 shrink-0 text-slate-400 font-mono text-sm">${i + 1}</span>
+        <span class="shrink-0 inline-flex items-center justify-center rounded-md w-8 h-8 text-[15px]"
+              style="background:${managerColor(m)}22;border:1px solid ${managerColor(m)}88">${managerMark(m)}</span>
+        <span class="min-w-0 flex-1">
+          <span class="block font-semibold truncate text-sm">${esc(m?.name || "?")}${
+            id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}</span>
+          <span class="flex items-center gap-1 mt-0.5">
+            ${form.length
+              ? form.map((x) => `<span class="inline-flex items-center justify-center w-4 h-4 rounded border text-[9px] font-bold ${FORM_STYLE[x]}">${x}</span>`).join("")
+              : '<span class="text-xs text-slate-400">no results yet</span>'}
+            ${r.bonus ? `<span class="text-[11px] text-emerald-400 ml-1">+${r.bonus} bonus</span>` : ""}
+          </span>
+        </span>
+        <span class="shrink-0 text-right">
+          <span class="block font-bold text-wcgold scoreboard leading-none">${r.logPts}</span>
+          <span class="block text-[10px] text-slate-400 mt-0.5">${r.W}-${r.D}-${r.L}</span>
+        </span>
+      </summary>
+      <div class="px-3 pb-3 space-y-2">
+        <div class="grid grid-cols-4 gap-1 text-center">
+          ${[["Played", r.P], ["For", r.PF], ["Against", r.PA], ["Diff", (r.PF - r.PA > 0 ? "+" : "") + (r.PF - r.PA)]]
+            .map(([k, v]) => `<div class="rounded-lg bg-slate-800/60 py-1.5">
+              <div class="text-sm font-bold scoreboard">${v}</div>
+              <div class="eyebrow">${k}</div></div>`).join("")}
+        </div>
+        <div id="hist-lb-${esc(id)}"></div>
+      </div>
+    </details>`;
   }).join("");
-  return `<div class="rounded-xl border border-slate-800 bg-slate-900/40 p-2 space-y-1">
-    <div class="text-sm font-semibold px-1">Head-to-head log</div>
-    <p class="text-xs text-slate-400 px-1">Win ${cfg.win} · draw ${cfg.draw} · loss ${cfg.loss} · +1 attacking (round ≥ ${cfg.score_bonus}) · +1 losing (by ≤ ${cfg.losing_margin}). PF/PA = points for/against.${
-      cfg.rumble ? (cfg.rumble_scoring === "placement"
-        ? ` ⚔️ Rumble rounds score by placement (${(cfg.rumble_points || [3, 2, 1]).join("-")}).`
-        : " ⚔️ Rumble rounds pit everyone against everyone.") : ""}</p>
-    ${head}${body || '<p class="text-sm text-slate-400 px-2 py-3">No completed rounds yet.</p>'}
+
+  return `<div class="space-y-2">
+    <div class="flex items-baseline justify-between gap-2 px-1">
+      <span class="text-sm font-semibold">Head-to-head log</span>
+      <span class="eyebrow">${played} round${played === 1 ? "" : "s"} played</span>
+    </div>
+    ${body || '<p class="rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm text-slate-400">No completed rounds yet.</p>'}
+    <details class="rounded-xl border border-slate-800 bg-slate-900/40">
+      <summary class="px-3 py-2 cursor-pointer select-none text-xs uppercase tracking-wide text-slate-400">How the log is scored</summary>
+      <p class="px-3 pb-3 text-xs text-slate-400">Win ${cfg.win} · draw ${cfg.draw} · loss ${cfg.loss} · +1 attacking (round ≥ ${cfg.score_bonus}) · +1 losing (by ≤ ${cfg.losing_margin}). For/Against are fantasy points scored and conceded.${
+        cfg.rumble ? (cfg.rumble_scoring === "placement"
+          ? ` ⚔️ Rumble rounds score by placement (${(cfg.rumble_points || [3, 2, 1]).join("-")}).`
+          : " ⚔️ Rumble rounds pit everyone against everyone.") : ""}</p>
+    </details>
   </div>`;
 }
 
@@ -5702,9 +5858,10 @@ function renderBoard() {
   const note = $("board-rules-note");
   if (note) {
     note.textContent = boardRulesNote();
-    // Team already carries "How points are scored"; the footer repeated most of
-    // it a centimetre lower, unboxed, as if it had fallen out of the card.
-    note.classList.toggle("hidden", S.boardTab === "home");
+    // Team carries "How points are scored" and League carries "How the log is
+    // scored"; on both, this footer repeated them a centimetre lower and
+    // unboxed, as if it had fallen out of the card.
+    note.classList.toggle("hidden", ["team", "league"].includes(groupOfTab(S.boardTab)));
   }
   maybeSquadReveal();
   maybeAutoRecap();
@@ -5751,9 +5908,18 @@ function renderBoard() {
     </div>
     ${playerView ? `<p class="text-xs text-amber-300/90 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-1.5">⚽ Player-points-only — just for fun. The official standings are 🏆 <b>Total</b> (national-team stage bonuses included).</p>` : ""}`;
   if (h2hEnabled()) {
-    $("board-lb").innerHTML = chartHtml + h2hStandingsHtml(me);
+    // The season chart only exists once two rounds have been scored; before
+    // that its placeholder was the largest thing on the tab, saying nothing.
+    const { maxR } = seasonSeries(scores);
+    $("board-lb").innerHTML = (maxR >= 2 ? chartHtml : "") + h2hStandingsHtml(me)
+      + '<button id="lb-awards" class="w-full rounded-xl border border-slate-700 bg-slate-900 py-2.5 text-sm font-semibold text-slate-300">🏆 Season awards</button>';
     const cc0 = document.getElementById("chart-compare");
     if (cc0) cc0.onchange = () => { S.chartCompare = cc0.value || null; renderBoard(); };
+    const aw0 = document.getElementById("lb-awards");
+    if (aw0) aw0.onclick = openAwards;
+    for (const m of S.managers)
+      renderHistInto("hist-lb-" + m.id, m.id, `${m.name}'s lineup`);
+    renderFixturesTab();
     renderRosters("board-rosters"); renderStatsTab(); renderTrades(); renderChat(); renderBracket();
     return;
   }
@@ -5806,6 +5972,7 @@ function renderBoard() {
   // Fill each manager's history pager (current lineup + past rounds).
   for (const s of scores)
     renderHistInto("hist-lb-" + s.manager.id, s.manager.id, `${s.manager.name}'s lineup`);
+  renderFixturesTab();
   renderRosters("board-rosters");
   renderStatsTab();
   renderTrades();
@@ -5824,6 +5991,7 @@ S.statsView = "list";   // Stats tab: "list" leaderboard or "dream" best XI
 S.histIdxByMgr = {};   // manager id -> history pager index (0 = current)
 S.chartCompare = null; // Table season chart: manager id to compare against (H2H)
 S.tableView = "total"; // Table: "total" (official, incl. teams) or "player" (for fun)
+S.fixRound = null;     // Fixtures tab: round being viewed (null = the live one)
 S.homeScoreMode = "total"; // current-lineup view: "total" or "round" points
 S.formerOpen = {};     // manager id -> former-players section expanded?
 S.messages = [];       // chat messages (group + DMs) for this league
@@ -6724,6 +6892,27 @@ function pitchFacingHtml(topByPos, botByPos, opts = {}) {
 const PITCH_MARKS =
   '<div class="pitch-half"></div><div class="pitch-box b"></div><div class="pitch-box t"></div>';
 
+/* The bench, drawn as a bench. A stack of full-width rows said "list of spare
+   players"; a row of faces under the pitch, numbered left to right, says the
+   thing that actually matters — who comes on first.
+     e : { player_id, name, team, position, note? }                          */
+function dugoutHtml(subs, opts = {}) {
+  if (!subs.length) return "";
+  return `<div class="dugout">${subs.map((e, i) => {
+    const tap = opts.tapAttr ? `${opts.tapAttr}="${esc(e.player_id)}"` : "";
+    return `<button type="button" ${tap} class="sub-chip">
+      <span class="sub-no">${i + 1}</span>
+      <span class="relative inline-flex">
+        ${avatarHtml(e.player_id, e.team, "w-9 h-9")}
+        ${teamCrestHtml(e.team) ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${teamCrestHtml(e.team, "w-3 h-3")}</span>` : ""}
+        ${e.note != null ? `<span class="pp-pts">${e.note}</span>` : ""}
+      </span>
+      <span class="sub-name">${esc(shortName(e.name))}</span>
+      <span class="text-[9px] pos-${e.position} rounded px-1 leading-tight">${esc(e.position || "")}</span>
+    </button>`;
+  }).join("")}</div>`;
+}
+
 function pitchRowsHtml(byPos, opts = {}) {
   const av = opts.small ? "w-8 h-8" : "w-10 h-10";
   const chip = (e) => {
@@ -6743,10 +6932,10 @@ function pitchRowsHtml(byPos, opts = {}) {
           ${avatarHtml(e.player_id, e.team, av)}
           ${opts.crests && teamCrestHtml(e.team) ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${teamCrestHtml(e.team, "w-3.5 h-3.5")}</span>` : ""}
           ${e.badge ? `<span class="absolute -top-1 -right-1 rounded-full bg-wcgold text-slate-900 text-[10px] font-bold w-4 h-4 inline-flex items-center justify-center">${e.badge}</span>` : ""}
+          ${e.note != null ? `<span class="pp-pts">${e.note}</span>` : ""}
         </span>
         <span class="pp-name">${esc(shortName(e.name))}</span>
         ${e.opp ? `<span class="pp-opp">${esc(e.opp)}</span>` : ""}
-        ${e.note != null ? `<span class="text-[11px] font-mono font-bold text-wcgold leading-none">${e.note}</span>` : ""}
       </button>
     </div>`;
   };
