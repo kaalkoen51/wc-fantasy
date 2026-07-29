@@ -2356,8 +2356,9 @@ function renderDraft() {
     ? "border-wcgold bg-wcred/20 ring-2 ring-wcgold/40" : "border-slate-700 bg-slate-900");
   $("draft-onclock").className = "text-lg font-bold truncate " + (myTurn ? "text-wcgold" : "");
   const miniWho = $("draft-mini-who");
-  if (miniWho) miniWho.textContent = myTurn ? "⏱ You're on the clock!"
+  if (miniWho) miniWho.textContent = myTurn ? "⏱ YOUR PICK — you're on the clock"
     : `${info.manager.name} is picking${away != null && away > 0 ? ` · you're ${away} away` : ""}`;
+  $("draft-mini")?.classList.toggle("mini-yours", myTurn);
   const upnext = $("draft-upnext");
   if (upnext) {
     const show = !myTurn && away != null && away > 0;
