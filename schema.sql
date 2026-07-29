@@ -69,6 +69,9 @@ create table if not exists team_stages (
 -- e.g. "team:Argentina"; regular slots use players.json ids like "arg_10".
 alter table leagues add column if not exists invite_code text;
 alter table leagues add column if not exists trading_open boolean not null default false;
+-- Manual windows only: line-up locking is its own deadline, separate from the
+-- trade window. Null = follow trading_open (how it behaved before).
+alter table leagues add column if not exists lineups_open boolean;
 alter table leagues add column if not exists admin_token text;
 alter table leagues add column if not exists num_managers int default 8;
 alter table leagues add column if not exists pick_duration_seconds int default 60;

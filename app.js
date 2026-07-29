@@ -114,8 +114,15 @@ function tradingOpen() {
 // Whether lineup (starter/bench) edits are currently allowed. Under auto
 // windows this locks 1h before the upcoming matchweek's first fixture, which
 // is a DIFFERENT moment from the trade window closing.
+/* Manual mode keeps the two locks separate. Closing trading is a deadline for
+   deals; locking line-ups is a deadline for team selection, and they are not
+   the same moment — you often want deals shut days early but selection open
+   until kick-off. Leagues created before this column follow trading_open, so
+   nothing changes for them until an admin touches the new toggle. */
 function lineupOpen() {
-  return autoWindowsEnabled() ? autoWindowState().lineupOpen : !!S.league?.trading_open;
+  if (autoWindowsEnabled()) return autoWindowState().lineupOpen;
+  const sep = S.league?.lineups_open;
+  return sep == null ? !!S.league?.trading_open : !!sep;
 }
 // Human-readable "when do lineups lock / when does trading reopen" strings for
 // auto-window mode. mwNo() pulls the matchweek number out of the round label.
@@ -286,7 +293,7 @@ const STRIPPABLE_COLUMNS = new Set([
   "home_score", "away_score", "minutes", "raw",
   "offered_player_name", "requested_player_name",
   "offered_player_id", "requested_player_id", "planner",
-  "owner_id", "user_id", "is_bot", "crest", "color", "bench_order",
+  "owner_id", "user_id", "is_bot", "crest", "color", "bench_order", "lineups_open",
 ]);
 
 // Insert/upsert that tolerates an unapplied additive migration. Throws on
@@ -6827,12 +6834,8 @@ async function toggleReaction(msgId, emoji) {
     ? "Reactions need a schema update — run schema.sql." : error.message);
 }
 S.admOpenLabels = null; // admin stats history: which match groups are expanded
-S.showShortlist = false;   // Trades tab: shortlist collapsed until opened
-S.slPos = "ALL";           // shortlist position filter
-S.slSort = "points";       // shortlist sort key
-S.slUnpicked = false;      // shortlist: show only unpicked (free agents)
-S.slHideKO = false;        // shortlist: hide knocked-out players
-S.showPlanner = false;     // Trades tab: squad planner collapsed until opened
+S.tradeTab = "deals";      // Trades tab: deals | planner | watch | history
+
 S.poolPlannerOnly = false; // draft pool: filter to planner choices
 S.plannerPickFor = null;   // out pick id the choice picker is adding to
 S.plannerSearch = "";      // choice picker search
@@ -8136,9 +8139,22 @@ function openSwap(pick) {
   if (cap != null && faMovesLeft(pick.manager_id) <= 0)
     return toast(`No free-agent moves left this window — the cap is ${cap}.`);
   S.swapPick = pick;
-  $("swap-title").textContent =
-    `Swap out ${pick.player_name} (${pick.slot}) — pick a replacement ${slotGroup(pick.slot)}:`
-    + (cap == null ? "" : ` · ${faMovesLeft(pick.manager_id)}/${cap} moves left this window`);
+  // Say what will actually happen. In waiver mode nothing is instant — the
+  // claim queues and resolves at window close — and calling it a swap was a
+  // straight lie about the rules the league is playing under.
+  const waiver = faDeferToClose();
+  $("swap-title").innerHTML = `
+    <div class="flex items-center gap-2">
+      ${avatarHtml(pick.player_id, pick.team, "w-8 h-8")}
+      <span class="min-w-0 flex-1 leading-tight">
+        <span class="block text-sm font-semibold truncate">Replace ${esc(pick.player_name)}</span>
+        <span class="block text-xs text-slate-400 truncate">${esc(pick.team)} · ${esc(pick.slot)}${
+          cap == null ? "" : ` · ${faMovesLeft(pick.manager_id)}/${cap} moves left`}</span>
+      </span>
+    </div>
+    <p class="text-xs ${waiver ? "text-amber-300" : "text-slate-400"} mt-1.5">${waiver
+      ? "⏳ Claims are not instant — yours queues and resolves when the window closes, in waiver order."
+      : "Applies immediately, first come first served."}</p>`;
   $("swap-search").value = "";
   if (!$("swap-team").options.length) {
     $("swap-team").innerHTML = '<option value="">All teams</option>' +
@@ -8184,23 +8200,34 @@ function renderSwapList() {
   const freeRows = free.map((e) => `
     <li class="flex items-center py-2 gap-2">
       ${avatarHtml(e.player_id, e.team)}
-      <div class="min-w-0 flex-1">
-        <div class="truncate font-medium">${esc(e.name)} ${availBadges(e.player_id)}</div>
-        <div class="text-xs text-slate-400">${teamFixLine(e.team)}</div>
+      <div class="min-w-0 flex-1 leading-tight">
+        <div class="flex items-center gap-1 min-w-0">
+          <span class="truncate text-sm">${esc(e.name)}</span>
+          <span class="shrink-0 flex items-center gap-1">${availBadges(e.player_id)}</span>
+        </div>
+        <div class="flex items-center gap-1 text-xs text-slate-400 min-w-0">
+          ${teamCrestHtml(e.team, "w-3.5 h-3.5")}<span class="truncate">${esc(e.team)}</span>
+          <span class="shrink-0 font-mono">${entryPoints(e.player_id, e.position, e.team)}p</span>
+        </div>
       </div>
-      <span class="shrink-0 text-xs font-mono text-slate-400">${entryPoints(e.player_id, e.position, e.team)} pts</span>
-      <button data-swapin="${esc(e.player_id)}" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-sm font-semibold">${faDeferToClose() ? "Claim" : "Swap in"}</button>
+      <button data-swapin="${esc(e.player_id)}" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-2 text-xs font-semibold">${faDeferToClose() ? "Claim" : "Swap in"}</button>
     </li>`).join("") || '<li class="py-4 text-sm text-slate-400">No free agents match.</li>';
   const ownedRows = owned.map(({ pk, owner }) => `
     <li class="flex items-center py-2 gap-2">
       ${avatarHtml(pk.player_id, pk.team)}
-      <div class="min-w-0 flex-1">
-        <div class="truncate font-medium">${esc(pk.player_name)} ${availBadges(pk.player_id)}
-          <span class="rounded bg-slate-700 px-1.5 py-0.5 text-xs font-semibold text-wcgold">👤 ${esc(owner?.name ?? "?")}</span></div>
-        <div class="text-xs text-slate-400">${teamFixLine(pk.team)}</div>
+      <div class="min-w-0 flex-1 leading-tight">
+        <div class="flex items-center gap-1 min-w-0">
+          <span class="truncate text-sm">${esc(pk.player_name)}</span>
+          <span class="shrink-0 flex items-center gap-1">${availBadges(pk.player_id)}</span>
+        </div>
+        <div class="flex items-center gap-1 text-xs text-slate-400 min-w-0">
+          <span class="shrink-0 inline-flex items-center justify-center rounded w-4 h-4 text-[10px]"
+                style="background:${managerColor(owner)}26;border:1px solid ${managerColor(owner)}88">${managerMark(owner)}</span>
+          <span class="truncate">${esc(owner?.name ?? "?")}</span>
+          <span class="shrink-0 font-mono">${entryPoints(pk.player_id, pk.position, pk.team)}p</span>
+        </div>
       </div>
-      <span class="shrink-0 text-xs font-mono text-slate-400">${entryPoints(pk.player_id, pk.position, pk.team)} pts</span>
-      <button data-tradefor="${pk.id}" class="shrink-0 bg-slate-800 border border-wcgold/60 text-wcgold rounded-lg px-3 py-1.5 text-sm font-semibold">Trade</button>
+      <button data-tradefor="${pk.id}" class="shrink-0 bg-slate-800 border border-wcgold/60 text-wcgold rounded-lg px-3 py-2 text-xs font-semibold">Offer</button>
     </li>`).join("");
   $("swap-list").innerHTML = freeRows + (ownedRows
     ? `<li class="pt-3 pb-1 text-xs uppercase tracking-wide text-slate-400">On other rosters — tap Trade to propose a swap</li>${ownedRows}`
@@ -8409,67 +8436,155 @@ function openBuilder(targetId = "", parentId = null, pairs = null) {
   renderTrades();
 }
 
+
+/* Choose a player by tapping them on a pitch, not from a dropdown that reads
+   "SUB_FWD · R. Ngumoha (Liverpool, 0 pts)". A squad is a shape; picking from
+   it should look like the shape.
+     mgrId  : whose squad
+     opts.tapAttr  : attribute written onto each chip (value = pick id)
+     opts.eligible : (pick) => boolean — others are dimmed and untappable
+     opts.selected : pick id currently chosen                              */
+function squadChooserHtml(mgrId, opts = {}) {
+  const picks = orderedRoster(S.managers.find((m) => m.id === mgrId) || { id: mgrId })
+    .filter((pk) => pk.slot !== "TEAM");
+  const ok = opts.eligible || (() => true);
+  const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+  const bench = [];
+  for (const pk of picks) {
+    const usable = ok(pk);
+    const e = {
+      id: pk.id, player_id: pk.player_id, name: pk.player_name, team: pk.team,
+      position: pk.position, opp: oppShort(pk.team),
+      dim: !usable, badge: opts.selected === pk.id ? "✓" : "",
+    };
+    if (pk.is_sub) bench.push(e);
+    else if (byPos[pk.position]) byPos[pk.position].push(e);
+  }
+  const tap = opts.tapAttr || "data-choose";
+  return `
+    ${pitchHtml(byPos, { tapAttr: tap, crests: true })}
+    ${bench.length ? `<div class="mt-1.5">
+      <div class="eyebrow mb-1">Bench</div>
+      ${dugoutHtml(bench, { tapAttr: tap })}
+    </div>` : ""}`;
+}
+
+/* The league's waiver order, so "your priority: #4" means something. */
+function waiverOrderHtml(me) {
+  const ranked = activeManagers()
+    .filter((m) => m.waiver_order != null)
+    .sort((a, b) => a.waiver_order - b.waiver_order);
+  if (!ranked.length) return "";
+  return `<div class="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+    ${ranked.map((m, i) => `<span class="shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs ${
+      m.id === me?.id ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400"}">
+      <span class="font-mono">${i + 1}</span>
+      <span class="inline-flex items-center justify-center rounded w-4 h-4 text-[10px]"
+            style="background:${managerColor(m)}26;border:1px solid ${managerColor(m)}88">${managerMark(m)}</span>
+      <span>${esc(shortName(m.name))}</span></span>`).join("")}
+  </div>`;
+}
+
+/* The trade builder, as two squads you tap rather than a stack of dropdowns.
+
+   Step 1 pick who you're dealing with, step 2 tap one of your players, step 3
+   tap one of theirs — and the pair appears as a card you can remove. Only one
+   thing is on screen at a time, which is the whole difference. */
 function builderHtml(me) {
   const b = S.builder;
   const others = activeManagers().filter((m) => m.id !== me.id);
-  const myPicks = S.picks.filter((p) => p.manager_id === me.id && p.slot !== "TEAM");
-  const targetPicks = S.picks.filter((p) => p.manager_id === b.target && p.slot !== "TEAM");
-  const optLabel = (p) =>
-    `${p.slot} · ${p.player_name} (${p.team}, ${entryPoints(p.player_id, p.position, p.team)} pts)${availText(p.player_id)}`;
-  const targetSelect = `<label class="block text-xs text-slate-400">Trade with
-      <select id="trade-target" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm" ${b.parent ? "disabled" : ""}>
-        <option value="">— choose trading partner —</option>
-        <option value="FA" ${b.target === "FA" ? "selected" : ""}>Free Agent Pool (instant swaps)</option>
-        ${others.map((m) =>
-          `<option value="${m.id}" ${b.target === m.id ? "selected" : ""}>${esc(m.name)}</option>`).join("")}
-      </select></label>`;
+  const waiver = faDeferToClose();
+  const head = (title, sub) => `<div class="flex items-baseline justify-between gap-2">
+      <h3 class="font-semibold text-sm">${title}</h3>
+      ${sub ? `<span class="text-xs text-slate-400">${sub}</span>` : ""}
+    </div>`;
+
+  // ---- step 1: who ----
+  if (!b.target) {
+    return `<div class="rounded-xl border border-wcgold bg-slate-900 p-3 space-y-2 mt-3">
+      ${head("New deal", "step 1 of 3")}
+      <p class="text-xs text-slate-400">Who are you dealing with?</p>
+      <button data-partner="FA" class="w-full text-left rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2.5 flex items-center gap-2">
+        <span class="text-lg">🆓</span>
+        <span class="min-w-0">
+          <span class="block text-sm font-semibold">Free agents</span>
+          <span class="block text-xs text-slate-400">${waiver
+            ? "Claims queue and resolve at window close, in waiver order"
+            : "Swap straight away — no approval needed"}</span>
+        </span></button>
+      ${others.map((m) => `<button data-partner="${esc(m.id)}" class="w-full text-left rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2.5 flex items-center gap-2">
+        <span class="shrink-0 inline-flex items-center justify-center rounded-lg w-8 h-8 text-base"
+              style="background:${managerColor(m)}26;border:1px solid ${managerColor(m)}99">${managerMark(m)}</span>
+        <span class="min-w-0">
+          <span class="block text-sm font-semibold truncate">${esc(m.name)}</span>
+          <span class="block text-xs text-slate-400">${managerPicks(m.id).filter((pk) => pk.slot !== "TEAM").length} players</span>
+        </span></button>`).join("")}
+      <button id="trade-discard" class="w-full bg-slate-800 border border-slate-700 rounded-lg py-1.5 text-xs font-semibold">Cancel</button>
+    </div>`;
+  }
+
+  // ---- free agents: pick who leaves, then who arrives ----
   if (b.target === "FA") {
-    return `<div class="rounded-xl border border-wcgold bg-slate-900 p-4 space-y-3 mt-3">
-      <h3 class="font-semibold text-sm">Free agent swap</h3>
-      ${targetSelect}
-      <p class="text-xs text-slate-400">Swap any of your players for an unpicked player in the same
-        position. No approval needed — it happens immediately.</p>
-      <div class="space-y-1">
-        ${myPicks.map((p) => `<div class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-2 py-1.5 text-sm">
-          <span class="text-xs w-14 shrink-0 text-slate-400">${p.slot}</span>
-          ${avatarHtml(p.player_id, p.team, "w-5 h-5")}
-          <span class="min-w-0 truncate">${esc(p.player_name)} ${availBadges(p.player_id)}
-            <span class="text-xs text-slate-400">${teamFixLine(p.team)}</span></span>
-          <span class="ml-auto shrink-0 text-xs font-mono text-slate-400">${entryPoints(p.player_id, p.position, p.team)}p</span>
-          <button data-faswap="${p.id}" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1 text-xs font-semibold">Swap</button>
-        </div>`).join("")}
-      </div>
+    return `<div class="rounded-xl border border-wcgold bg-slate-900 p-3 space-y-2 mt-3">
+      ${head("🆓 Free agents", "step 2 of 3")}
+      <p class="text-xs text-slate-400">${waiver
+        ? "Tap the player you'd drop. Claims queue up and resolve when the window closes, in waiver order — the first still-available one lands."
+        : "Tap the player you want to drop, then choose their replacement. It applies immediately."}</p>
+      ${squadChooserHtml(me.id, { tapAttr: "data-faswap" })}
       <button id="trade-discard" class="w-full bg-slate-800 border border-slate-700 rounded-lg py-1.5 text-xs font-semibold">Close</button>
     </div>`;
   }
-  return `<div class="rounded-xl border border-wcgold bg-slate-900 p-4 space-y-3 mt-3">
-    <h3 class="font-semibold text-sm">${b.parent ? "Counter-offer" : "New trade proposal"}</h3>
-    ${targetSelect}
-    ${b.pairs.map((pair, i) => {
-      const mp = pickById(pair.mine), tp = pickById(pair.theirs);
-      const theirOpts = targetPicks.filter((p) => !mp || slotGroup(p.slot) === slotGroup(mp.slot));
-      const fixOf = (p) => p && S.fixtures?.length
-        ? `${esc(p.player_name)}: ${esc(fixtureText(p.team))}` : "";
-      const fixLine = [fixOf(mp), fixOf(tp)].filter(Boolean).join(" ⇄ ");
-      return `<div class="flex items-center gap-1.5">
-        <select data-mine="${i}" class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-1.5 py-1.5 text-xs">
-          <option value="">your player…</option>
-          ${myPicks.map((p) =>
-            `<option value="${p.id}" ${pair.mine === p.id ? "selected" : ""}>${esc(optLabel(p))}</option>`).join("")}
-        </select>
-        <span class="text-slate-400">⇄</span>
-        <select data-theirs="${i}" class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-1.5 py-1.5 text-xs">
-          <option value="">their player…</option>
-          ${theirOpts.map((p) =>
-            `<option value="${p.id}" ${pair.theirs === p.id ? "selected" : ""}>${esc(optLabel(p))}</option>`).join("")}
-        </select>
-        ${b.pairs.length > 1 ? `<button data-rmpair="${i}" class="text-red-400 text-xs px-1">✕</button>` : ""}
-      </div>${fixLine ? `<div class="text-xs text-slate-400 px-1 -mt-1.5">${fixLine}</div>` : ""}`;
-    }).join("")}
-    <div class="flex gap-2">
-      <button id="trade-addpair" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg py-1.5 text-xs font-semibold">+ add pair</button>
-      <button id="trade-submit" class="flex-1 bg-wcred hover:bg-wcred-hov rounded-lg py-1.5 text-xs font-semibold">Send</button>
-      <button id="trade-discard" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg py-1.5 text-xs font-semibold">Discard</button>
+
+  // ---- manager trade: tap yours, tap theirs ----
+  const partner = S.managers.find((m) => m.id === b.target);
+  const pending = b.pairs.find((pr) => !pr.mine || !pr.theirs)
+    || (b.pairs.length ? null : (b.pairs.push({ mine: "", theirs: "" }), b.pairs[0]));
+  const done = b.pairs.filter((pr) => pr.mine && pr.theirs);
+  const mineSel = pending && pending.mine ? pickById(pending.mine) : null;
+  const paired = new Set(b.pairs.flatMap((pr) => [pr.mine, pr.theirs]).filter(Boolean));
+
+  const pairCard = (pr, i) => {
+    const mp = pickById(pr.mine), tp = pickById(pr.theirs);
+    const side = (pk, who) => `<span class="min-w-0 flex-1 flex items-center gap-1.5 ${who === "in" ? "flex-row-reverse text-right" : ""}">
+      ${avatarHtml(pk.player_id, pk.team, "w-7 h-7")}
+      <span class="min-w-0">
+        <span class="block truncate text-sm">${esc(shortName(pk.player_name))}</span>
+        <span class="block truncate text-xs text-slate-400">${esc(pk.team)}</span>
+      </span></span>`;
+    return `<div class="rounded-lg border border-slate-700 bg-slate-800/60 px-2 py-2 flex items-center gap-2">
+      ${side(mp, "out")}
+      <span class="shrink-0 text-slate-400">⇄</span>
+      ${side(tp, "in")}
+      <button data-rmpair="${i}" class="shrink-0 text-slate-500 hover:text-wcred px-1" aria-label="Remove">✕</button>
+    </div>`;
+  };
+
+  const step = !pending ? "" : !pending.mine
+    ? `<div class="space-y-1.5">
+         <p class="text-xs text-slate-400">Tap the player <b class="text-slate-200">you</b> would give up.</p>
+         ${squadChooserHtml(me.id, { tapAttr: "data-pickmine", eligible: (pk) => !paired.has(pk.id) })}
+       </div>`
+    : `<div class="space-y-1.5">
+         <div class="flex items-center gap-2 rounded-lg bg-wcred/15 border border-wcred/40 px-2 py-1.5">
+           ${avatarHtml(mineSel.player_id, mineSel.team, "w-7 h-7")}
+           <span class="min-w-0 flex-1 text-sm truncate">You give <b>${esc(mineSel.player_name)}</b></span>
+           <button data-clearmine="1" class="shrink-0 text-xs text-slate-400 underline">change</button>
+         </div>
+         <p class="text-xs text-slate-400">Now tap the <b class="text-slate-200">${esc(partner?.name || "their")}</b> player you want — same position.</p>
+         ${squadChooserHtml(b.target, { tapAttr: "data-picktheirs",
+           eligible: (pk) => !paired.has(pk.id) && slotGroup(pk.slot) === slotGroup(mineSel.slot) })}
+       </div>`;
+
+  return `<div class="rounded-xl border border-wcgold bg-slate-900 p-3 space-y-2 mt-3">
+    ${head(b.parent ? "Counter-offer" : "New deal",
+           `with ${esc(partner?.name || "?")}`)}
+    ${done.length ? `<div class="space-y-1">${done.map((pr) =>
+      pairCard(pr, b.pairs.indexOf(pr))).join("")}</div>` : ""}
+    ${step}
+    <div class="flex gap-2 pt-1">
+      <button id="trade-discard" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg py-2 text-xs font-semibold">Discard</button>
+      <button id="trade-submit" class="flex-1 bg-wcred hover:bg-wcred-hov disabled:bg-slate-800 disabled:text-slate-500 rounded-lg py-2 text-xs font-semibold"${
+        done.length ? "" : " disabled"}>Send ${done.length ? `(${done.length})` : ""}</button>
     </div>
   </div>`;
 }
@@ -8479,41 +8594,59 @@ const TRADE_STATUS_STYLE = {
   cancelled: "text-slate-400", countered: "text-sky-300",
 };
 
+/* A proposal, as the deal it is: their face, your players out on one side and
+   theirs in on the other, with the arrow between them. The old card was two
+   names and a slot code on one line of 12px text. */
 function tradeSectionHtml(title, list, incoming) {
   const cards = list.map((t) => {
     const other = S.managers.find((m) =>
       m.id === (incoming ? t.proposer_manager_id : t.target_manager_id));
-    const rows = (t.trade_items || []).map((it) => {
+    const col = managerColor(other);
+    const items = (t.trade_items || []).map((it) => {
+      // "offered" is always from the proposer's side, so which column a player
+      // belongs in flips depending on who is reading the card.
       const o = pickById(it.offered_pick_id), r = pickById(it.requested_pick_id);
-      const fixOf = (p) => p && S.fixtures?.length
-        ? `${esc(p.player_name)}: ${esc(fixtureText(p.team))}` : "";
-      const fixLine = t.status === "proposed"
-        ? [fixOf(o), fixOf(r)].filter(Boolean).join(" ⇄ ") : "";
-      return `<div class="text-xs text-slate-300">
-        ${esc(o?.player_name ?? "?")} <span class="text-slate-400">(${o?.slot ?? "?"})</span>
-        ⇄ ${esc(r?.player_name ?? "?")} <span class="text-slate-400">(${r?.slot ?? "?"})</span>
-      </div>${fixLine ? `<div class="text-xs text-slate-400">${fixLine}</div>` : ""}`;
-    }).join("");
-    // Accept only while the window is open; Reject/Counter stay available so
-    // you can still respond to (and renegotiate) pending proposals when closed.
+      return incoming ? { gain: o, give: r } : { gain: r, give: o };
+    });
+    const col2 = (pk, tint) => pk ? `<span class="flex items-center gap-1.5 min-w-0">
+        ${avatarHtml(pk.player_id, pk.team, "w-7 h-7")}
+        <span class="min-w-0 leading-tight">
+          <span class="block truncate text-sm">${esc(shortName(pk.player_name))}</span>
+          <span class="block truncate text-[11px] ${tint}">${esc(pk.team)} · ${esc(pk.position)}</span>
+        </span></span>` : '<span class="text-sm text-slate-500">?</span>';
+    const rows = items.map(({ gain, give }) => `
+      <div class="grid grid-cols-[1fr_auto_1fr] items-center gap-1.5 rounded-lg bg-slate-800/60 px-2 py-1.5">
+        ${col2(give, "text-red-300/70")}
+        <span class="shrink-0 text-slate-500 text-xs">⇄</span>
+        <span class="flex justify-end min-w-0">${col2(gain, "text-live/70")}</span>
+      </div>`).join("");
     const actions = t.status !== "proposed" ? "" : incoming
-      ? `${tradingOpen() ? `<button data-acc="${t.id}" class="bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-xs font-semibold">Accept</button>` : ""}
-         <button data-rej="${t.id}" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold">Reject</button>
-         <button data-cnt="${t.id}" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold">Counter</button>`
-      : `<button data-can="${t.id}" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold">Cancel</button>`;
-    return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2">
-      <div class="flex items-center justify-between text-sm">
-        <span>${incoming ? "from" : "to"} <b>${esc(other?.name ?? "?")}</b>${
-          t.parent_trade_id ? ' <span class="text-xs text-sky-300">(counter-offer)</span>' : ""}</span>
-        <span class="text-xs font-semibold ${TRADE_STATUS_STYLE[t.status] || ""}">${t.status}</span>
+      ? `${tradingOpen() ? `<button data-acc="${t.id}" class="flex-1 bg-wcred hover:bg-wcred-hov rounded-lg py-2 text-xs font-semibold">✓ Accept</button>` : ""}
+         <button data-cnt="${t.id}" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg py-2 text-xs font-semibold">↩ Counter</button>
+         <button data-rej="${t.id}" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg py-2 text-xs font-semibold text-slate-400">Reject</button>`
+      : `<button data-can="${t.id}" class="w-full bg-slate-800 border border-slate-700 rounded-lg py-2 text-xs font-semibold text-slate-400">Withdraw offer</button>`;
+    return `<div class="rounded-xl border bg-slate-900 p-3 space-y-2"
+                 style="border-color:${col}55">
+      <div class="flex items-center gap-2">
+        <span class="shrink-0 inline-flex items-center justify-center rounded-lg w-8 h-8 text-base"
+              style="background:${col}26;border:1px solid ${col}99">${managerMark(other)}</span>
+        <span class="min-w-0 flex-1 leading-tight">
+          <span class="block text-sm font-semibold truncate">${esc(other?.name ?? "?")}</span>
+          <span class="block text-[11px] text-slate-400">${incoming ? "wants to deal" : "waiting on them"}${
+            t.parent_trade_id ? " · counter-offer" : ""}</span>
+        </span>
+        <span class="shrink-0 text-[11px] font-semibold ${TRADE_STATUS_STYLE[t.status] || ""}">${t.status}</span>
       </div>
-      <div class="space-y-0.5">${rows}</div>
-      ${actions ? `<div class="flex gap-2 pt-1">${actions}</div>` : ""}
+      <div class="grid grid-cols-[1fr_auto_1fr] gap-1.5 px-2 eyebrow">
+        <span>you give</span><span></span><span class="text-right">you get</span>
+      </div>
+      <div class="space-y-1">${rows}</div>
+      ${actions ? `<div class="flex gap-1.5 pt-0.5">${actions}</div>` : ""}
     </div>`;
   }).join("");
-  return `<div class="mt-4 space-y-2">
-    <h3 class="font-semibold text-sm">${title}</h3>
-    ${cards || '<p class="text-xs text-slate-400">None.</p>'}
+  return `<div class="space-y-2">
+    <h3 class="font-semibold text-sm px-1">${title}</h3>
+    ${cards || '<p class="text-xs text-slate-400 px-1">None.</p>'}
   </div>`;
 }
 
@@ -8625,93 +8758,58 @@ function transactionsLogHtml() {
 // with the same position + category filters as the Stats tab. Players are
 // tappable for the full detail card, and carry a Trade shortcut when the
 // window is open. Only ever built from your own shortlist.
+/* The watchlist. It used to carry its own position chips, sort dropdown and
+   unpicked / hide-KO toggles — a second, worse copy of the Players page bolted
+   under a collapsed header. A shortlist is a short list: it needs the same row
+   as everywhere else and nothing around it. */
 function shortlistSectionHtml(me) {
   const open = tradingOpen();
-  const allIds = myShortlist();
+  const ids = myShortlist();
+  const owned = pickedIdSet();
 
-  if (!S.showShortlist) {
-    return `<div class="mt-4">
-      <button id="sl-toggle" class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm font-semibold flex items-center justify-between">
-        <span>★ View shortlist <span class="text-slate-400 font-normal">· ${allIds.length} player${allIds.length === 1 ? "" : "s"}</span></span>
-        <span class="text-slate-400">▾</span>
-      </button>
-    </div>`;
-  }
-
-  const sortKey = S.slSort || "points";
-  const byPoints = sortKey === "points";
-  const valOf = (p) => byPoints ? playerPoints(p.player_id, p.position)
-    : playerStatTotal(p.player_id, sortKey);
-
-  let players = allIds.map((pid) => S.playerById[pid]).filter(Boolean);
-  if (S.slPos !== "ALL") players = players.filter((p) => p.position === S.slPos);
-  if (S.slHideKO) players = players.filter((p) => !isEliminated(p.team));
-  if (S.slUnpicked) {
-    const owned = pickedIdSet();
-    players = players.filter((p) => !owned.has(p.player_id));
-  }
-  const ranked = players
-    .map((p) => ({ p, pts: playerPoints(p.player_id, p.position), val: valOf(p) }))
-    .sort((a, b) => b.val - a.val || b.pts - a.pts || a.p.name.localeCompare(b.p.name));
-
-  const rows = ranked.map(({ p, pts, val }) => {
+  const rows = ids.map((pid) => S.playerById[pid]).filter(Boolean).map((p) => {
     const ownPick = S.picks.find((pk) => pk.player_id === p.player_id);
-    const owner = ownPick && S.managers.find((m) => m.id === ownPick.manager_id);
     const mine = ownPick && ownPick.manager_id === me.id;
-    const status = mine ? '<span class="text-slate-400">on your roster</span>'
-      : owner ? `<span class="rounded bg-slate-700 px-1 py-0.5 text-xs text-wcgold">👤 ${esc(owner.name)}</span>`
-      : '<span class="text-slate-400">free agent</span>';
-    return `<li class="flex items-center py-2 gap-1.5">
+    const val = playerPoints(p.player_id, p.position);
+    return `<li class="flex items-center gap-1">
       ${starHtml(p.player_id)}
-      <button data-sldetail="${esc(p.player_id)}" class="flex-1 min-w-0 flex items-center gap-2 text-left">
+      <button data-sldetail="${esc(p.player_id)}" class="flex-1 min-w-0 flex items-center gap-2 py-2 text-left">
         ${avatarHtml(p.player_id, p.team)}
         <span class="min-w-0 flex-1">
-          <span class="block truncate font-medium text-sm">${esc(p.name)} ${availBadges(p.player_id)}</span>
-          <span class="block truncate text-xs text-slate-400">${esc(p.team)} · ${status}</span>
-          ${fixtureCrestHtml(p.team, "w-3 h-3")
-            ? `<span class="flex items-center gap-1 text-xs text-slate-400 truncate">${fixtureCrestHtml(p.team, "w-3 h-3")}</span>`
-            : ""}
+          <span class="flex items-center gap-1 text-sm min-w-0">
+            <span class="truncate">${esc(p.name)}</span>
+            <span class="shrink-0 flex items-center gap-1">${availBadges(p.player_id)}</span>
+          </span>
+          <span class="flex items-center gap-1.5 text-xs text-slate-400 min-w-0">
+            ${mine ? '<span class="shrink-0 text-wcgold">yours</span>'
+                   : ownerChipHtml(p.player_id) || '<span class="shrink-0 text-live">free</span>'}
+            ${teamCrestHtml(p.team, "w-3.5 h-3.5")}<span class="truncate">${esc(p.team)}</span>
+          </span>
         </span>
         <span class="pos-${p.position} rounded px-1.5 py-0.5 text-xs font-semibold shrink-0">${p.position}</span>
-        <span class="shrink-0 w-10 text-right">
-          <span class="block font-mono font-bold ${val > 0 ? "text-wcgold" : "text-slate-400"}">${val}</span>
-          ${byPoints ? "" : `<span class="block text-xs text-slate-400">${pts}p</span>`}
-        </span>
+        <span class="shrink-0 w-8 text-right font-mono font-bold ${val > 0 ? "text-wcgold" : "text-slate-400"}">${val}</span>
       </button>
-      ${!mine && open ? `<button data-sltrade="${esc(p.player_id)}" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-sm font-semibold">Trade</button>` : ""}
+      ${!mine && open ? `<button data-sltrade="${esc(p.player_id)}" class="shrink-0 rounded-lg bg-wcred hover:bg-wcred-hov px-2.5 py-1.5 text-xs font-semibold">${
+        owned.has(p.player_id) ? "Offer" : "Claim"}</button>` : ""}
     </li>`;
   }).join("");
 
-  const chips = ["ALL", ...GROUPS.slice(0, 4)];
-  return `<div class="mt-4 space-y-2">
-    <button id="sl-toggle" class="w-full rounded-xl border border-wcgold/60 bg-wcred/10 px-3 py-2.5 text-sm font-semibold flex items-center justify-between">
-      <span>★ My shortlist <span class="text-xs text-slate-400 font-normal">· only you can see this</span></span>
-      <span class="text-slate-400">▴ hide</span>
-    </button>
-    ${allIds.length ? `<div class="flex gap-2">
-      <button id="sl-clean" class="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-300">🧹 Clean · remove knocked-out</button>
-      <button id="sl-clear" class="shrink-0 rounded-lg border border-red-500/40 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-red-400">Clear all</button>
-    </div>` : ""}
-    <div class="flex items-center gap-2 flex-wrap">
-      <div id="sl-chips" class="flex gap-1.5 flex-wrap text-xs">
-        ${chips.map((c) => `<button data-slchip="${c}" class="rounded-full px-3 py-1 border ${
-          S.slPos === c ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"}">${c}</button>`).join("")}
-      </div>
-      <select id="sl-sort" class="ml-auto rounded-lg bg-slate-900 border border-slate-700 px-2 py-1 text-xs">
-        ${STAT_SORTS.map(([k, lbl]) => `<option value="${k}" ${sortKey === k ? "selected" : ""}>${lbl}</option>`).join("")}
-      </select>
+  return `<div class="space-y-2">
+    <div class="flex items-baseline justify-between gap-2 px-1">
+      <span class="text-sm font-semibold">★ Watchlist</span>
+      <span class="text-xs text-slate-400">only you can see this</span>
     </div>
-    <div class="flex gap-1.5 flex-wrap text-xs">
-      <button id="sl-unpicked" class="rounded-full px-3 py-1 border ${
-        S.slUnpicked ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"}">🟢 Unpicked</button>
-      <button id="sl-hideko" class="rounded-full px-3 py-1 border ${
-        S.slHideKO ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"}">🚫 Hide KO</button>
-    </div>
-    ${ranked.length
-      ? `<ul class="rounded-xl border border-slate-700 bg-slate-900 px-3 divide-y divide-slate-800">${rows}</ul>`
-      : `<p class="text-xs text-slate-400">${allIds.length
-          ? "No shortlisted players match the current filters."
-          : "No players shortlisted yet — tap ☆ on a player in the Stats tab."}</p>`}
+    ${rows
+      ? `<ul class="rounded-xl border border-slate-700 bg-slate-900 px-3 divide-y divide-slate-800">${rows}</ul>
+         <div class="flex gap-2">
+           ${isCupCompetition() ? '<button id="sl-clean" class="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-300">🧹 Drop knocked-out</button>' : ""}
+           <button id="sl-clear" class="flex-1 rounded-lg border border-red-500/40 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-red-400">Clear all</button>
+         </div>`
+      : `<div class="rounded-xl border border-slate-700 bg-slate-900 p-6 text-center space-y-2">
+           <div class="text-3xl">★</div>
+           <p class="text-sm text-slate-300">Nothing on your watchlist.</p>
+           <p class="text-xs text-slate-500">Tap ☆ next to any player on the Players tab to keep an eye on them.</p>
+         </div>`}
   </div>`;
 }
 
@@ -8745,46 +8843,53 @@ function tradeForShortlisted(pid) {
 
 // Squad planner section (Trades tab): your whole squad, with planned
 // replacements per slot. Collapsed behind a "Squad planner" button.
+/* The planner, on the pitch. Which of your slots has a replacement lined up is
+   a question about your team's shape, so it's answered on a pitch: a shirt with
+   a plan wears a badge, and tapping any shirt opens or edits its plan. The
+   detail (ranked choices, execute) lists underneath, but only for slots you've
+   actually planned — the old version listed all fifteen whether or not there
+   was anything to say. */
 function plannerSectionHtml(me) {
   const open = tradingOpen();
   const myPickIds = new Set(managerPicks(me.id).map((pk) => pk.id));
-  const activeMoves = plannerMoves().filter((m) => myPickIds.has(m.out));
+  const planned = plannerMoves().filter((m) => myPickIds.has(m.out));
+  const plannedFor = new Set(planned.map((m) => m.out));
 
-  if (!S.showPlanner) {
-    return `<div class="mt-4">
-      <button id="pl-toggle" class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm font-semibold flex items-center justify-between">
-        <span>🗺 Squad planner <span class="text-slate-400 font-normal">· ${activeMoves.length} planned move${activeMoves.length === 1 ? "" : "s"}</span></span>
-        <span class="text-slate-400">▾</span>
-      </button>
-    </div>`;
+  const picks = orderedRoster(me).filter((pk) => pk.slot !== "TEAM");
+  const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+  const bench = [];
+  for (const pk of picks) {
+    const e = { id: pk.id, player_id: pk.player_id, name: pk.player_name, team: pk.team,
+      position: pk.position, opp: oppShort(pk.team),
+      badge: plannedFor.has(pk.id) ? "🗺" : "" };
+    if (pk.is_sub) bench.push(e); else if (byPos[pk.position]) byPos[pk.position].push(e);
   }
 
-  const mine = managerPicks(me.id).filter((pk) => pk.slot !== "TEAM").sort((a, b) =>
-    (SLOT_RANK[a.slot] ?? 9) - (SLOT_RANK[b.slot] ?? 9) || a.pick_number - b.pick_number);
-  const rows = mine.map((pk) => {
-    const m = moveFor(pk.id);
-    const next = upNextHtml(pk.team);
-    return `<li class="py-2">
+  const detail = planned.map((m) => {
+    const pk = pickById(m.out);
+    return pk ? `<div class="rounded-xl border border-slate-700 bg-slate-900 p-2.5 space-y-1.5">
       <div class="flex items-center gap-1.5">
-        ${avatarHtml(pk.player_id, pk.team, "w-5 h-5")}
-        <span class="min-w-0 flex-1">
-          <span class="block truncate text-sm">${esc(pk.player_name)} ${availBadges(pk.player_id)}</span>
-          <span class="flex items-center gap-1 truncate text-xs text-slate-400">${pk.slot} · ${esc(pk.team)}${next ? ` · ${next}` : ""}</span>
+        ${avatarHtml(pk.player_id, pk.team, "w-6 h-6")}
+        <span class="min-w-0 flex-1 leading-tight">
+          <span class="block truncate text-sm">Out: ${esc(pk.player_name)}</span>
+          <span class="block truncate text-xs text-slate-400">${pk.slot} · ${esc(pk.team)}</span>
         </span>
-        ${m ? "" : `<button data-plplan="${pk.id}" class="shrink-0 text-xs text-wcgold underline">plan replacement</button>`}
       </div>
-      ${m ? plannerMoveHtml(pk, m, open) : ""}
-    </li>`;
+      ${plannerMoveHtml(pk, m, open)}
+    </div>` : "";
   }).join("");
 
-  return `<div class="mt-4 space-y-2">
-    <button id="pl-toggle" class="w-full rounded-xl border border-wcgold/60 bg-wcred/10 px-3 py-2.5 text-sm font-semibold flex items-center justify-between">
-      <span>🗺 Squad planner <span class="text-xs text-slate-400 font-normal">· only you can see this</span></span>
-      <span class="text-slate-400">▴ hide</span>
-    </button>
-    <p class="text-xs text-slate-400">Plan a replacement per slot (a first choice + backups). ${
-      open ? "Window's open — execute below." : "You'll be able to execute when the trading window opens."}</p>
-    <ul class="rounded-xl border border-slate-700 bg-slate-900 px-3 divide-y divide-slate-800">${rows}</ul>
+  return `<div class="space-y-2">
+    <div class="flex items-baseline justify-between gap-2 px-1">
+      <span class="text-sm font-semibold">🗺 Squad planner</span>
+      <span class="text-xs text-slate-400">only you can see this</span>
+    </div>
+    <p class="text-xs text-slate-400">Tap a shirt to line up a replacement — a first choice plus backups. ${
+      open ? "The window's open, so you can execute them below." : "You can execute once the window opens."}</p>
+    ${pitchHtml(byPos, { tapAttr: "data-plplan", crests: true })}
+    ${bench.length ? `<div><div class="eyebrow mb-1">Bench</div>${dugoutHtml(bench, { tapAttr: "data-plplan" })}</div>` : ""}
+    ${detail ? `<div class="space-y-2 pt-1">${detail}</div>`
+      : '<p class="text-xs text-slate-400 text-center py-2">No plans yet — 🗺 marks a shirt once you make one.</p>'}
     ${plannerMoves().length ? '<button id="pl-clear" class="w-full text-xs text-slate-400 underline">clear planner</button>' : ""}
   </div>`;
 }
@@ -8912,6 +9017,8 @@ function renderPlannerPick() {
   $("planner-unpicked").textContent = "🟢 Unpicked";
   $("planner-hideko").className = chipCls(S.plannerHideKO);
   $("planner-hideko").textContent = "🚫 Hide KO";
+  // Nobody is knocked out of a league season.
+  $("planner-hideko").classList.toggle("hidden", !isCupCompetition());
   $("planner-sort").innerHTML = STAT_SORTS.map(([k, lbl]) =>
     `<option value="${k}" ${S.plannerSort === k ? "selected" : ""}>${lbl}</option>`).join("");
 
@@ -8977,7 +9084,7 @@ function renderPlannerPick() {
 function faClaimsSectionHtml(me) {
   const mine = myClaims();
   const priority = me.waiver_order != null
-    ? `Your priority: <b class="text-wcgold">#${me.waiver_order + 1}</b>`
+    ? `You're <b class="text-wcgold">#${me.waiver_order + 1}</b>`
     : "priority set at window open";
   // Same control as every other ordered list in the app: stacked arrows, and
   // hold a row to drag it. This IS a priority queue, so it should feel like one.
@@ -9000,10 +9107,24 @@ function faClaimsSectionHtml(me) {
       <span class="text-xs text-slate-400">${priority}</span>
     </div>
     <p class="text-xs text-slate-400">These resolve when the window closes, in waiver order (worst-placed picks first). Order yours by preference — the first still-available one lands.</p>
+    <div>
+      <div class="eyebrow mb-1">Waiver order</div>
+      ${waiverOrderHtml(me)}
+    </div>
     <div id="fa-claim-list" class="space-y-1">${rows}</div>
     ${mine.length > 1 ? '<p class="text-xs text-slate-400">Hold a row to drag it anywhere in the queue.</p>' : ""}
   </div>`;
 }
+
+/* The Activity → Trades page, as four small pages instead of one long scroll.
+
+   Everything used to be on screen at once — window banner, waiver queue,
+   planner, watchlist with its own duplicate filter bar, the free-agent list
+   and the builder — which is why it read as a wall. Each of those is a
+   different job, so each gets its own tab and the page only ever shows one. */
+const TRADE_TABS = [
+  ["deals", "Deals"], ["planner", "Planner"], ["watch", "Watchlist"], ["history", "History"],
+];
 
 function renderTrades() {
   const box = $("board-trades");
@@ -9013,38 +9134,67 @@ function renderTrades() {
     return;
   }
   const open = tradingOpen();
-  // The header answers the two questions you open this tab with: can I move
-  // right now, and how long have I got.
-  const when = autoWindowsEnabled()
-    ? (open ? lineupLockMessage() : tradeWindowMessage()) : "";
-  let html = `<div class="rounded-xl border ${open ? "border-wcgold/60 bg-wcred/10" : "border-slate-700 bg-slate-900"} p-3">
-    <div class="flex items-center justify-between gap-2">
-      <span class="min-w-0">
-        <span class="block text-sm font-semibold">${open ? "🔓 Window open" : "🔒 Window closed"}</span>
-        <span class="block text-xs text-slate-400">${open
-          ? "Trade, swap free agents and change your line-up."
-          : "You can still reply to pending proposals."}</span>
-      </span>
-      ${open && !S.builder ? '<button id="trade-new" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-1.5 text-sm font-semibold">New trade</button>' : ""}
-    </div>
-    ${when ? `<div class="mt-2 text-xs text-wcgold border-t border-white/10 pt-1.5">${esc(when)}</div>` : ""}
-  </div>`;
-  if (faDeferToClose()) html += faClaimsSectionHtml(me);
-  if (S.builder) html += builderHtml(me);
-  // Pending requests sit at the very top so they can't be missed; only shown
-  // when there's something to act on.
   const pendingIn = S.trades.filter((t) =>
     t.target_manager_id === me.id && t.status === "proposed");
   const pendingOut = S.trades.filter((t) =>
     t.proposer_manager_id === me.id && t.status === "proposed");
-  if (pendingIn.length)
-    html += tradeSectionHtml(`🔔 Incoming requests (${pendingIn.length})`, pendingIn, true);
-  if (pendingOut.length)
-    html += tradeSectionHtml(`Outgoing — awaiting reply (${pendingOut.length})`, pendingOut, false);
-  html += plannerSectionHtml(me);
-  html += shortlistSectionHtml(me);
-  html += transactionsLogHtml();   // full history at the bottom
-  box.innerHTML = html;
+  const myPickIds = new Set(managerPicks(me.id).map((pk) => pk.id));
+  const plans = plannerMoves().filter((m) => myPickIds.has(m.out)).length;
+  const counts = { deals: pendingIn.length, planner: plans,
+                   watch: myShortlist().length, history: 0 };
+  const tab = S.tradeTab && TRADE_TABS.some(([k]) => k === S.tradeTab) ? S.tradeTab : "deals";
+  S.tradeTab = tab;
+
+  const nav = `<div class="flex gap-1 rounded-lg bg-slate-900 border border-slate-700 p-1 text-sm">
+    ${TRADE_TABS.map(([k, label]) => `<button data-tradetab="${k}" class="flex-1 rounded-md py-1.5 text-xs font-semibold ${
+      k === tab ? "bg-slate-700 text-wcgold" : "text-slate-400"}">${label}${
+      counts[k] ? ` <span class="inline-flex items-center justify-center rounded-full bg-wcgold text-slate-900 w-4 h-4 text-[10px] align-middle">${counts[k]}</span>` : ""}</button>`).join("")}
+  </div>`;
+
+  // The window state leads every tab: it decides what you can do at all.
+  const when = autoWindowsEnabled() ? (open ? lineupLockMessage() : tradeWindowMessage()) : "";
+  const banner = `<div class="rounded-xl border ${open ? "border-wcgold/60 bg-wcred/10" : "border-slate-700 bg-slate-900"} px-3 py-2">
+    <div class="flex items-center justify-between gap-2">
+      <span class="min-w-0">
+        <span class="block text-sm font-semibold">${open ? "🔓 Window open" : "🔒 Window closed"}</span>
+        <span class="block text-xs text-slate-400 truncate">${open
+          ? "Deals, free agents and line-up changes are live."
+          : "You can still reply to pending offers."}</span>
+      </span>
+      ${open && !S.builder && tab === "deals"
+        ? '<button id="trade-new" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-2 text-sm font-semibold">＋ New deal</button>' : ""}
+    </div>
+    ${when ? `<div class="mt-1.5 text-xs text-wcgold border-t border-white/10 pt-1.5">${esc(when)}</div>` : ""}
+  </div>`;
+
+  let body = "";
+  if (tab === "deals") {
+    if (S.builder) body += builderHtml(me);
+    if (faDeferToClose()) body += faClaimsSectionHtml(me);
+    if (pendingIn.length)
+      body += tradeSectionHtml(`🔔 Waiting on you (${pendingIn.length})`, pendingIn, true);
+    if (pendingOut.length)
+      body += tradeSectionHtml(`📤 Sent — awaiting reply (${pendingOut.length})`, pendingOut, false);
+    if (!S.builder && !pendingIn.length && !pendingOut.length && !faDeferToClose())
+      body += `<div class="rounded-xl border border-slate-700 bg-slate-900 p-6 text-center space-y-2">
+        <div class="text-3xl">🤝</div>
+        <p class="text-sm text-slate-300">No deals on the table.</p>
+        <p class="text-xs text-slate-500">${open
+          ? "Tap ＋ New deal to offer a swap, or raid the free agents."
+          : "The window is closed — deals open again next window."}</p>
+      </div>`;
+  } else if (tab === "planner") {
+    body += plannerSectionHtml(me);
+  } else if (tab === "watch") {
+    body += shortlistSectionHtml(me);
+  } else {
+    body += transactionsLogHtml();
+  }
+
+  box.innerHTML = nav + banner + `<div class="space-y-3 mt-3">${body}</div>`;
+  box.querySelectorAll("[data-tradetab]").forEach((b) => b.onclick = () => {
+    S.tradeTab = b.dataset.tradetab; renderTrades();
+  });
   wireTrades(me);
 }
 
@@ -9060,28 +9210,15 @@ function wireTrades(me) {
     setClaimOrder(order);
     animateReorder("fa-claim-list", "data-clrow", renderTrades, moved);
   });
-  const slToggle = box.querySelector("#sl-toggle");
-  if (slToggle) slToggle.onclick = () => { S.showShortlist = !S.showShortlist; renderTrades(); };
   const slClean = box.querySelector("#sl-clean");
   if (slClean) slClean.onclick = () => cleanShortlist().catch((e) => toast(e.message));
   const slClear = box.querySelector("#sl-clear");
   if (slClear) slClear.onclick = () => clearShortlist();
-  box.querySelectorAll("[data-slchip]").forEach((b) => b.onclick = () => {
-    S.slPos = b.dataset.slchip; renderTrades();
-  });
-  const slUnpicked = box.querySelector("#sl-unpicked");
-  if (slUnpicked) slUnpicked.onclick = () => { S.slUnpicked = !S.slUnpicked; renderTrades(); };
-  const slHideKO = box.querySelector("#sl-hideko");
-  if (slHideKO) slHideKO.onclick = () => { S.slHideKO = !S.slHideKO; renderTrades(); };
-  const slSort = box.querySelector("#sl-sort");
-  if (slSort) slSort.onchange = () => { S.slSort = slSort.value; renderTrades(); };
   box.querySelectorAll("[data-sldetail]").forEach((b) => b.onclick = () =>
     openPlayerDetail(b.dataset.sldetail));
   box.querySelectorAll("[data-sltrade]").forEach((b) => b.onclick = () =>
     tradeForShortlisted(b.dataset.sltrade));
   // ----- squad planner controls -----
-  const plToggle = box.querySelector("#pl-toggle");
-  if (plToggle) plToggle.onclick = () => { S.showPlanner = !S.showPlanner; renderTrades(); };
   const plClear = box.querySelector("#pl-clear");
   if (plClear) plClear.onclick = () => {
     if (confirm("Clear your whole squad planner?")) setPlanner([]);
@@ -9099,33 +9236,38 @@ function wireTrades(me) {
     plannerExec(...split(b.dataset.plexec)));
   const newBtn = box.querySelector("#trade-new");
   if (newBtn) newBtn.onclick = () => openBuilder();
-  const target = box.querySelector("#trade-target");
-  if (target) target.onchange = () => {
-    S.builder.target = target.value;
-    S.builder.pairs = [{ mine: "", theirs: "" }];
+  // Step 1: who. Step 2: tap one of yours. Step 3: tap one of theirs — which
+  // completes the pair and immediately offers a fresh one, so multi-player
+  // deals build up without an "add pair" button to find.
+  box.querySelectorAll("[data-partner]").forEach((b) => b.onclick = () => {
+    S.builder.target = b.dataset.partner;
+    S.builder.pairs = b.dataset.partner === "FA" ? [] : [{ mine: "", theirs: "" }];
     renderTrades();
-  };
+  });
   box.querySelectorAll("[data-faswap]").forEach((b) => b.onclick = () =>
     openSwap(S.picks.find((pk) => pk.id === b.dataset.faswap)));
-  box.querySelectorAll("[data-mine]").forEach((sel) => sel.onchange = () => {
-    const pair = S.builder.pairs[+sel.dataset.mine];
-    pair.mine = sel.value;
-    pair.theirs = "";
+  box.querySelectorAll("[data-pickmine]").forEach((b) => b.onclick = () => {
+    const pair = S.builder.pairs.find((pr) => !pr.mine || !pr.theirs);
+    if (pair) { pair.mine = b.dataset.pickmine; pair.theirs = ""; }
     renderTrades();
   });
-  box.querySelectorAll("[data-theirs]").forEach((sel) => sel.onchange = () => {
-    S.builder.pairs[+sel.dataset.theirs].theirs = sel.value;
+  box.querySelectorAll("[data-picktheirs]").forEach((b) => b.onclick = () => {
+    const pair = S.builder.pairs.find((pr) => pr.mine && !pr.theirs);
+    if (pair) pair.theirs = b.dataset.picktheirs;
+    S.builder.pairs.push({ mine: "", theirs: "" });   // ready for the next one
     renderTrades();
   });
-  box.querySelectorAll("[data-rmpair]").forEach((b) => b.onclick = () => {
-    S.builder.pairs.splice(+b.dataset.rmpair, 1);
-    renderTrades();
-  });
-  const addPair = box.querySelector("#trade-addpair");
-  if (addPair) addPair.onclick = () => {
-    S.builder.pairs.push({ mine: "", theirs: "" });
+  const clearMine = box.querySelector("[data-clearmine]");
+  if (clearMine) clearMine.onclick = () => {
+    const pair = S.builder.pairs.find((pr) => pr.mine && !pr.theirs);
+    if (pair) pair.mine = "";
     renderTrades();
   };
+  box.querySelectorAll("[data-rmpair]").forEach((b) => b.onclick = () => {
+    S.builder.pairs.splice(+b.dataset.rmpair, 1);
+    if (!S.builder.pairs.length) S.builder.pairs.push({ mine: "", theirs: "" });
+    renderTrades();
+  });
   const discard = box.querySelector("#trade-discard");
   if (discard) discard.onclick = () => { S.builder = null; renderTrades(); };
   const submit = box.querySelector("#trade-submit");
@@ -10299,6 +10441,14 @@ function renderAdmin() {
   $("adm-trading-toggle").disabled = auto;
   $("adm-trading-toggle").classList.toggle("opacity-50", auto);
   $("adm-trading-toggle").classList.toggle("cursor-not-allowed", auto);
+  // Line-ups get their own deadline in manual mode; under automatic windows
+  // the fixture calendar owns both and the row would only mislead.
+  const lopen = lineupOpen();
+  $("adm-lineup-row").classList.toggle("hidden", auto);
+  $("adm-lineup-status").textContent = lopen ? "Line-ups are OPEN" : "Line-ups are LOCKED";
+  $("adm-lineup-status").className =
+    "text-sm font-semibold " + (lopen ? "text-wcgold" : "text-slate-400");
+  $("adm-lineup-toggle").textContent = lopen ? "Lock line-ups" : "Unlock line-ups";
   const sortOn = S.league.draft_stat_sort !== false;
   $("adm-sort-status").textContent = sortOn ? "Draft sort is ON" : "Draft sort is OFF";
   $("adm-sort-status").className =
@@ -10388,9 +10538,31 @@ async function toggleTrading() {
     await S.sb.from("fa_claims").delete().eq("league_id", S.league.id);  // fresh window
     await resetWaiverOrder();                                            // seed from standings
   }
-  if (!next) await snapshotRosters(); // closing = lock everyone's lineups in
-  toast(next ? "Trading window opened — lineups and trades unlocked."
-             : "Trading window closed — lineups locked in for the next games.");
+  /* Closing trading no longer locks line-ups by itself: they are separate
+     deadlines now (see lineupOpen). Opening trading unlocks both, because
+     opening a window that leaves team selection shut would be a trap. */
+  if (next) await S.sb.from("leagues").update({ lineups_open: true }).eq("id", S.league.id)
+    .then(() => { S.league.lineups_open = true; }, () => {});
+  toast(next ? "Trading window opened — deals and line-ups unlocked."
+             : "Trading closed. Line-ups are still open — lock them before kick-off.");
+  scheduleRefetch();
+}
+
+/* Lock or unlock team selection on its own. Locking is what takes the snapshot
+   that the round is scored against, so it — not the trade window — is the
+   moment that decides what everyone's XI was. */
+async function toggleLineups() {
+  if (autoWindowsEnabled())
+    return toast("Line-up locking is automatic — it follows the fixture calendar.");
+  const next = !lineupOpen();
+  const { error } = await S.sb.from("leagues")
+    .update({ lineups_open: next }).eq("id", S.league.id);
+  if (error) return toast(/lineups_open|column|schema cache/.test(error.message)
+    ? "Separate line-up locking needs a schema update — run schema.sql." : error.message);
+  S.league.lineups_open = next;
+  if (!next) await snapshotRosters();      // locking = freeze everyone's XI
+  toast(next ? "Line-ups unlocked — managers can change their team."
+             : "Line-ups locked in for the next games.");
   scheduleRefetch();
 }
 
@@ -10600,6 +10772,7 @@ function wire() {
   $("adm-drafted").onchange = admRenderPlayerSearch;
   $("adm-tsearch").oninput = admRenderStages;
   $("adm-trading-toggle").onclick = () => toggleTrading().catch((e) => toast(e.message));
+  $("adm-lineup-toggle").onclick = () => toggleLineups().catch((e) => toast(e.message));
   $("adm-sort-toggle").onclick = () => toggleDraftSort().catch((e) => toast(e.message));
   $("adm-keeper-toggle").onclick = () => toggleKeeperWindow().catch((e) => toast(e.message));
   $("adm-redraft").onclick = () => startRedraft().catch((e) => toast(e.message));
