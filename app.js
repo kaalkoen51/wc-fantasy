@@ -1699,14 +1699,18 @@ function overrideStillWins(serverValue, rec, pending, nowMs, maxMs = OVERRIDE_MA
   return nowMs - rec.at <= maxMs;      // give up eventually rather than wedge
 }
 
+// Which local collection a table's overrides apply to.
+const OVERRIDE_TABLES = { managers: () => S.managers, picks: () => S.picks };
+
 function applyLocalOverrides() {
   const now = Date.now();
   for (const [key, rec] of [...localOverrides]) {
     const [table, id, field] = key.split(":");
-    if (table !== "managers") continue;
-    const m = S.managers.find((x) => x.id === id);
-    if (!m) continue;
-    if (overrideStillWins(m[field], rec, _pendingWrites.has(key), now)) m[field] = rec.value;
+    const rows = OVERRIDE_TABLES[table]?.();
+    if (!rows) continue;
+    const row = rows.find((x) => x.id === id);
+    if (!row) continue;                 // deleted, or not read back yet
+    if (overrideStillWins(row[field], rec, _pendingWrites.has(key), now)) row[field] = rec.value;
     else localOverrides.delete(key);
   }
 }
@@ -1723,9 +1727,14 @@ function writeSettled(key) {
 }
 
 /* Coalesce a burst of edits to one column into a single write, and hold the
-   local value as authoritative until the server hands it back to us. */
-function queueManagerWrite(id, field, value, onError) {
-  const key = `managers:${id}:${field}`;
+   local value as authoritative until the server hands it back to us.
+
+   Every optimistic write in the app should go through here. Writing directly
+   and then refetching is the pattern that produced the shortlist bounce, the
+   rewinding draft and the vanishing pick: the read can predate the write, and
+   whatever it carries lands on top of a value the user has already seen. */
+function queueFieldWrite(table, id, field, value, onError) {
+  const key = `${table}:${id}:${field}`;
   localOverrides.set(key, { value, at: Date.now() });
   _pendingWrites.add(key);
   clearTimeout(_writeTimers.get(key));
@@ -1733,12 +1742,15 @@ function queueManagerWrite(id, field, value, onError) {
     _writeTimers.delete(key);
     const rec = localOverrides.get(key);
     if (!rec) { writeSettled(key); return; }
-    S.sb.from("managers").update({ [field]: rec.value }).eq("id", id).then(({ error }) => {
+    S.sb.from(table).update({ [field]: rec.value }).eq("id", id).then(({ error }) => {
       if (error) { localOverrides.delete(key); writeSettled(key); onError?.(error); return; }
       writeSettled(key);
     }, () => { localOverrides.delete(key); writeSettled(key); });
   }, 250));
 }
+
+const queueManagerWrite = (id, field, value, onError) =>
+  queueFieldWrite("managers", id, field, value, onError);
 
 function setShortlist(next) {
   const me = myManager();
@@ -1927,16 +1939,13 @@ function choiceStatus(pid) {
 async function setPlanner(moves) {
   const me = myManager();
   if (!me) return toast("Join as a manager to use the planner.");
-  const prev = me.planner;
   const next = { moves };
   me.planner = next;                               // optimistic
-  const { error } = await S.sb.from("managers").update({ planner: next }).eq("id", me.id);
-  if (error) {
-    me.planner = prev;
-    return toast(/planner/.test(error.message)
+  queueManagerWrite(me.id, "planner", next, (error) => {
+    toast(/planner/.test(error.message)
       ? "Planner needs a schema update — run schema.sql." : error.message);
-  }
-  scheduleRefetch();
+    scheduleRefetch();                             // fall back to server truth
+  });
 }
 
 const plannerSetMove = (outPickId, choices) => setPlanner(
@@ -4525,24 +4534,26 @@ async function toggleKeeper(pickId) {
     }
     next.push(pickId);
   }
-  const { error } = await S.sb.from("managers")
-    .update({ keeper_pick_ids: next }).eq("id", me.id);
-  if (error) return toast(error.message);
+  me.keeper_pick_ids = next;                       // optimistic
+  queueManagerWrite(me.id, "keeper_pick_ids", next, (error) => {
+    toast(error.message); scheduleRefetch();
+  });
   toast(next.length === cur.length + 1
     ? "Keeper added: " + (pickById(pickId)?.player_name || "")
     : "Keeper removed: " + (pickById(pickId)?.player_name || ""));
-  scheduleRefetch();
+  renderBoard();
 }
 
 async function setFinalPick(team) {
   const me = myManager();
   if (S.stages.some((s) => s.stage === "winner"))
     return toast("The winner is already decided.");
-  const { error } = await S.sb.from("managers")
-    .update({ final_pick: team }).eq("id", me.id);
-  if (error) return toast(error.message);
+  me.final_pick = team;                            // optimistic
+  queueManagerWrite(me.id, "final_pick", team, (error) => {
+    toast(error.message); scheduleRefetch();
+  });
   toast("Champion pick saved: " + team);
-  scheduleRefetch();
+  renderBoard();
 }
 
 // One roster row in a history view. Tappable (data-hp) unless it's a
@@ -5038,22 +5049,17 @@ function renderCrestPicker() {
     </div>
     <p id="crest-note" class="text-xs text-slate-400 text-center min-h-[1em]"></p>`;
 
-  const apply = async (patch) => {
-    const before = { crest: me.crest ?? null, color: me.color ?? null };
+  const apply = (patch) => {
     Object.assign(me, patch);            // optimistic: the sheet repaints at once
     renderCrestPicker();
     renderBoard();
-    const { error } = await S.sb.from("managers").update(patch).eq("id", me.id);
-    if (error) {
-      Object.assign(me, before);         // put it back rather than lie about it
-      renderCrestPicker();
-      renderBoard();
-      const note = document.getElementById("crest-note");
-      if (note) note.textContent = /crest|color|column|schema cache/.test(error.message)
-        ? "Crests need a schema update — run schema.sql." : error.message;
-      return;
-    }
-    scheduleRefetch();
+    for (const [field, value] of Object.entries(patch))
+      queueManagerWrite(me.id, field, value, (error) => {
+        const note = document.getElementById("crest-note");
+        if (note) note.textContent = /crest|color|column|schema cache/.test(error.message)
+          ? "Crests need a schema update — run schema.sql." : error.message;
+        scheduleRefetch();               // the refetch puts the server's value back
+      });
   };
   body.querySelectorAll("[data-crest]").forEach((b) =>
     b.onclick = () => apply({ crest: b.dataset.crest || null }));
@@ -7928,26 +7934,32 @@ async function saveLineup() {
   // order, so this is what decides who covers a no-show.
   if (S.benchDraft) {
     me.bench_order = S.benchDraft.slice();
-    S.sb.from("managers").update({ bench_order: me.bench_order }).eq("id", me.id)
-      .then(() => {}, () => {});
+    queueManagerWrite(me.id, "bench_order", me.bench_order);
   }
+  /* Applied locally first, then written. The old order — write, await, wait for
+     the refetch — meant the saved XI only appeared after a round trip, and a
+     read that predated the writes put the OLD XI back on screen first. */
   const changes = managerPicks(me.id).filter((pk) => pk.slot !== "TEAM").map((pk) => {
     const isSub = !S.lineupDraft.has(pk.id);
     return { pk, isSub, slot: isSub ? "SUB_" + pk.position : pk.position };
   }).filter(({ pk, isSub }) => pk.is_sub !== isSub);
-  const results = await Promise.all(changes.map(({ pk, isSub, slot }) =>
-    S.sb.from("picks").update({ is_sub: isSub, slot }).eq("id", pk.id)));
-  const err = results.find((r) => r.error)?.error;
-  if (err) return toast("Save failed: " + err.message);
+  const onSaveErr = (error) => { toast("Save failed: " + error.message); scheduleRefetch(); };
+  for (const { pk, isSub, slot } of changes) {
+    pk.is_sub = isSub; pk.slot = slot;
+    queueFieldWrite("picks", pk.id, "is_sub", isSub, onSaveErr);
+    queueFieldWrite("picks", pk.id, "slot", slot, onSaveErr);
+  }
   // Persist captain/vice (only valid if still among the starters).
   if (captainEnabled()) {
     const starterIds = new Set(managerPicks(me.id).filter((pk) => S.lineupDraft.has(pk.id)).map((pk) => pk.player_id));
     const cap = starterIds.has(S.captainDraft) ? S.captainDraft : null;
     const vice = starterIds.has(S.viceDraft) && S.viceDraft !== cap ? S.viceDraft : null;
     if (cap !== (me.captain_id || null) || vice !== (me.vice_id || null)) {
-      const { error: ce } = await S.sb.from("managers").update({ captain_id: cap, vice_id: vice }).eq("id", me.id);
-      if (ce) return toast(/captain|column|schema cache/.test(ce.message) ? "Captain needs a schema update — run schema.sql." : ce.message);
+      const capErr = (error) => toast(/captain|column|schema cache/.test(error.message)
+        ? "Captain needs a schema update — run schema.sql." : error.message);
       me.captain_id = cap; me.vice_id = vice;
+      queueManagerWrite(me.id, "captain_id", cap, capErr);
+      queueManagerWrite(me.id, "vice_id", vice, capErr);
     }
   }
   toast(changes.length ? "Lineup saved." : "Lineup unchanged.");
