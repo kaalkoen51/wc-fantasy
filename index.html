@@ -707,7 +707,14 @@
     <!-- Your queue, in the room: what auto-pick would take, and what's next. -->
     <div id="draft-queue" class="hidden rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2"></div>
     <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
-      <input id="pool-search" placeholder="Search player…" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+      <!-- Collapsible: mid-draft the board and your squad matter more than the
+           search box, and on a phone this panel is most of the screen. -->
+      <button id="pool-toggle" class="w-full flex items-center justify-between gap-2 text-left">
+        <span class="text-sm font-semibold">🔍 Find a player</span>
+        <span id="pool-toggle-hint" class="text-xs text-slate-400"></span>
+      </button>
+      <div id="pool-body" class="space-y-3">
+      <input id="pool-search" placeholder="Search player or team…" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
       <div class="flex gap-2">
         <select id="pool-team" class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm"></select>
         <select id="pool-sort" class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm"></select>
@@ -717,6 +724,7 @@
            thing that feels most broken on a phone, and the clock now follows
            you down anyway. -->
       <ul id="pool-list" class="divide-y divide-slate-800"></ul>
+      </div>
     </div>
     <div id="draft-rosters" class="space-y-2"></div>
     <button id="draft-force" class="hidden w-full bg-amber-700 hover:bg-amber-600 rounded-lg py-2 text-sm font-semibold">Admin: force auto-pick now</button>
@@ -741,10 +749,11 @@
     <div id="board-bracket" class="hidden space-y-2"></div>
     <div id="board-stats" class="hidden space-y-3">
       <div id="stats-view" class="flex gap-1 rounded-lg bg-slate-900 border border-slate-700 p-1 text-sm">
-        <button data-statsview="list" class="flex-1 rounded-md py-1.5 font-semibold">Leaderboard</button>
+        <button data-statsview="list" class="flex-1 rounded-md py-1.5 font-semibold">Player stats</button>
         <button data-statsview="dream" class="flex-1 rounded-md py-1.5 font-semibold">Dream XI</button>
+        <button data-statsview="nightmare" class="flex-1 rounded-md py-1.5 font-semibold">Nightmare XI</button>
       </div>
-      <input id="stats-search" placeholder="Search any player or country…"
+      <input id="stats-search" placeholder="Search any player or team…"
              class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm">
       <div id="stats-listctl" class="space-y-2">
         <div id="stats-chips" class="flex gap-1.5 flex-wrap text-xs"></div>
@@ -758,6 +767,8 @@
         <button id="stats-per90" class="rounded-full px-3 py-1 border border-slate-700 text-slate-400">⏱ per 90</button>
         <span class="text-xs text-slate-500">Round = each team's Nth game · per 90 needs ≥90′</span>
       </div>
+      <!-- Which filters are on, and one tap to drop any of them. -->
+      <div id="stats-active" class="hidden flex items-center gap-1.5 overflow-x-auto whitespace-nowrap"></div>
       <p id="stats-count" class="hidden text-xs text-slate-400 text-center"></p>
       <div id="stats-filters" class="flex items-center gap-1.5 flex-wrap text-xs">
         <button id="stats-unpicked" class="rounded-full px-3 py-1 border border-slate-700 text-slate-400">🟢 Unpicked only</button>
@@ -950,7 +961,7 @@
         <button id="adm-redraft" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2 text-sm font-semibold">Start redraft now</button>
         <button id="adm-final" class="w-full bg-slate-800 border border-wcgold/60 text-wcgold rounded-lg py-2 text-sm font-semibold">Start final phase (champion picks, +5)</button>
       </div>
-      <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-2">
+      <div id="adm-stages-card" class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-2">
         <h3 class="font-semibold text-sm">Team stages</h3>
         <p class="text-xs text-slate-400">How far each national team has progressed. TEAM picks earn
           cumulative bonuses (R32 +5, R16 +10, QF +15, SF +20, Final +25, Winner +15).
@@ -1006,7 +1017,7 @@
     <button data-nav="team"     class="nav-btn py-2.5 text-xs font-semibold flex flex-col items-center gap-0.5"><span class="text-lg leading-none">👕</span>Team</button>
     <button data-nav="league"   class="nav-btn py-2.5 text-xs font-semibold flex flex-col items-center gap-0.5"><span class="text-lg leading-none">🏆</span>League</button>
     <button data-nav="players"  class="nav-btn py-2.5 text-xs font-semibold flex flex-col items-center gap-0.5"><span class="text-lg leading-none">🔍</span>Players</button>
-    <button data-nav="activity" class="nav-btn py-2.5 text-xs font-semibold flex flex-col items-center gap-0.5 relative"><span class="text-lg leading-none">💬</span>Activity<span id="nav-dot" class="hidden absolute top-1.5 right-[22%] w-2 h-2 rounded-full bg-wcgold"></span></button>
+    <button data-nav="activity" class="nav-btn py-2.5 text-xs font-semibold flex flex-col items-center gap-0.5 relative"><span class="text-lg leading-none">🔁</span>Activity<span id="nav-dot" class="hidden absolute top-1.5 right-[22%] w-2 h-2 rounded-full bg-wcgold"></span></button>
   </div>
 </nav>
 

@@ -2005,6 +2005,50 @@ function slotForNewPick(mgrPicks, group) {
   return flexLeft(starters, group, starterQuota(), leagueFlex()) > 0 ? group : "SUB_" + group;
 }
 
+/* A drafted squad on the pitch, with an empty shirt for every slot still to
+   fill. A list tells you what you have; the gaps tell you what you need, which
+   is the only question anyone asks mid-draft. Pure so the counting is testable.
+   Returns { byPos, counts, mins, flexLeft, complete }. */
+function squadShape(mgrPicks) {
+  const counts = posCounts(mgrPicks);
+  const mins = posQuota();
+  const groups = ["GK", "DEF", "MID", "FWD"];
+  const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+  for (const pk of mgrPicks) if (byPos[pk.position]) byPos[pk.position].push(pk);
+  let flexLeft = groups.reduce((a, g) => a + (mins[g] || 0), 0) + leagueFlex()
+    - groups.reduce((a, g) => a + (counts[g] || 0), 0);
+  const need = {};
+  for (const g of groups) {
+    need[g] = Math.max(0, (mins[g] || 0) - (counts[g] || 0));
+    flexLeft -= need[g];
+  }
+  return { byPos, counts, mins, need, flexLeft: Math.max(0, flexLeft),
+    complete: !groups.some((g) => need[g] > 0) && flexLeft <= 0 };
+}
+
+function squadPitchHtml(mgrPicks, opts = {}) {
+  const s = squadShape(mgrPicks);
+  const pitch = { GK: [], DEF: [], MID: [], FWD: [] };
+  for (const g of ["GK", "DEF", "MID", "FWD"]) {
+    for (const pk of s.byPos[g]) pitch[g].push({
+      id: pk.player_id, player_id: pk.player_id, name: pk.player_name,
+      team: pk.team, opp: oppShort(pk.team),
+    });
+    // One dashed shirt per slot you are still obliged to fill.
+    for (let i = 0; i < s.need[g]; i++) pitch[g].push({ ghost: true, name: g, id: `${g}-${i}` });
+  }
+  const chip = (g) => `<span class="rounded px-1.5 py-0.5 text-xs font-semibold pos-${g} ${
+    s.need[g] ? "" : "opacity-45"}">${g} ${s.counts[g] || 0}<span class="opacity-70">/${s.mins[g] || 0}</span></span>`;
+  return `
+    <div class="flex items-center gap-1 flex-wrap mb-1.5">
+      ${["GK", "DEF", "MID", "FWD"].map(chip).join("")}
+      ${s.flexLeft > 0 ? `<span class="rounded px-1.5 py-0.5 text-xs font-semibold bg-slate-700 text-slate-200">+${s.flexLeft} flex</span>` : ""}
+      <span class="ml-auto text-xs ${s.complete ? "text-live" : "text-slate-400"}">${
+        s.complete ? "squad complete ✓" : "dashed shirts = still to fill"}</span>
+    </div>
+    ${pitchHtml(pitch, { crests: true, ...opts })}`;
+}
+
 function needsSummary(mgrPicks) {
   const counts = posCounts(mgrPicks);
   const mins = posQuota(), flex = leagueFlex();
@@ -2406,6 +2450,9 @@ function renderRosters(containerId, force) {
              <button data-editcrest="1" class="shrink-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm" title="Edit your crest and colour">🎨</button>
            </div>`
         : ""}
+      ${containerId === "draft-rosters" ? `<div class="px-4 pb-2">
+        ${squadPitchHtml((byMgr[m.id] || []).filter((pk) => pk.slot !== "TEAM"))}
+      </div>` : ""}
       <div class="px-4 pb-3 grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-sm">
         ${(() => {
           const list = byMgr[m.id] || [];
@@ -2979,7 +3026,16 @@ function renderDraft() {
     </li>`;
   }).join("") || '<li class="text-slate-400">No picks yet — the board is wide open.</li>';
 
-  renderRosters("draft-rosters");   // memoised on the picks/lineup signature
+  // Collapsible search: the toggle persists, so it stays shut between renders.
+  const poolShut = localStorage.getItem("wcf_pool_collapsed") === "1";
+  $("pool-body").classList.toggle("hidden", poolShut);
+  $("pool-toggle-hint").textContent = poolShut ? "show ▾" : "hide ▴";
+  $("pool-toggle").onclick = () => {
+    localStorage.setItem("wcf_pool_collapsed", poolShut ? "0" : "1");
+    renderDraft();
+  };
+
+  renderRosters("draft-rosters");   // memoised; its signature includes the picks
   $("draft-force").classList.toggle("hidden", !isAdmin() || myTurn);
   $("draft-timerctl").classList.toggle("hidden", !isAdmin());
   if (isAdmin() && document.activeElement !== $("draft-timer-input"))
@@ -5107,9 +5163,13 @@ const closeReveal = () => $("reveal-sheet")?.classList.add("hidden");
 
 function maybeSquadReveal() {
   if (!S.league?.id || !myManager() || S._revealChecked) return;
-  S._revealChecked = true;
   if (localStorage.getItem("wcf_reveal_" + S.league.id)) return;
   if (!managerPicks(myManager().id).length) return;
+  /* Latch only once there was actually something to reveal. It used to latch
+     on the way in, which was harmless until the board started rendering
+     BEFORE the draft for the scouting room: that first render burned the
+     one-shot while the squad was still empty, so the reveal never came. */
+  S._revealChecked = true;
   openReveal();
 }
 
@@ -5363,10 +5423,10 @@ function maybeAutoRecap() {
   // The squad reveal owns the screen on draft day; don't stack a second sheet
   // on top of it — the recap will offer itself on the next render instead.
   if (!$("reveal-sheet")?.classList.contains("hidden")) return;
-  S._recapChecked = true;
   const r = myRecap();
   if (!r) return;
   if (Number(localStorage.getItem("wcf_recap_" + S.league.id) || 0) >= r.n) return;
+  S._recapChecked = true;      // latch only when it could actually open
   openRecap();
 }
 
@@ -5442,8 +5502,10 @@ function renderHomeTab() {
     ${phaseCardsHtml(me)}
     ${squadHtml}
     <details class="rounded-xl border border-slate-700 bg-slate-900">
-      <summary class="px-4 py-3 font-semibold cursor-pointer select-none text-sm">How points are scored</summary>
-      <div class="px-4 pb-4">${scoringHtml()}</div>
+      <summary class="px-4 py-3 font-semibold cursor-pointer select-none text-sm">How this league works</summary>
+      <!-- The same content the lobby shows: tiles, rule cards, and scoring as a
+           per-position matrix. This card had drifted to the old flat table. -->
+      <div class="px-4 pb-4">${lobbyRulesHtml()}</div>
     </details>`;
   box.querySelectorAll("[data-keep]").forEach((b) => b.onclick = () =>
     toggleKeeper(b.dataset.keep).catch((e) => toast(e.message)));
@@ -6084,10 +6146,16 @@ function renderChat() {
     // out even when not selected; the count badge shows how many.
     const cls = on ? "border-wcgold text-wcgold bg-wcred/10"
       : unread ? "border-wcgold/70 text-slate-100" : "border-slate-700 text-slate-400";
-    return `<button data-chatthread="${esc(t.id)}" class="shrink-0 rounded-full px-3 py-1 border ${cls}">${
-      unread ? '<span class="text-red-400 mr-0.5">●</span>' : ""}${
-      t.id === "league" ? "🏟 " : "✉ "}${esc(t.name)}${
-      unread ? ` <span class="ml-0.5 inline-flex items-center justify-center rounded-full bg-wcgold text-slate-900 text-xs font-bold w-4 h-4 align-middle">${
+    // A direct thread is a person, so it wears their crest and colour rather
+    // than a generic envelope — the same mark they have everywhere else.
+    const dm = t.id !== "league" && S.managers.find((m) => m.id === t.id);
+    const face = dm
+      ? `<span class="shrink-0 inline-flex items-center justify-center rounded-md w-5 h-5 text-[11px]"
+             style="background:${managerColor(dm)}26;border:1px solid ${managerColor(dm)}99">${managerMark(dm)}</span>`
+      : '<span class="shrink-0 text-[13px] leading-none">🏟</span>';
+    return `<button data-chatthread="${esc(t.id)}" class="shrink-0 inline-flex items-center gap-1.5 rounded-full pl-1.5 pr-3 py-1 border ${cls}">${
+      unread ? '<span class="text-red-400">●</span>' : ""}${face}<span>${esc(t.name)}</span>${
+      unread ? `<span class="inline-flex items-center justify-center rounded-full bg-wcgold text-slate-900 text-xs font-bold w-4 h-4">${
         unread > 9 ? "9+" : unread}</span>` : ""}</button>`;
   }).join("");
   $("chat-threads").querySelectorAll("[data-chatthread]").forEach((b) => b.onclick = () => {
@@ -6467,9 +6535,12 @@ function h2hStandingsHtml(me) {
             ${r.bonus ? `<span class="text-[11px] text-emerald-400 ml-1">+${r.bonus} bonus</span>` : ""}
           </span>
         </span>
-        <span class="shrink-0 text-right">
+        <!-- Points for and against belong on the row: they are the tiebreak
+             and the story of a season, not a detail to expand for. -->
+        <span class="shrink-0 text-right leading-tight">
           <span class="block font-bold text-wcgold scoreboard leading-none">${r.logPts}</span>
           <span class="block text-[10px] text-slate-400 mt-0.5">${r.W}-${r.D}-${r.L}</span>
+          <span class="block text-[10px] text-slate-500 font-mono">${r.PF}<span class="text-slate-600">:</span>${r.PA}</span>
         </span>
       </summary>
       <div class="px-3 pb-3 space-y-2">
@@ -6487,8 +6558,9 @@ function h2hStandingsHtml(me) {
   return `<div class="space-y-2">
     <div class="flex items-baseline justify-between gap-2 px-1">
       <span class="text-sm font-semibold">Head-to-head log</span>
-      <span class="eyebrow">${played} round${played === 1 ? "" : "s"} played</span>
+      <span class="eyebrow">pts · W-D-L · for:against</span>
     </div>
+    <div class="text-[11px] text-slate-500 px-1 -mt-1">${played} round${played === 1 ? "" : "s"} played</div>
     ${body || '<p class="rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm text-slate-400">No completed rounds yet.</p>'}
     <details class="rounded-xl border border-slate-800 bg-slate-900/40">
       <summary class="px-3 py-2 cursor-pointer select-none text-xs uppercase tracking-wide text-slate-400">How the log is scored</summary>
@@ -6519,13 +6591,11 @@ function renderBoard() {
   const note = $("board-rules-note");
   if (note) {
     note.textContent = boardRulesNote();
-    // Team carries "How points are scored" and League carries "How the log is
-    // scored"; on both, this footer repeated them a centimetre lower and
-    // unboxed, as if it had fallen out of the card.
-    // ...and pre-draft it describes subs, stage bonuses and redrafts, none of
-    // which has happened yet or helps you star a striker.
-    note.classList.toggle("hidden",
-      preDraft || ["team", "league"].includes(groupOfTab(S.boardTab)));
+    /* Retired everywhere. Every section that needs the rules now has a proper
+       card — Team's "How points are scored", League's "How the log is scored",
+       the scouting room's button — and an unboxed paragraph of scoring rules
+       under the chat window or the player list was never relevant to either. */
+    note.classList.add("hidden");
   }
   maybeSquadReveal();
   maybeAutoRecap();
@@ -7183,10 +7253,16 @@ function openPlayerDetail(pid, managerId, perspectiveLabel) {
 // appeared in scope are eligible. When the league's redraft grants a flex slot
 // (leagueFlex() > 0), FLEX holds the best remaining outfielder(s) — any of
 // DEF/MID/FWD not already in the XI. Returns { GK,DEF,MID,FWD, FLEX, total }.
-function dreamTeam(round, per90) {
+/* The best XI by the current scoring — or, with `worst`, the Nightmare XI.
+   A bad score only means something over a real shift, so the nightmare side
+   requires a full 90 minutes: otherwise it is just a list of substitutes who
+   came on for five minutes and touched the ball twice. */
+function dreamTeam(round, per90, worst) {
   const quota = starterQuota();
   const flex = leagueFlex();
-  const bySort = (a, b) => b.val - a.val || b.pts - a.pts || a.p.name.localeCompare(b.p.name);
+  const bySort = worst
+    ? (a, b) => a.val - b.val || a.pts - b.pts || a.p.name.localeCompare(b.p.name)
+    : (a, b) => b.val - a.val || b.pts - a.pts || a.p.name.localeCompare(b.p.name);
   const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
   for (const id of new Set((S.stats || []).map((r) => r.player_id))) {
     const p = S.playerById[id];
@@ -7195,7 +7271,7 @@ function dreamTeam(round, per90) {
     if (!rows.length) continue;                         // didn't play in scope
     const pts = rows.reduce((s, r) => s + calcPlayerPoints(r, p.position), 0);
     const mins = sumMinutes(rows);
-    if (per90 && mins < 90) continue;                   // too little to rate
+    if ((per90 || worst) && mins < 90) continue;        // too little to rate
     const val = per90 ? Math.round((pts / mins) * 90 * 10) / 10 : pts;
     byPos[p.position].push({ p, pts, mins, val });
   }
@@ -7241,63 +7317,58 @@ function currentRoundDreamIds() {
   return ids;
 }
 
-function renderDreamTeam(round, per90) {
-  const dt = dreamTeam(round, per90);
+/* The XI on a pitch, like every other squad in the app. It used to be three
+   rows of cards, which said "table of players" rather than "team". */
+function renderDreamTeam(round, per90, worst) {
+  const dt = dreamTeam(round, per90, worst);
   const quota = starterQuota();
   const mgrByPid = {};
   for (const pk of S.picks) {
     const m = S.managers.find((x) => x.id === pk.manager_id);
-    if (m) mgrByPid[pk.player_id] = m.name;
+    if (m) mgrByPid[pk.player_id] = m;
   }
   const teamMatches = statsDerived().teamMatches;
   // Owner shown per scope: cumulative = who holds them now; a specific round =
   // who had them in their locked roster for that round's match (history).
-  const ownerName = (p) => {
+  const ownerOfP = (p) => {
     if (!round) return mgrByPid[p.player_id] || null;
     const label = (teamMatches[p.team] || [])[round - 1];
-    return label ? (ownerEntryAt(p.player_id, label)?.manager.name || null) : null;
+    const e = label ? ownerEntryAt(p.player_id, label) : null;
+    return e ? S.managers.find((m) => m.id === e.manager.id) || e.manager : null;
   };
-  const posName = { GK: "Goalkeeper", DEF: "Defenders", MID: "Midfielders", FWD: "Forwards" };
-  const card = (x, isFlex) => {
-    const owner = ownerName(x.p);
-    return `<button data-sp="${esc(x.p.player_id)}" class="relative w-[30%] max-w-[7.5rem] shrink-0 rounded-xl border ${
-      isFlex ? "border-wcgold/60" : "border-slate-700"} bg-slate-900 p-2 text-center flex flex-col items-center gap-1">
-      ${isFlex ? '<span class="absolute top-1 right-1 rounded bg-wcgold/20 text-wcgold text-[8px] font-bold px-1 leading-tight" title="Flex slot">FLEX</span>' : ""}
-      ${avatarHtml(x.p.player_id, x.p.team, "w-10 h-10")}
-      <span class="text-xs font-medium leading-tight">${esc(x.p.name)} ${availBadges(x.p.player_id)}</span>
-      <span class="text-xs text-slate-400 truncate w-full">${esc(x.p.team)}</span>
-      <span class="text-xs truncate w-full ${owner ? "text-wcgold" : "text-slate-400"}">${
-        owner ? "👤 " + esc(owner) : "free agent"}</span>
-      <span class="font-mono font-bold text-wcgold">${x.val}${per90 ? "" : "p"}</span>
-    </button>`;
-  };
-  const emptyCard = `<div class="w-[30%] max-w-[7.5rem] shrink-0 rounded-xl border border-dashed border-slate-800 p-2 flex items-center justify-center text-slate-500 text-sm min-h-[6rem]">—</div>`;
+
   const flexN = leagueFlex();
-  // Flex players sit in the row of their own position, tagged FLEX.
-  const flexByPos = {};
-  for (const x of dt.FLEX) (flexByPos[x.p.position] ||= []).push(x);
-  const rowFor = (pos) => {
-    const cards = dt[pos].map((x) => card(x, false));
-    while (cards.length < (quota[pos] || 0)) cards.push(emptyCard);
-    for (const x of (flexByPos[pos] || [])) cards.push(card(x, true));
-    return `<div>
-      <div class="text-xs uppercase tracking-wide text-slate-400 mb-1 text-center">${posName[pos]}</div>
-      <div class="flex flex-wrap justify-center gap-2">${cards.join("")}</div>
-    </div>`;
+  const flexIds = new Set(dt.FLEX.map((x) => x.p.player_id));
+  const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+  const entry = (x) => {
+    const own = ownerOfP(x.p);
+    return { id: x.p.player_id, player_id: x.p.player_id, name: x.p.name, team: x.p.team,
+      note: x.val, opp: own ? shortName(own.name) : "free",
+      badge: flexIds.has(x.p.player_id) ? "F" : "" };
   };
-  const scope = round ? `Round ${round}` : "Cumulative";
-  const formation = `${quota.GK}-${quota.DEF}-${quota.MID}-${quota.FWD}${flexN ? ` +${flexN} flex` : ""}`;
+  for (const pos of ["GK", "DEF", "MID", "FWD"]) {
+    for (const x of dt[pos]) byPos[pos].push(entry(x));
+    for (let i = dt[pos].length; i < (quota[pos] || 0); i++)
+      byPos[pos].push({ ghost: true, name: pos, id: `${pos}-${i}` });
+  }
+  for (const x of dt.FLEX) byPos[x.p.position]?.push(entry(x));
+
+  const picked = ["GK", "DEF", "MID", "FWD"].reduce((a, g) => a + dt[g].length, 0) + dt.FLEX.length;
+  const scope = round ? `Round ${round}` : "Season";
+  const title = worst ? "Nightmare XI" : "Dream XI";
+  const blurb = worst
+    ? `The lowest ${per90 ? "points per 90" : "points"} of anyone who played a full 90 in scope — the XI you would not have wanted.`
+    : `The best ${per90 ? "points per 90" : "points"} in each position under this league's scoring.`;
   $("stats-dream").innerHTML = `
-    <div class="flex items-center justify-between">
-      <div class="text-sm font-semibold">Dream XI · ${scope}${per90 ? " · per 90" : ""}</div>
-      <div class="text-sm font-mono text-wcgold">${dt.total}p</div>
+    <div class="flex items-center justify-between gap-2">
+      <div class="text-sm font-semibold">${title} · ${scope}${per90 ? " · per 90" : ""}</div>
+      <div class="text-sm font-mono ${worst ? "text-danger" : "text-wcgold"}">${dt.total}p</div>
     </div>
-    <p class="text-xs text-slate-400">Best starters (${formation}) by ${
-      per90 ? "points per 90" : "total points"}. 👤 ${
-      round ? "= who owned them that round" : "= who drafted them"}. Updates after every game.</p>
-    <div class="rounded-xl border border-slate-800 bg-emerald-950/20 p-3 space-y-3">
-      ${["FWD", "MID", "DEF", "GK"].map(rowFor).join("")}
-    </div>`;
+    <p class="text-xs text-slate-400">${blurb} The name under each shirt is who owns them${
+      flexN ? "; Ⓕ marks a flex slot" : ""}.</p>
+    ${picked
+      ? pitchHtml(byPos, { tapAttr: "data-sp", crests: true })
+      : '<p class="rounded-xl border border-slate-700 bg-slate-900 p-4 text-sm text-slate-400">Not enough minutes logged yet — this fills in once matches are played.</p>'}`;
   $("stats-dream").querySelectorAll("[data-sp]").forEach((b) => b.onclick = () =>
     openPlayerDetail(b.dataset.sp));
 }
@@ -7368,11 +7439,14 @@ function renderStatsTab() {
      a bad first impression of the app. In that mode the page becomes: search,
      position, club, and every player in the competition. */
   const scouting = preDraftBrowsing();
-  const dream = S.statsView === "dream" && !scouting;
+  const worst = S.statsView === "nightmare";
+  const dream = (S.statsView === "dream" || worst) && !scouting;
   if (scouting) S.statsView = "list";
   $("stats-view").classList.toggle("hidden", scouting);
   $("stats-scope").classList.toggle("hidden", scouting || dream);
   $("stats-filters").classList.toggle("hidden", scouting || dream);
+  // Nobody is knocked out of a league season, so the filter is noise there.
+  $("stats-hideko").classList.toggle("hidden", !isCupCompetition());
   // View toggle (Leaderboard / Dream XI): active-state visuals + wiring.
   $("stats-view").querySelectorAll("[data-statsview]").forEach((b) => {
     const on = b.dataset.statsview === S.statsView;
@@ -7386,7 +7460,7 @@ function renderStatsTab() {
   $("stats-list").classList.toggle("hidden", dream);
   $("stats-dream").classList.toggle("hidden", !dream);
   $("stats-search").placeholder = scouting
-    ? "Search any player or club…" : "Search any player or country…";
+    ? "Search any player or club…" : "Search any player or team…";
 
   // Club filter. Useful all season, essential when scouting — it is the only
   // way to walk a 20-club, 600-player pool squad by squad.
@@ -7394,6 +7468,34 @@ function renderStatsTab() {
   $("stats-team").innerHTML = '<option value="">All clubs</option>' + teams.map((t) =>
     `<option value="${esc(t)}" ${S.statsTeam === t ? "selected" : ""}>${esc(t)}</option>`).join("");
   $("stats-team").onchange = () => { S.statsTeam = $("stats-team").value || ""; renderStatsTab(); };
+  // A narrowed list that looks like the whole list is how you end up believing
+  // a player isn't there. Every active filter says so, and can be cleared.
+  const active = [];
+  if (S.statsTeam) active.push(["team", S.statsTeam]);
+  if (S.statsPos !== "ALL") active.push(["pos", S.statsPos]);
+  if (S.statsSearch.trim()) active.push(["search", `“${S.statsSearch.trim()}”`]);
+  if (!scouting && S.statsRound) active.push(["round", "Round " + S.statsRound]);
+  if (!scouting && S.statsPer90) active.push(["per90", "per 90"]);
+  if (!scouting && S.statsUnpicked) active.push(["unpicked", "unpicked only"]);
+  if (!scouting && S.statsHideKO) active.push(["hideko", "hiding knocked-out"]);
+  const fbar = $("stats-active");
+  fbar.classList.toggle("hidden", !active.length);
+  fbar.innerHTML = active.length ? `
+    <span class="eyebrow text-wcgold shrink-0">Filtered</span>
+    ${active.map(([k, label]) => `<button data-clearf="${k}" class="shrink-0 inline-flex items-center gap-1 rounded-full border border-wcgold/50 bg-wcgold/10 text-wcgold px-2 py-0.5 text-xs">
+      ${esc(label)}<span class="opacity-70">✕</span></button>`).join("")}
+    <button data-clearf="all" class="shrink-0 text-xs text-slate-400 underline ml-auto">clear all</button>` : "";
+  fbar.querySelectorAll("[data-clearf]").forEach((b) => b.onclick = () => {
+    const k = b.dataset.clearf;
+    if (k === "team" || k === "all") S.statsTeam = "";
+    if (k === "pos" || k === "all") S.statsPos = "ALL";
+    if (k === "search" || k === "all") { S.statsSearch = ""; $("stats-search").value = ""; }
+    if (k === "round" || k === "all") S.statsRound = 0;
+    if (k === "per90" || k === "all") S.statsPer90 = false;
+    if (k === "unpicked" || k === "all") S.statsUnpicked = false;
+    if (k === "hideko" || k === "all") S.statsHideKO = false;
+    renderStatsTab();
+  });
 
   const chips = ["ALL", ...GROUPS.slice(0, 4)];
   $("stats-chips").innerHTML = chips.map((c) =>
@@ -7436,7 +7538,7 @@ function renderStatsTab() {
     (S.statsHideKO ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400");
 
   $("stats-count").classList.add("hidden");
-  if (dream) { renderDreamTeam(round, per90); return; }
+  if (dream) { renderDreamTeam(round, per90, worst); return; }
 
   const q = S.statsSearch.trim().toLowerCase();
   let pool;
@@ -7708,6 +7810,11 @@ function dugoutHtml(subs, opts = {}) {
 function pitchRowsHtml(byPos, opts = {}) {
   const av = opts.small ? "w-8 h-8" : "w-10 h-10";
   const chip = (e) => {
+    // An empty slot: a dashed shirt where a player still has to go.
+    if (e.ghost) return `<div class="pp opacity-70">
+      <span class="${av} rounded-full border-2 border-dashed border-white/40 inline-flex items-center justify-center text-[10px] font-bold text-white/60">+</span>
+      <span class="pp-name text-white/60">${esc(e.name || "")}</span>
+    </div>`;
     const tap = opts.tapAttr ? `${opts.tapAttr}="${esc(e.id)}"` : "";
     // The button itself is a transparent finger-sized box (the mobile rule in
     // index.html floors every button at 38px); only the inner span is painted,
@@ -10051,6 +10158,9 @@ function renderAdmin() {
   $("admin-gate").classList.toggle("hidden", ok);
   $("admin-panel").classList.toggle("hidden", !ok);
   if (!ok) return;
+  // Stages and redrafts are knockout machinery: a league season never has a
+  // team "out", so the whole card is meaningless there.
+  $("adm-stages-card")?.classList.toggle("hidden", !isCupCompetition());
   renderConfigEditor();
   // Competition selector + current-pool status.
   if (!$("adm-comp-select").options.length)
