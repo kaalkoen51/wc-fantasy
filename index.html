@@ -132,6 +132,17 @@
     button { min-width: 38px; }
   }
 
+  /* Stacked reorder arrows opt out of the floor above: each half is 22px but
+     the pair is 44px, so the control as a whole is still finger-sized, and it
+     costs one column of a bench row instead of two. */
+  .nudge {
+    min-height: 0;
+    min-width: 0;
+    height: 1.375rem;
+    font-size: 0.75rem;
+    line-height: 1;
+  }
+
   /* The clock and whose-pick-it-is must stay on screen while you scroll the
      player list. The offset is the real header height, measured at runtime —
      a hardcoded guess left it tucked behind the header on some devices. */
@@ -834,10 +845,7 @@
 <!-- Lineup picker bottom sheet -->
 <div id="lineup-sheet" class="hidden fixed inset-0 z-40 bg-black/60">
   <div class="absolute bottom-0 inset-x-0 max-h-[92vh] bg-slate-900 border-t border-slate-700 rounded-t-2xl p-4 flex flex-col">
-    <div class="flex items-center justify-between gap-2">
-      <span class="font-semibold">Your team</span>
-      <button id="lineup-edit" class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold">Edit lineup</button>
-    </div>
+    <div class="font-semibold">Your team</div>
     <!-- The formation is the thing you're actually deciding, so it leads. -->
     <div class="flex items-baseline gap-2 mt-1">
       <span id="lineup-formation" class="text-3xl font-bold scoreboard tracking-tight">—</span>
@@ -846,9 +854,11 @@
     <p id="lineup-rule" class="text-xs text-slate-400 mt-0.5 mb-2"></p>
     <div id="lineup-captain" class="hidden grid grid-cols-2 gap-2 mb-2"></div>
     <div id="lineup-list" class="overflow-y-auto overscroll-contain flex-1 min-h-0 space-y-1"></div>
+    <!-- Two buttons whose labels say what they do in the mode you're in:
+         Exit / Edit lineup when viewing, Discard changes / Save edits when editing. -->
     <div class="flex items-center gap-2 mt-3">
-      <button id="lineup-cancel" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-sm font-semibold">Cancel</button>
-      <button id="lineup-save" class="flex-1 bg-wcred hover:bg-wcred-hov disabled:bg-slate-800 disabled:text-slate-400 rounded-lg px-4 py-2 text-sm font-semibold">Save</button>
+      <button id="lineup-secondary" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-sm font-semibold">Exit</button>
+      <button id="lineup-primary" class="flex-1 bg-wcred hover:bg-wcred-hov disabled:bg-slate-800 disabled:text-slate-400 rounded-lg px-4 py-2 text-sm font-semibold">Edit lineup</button>
     </div>
   </div>
 </div>

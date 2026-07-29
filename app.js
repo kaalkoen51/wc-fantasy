@@ -276,7 +276,7 @@ const STRIPPABLE_COLUMNS = new Set([
   "home_score", "away_score", "minutes", "raw",
   "offered_player_name", "requested_player_name",
   "offered_player_id", "requested_player_id", "planner",
-  "owner_id", "user_id", "is_bot", "crest", "color",
+  "owner_id", "user_id", "is_bot", "crest", "color", "bench_order",
 ]);
 
 // Insert/upsert that tolerates an unapplied additive migration. Throws on
@@ -6457,11 +6457,24 @@ function renderStatsTab() {
 
 // Record every manager's current 14 picks. Scoring replays history against
 // these, so changes after a lock never rewrite already-played rounds.
+// Starters first, then the bench in the manager's chosen sub priority. The
+// sub engine promotes the first eligible bench player it finds, so this order
+// is the setting — not just a display preference.
+function orderedRoster(m) {
+  const picks = managerPicks(m.id);
+  const order = m.bench_order || [];
+  const rank = new Map(order.map((id, i) => [id, i]));
+  const key = (pk) => pk.is_sub
+    ? 1e6 + (rank.has(pk.id) ? rank.get(pk.id) : 5e5)
+    : 0;
+  return picks.slice().sort((a, b) => key(a) - key(b));
+}
+
 async function snapshotRosters() {
   const rows = activeManagers().map((m) => ({
     league_id: S.league.id,
     manager_id: m.id,
-    roster: managerPicks(m.id).map((pk) => ({
+    roster: orderedRoster(m).map((pk) => ({
       player_id: pk.player_id, player_name: pk.player_name,
       position: pk.position, team: pk.team, is_sub: pk.is_sub, slot: pk.slot,
       // Lock the captain/vice into the round so past rounds keep their choice.
@@ -6476,8 +6489,33 @@ async function snapshotRosters() {
 
 /* ---------- lineup picker ---------- */
 
+function enterLineupEdit() {
+  const me = myManager();
+  S._lineupSaved = {
+    draft: new Set(S.lineupDraft),
+    captain: S.captainDraft, vice: S.viceDraft,
+    bench: (S.benchDraft || me?.bench_order || []).slice(),
+  };
+  S.lineupEdit = true;
+  renderLineup();
+}
+
+// Put everything back the way it was saved, and return to the view.
+function discardLineupEdit() {
+  const snap = S._lineupSaved;
+  if (snap) {
+    S.lineupDraft = new Set(snap.draft);
+    S.captainDraft = snap.captain;
+    S.viceDraft = snap.vice;
+    S.benchDraft = snap.bench.slice();
+  }
+  S.lineupEdit = false;
+  renderLineup();
+}
+
 function openLineup() {
   S.lineupEdit = false;           // opens read-only; Edit lineup turns it on
+  S.benchDraft = null;            // fall back to the saved order
   lockScroll(true);
   const me = myManager();
   if (!me) return;
@@ -6548,17 +6586,27 @@ function pitchHtml(byPos, opts = {}) {
   const av = opts.small ? "w-8 h-8" : "w-10 h-10";
   const chip = (e) => {
     const tap = opts.tapAttr ? `${opts.tapAttr}="${esc(e.id)}"` : "";
-    return `<button type="button" ${tap} class="pp ${e.dim ? "opacity-50" : ""}">
-      <span class="relative inline-flex">
-        ${avatarHtml(e.player_id, e.team, av)}
-        ${opts.crests && teamCrestHtml(e.team) ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${teamCrestHtml(e.team, "w-3.5 h-3.5")}</span>` : ""}
-        ${e.badge ? `<span class="absolute -top-1 -right-1 rounded-full bg-wcgold text-slate-900 text-[10px] font-bold w-4 h-4 inline-flex items-center justify-center">${e.badge}</span>` : ""}
-        ${e.remove ? '<span class="absolute -top-1 -left-1 rounded-full bg-wcred text-white text-[11px] font-bold w-4 h-4 inline-flex items-center justify-center leading-none">−</span>' : ""}
-      </span>
-      <span class="pp-name">${esc(shortName(e.name))}</span>
-      ${e.opp ? `<span class="pp-opp">${esc(e.opp)}</span>` : ""}
-      ${e.note != null ? `<span class="text-[11px] font-mono font-bold text-wcgold leading-none">${e.note}</span>` : ""}
-    </button>`;
+    // The button itself is a transparent finger-sized box (the mobile rule in
+    // index.html floors every button at 38px); only the inner span is painted,
+    // so the badge sits on the corner of the avatar instead of covering the face.
+    const rm = e.remove && opts.removeAttr
+      ? `<button type="button" ${opts.removeAttr}="${esc(e.removeId ?? e.id)}"
+           aria-label="Remove from lineup"
+           class="absolute -top-3 -left-3 z-10 inline-flex items-center justify-center w-9 h-9"
+           ><span class="rounded-full bg-wcred text-white text-sm font-bold w-5 h-5 inline-flex items-center justify-center leading-none shadow ring-2 ring-slate-900/60">−</span></button>` : "";
+    return `<div class="relative flex justify-center">
+      ${rm}
+      <button type="button" ${tap} class="pp ${e.dim ? "opacity-50" : ""}">
+        <span class="relative inline-flex">
+          ${avatarHtml(e.player_id, e.team, av)}
+          ${opts.crests && teamCrestHtml(e.team) ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${teamCrestHtml(e.team, "w-3.5 h-3.5")}</span>` : ""}
+          ${e.badge ? `<span class="absolute -top-1 -right-1 rounded-full bg-wcgold text-slate-900 text-[10px] font-bold w-4 h-4 inline-flex items-center justify-center">${e.badge}</span>` : ""}
+        </span>
+        <span class="pp-name">${esc(shortName(e.name))}</span>
+        ${e.opp ? `<span class="pp-opp">${esc(e.opp)}</span>` : ""}
+        ${e.note != null ? `<span class="text-[11px] font-mono font-bold text-wcgold leading-none">${e.note}</span>` : ""}
+      </button>
+    </div>`;
   };
   return `<div class="pitch">
     <div class="pitch-half"></div><div class="pitch-box b"></div><div class="pitch-box t"></div>
@@ -6575,54 +6623,95 @@ function lockScroll(on) {
   document.body.style.overflow = on ? "hidden" : "";
 }
 
+/* Sub priority. The auto-sub engine promotes the first eligible bench player,
+   so the bench's ORDER decides who covers a no-show — but until now that order
+   was whatever the draft happened to produce. S.benchDraft holds the working
+   order while editing; managers.bench_order persists it. */
+function benchInOrder(subs) {
+  const order = S.benchDraft || myManager()?.bench_order || [];
+  const rank = new Map(order.map((id, i) => [id, i]));
+  return subs.slice().sort((a, b) =>
+    (rank.has(a.id) ? rank.get(a.id) : 1e6) - (rank.has(b.id) ? rank.get(b.id) : 1e6));
+}
+
+function moveBench(pickId, dir) {
+  const me = myManager();
+  if (!me) return;
+  const cur = benchInOrder(managerPicks(me.id)
+    .filter((pk) => pk.slot !== "TEAM" && !S.lineupDraft.has(pk.id))).map((pk) => pk.id);
+  const i = cur.indexOf(pickId), j = i + dir;
+  if (i < 0 || j < 0 || j >= cur.length) return;
+  [cur[i], cur[j]] = [cur[j], cur[i]];
+  S.benchDraft = cur;
+  renderLineup();
+  markQueueMoved(pickId);
+}
+
 function renderLineup() {
   const me = myManager();
   const mine = managerPicks(me.id).filter((pk) => pk.slot !== "TEAM");
   const order = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
   mine.sort((a, b) => order[a.position] - order[b.position] || a.pick_number - b.pick_number);
   // Starters go on the pitch; everyone else sits on the bench beneath it.
-  // The page opens in view mode — tapping a player tells you about them — and
-  // only becomes editable when you ask, so a stray tap can't wreck your XI.
+  // Tapping a player ALWAYS opens their card, in either mode — moving them in
+  // or out is the − and + controls' job, so a tap can't cost you your XI.
   const editing = !!S.lineupEdit;
   const starters = mine.filter((pk) => S.lineupDraft.has(pk.id));
-  const bench = mine.filter((pk) => !S.lineupDraft.has(pk.id));
+  const bench = benchInOrder(mine.filter((pk) => !S.lineupDraft.has(pk.id)));
   const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
   for (const pk of starters) {
     (byPos[pk.position] ||= []).push({
-      id: pk.id, player_id: pk.player_id, name: pk.player_name, team: pk.team,
+      id: pk.player_id, removeId: pk.id,
+      player_id: pk.player_id, name: pk.player_name, team: pk.team,
       opp: oppShort(pk.team),
       remove: editing,
       badge: captainEnabled() && S.captainDraft === pk.player_id ? "C"
            : captainEnabled() && S.viceDraft === pk.player_id ? "V" : "",
     });
   }
-  const benchRow = (pk) => `<button data-${editing ? "lineup" : "peek"}="${editing ? pk.id : pk.player_id}"
-      class="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left border border-slate-700 bg-slate-800/60">
-      ${avatarHtml(pk.player_id, pk.team, "w-7 h-7")}
-      <span class="min-w-0 flex-1 leading-tight">
-        <span class="flex items-center gap-1 min-w-0">
-          <span class="truncate text-sm">${esc(pk.player_name)}</span>
-          <span class="shrink-0 flex items-center gap-1">${availBadges(pk.player_id)}</span>
+  const benchRow = (pk, i) => `<div class="flex items-center gap-1.5 rounded-lg px-2 py-1.5 border border-slate-700 bg-slate-800/60">
+      ${editing ? `<span class="w-4 shrink-0 text-xs font-mono text-slate-400">${i + 1}</span>` : ""}
+      <button data-peek="${esc(pk.player_id)}" class="min-w-0 flex-1 flex items-center gap-2 text-left">
+        ${avatarHtml(pk.player_id, pk.team, "w-7 h-7")}
+        <span class="min-w-0 flex-1 leading-tight">
+          <span class="flex items-center gap-1 min-w-0">
+            <span class="truncate text-sm">${esc(pk.player_name)}</span>
+            <span class="shrink-0 flex items-center gap-1">${availBadges(pk.player_id)}</span>
+          </span>
+          <span class="flex items-center gap-1 truncate text-xs text-slate-400">
+            ${teamCrestHtml(pk.team, "w-3.5 h-3.5")}<span class="truncate">${esc(pk.team)}</span>
+            ${oppShort(pk.team) ? `<span class="shrink-0">· ${esc(oppShort(pk.team))}</span>` : ""}</span>
         </span>
-        <span class="flex items-center gap-1 truncate text-xs text-slate-400">
-          ${teamCrestHtml(pk.team, "w-3.5 h-3.5")}<span class="truncate">${esc(pk.team)}</span>
-          ${oppShort(pk.team) ? `<span class="shrink-0">· ${esc(oppShort(pk.team))}</span>` : ""}</span>
-      </span>
+      </button>
       <span class="shrink-0 text-xs pos-${pk.position} rounded px-1.5 py-0.5">${pk.position}</span>
-      ${editing ? '<span class="shrink-0 text-sm font-bold text-wcgold">+</span>' : ""}
-    </button>`;
+      ${editing ? `
+        <span class="shrink-0 flex flex-col w-7 leading-none">
+          <button data-bup="${esc(pk.id)}" class="nudge text-slate-400 ${i === 0 ? "opacity-30" : ""}" ${i === 0 ? "disabled" : ""} aria-label="Higher sub priority">▲</button>
+          <button data-bdn="${esc(pk.id)}" class="nudge text-slate-400 ${i === bench.length - 1 ? "opacity-30" : ""}" ${i === bench.length - 1 ? "disabled" : ""} aria-label="Lower sub priority">▼</button>
+        </span>
+        <button data-lineup="${esc(pk.id)}" aria-label="Add to lineup"
+          class="shrink-0 inline-flex items-center justify-center w-9 h-9"
+          ><span class="rounded-full bg-wcgold text-slate-900 text-sm font-bold w-6 h-6 inline-flex items-center justify-center leading-none">+</span></button>` : ""}
+    </div>`;
 
   $("lineup-list").innerHTML = `
-    ${pitchHtml(byPos, { tapAttr: editing ? "data-lineup" : "data-peek", crests: true })}
+    ${pitchHtml(byPos, { tapAttr: "data-peek", removeAttr: "data-lineup", crests: true })}
     <div class="mt-2">
-      <div class="eyebrow mb-1">Bench · ${bench.length}</div>
+      <div class="flex items-baseline justify-between gap-2 mb-1">
+        <span class="eyebrow">Bench · ${bench.length}</span>
+        ${editing && bench.length > 1 ? '<span class="text-xs text-slate-400">order = sub priority</span>' : ""}
+      </div>
       <div class="space-y-1">${bench.map(benchRow).join("")
         || '<p class="text-xs text-slate-400">Nobody on the bench.</p>'}</div>
     </div>`;
 
-  // View mode: a tap opens the player's card instead of changing the team.
+  // A tap on any player — pitch or bench, either mode — opens their card.
   $("lineup-list").querySelectorAll("[data-peek]").forEach((b) => b.onclick = () =>
     openPlayerDetail(b.dataset.peek));
+  $("lineup-list").querySelectorAll("[data-bup]").forEach((b) => b.onclick = () =>
+    moveBench(b.dataset.bup, -1));
+  $("lineup-list").querySelectorAll("[data-bdn]").forEach((b) => b.onclick = () =>
+    moveBench(b.dataset.bdn, 1));
 
   $("lineup-list").querySelectorAll("[data-lineup]").forEach((b) => b.onclick = () => {
     const id = b.dataset.lineup;
@@ -6630,9 +6719,7 @@ function renderLineup() {
     else S.lineupDraft.add(id);
     renderLineup();
   });
-  $("lineup-edit").textContent = editing ? "Done editing" : "Edit lineup";
-  $("lineup-edit").className = "rounded-lg border px-3 py-1.5 text-xs font-semibold "
-    + (editing ? "border-wcgold text-wcgold bg-wcgold/10" : "border-slate-700 bg-slate-800");
+
   const counts = lineupCounts();
   const total = counts.GK + counts.DEF + counts.MID + counts.FWD;
   const ok = lineupValid(counts);
@@ -6645,7 +6732,16 @@ function renderLineup() {
     + (ok ? "text-wcgold" : "text-danger");
   $("lineup-count").textContent = `${total}/${need} picked${counts.GK !== 1 ? " · needs a keeper" : ""}`;
   $("lineup-count").className = "text-xs " + (ok ? "text-slate-400" : "text-danger");
-  $("lineup-save").disabled = !lineupValid(counts);
+  const prim = $("lineup-primary"), sec = $("lineup-secondary");
+  if (editing) {
+    sec.textContent = "Discard changes";
+    prim.textContent = "Save edits";
+    prim.disabled = !ok;
+  } else {
+    sec.textContent = "Exit";
+    prim.textContent = "Edit lineup";
+    prim.disabled = false;
+  }
   // Captain / vice pickers (only among the chosen starters).
   const capBox = $("lineup-captain");
   if (captainEnabled()) {
@@ -6670,6 +6766,13 @@ async function saveLineup() {
   if (!lineupOpen())
     return toast("Lineups are locked — the window closed while you were editing.");
   if (!lineupValid(lineupCounts())) return;
+  // Persist sub priority alongside the XI: the auto-sub engine reads roster
+  // order, so this is what decides who covers a no-show.
+  if (S.benchDraft) {
+    me.bench_order = S.benchDraft.slice();
+    S.sb.from("managers").update({ bench_order: me.bench_order }).eq("id", me.id)
+      .then(() => {}, () => {});
+  }
   const changes = managerPicks(me.id).filter((pk) => pk.slot !== "TEAM").map((pk) => {
     const isSub = !S.lineupDraft.has(pk.id);
     return { pk, isSub, slot: isSub ? "SUB_" + pk.position : pk.position };
@@ -6690,8 +6793,9 @@ async function saveLineup() {
     }
   }
   toast(changes.length ? "Lineup saved." : "Lineup unchanged.");
-  $("lineup-sheet").classList.add("hidden");
-  lockScroll(false);
+  S.lineupEdit = false;      // back to the read-only view, sheet stays open
+  S._lineupSaved = null;
+  renderLineup();
   scheduleRefetch();
 }
 
@@ -9103,9 +9207,15 @@ function wire() {
   $("chart-sheet").onclick = (e) => { if (e.target.id === "chart-sheet") closeChartSheet(); };  // tap backdrop
   $("swap-search").oninput = renderSwapList;
   $("swap-team").onchange = renderSwapList;
-  $("lineup-cancel").onclick = () => { $("lineup-sheet").classList.add("hidden"); lockScroll(false); };
-  $("lineup-save").onclick = () => saveLineup().catch((e) => toast(e.message));
-  $("lineup-edit").onclick = () => { S.lineupEdit = !S.lineupEdit; renderLineup(); };
+  $("lineup-secondary").onclick = () => {
+    if (S.lineupEdit) return discardLineupEdit();          // back to viewing
+    $("lineup-sheet").classList.add("hidden"); lockScroll(false);
+  };
+  $("lineup-primary").onclick = () => {
+    if (!S.lineupEdit) return enterLineupEdit();
+    saveLineup().catch((e) => toast(e.message));
+  };
+
   ["adm-home", "adm-away", "adm-date", "adm-label"].forEach((id) =>
     $(id).onchange = () => $("adm-label-preview").textContent = admLabel());
   $("adm-save").onclick = () => admSave().catch((e) => toast(e.message));
