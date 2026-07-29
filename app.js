@@ -531,10 +531,20 @@ function markConnection(ok, msg) {
   _connTimer = setTimeout(() => { refetchAll().catch(() => {}); }, wait);
 }
 
-let refetchTimer;
+/* Reload from the server, unless we're mid-conversation with it.
+
+   Every write echoes back as a realtime event, which used to schedule a full
+   reload of the league — so a burst of reorders produced a burst of reloads,
+   each of them reading a row we were in the middle of replacing. Holding the
+   refetch until our own writes have landed removes both the wasted round trips
+   and the window the stale-read bounce lived in. */
+let refetchTimer, _refetchWanted = false;
 const scheduleRefetch = () => {
   clearTimeout(refetchTimer);
-  refetchTimer = setTimeout(() => { refetchAll().catch(() => {}); }, 250);
+  refetchTimer = setTimeout(() => {
+    if (_pendingWrites.size) { _refetchWanted = true; return; }
+    refetchAll().catch(() => {});
+  }, 250);
 };
 
 function subscribeRealtime() {
@@ -1611,34 +1621,65 @@ const isShortlisted = (pid) => myShortlist().includes(pid);
    refetch makes the local value win until the server has caught up. */
 const localOverrides = new Map();          // "table:id:field" -> value
 
+/* Should our local value still shadow the server's?
+
+   The old rule was "for two seconds after the write is acknowledged", which is
+   a guess about network timing, and on a phone it is the wrong guess. A read
+   issued before our write is processed by Postgres before our write, so it
+   carries the OLD value however long the response then takes to arrive — and
+   if it arrives after the two seconds are up, the row visibly drops back.
+
+   The rule is now self-verifying: keep ours until the server hands us back
+   what we wrote. No timing assumption at all. The age ceiling is only there so
+   a write that can never be confirmed can't shadow the server forever. */
+const OVERRIDE_MAX_MS = 30000;
+
+function overrideStillWins(serverValue, rec, pending, nowMs, maxMs = OVERRIDE_MAX_MS) {
+  if (!rec) return false;
+  const same = JSON.stringify(serverValue ?? null) === JSON.stringify(rec.value ?? null);
+  if (same) return false;              // the server has caught up; we're done
+  if (pending) return true;            // our write hasn't landed yet
+  return nowMs - rec.at <= maxMs;      // give up eventually rather than wedge
+}
+
 function applyLocalOverrides() {
-  for (const [key, val] of localOverrides) {
+  const now = Date.now();
+  for (const [key, rec] of [...localOverrides]) {
     const [table, id, field] = key.split(":");
     if (table !== "managers") continue;
     const m = S.managers.find((x) => x.id === id);
-    if (m) m[field] = val;
+    if (!m) continue;
+    if (overrideStillWins(m[field], rec, _pendingWrites.has(key), now)) m[field] = rec.value;
+    else localOverrides.delete(key);
   }
 }
 
 const _writeTimers = new Map();
+const _pendingWrites = new Set();     // keys with a write queued or in flight
+
+// A write has finished (or failed). If nothing else is outstanding, run the
+// refetch we held back while it was.
+function writeSettled(key) {
+  if (_writeTimers.has(key)) return;  // a newer write for the same field is queued
+  _pendingWrites.delete(key);
+  if (!_pendingWrites.size && _refetchWanted) { _refetchWanted = false; scheduleRefetch(); }
+}
+
 /* Coalesce a burst of edits to one column into a single write, and hold the
-   local value as authoritative until a little after the server confirms it. */
+   local value as authoritative until the server hands it back to us. */
 function queueManagerWrite(id, field, value, onError) {
   const key = `managers:${id}:${field}`;
-  localOverrides.set(key, value);
+  localOverrides.set(key, { value, at: Date.now() });
+  _pendingWrites.add(key);
   clearTimeout(_writeTimers.get(key));
   _writeTimers.set(key, setTimeout(() => {
     _writeTimers.delete(key);
-    const sent = localOverrides.get(key);
-    S.sb.from("managers").update({ [field]: sent }).eq("id", id).then(({ error }) => {
-      if (error) { localOverrides.delete(key); onError?.(error); return; }
-      // Keep owning the value briefly: a refetch begun before this write
-      // finished can still be in flight and would carry the previous value.
-      if (localOverrides.get(key) !== sent) return;   // superseded; newer write owns it
-      setTimeout(() => {
-        if (localOverrides.get(key) === sent) localOverrides.delete(key);
-      }, 2000);
-    }, () => localOverrides.delete(key));
+    const rec = localOverrides.get(key);
+    if (!rec) { writeSettled(key); return; }
+    S.sb.from("managers").update({ [field]: rec.value }).eq("id", id).then(({ error }) => {
+      if (error) { localOverrides.delete(key); writeSettled(key); onError?.(error); return; }
+      writeSettled(key);
+    }, () => { localOverrides.delete(key); writeSettled(key); });
   }, 250));
 }
 
