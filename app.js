@@ -472,6 +472,7 @@ async function refetchAll() {
   const err = m.error || p.error || st.error || tg.error || tr.error;
   if (err) { toast("Load failed: " + err.message); return; }
   S.managers = m.data;
+  applyLocalOverrides();   // a read that started before our last write is stale
   S.picks = p.data;
   S.stats = st.data;
   S.stages = tg.data;
@@ -523,6 +524,7 @@ function leaveLeague() {
   if (S.channel) { S.sb.removeChannel(S.channel); S.channel = null; }
   setSession(null);
   S.league = null; S.managers = []; S.picks = []; S.stats = [];
+  localOverrides.clear();   // pending edits belong to the league we just left
   // Pool is per-competition now — clear it so the next league loads its own.
   S.players = []; S.teams = []; S.playerById = {}; S.fixtures = null; S._compPool = undefined;
   S.messages = []; S.chatThread = "league"; S._chatSeenLoaded = false;
@@ -1536,19 +1538,58 @@ const isShortlisted = (pid) => myShortlist().includes(pid);
    there is nothing to refetch and nothing to wait for. Apply it locally and let
    the write happen in the background — this used to block on a round trip and
    then reload all nine tables, which is why reordering felt broken. */
+/* Fields this device has changed but not yet seen confirmed by the server.
+
+   Every write echoes back as a realtime event, which triggers a refetch. Tap
+   ▲ twice quickly and the refetch for the FIRST write lands after the second
+   one has already been applied locally — so the row visibly snaps back to the
+   old order before jumping forward again. That is the "glitch": not lag, a
+   stale read overwriting a newer local truth. Re-applying these after every
+   refetch makes the local value win until the server has caught up. */
+const localOverrides = new Map();          // "table:id:field" -> value
+
+function applyLocalOverrides() {
+  for (const [key, val] of localOverrides) {
+    const [table, id, field] = key.split(":");
+    if (table !== "managers") continue;
+    const m = S.managers.find((x) => x.id === id);
+    if (m) m[field] = val;
+  }
+}
+
+const _writeTimers = new Map();
+/* Coalesce a burst of edits to one column into a single write, and hold the
+   local value as authoritative until a little after the server confirms it. */
+function queueManagerWrite(id, field, value, onError) {
+  const key = `managers:${id}:${field}`;
+  localOverrides.set(key, value);
+  clearTimeout(_writeTimers.get(key));
+  _writeTimers.set(key, setTimeout(() => {
+    _writeTimers.delete(key);
+    const sent = localOverrides.get(key);
+    S.sb.from("managers").update({ [field]: sent }).eq("id", id).then(({ error }) => {
+      if (error) { localOverrides.delete(key); onError?.(error); return; }
+      // Keep owning the value briefly: a refetch begun before this write
+      // finished can still be in flight and would carry the previous value.
+      if (localOverrides.get(key) !== sent) return;   // superseded; newer write owns it
+      setTimeout(() => {
+        if (localOverrides.get(key) === sent) localOverrides.delete(key);
+      }, 2000);
+    }, () => localOverrides.delete(key));
+  }, 250));
+}
+
 function setShortlist(next) {
   const me = myManager();
   if (!me) { toast("Join as a manager to shortlist players."); return false; }
-  const cur = myShortlist();
   me.shortlist = next;
-  S.sb.from("managers").update({ shortlist: next }).eq("id", me.id).then(({ error }) => {
-    if (!error) return;
-    me.shortlist = cur;                        // put it back and say so
+  queueManagerWrite(me.id, "shortlist", next, (error) => {
     renderPredraftShortlist();
     if (S.league?.current_pick) renderDraftQueue(myManager(), false);
     toast(/shortlist/.test(error.message)
       ? "Shortlist needs a schema update — run schema.sql." : error.message);
-  }, () => {});
+    scheduleRefetch();                       // fall back to server truth
+  });
   return true;
 }
 
@@ -1567,6 +1608,42 @@ function toggleShortlist(pid) {
   const cur = myShortlist();
   const next = cur.includes(pid) ? cur.filter((x) => x !== pid) : [...cur, pid];
   return setShortlist(next);
+}
+
+/* How far into the draft a shortlist of `count` names actually covers you.
+   "One name per round" is far too shallow: by your last pick most of your
+   board is gone, taken by everyone else. The draft snakes, so the number of
+   players off the board before your r-th pick alternates with the direction
+   of travel rather than being a flat multiple of the league size.
+
+   Returns the last round your board still reaches (0 = it doesn't even cover
+   your first pick), the depth needed to reach the final round, and how many
+   more names would buy you one more round. Pure, so the arithmetic that
+   drives the progress meter is pinned by tests rather than eyeballed. */
+function shortlistCoverage(count, managers, rounds, draftPos) {
+  const N = Math.max(1, managers | 0), R = Math.max(1, rounds | 0);
+  const d = Math.min(N, Math.max(1, draftPos | 0 || 1));
+  // Odd rounds run 1→N, even rounds run N→1; subtract one for your own pick.
+  const takenBefore = (r) => (r - 1) * N + (r % 2 === 1 ? d : N - d + 1) - 1;
+  let through = 0;
+  for (let r = 1; r <= R; r++) {
+    if (count <= takenBefore(r)) break;
+    through = r;
+  }
+  return {
+    through,
+    target: takenBefore(R) + 1,
+    nextAt: through >= R ? null : takenBefore(through + 1) + 1,
+    needForNext: through >= R ? 0 : Math.max(0, takenBefore(through + 1) + 1 - count),
+  };
+}
+
+// Says what the coverage number means in the language of the draft.
+function coverageHint(cov, rounds) {
+  if (cov.through >= rounds) return `covers all ${rounds} picks ⭐`;
+  if (cov.through === 0) return "not deep enough for pick 1";
+  const covered = cov.through === 1 ? "pick 1" : `picks 1–${cov.through}`;
+  return `covers ${covered} of ${rounds} · +${cov.needForNext} for pick ${cov.through + 1}`;
 }
 
 // The shortlist with knocked-out players removed (keeps alive + unknown ids).
@@ -1609,13 +1686,34 @@ function refreshShortlistViews() {
     renderPredraftShortlist();
 }
 
+/* Star toggling repaints only the button and its own row. Re-rendering the
+   whole list on every tap was half of the lurch; the other half is that the
+   shortlist panel ABOVE the list gains or loses a row at the same moment, so
+   everything below it slides under your thumb. Measuring the tapped row before
+   and after and scrolling by the difference pins it in place.
+
+   Delegated from the container, so replacing a button's markup can't unwire
+   it. `rerender` is for callers whose panel shows more than the star itself. */
 function wireStars(el, rerender) {
-  el.querySelectorAll("[data-star]").forEach((b) => b.onclick = (ev) => {
+  el.onclick = (ev) => {
+    const b = ev.target?.closest?.("[data-star]");
+    if (!b || !el.contains(b)) return;
     ev.stopPropagation();
-    toggleShortlist(b.dataset.star);
-    rerender();
+    const pid = b.dataset.star;
+    const row = b.closest("li") || b.parentElement;
+    const before = row ? row.getBoundingClientRect().top : null;
+    if (!toggleShortlist(pid)) return;
+    if (rerender) rerender();
+    else {
+      b.outerHTML = starHtml(pid);
+      row?.classList.toggle("bg-wcgold/5", isShortlisted(pid));
+    }
     refreshShortlistViews();
-  });
+    if (before != null && row?.isConnected) {
+      const after = row.getBoundingClientRect().top;
+      if (Math.abs(after - before) > 0.5) window.scrollBy(0, after - before);
+    }
+  };
 }
 
 /* ---------- squad planner (per-manager, synced; only shown to its owner) ---------- */
@@ -2209,20 +2307,23 @@ function renderPredraftShortlist() {
     ${rows ? `<ul class="divide-y divide-slate-800">${rows}</ul>
       <p class="text-xs text-slate-400 pt-1">#1 is who auto-pick takes if your clock runs out.</p>`
            : '<p class="text-xs text-slate-400">Nothing yet — tap the ☆ beside a player below.</p>'}`;
-  // Keep the banner's progress meter honest without re-rendering the board.
+  // Keep the banner's coverage meter honest without re-rendering the board.
   const per = picksPerManager();
+  const cov = shortlistCoverage(ids.length, S.managers.length, per, me.draft_position);
   const haveEl = $("predraft-have"), barEl = $("predraft-bar"), hintEl = $("predraft-hint");
-  if (haveEl) haveEl.textContent = `${ids.length} of ${per} starred`;
-  if (hintEl) hintEl.textContent = ids.length >= per ? "board ready ⭐" : "aim for one name per round";
+  if (haveEl) haveEl.textContent = `${ids.length} starred`;
+  if (hintEl) hintEl.textContent = coverageHint(cov, per);
   if (barEl) {
-    barEl.style.width = Math.min(100, Math.round((ids.length / Math.max(1, per)) * 100)) + "%";
-    barEl.className = "block h-full rounded-full " + (ids.length >= per ? "bg-live" : "bg-wcgold");
+    barEl.style.width = Math.round((cov.through / Math.max(1, per)) * 100) + "%";
+    barEl.className = "block h-full rounded-full " + (cov.through >= per ? "bg-live" : "bg-wcgold");
   }
 
-  box.querySelectorAll("[data-slup]").forEach((b) =>
-    b.onclick = () => { moveShortlist(b.dataset.slup, -1); renderPredraftShortlist(); markQueueMoved(b.dataset.slup); });
-  box.querySelectorAll("[data-sldn]").forEach((b) =>
-    b.onclick = () => { moveShortlist(b.dataset.sldn, 1); renderPredraftShortlist(); markQueueMoved(b.dataset.sldn); });
+  const slide = (pid, dir) => {
+    moveShortlist(pid, dir);
+    animateReorder("predraft-shortlist", "data-slrow", renderPredraftShortlist, pid);
+  };
+  box.querySelectorAll("[data-slup]").forEach((b) => b.onclick = () => slide(b.dataset.slup, -1));
+  box.querySelectorAll("[data-sldn]").forEach((b) => b.onclick = () => slide(b.dataset.sldn, 1));
   box.querySelectorAll("[data-slrm]").forEach((b) =>
     b.onclick = () => { toggleShortlist(b.dataset.slrm); renderPredraftShortlist(); });
 }
@@ -2252,6 +2353,23 @@ function queuePlan(shortlist, takenBy, myLastPickNo, eligibleIds) {
   return { rows, hiddenNoFit, available: rows.filter((r) => !r.gone).length };
 }
 
+/* Reorder a list and animate it. The rows are rebuilt by `rerender`, so their
+   old positions are captured first and handed to flipRows, which puts each one
+   back where it was and lets the compositor close the gap. Without this a
+   reorder is a jump-cut, and a fast double-tap reads as a glitch rather than
+   two moves. */
+function animateReorder(boxId, rowAttr, rerender, movedId) {
+  const box = document.getElementById(boxId);
+  if (!box) { rerender(); markQueueMoved(movedId); return; }
+  const was = new Map();
+  box.querySelectorAll(`[${rowAttr}]`).forEach((r) =>
+    was.set(r.getAttribute(rowAttr), r.getBoundingClientRect().top));
+  rerender();
+  const after = document.getElementById(boxId);
+  if (after) flipRows(after, was, rowAttr);
+  markQueueMoved(movedId);
+}
+
 // After a reorder the list is rebuilt, so flag the row that moved — otherwise
 // the change is something you have to infer by re-reading the order.
 function markQueueMoved(pid) {
@@ -2262,7 +2380,9 @@ function markQueueMoved(pid) {
   // Bench rows are already being slid into place by flipRows, and a keyframe
   // animation outranks the inline transform that FLIP relies on — so they get
   // the colour half of the cue only.
-  const cls = row.dataset.brow ? "row-flash" : "queue-moved";
+  // Every reorder now slides its rows into place, and a keyframe animation
+  // outranks the inline transform FLIP relies on — so the cue is colour only.
+  const cls = "row-flash";
   row.classList.remove(cls);
   void row.offsetWidth;
   row.classList.add(cls);
@@ -2352,10 +2472,13 @@ function renderDraftQueue(me, myTurn) {
       makePick(entry, { ...info, pickNumber: S.league.current_pick })
         .catch((er) => toast(er.message));
   });
-  box.querySelectorAll("[data-qup]").forEach((b) =>
-    b.onclick = () => { moveShortlist(b.dataset.qup, -1); renderDraftQueue(myManager(), myTurn); markQueueMoved(b.dataset.qup); });
-  box.querySelectorAll("[data-qdn]").forEach((b) =>
-    b.onclick = () => { moveShortlist(b.dataset.qdn, 1); renderDraftQueue(myManager(), myTurn); markQueueMoved(b.dataset.qdn); });
+  const slide = (pid, dir) => {
+    moveShortlist(pid, dir);
+    animateReorder("draft-queue", "data-qrow",
+      () => renderDraftQueue(myManager(), myTurn), pid);
+  };
+  box.querySelectorAll("[data-qup]").forEach((b) => b.onclick = () => slide(b.dataset.qup, -1));
+  box.querySelectorAll("[data-qdn]").forEach((b) => b.onclick = () => slide(b.dataset.qdn, 1));
 }
 
 /* The clock and whose turn it is must never be off screen. `position: sticky`
@@ -3762,6 +3885,62 @@ function scoringHtml() {
       points stay banked. For the final there are no squads: surviving managers just call the
       champion for +${finalPickBonus()}.</p>
   </div>`;
+}
+
+/* Scoring as a per-position matrix. What a striker earns for a goal versus
+   what a keeper earns for one is the single most useful thing to know while
+   building a board, and the flat "GK 10 / DEF 6 / MID 5 / FWD 4" string in the
+   rules list buried it inside a sentence. */
+function scoringByPositionHtml() {
+  const pos = GROUPS.slice(0, 4);
+  const rules = scoringRules();
+  const cell = (r, g) => {
+    const v = r.perPosition ? (r.points?.[g] ?? 0) : (r.points ?? 0);
+    return `<td class="py-1.5 text-center font-mono ${
+      v > 0 ? "text-wcgold" : v < 0 ? "text-red-400" : "text-slate-600"}">${v > 0 ? "+" : ""}${v}</td>`;
+  };
+  const qual = (r) => {
+    const bits = [];
+    if (r.mode === "per" && r.per > 1) bits.push(`per ${r.per}`);
+    if (r.mode === "threshold") bits.push(`if ≥${r.gte}`);
+    if (r.minMinutes) bits.push(`≥${r.minMinutes}′`);
+    return bits.length ? ` <span class="text-slate-500">${bits.join(" · ")}</span>` : "";
+  };
+  return `<table class="w-full text-xs">
+    <thead><tr class="text-slate-400">
+      <th class="text-left font-normal pb-1">Scores for</th>
+      ${pos.map((g) => `<th class="pb-1"><span class="pos-${g} rounded px-1.5 py-0.5">${g}</span></th>`).join("")}
+    </tr></thead>
+    <tbody>${rules.map((r) => `<tr class="border-t border-slate-800">
+      <td class="py-1.5 pr-2 text-slate-300">${STAT_LABEL[r.stat] || r.stat}${qual(r)}</td>
+      ${pos.map((g) => cell(r, g)).join("")}
+    </tr>`).join("")}</tbody>
+  </table>`;
+}
+
+/* The full rule book, reachable while you're building a shortlist — you can't
+   rank players sensibly without knowing what they're ranked on. */
+function openScoringSheet() {
+  const body = $("recap-body");
+  if (!body) return;
+  body.innerHTML = `
+    <div class="text-center">
+      <div class="eyebrow">Know what you're drafting for</div>
+      <div class="text-lg font-bold mt-0.5">How points are scored</div>
+    </div>
+    <div class="rounded-xl border border-slate-700 bg-slate-900/60 p-3 overflow-x-auto">
+      ${scoringByPositionHtml()}
+    </div>
+    <details class="rounded-xl border border-slate-700 bg-slate-900/60">
+      <summary class="px-3 py-2 cursor-pointer select-none text-xs uppercase tracking-wide text-slate-400">Squad, subs and the draft itself</summary>
+      <div class="px-3 pb-3 space-y-2 text-xs text-slate-300">${draftRulesHtml()}</div>
+    </details>
+    <details class="rounded-xl border border-slate-700 bg-slate-900/60">
+      <summary class="px-3 py-2 cursor-pointer select-none text-xs uppercase tracking-wide text-slate-400">Bonuses and the small print</summary>
+      <div class="px-3 pb-3">${scoringHtml()}</div>
+    </details>`;
+  $("recap-sheet").classList.remove("hidden");
+  lockScroll(true);
 }
 
 function draftRulesHtml() {
@@ -5914,8 +6093,8 @@ function renderBoard() {
     const seats = S.managers.length;
     const per = picksPerManager();
     const have = (meP?.shortlist || []).length;
-    const pct = Math.min(100, Math.round((have / Math.max(1, per)) * 100));
     const slot = meP?.draft_position;
+    const cov = shortlistCoverage(have, seats, per, slot);
     $("board-banner").innerHTML = `<div class="rounded-xl border border-wcgold/50 bg-gradient-to-br from-wcred/25 via-slate-900 to-slate-900 p-3">
       <div class="flex items-start justify-between gap-2">
         <div class="min-w-0">
@@ -5937,16 +6116,22 @@ function renderBoard() {
       </div>
       <div class="mt-2">
         <div class="flex items-baseline justify-between gap-2 text-xs">
-          <span id="predraft-have" class="text-slate-300">${have} of ${per} starred</span>
-          <span id="predraft-hint" class="text-slate-400">${have >= per ? "board ready ⭐" : "aim for one name per round"}</span>
+          <span id="predraft-have" class="text-slate-300">${have} starred</span>
+          <span id="predraft-hint" class="text-slate-400">${coverageHint(cov, per)}</span>
         </div>
         <div class="mt-1 h-1.5 rounded-full bg-slate-800 overflow-hidden">
-          <span id="predraft-bar" class="block h-full rounded-full ${have >= per ? "bg-live" : "bg-wcgold"}" style="width:${pct}%"></span>
+          <span id="predraft-bar" class="block h-full rounded-full ${
+            cov.through >= per ? "bg-live" : "bg-wcgold"}" style="width:${
+            Math.round((cov.through / Math.max(1, per)) * 100)}%"></span>
         </div>
       </div>
+      <button id="board-scoring" class="mt-2 w-full rounded-lg bg-slate-800/80 border border-slate-700 py-2 text-xs font-semibold text-left px-3">
+        📋 How points are scored <span class="font-normal text-slate-400">· by position</span></button>
       <p class="text-xs text-slate-400 mt-2">Star players below. If your pick clock runs out, auto-pick takes the top name still available — so the order matters.</p></div>`;
     const btl = $("board-tolobby");
     if (btl) btl.onclick = () => { S._browsing = false; route(); };
+    const bsc = $("board-scoring");
+    if (bsc) bsc.onclick = openScoringSheet;
     renderPredraftShortlist();
   }
   renderHomeTab();
@@ -6718,7 +6903,7 @@ function renderScoutList(pool, sortKey) {
 
   $("stats-list").querySelectorAll("[data-sp]").forEach((b) => b.onclick = () =>
     openPlayerDetail(b.dataset.sp));
-  wireStars($("stats-list"), () => { renderStatsTab(); renderPredraftShortlist(); });
+  wireStars($("stats-list"));   // in-place: see wireStars
 }
 
 function renderStatsTab() {
@@ -6885,7 +7070,7 @@ function renderStatsTab() {
   // doesn't jump — same as tapping a player on the Home tab.
   $("stats-list").querySelectorAll("[data-sp]").forEach((b) => b.onclick = () =>
     openPlayerDetail(b.dataset.sp));
-  wireStars($("stats-list"), () => { renderStatsTab(); renderPredraftShortlist(); });
+  wireStars($("stats-list"));   // in-place: see wireStars
 }
 
 /* ---------- roster snapshots (lineup locks) ---------- */
@@ -7138,10 +7323,10 @@ function wireLineupControls(root) {
    back where it just was and let the compositor animate the gap to zero: the
    two swapped rows visibly trade places instead of teleporting, and nothing
    re-lays out mid-animation. */
-function flipRows(box, was) {
+function flipRows(box, was, rowAttr = "data-brow") {
   if (globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
-  box.querySelectorAll("[data-brow]").forEach((r) => {
-    const y0 = was.get(r.dataset.brow);
+  box.querySelectorAll(`[${rowAttr}]`).forEach((r) => {
+    const y0 = was.get(r.getAttribute(rowAttr));
     if (y0 == null) return;
     const dy = y0 - r.getBoundingClientRect().top;
     if (!dy) return;
