@@ -2399,7 +2399,7 @@ function renderPredraftShortlist() {
         <span class="block truncate text-xs text-slate-400">${esc(e.team || "")}</span>
       </span>
       <span class="shrink-0 text-xs pos-${e.position} rounded px-1.5 py-0.5">${e.position}</span>
-      ${ids.length > 1 ? `<span class="shrink-0 flex flex-col w-7 leading-none">
+      ${ids.length > 1 ? `<span class="nudge-col shrink-0 leading-none">
         <button data-slup="${esc(pid)}" class="nudge text-slate-400 ${i === 0 ? "opacity-30" : ""}" ${i === 0 ? "disabled" : ""} aria-label="Move up">▲</button>
         <button data-sldn="${esc(pid)}" class="nudge text-slate-400 ${i === ids.length - 1 ? "opacity-30" : ""}" ${i === ids.length - 1 ? "disabled" : ""} aria-label="Move down">▼</button>
       </span>` : ""}
@@ -2745,8 +2745,10 @@ function renderDraftQueue(me, myTurn) {
       <span class="min-w-0 flex-1 truncate text-sm">${esc(e.name)}</span>
       <span class="shrink-0 text-xs pos-${e.position} rounded px-1.5 py-0.5">${e.position}</span>
       ${myTurn ? `<button data-qpick="${esc(r.pid)}" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-2.5 text-xs font-bold">Pick</button>` : ""}
-      ${movable > 1 ? `<button data-qup="${esc(r.pid)}" class="tap shrink-0 text-slate-400 ${first ? "opacity-30" : ""}" ${first ? "disabled" : ""} title="Move up">▲</button>
-      <button data-qdn="${esc(r.pid)}" class="tap shrink-0 text-slate-400 ${last ? "opacity-30" : ""}" ${last ? "disabled" : ""} title="Move down">▼</button>` : ""}
+      ${movable > 1 ? `<span class="nudge-col shrink-0 leading-none">
+        <button data-qup="${esc(r.pid)}" class="nudge text-slate-400 ${first ? "opacity-30" : ""}" ${first ? "disabled" : ""} aria-label="Move up">▲</button>
+        <button data-qdn="${esc(r.pid)}" class="nudge text-slate-400 ${last ? "opacity-30" : ""}" ${last ? "disabled" : ""} aria-label="Move down">▼</button>
+      </span>` : ""}
     </li>`;
   }).join("");
 
@@ -7236,10 +7238,12 @@ function renderScoutList(pool, sortKey) {
             <span class="truncate">${esc(p.name)}</span>
             <span class="shrink-0 flex items-center gap-1">${availBadges(p.player_id)}</span>
           </span>
-          <span class="flex items-center gap-1.5 text-xs text-slate-400">${
-            // Under a club divider the club name on every row is just noise.
-            sortKey === "team" ? "" :
-            `${teamCrestHtml(p.team, "w-3.5 h-3.5")}<span class="truncate">${esc(p.team || "")}</span>`}
+          <!-- The club stays on every row. Suppressing it under a club divider
+               looked tidy until you filtered to one club and scrolled: the
+               header goes off screen and the rows no longer say who they play
+               for. A row has to identify a player on its own. -->
+          <span class="flex items-center gap-1.5 text-xs text-slate-400">
+            ${teamCrestHtml(p.team, "w-3.5 h-3.5")}<span class="truncate">${esc(p.team || "")}</span>
             ${p.number ? `<span class="shrink-0 font-mono">#${esc(p.number)}</span>` : ""}
           </span>
         </span>
@@ -7749,7 +7753,7 @@ function renderLineup() {
       </button>
       <span class="shrink-0 text-xs pos-${pk.position} rounded px-1.5 py-0.5">${pk.position}</span>
       ${editing ? `
-        <span class="shrink-0 flex flex-col w-7 leading-none">
+        <span class="nudge-col shrink-0 leading-none">
           <button data-bup="${esc(pk.id)}" class="nudge text-slate-400 ${i === 0 ? "opacity-30" : ""}" ${i === 0 ? "disabled" : ""} aria-label="Higher sub priority">▲</button>
           <button data-bdn="${esc(pk.id)}" class="nudge text-slate-400 ${i === arr.length - 1 ? "opacity-30" : ""}" ${i === arr.length - 1 ? "disabled" : ""} aria-label="Lower sub priority">▼</button>
         </span>
