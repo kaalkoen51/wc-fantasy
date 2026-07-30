@@ -8764,6 +8764,17 @@ function swapTxCard(x) {
     managerColor(mgr));
 }
 
+/* When each trading window began: the moment of every lineup lock, newest
+   first. The log uses the most recent one to split "this window" from the rest.
+   (Deleted by a region rewrite of the history cards; its absence threw inside
+   renderTrades BEFORE the innerHTML assignment, so tapping History did
+   nothing at all rather than showing an error.) */
+function txWindowStarts() {
+  return [...new Set((S.snapshots || [])
+    .map((sn) => Date.parse(sn.created_at || sn.effective_from))
+    .filter((t) => !isNaN(t)))].sort((a, b) => b - a);   // newest first
+}
+
 function transactionsLogHtml() {
   const entries = [];
   for (const t of S.trades.filter((t) => t.status === "accepted"))
@@ -9290,6 +9301,29 @@ function renderTrades() {
     ${when ? `<div class="mt-1.5 text-xs text-wcgold border-t border-white/10 pt-1.5">${esc(when)}</div>` : ""}
   </div>`;
 
+  /* Build the tab's body inside a guard. A throw in here used to happen BEFORE
+     the innerHTML assignment below, so the old markup stayed on screen and the
+     tab looked like a dead button — which is exactly how a missing helper
+     presented. A broken tab should say it is broken. */
+  let body = "";
+  try {
+    body = tradeTabBodyHtml(tab, me, { open, pendingIn, pendingOut });
+  } catch (e) {
+    body = `<div class="rounded-xl border border-wcred/50 bg-wcred/10 p-4 space-y-1">
+      <div class="text-sm font-semibold">This tab failed to load</div>
+      <p class="text-xs text-slate-400">The rest of the app is fine — try another tab.</p>
+      <p class="text-xs text-slate-500 font-mono break-words">${esc(String(e && e.message || e))}</p>
+    </div>`;
+  }
+
+  box.innerHTML = `<div class="space-y-2">${nav}${banner}</div>` + `<div class="space-y-3 mt-3">${body}</div>`;
+  box.querySelectorAll("[data-tradetab]").forEach((b) => b.onclick = () => {
+    S.tradeTab = b.dataset.tradetab; renderTrades();
+  });
+  wireTrades(me);
+}
+
+function tradeTabBodyHtml(tab, me, { open, pendingIn, pendingOut }) {
   let body = "";
   if (tab === "deals") {
     if (S.builder) body += builderHtml(me);
@@ -9313,12 +9347,7 @@ function renderTrades() {
   } else {
     body += transactionsLogHtml();
   }
-
-  box.innerHTML = `<div class="space-y-2">${nav}${banner}</div>` + `<div class="space-y-3 mt-3">${body}</div>`;
-  box.querySelectorAll("[data-tradetab]").forEach((b) => b.onclick = () => {
-    S.tradeTab = b.dataset.tradetab; renderTrades();
-  });
-  wireTrades(me);
+  return body;
 }
 
 function wireTrades(me) {
