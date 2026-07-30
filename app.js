@@ -247,7 +247,13 @@ function myManager() {
   const uid = authUid();
   if (uid) { const mine = S.managers.find((m) => m.user_id === uid); if (mine) return mine; }
   const s = getSession();
-  return S.managers.find((m) => m.id === s?.managerId) || null;
+  const bySession = S.managers.find((m) => m.id === s?.managerId) || null;
+  /* A stale device session must never make you someone else. If you're signed
+     in and that manager belongs to a different account, it isn't yours —
+     regardless of what this device remembers. (Client-side courtesy only:
+     rls.sql is what actually enforces it. See its header.) */
+  if (uid && bySession?.user_id && bySession.user_id !== uid) return null;
+  return bySession;
 }
 function isAdmin() {
   // The league creator (owner_id === your account) is always admin; the legacy
@@ -1432,11 +1438,20 @@ async function findLeague() {
   $("join-new-wrap").classList.toggle("hidden", full || data.current_pick > 0);
   const list = $("join-reclaim-list");
   list.innerHTML = "";
+  const uid = authUid();
   for (const m of S.joinManagers) {
+    // Claimable if nobody owns it yet, or it is already yours. A manager linked
+    // to another account is shown as taken rather than offered.
+    const taken = !!m.user_id && m.user_id !== uid;
     const b = document.createElement("button");
-    b.className = "w-full text-left rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 hover:border-wcgold";
-    b.textContent = m.name;
-    b.onclick = () => claimManager(m);
+    b.className = "w-full text-left rounded-lg bg-slate-900 border px-3 py-2 "
+      + (taken ? "border-slate-800 text-slate-500 cursor-not-allowed"
+               : "border-slate-700 hover:border-wcgold");
+    b.innerHTML = `<span>${esc(m.name)}</span>` + (taken
+      ? '<span class="float-right text-xs">🔒 linked to an account</span>'
+      : (m.user_id ? '<span class="float-right text-xs text-wcgold">yours</span>' : ""));
+    b.disabled = taken;
+    if (!taken) b.onclick = () => claimManager(m);
     list.appendChild(b);
   }
   $("join-reclaim-wrap").classList.toggle("hidden", !S.joinManagers.length);
@@ -1469,8 +1484,15 @@ async function joinLeague() {
 // on a new device. If you're signed in and the name isn't linked yet, claim it
 // to your account so it follows you from now on.
 async function claimManager(m) {
-  if (authUid() && !m.user_id)
-    await S.sb.from("managers").update({ user_id: authUid() }).eq("id", m.id).then(() => {}, () => {});
+  const uid = authUid();
+  if (m.user_id && uid && m.user_id !== uid)
+    return toast("That manager belongs to another account.");
+  if (uid && !m.user_id)
+    // Claim it on first use so it follows this account from now on. The
+    // .is("user_id", null) makes it a race-safe compare-and-set: whoever gets
+    // there first owns it, rather than the last write winning.
+    await S.sb.from("managers").update({ user_id: uid })
+      .eq("id", m.id).is("user_id", null).then(() => {}, () => {});
   setSession({ ...joinSessionBase(), managerId: m.id });
   await enterLeague();
 }
