@@ -343,6 +343,40 @@ const COMPETITIONS = [
   { name: "Bundesliga",            apiLeagueId: 78,  kind: "league" },
   { name: "Ligue 1",               apiLeagueId: 61,  kind: "league" },
 ];
+/* Which seasons you may start a league on.
+
+   A domestic season's API key is its START year: 2026 means 2026/27, which
+   runs August 2026 → May 2027. So the season you can draft for is the one that
+   has not finished — from June onwards that is this calendar year, before June
+   it is last year (you are mid-season). Offering 2025 in July 2026 would let
+   someone build a league on a competition that is already over.
+
+   Tournaments are keyed by their own year and are scheduled well ahead, so
+   they offer this year and next. Pure, so the boundary cases are pinned. */
+// getUTCMonth() is 0-indexed, so 5 is June — the month after a domestic
+// season ends and the key ticks over to the one about to begin.
+const SEASON_ROLLOVER_MONTH = 5;
+
+function currentSeasonFor(kind, nowMs) {
+  const d = new Date(nowMs);
+  const y = d.getUTCFullYear();
+  if (kind === "cup") return y;
+  return d.getUTCMonth() >= SEASON_ROLLOVER_MONTH ? y : y - 1;
+}
+
+function seasonOptions(kind, nowMs) {
+  const cur = currentSeasonFor(kind, nowMs);
+  return kind === "cup" ? [cur, cur + 1] : [cur];
+}
+
+// "2026/27" for a domestic season, "2026" for a tournament.
+const seasonLabel = (kind, y) =>
+  kind === "cup" ? String(y) : `${y}/${String((y + 1) % 100).padStart(2, "0")}`;
+
+// The season whose results a new league's scoring is validated against: the
+// one before it, because its own has not been played yet.
+const backtestSeason = (season) => season - 1;
+
 // The league's competition (null → legacy static players.json / fixtures.json).
 const leagueCompetition = () => S.league?.competition || null;
 // Competition data (pool + stats) is SHARED across every league on the same
@@ -1052,21 +1086,37 @@ async function loadScoringPreviewData() {
   const key = `${sel.value}-${season}`;
   if (S._previewData?.key === key) { updateCreatePullStatus(); return renderCreateBalance(); }
   box.innerHTML = '<span class="text-xs text-slate-400">Loading prior data…</span>';
-  try {
-    const pool = await S.sb.from("competition_pools").select("players").eq("competition_key", key).maybeSingle();
+
+  const fetchSeason = async (s) => {
+    const k = `${sel.value}-${s}`;
+    const pool = await S.sb.from("competition_pools").select("players").eq("competition_key", k).maybeSingle();
     const posOf = {}, meta = {};
     for (const pl of (pool.data?.players || [])) { posOf[pl.player_id] = pl.position; meta[pl.player_id] = { name: pl.name, team: pl.team }; }
     const rows = [];
     for (let from = 0; ;) {
       const { data, error } = await S.sb.from("competition_stats").select("*")
-        .eq("competition_key", key).order("id").range(from, from + 999);
+        .eq("competition_key", k).order("id").range(from, from + 999);
       if (error) break;
       rows.push(...(data || []));
       if (!data || data.length < 1000) break;
       from += 1000;
     }
-    S._previewData = { key, rows, posOf, meta };
-  } catch { S._previewData = { key, rows: [], posOf: {}, meta: {} }; }
+    return { season: s, rows, posOf, meta };
+  };
+
+  try {
+    /* A league for a season that hasn't kicked off has no results of its own to
+       validate against — which is the normal case when you're setting one up.
+       Fall back to the season before it: that is what "is my scoring balanced"
+       actually means here. */
+    let d = await fetchSeason(season);
+    let usedFallback = false;
+    if (!d.rows.length) {
+      const prior = await fetchSeason(backtestSeason(season));
+      if (prior.rows.length) { d = prior; usedFallback = true; }
+    }
+    S._previewData = { key, ...d, usedFallback };
+  } catch { S._previewData = { key, season, rows: [], posOf: {}, meta: {}, usedFallback: false }; }
   updateCreatePullStatus();
   renderCreateBalance();
 }
@@ -1076,19 +1126,45 @@ async function loadScoringPreviewData() {
 function updateCreatePullStatus() {
   const d = S._previewData, status = $("create-pull-status"), btn = $("create-pull-history");
   if (!status || !btn) return;
+  const kind = createCompKind();
+  const want = createPreviewSeason();          // the season the check needs
   const players = Object.keys(d?.posOf || {}).length;
   const matches = new Set((d?.rows || []).map((r) => r.match_label)).size;
   if (players || matches) {
-    status.innerHTML = `<span class="text-emerald-400">✓ Already loaded:</span> ${players} players · ${matches} match${matches === 1 ? "" : "es"} (shared). Re-pull only adds new matches.`;
-    btn.textContent = "⟳ Pull any new / missing matches";
+    status.innerHTML = `<span class="text-emerald-400">✓ Loaded ${esc(seasonLabel(kind, d.season))}:</span> ${players} players · ${matches} match${matches === 1 ? "" : "es"} (shared). Re-pull only adds new matches.`;
+    btn.textContent = `⟳ Pull any new / missing ${seasonLabel(kind, want)} matches`;
   } else {
-    status.textContent = "Not loaded yet for this season.";
-    btn.textContent = "⬇ Pull this competition's players + season history";
+    status.textContent = `No ${seasonLabel(kind, want)} results stored yet — pull them to check the balance.`;
+    btn.textContent = `⬇ Pull ${seasonLabel(kind, want)} players + results`;
   }
 }
-function renderCreateBalance() {
+
+// Which competition kind the create form is on ("league" | "cup").
+function createCompKind() {
+  const v = $("create-comp")?.value;
+  if (!v || v === "wc") return "cup";
+  return COMPETITIONS.find((c) => String(c.apiLeagueId) === String(v))?.kind || "league";
+}
+
+/* The season the balance check should read: the one you're creating for if it
+   already has results, otherwise the one before it. */
+function createPreviewSeason() {
+  const season = Number($("create-comp-season")?.value) || 0;
   const d = S._previewData;
-  renderScoringBalance($("create-balance"), d?.rows || null, d?.posOf || {}, S._createRules, d?.meta || {});
+  if (d?.rows?.length) return d.season;
+  return backtestSeason(season);
+}
+function renderCreateBalance() {
+  const d = S._previewData, box = $("create-balance");
+  renderScoringBalance(box, d?.rows || null, d?.posOf || {}, S._createRules, d?.meta || {});
+  // Never leave which season produced the verdict to inference.
+  if (box && d?.rows?.length) {
+    const kind = createCompKind();
+    const chosen = Number($("create-comp-season")?.value) || 0;
+    box.insertAdjacentHTML("afterbegin",
+      `<p class="text-xs text-slate-400 mb-1.5">Checked against <b class="text-slate-200">${esc(seasonLabel(kind, d.season))}</b>${
+        d.usedFallback ? ` — ${esc(seasonLabel(kind, chosen))} hasn't been played yet, so last season's results stand in.` : "."}</p>`);
+  }
 }
 
 // On-demand: pull a competition's players + full-season history straight into
@@ -1160,14 +1236,18 @@ async function pullCreateHistory() {
   const apiKey = ($("create-api-key")?.value.trim()) || localStorage.getItem("wcf_apikey") || "";
   const log = (t) => { if ($("create-pull-log")) $("create-pull-log").textContent = t; };
   if (!apiLeagueId || apiLeagueId === "wc") return toast("Pick an API competition first.");
-  if (!season) return toast("Enter a season first.");
-  
+  if (!season) return toast("Pick a season first.");
   localStorage.setItem("wcf_apikey", apiKey);
   const btn = $("create-pull-history");
   btn.disabled = true;
   try {
-    const key = `${apiLeagueId}-${season}`;
-    await pullCompetitionHistory(Number(apiLeagueId), season, apiKey, key, log);
+    /* Pull the season the balance check needs, which for a league that hasn't
+       kicked off is the PREVIOUS one. Pulling the upcoming season would fetch
+       a fixture list with no results in it and leave the check as empty as it
+       started — which is exactly what made this button look broken. */
+    const want = createPreviewSeason();
+    const key = `${apiLeagueId}-${want}`;
+    await pullCompetitionHistory(Number(apiLeagueId), want, apiKey, key, log);
     S._previewData = null;               // invalidate cache and reload the panel
     await loadScoringPreviewData();
   } catch (e) {
@@ -1232,9 +1312,24 @@ function renderCreateForm() {
     sel.innerHTML = `<option value="wc">World Cup 2026 (built-in squads)</option>`
       + COMPETITIONS.filter((c) => c.apiLeagueId !== 1)
           .map((c) => `<option value="${c.apiLeagueId}">${esc(c.name)}</option>`).join("");
-  const syncApi = () => { $("create-comp-api").classList.toggle("hidden", sel.value === "wc"); loadScoringPreviewData(); };
+  const syncApi = () => {
+    $("create-comp-api").classList.toggle("hidden", sel.value === "wc");
+    // Repopulate the season list: which seasons are open depends on whether
+    // the competition is a domestic season or a tournament.
+    const kind = createCompKind();
+    const opts = seasonOptions(kind, Date.now());
+    const seasonSel = $("create-comp-season");
+    const keep = seasonSel.value;
+    seasonSel.innerHTML = opts.map((y) =>
+      `<option value="${y}">${esc(seasonLabel(kind, y))}</option>`).join("");
+    if (opts.map(String).includes(keep)) seasonSel.value = keep;
+    S._previewData = null;
+    loadScoringPreviewData();
+  };
   sel.onchange = syncApi;
-  $("create-comp-season").addEventListener("input", loadScoringPreviewData);
+  $("create-comp-season").addEventListener("change", () => {
+    S._previewData = null; loadScoringPreviewData();
+  });
   $("create-pull-history").onclick = pullCreateHistory;
   syncApi();
   S._createTeamOn = true; S._createH2H = false; S._createWaiver = false; S._createCaptain = false; S._createAutoWin = false;
