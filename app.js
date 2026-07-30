@@ -3355,12 +3355,12 @@ function flexCounting(starters, bench, playedIds, bounds, totalStarters, maxSubs
 // Flex counting player_ids for round `rnd` from a roster (starter/bench entries),
 // resolving each player's round-r match via teamMatches + an appeared(pid,label)
 // predicate. Shared by the leaderboard and the lineup-history views.
-function flexRoundCounting(roster, rnd, teamMatches, appeared) {
+function flexRoundCounting(roster, rnd, labelFor, appeared) {
   const st = roster.filter((e) => !e.is_sub && e.position !== "TEAM");
   const bn = roster.filter((e) => e.is_sub && e.position !== "TEAM");
   const played = new Set();
   for (const e of [...st, ...bn]) {
-    const lbl = (teamMatches[e.team] || [])[rnd - 1];
+    const lbl = labelFor(e, rnd);
     if (lbl && appeared(e.player_id, lbl)) played.add(e.player_id);
   }
   const b = formationBounds();
@@ -3380,18 +3380,18 @@ const maxSubsCapped = () => cfgOf().maxSubs != null;
 // Fixed-formation subs that activate this round, respecting the cap: bench
 // players (in roster order) cover a same-position no-show starter until the cap
 // (or the no-shows) run out. Only used when a cap is configured.
-function fixedRoundSubs(roster, rnd, teamMatches, appeared, cap) {
+function fixedRoundSubs(roster, rnd, labelFor, appeared, cap) {
   const starters = roster.filter((e) => !e.is_sub && e.position !== "TEAM");
   const noShow = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
   for (const st of starters) {
-    const lbl = (teamMatches[st.team] || [])[rnd - 1];
+    const lbl = labelFor(st, rnd);
     if (lbl && !appeared(st.player_id, lbl)) noShow[st.position]++;
   }
   const activated = new Set();
   let count = 0;
   for (const sub of roster.filter((e) => e.is_sub && e.position !== "TEAM")) {
     if (count >= cap) break;
-    const lbl = (teamMatches[sub.team] || [])[rnd - 1];
+    const lbl = labelFor(sub, rnd);
     if (lbl && appeared(sub.player_id, lbl) && noShow[sub.position] > 0) {
       activated.add(sub.player_id); noShow[sub.position]--; count++;
     }
@@ -4165,13 +4165,48 @@ function statsDerived() {
   return _statsDerived;
 }
 
+/* Round resolution, shared by computeScores and managerHistory (they score the
+   same way and must agree — there is a test tying their totals together).
+
+   Rounds are indexed PER TEAM: round k is a club's k-th fixture. That makes a
+   mid-season transfer dangerous. Once a pick's team is rewritten to the new
+   club, the player's earlier matches live in the OLD club's fixture list, so a
+   lookup by team misses them — a transferred sub silently stopped scoring the
+   matches it had already covered. These helpers fall back to the player's own
+   stat rows whenever the club lookup can't explain an appearance. */
+function roundResolvers(statsByPlayer, teamMatches) {
+  const roundOf = (team, label) => (teamMatches[team] || []).indexOf(label);
+  const appearedIn = (pid, label) =>
+    (statsByPlayer[pid] || []).some((r) => r.appeared && r.match_label === label);
+  const roundByLabel = (label) => roundOf(labelTeams(label)[0], label) + 1;
+  const playerRoundLabel = (pid, rnd) => {
+    for (const r of (statsByPlayer[pid] || []))
+      if (r.appeared && roundByLabel(r.match_label) === rnd) return r.match_label;
+    return null;
+  };
+  // The club list stays the primary source, so a no-show (which has no row to
+  // find) still resolves. The player's own match is only consulted when the
+  // club lookup can't explain an appearance — i.e. exactly the transfer case.
+  const labelForRound = (entry, rnd) => {
+    const lbl = (teamMatches[entry.team] || [])[rnd - 1];
+    if (lbl && appearedIn(entry.player_id, lbl)) return lbl;
+    return playerRoundLabel(entry.player_id, rnd) || lbl || null;
+  };
+  // The 1-based round a pick's match belongs to, falling back to the label's
+  // own round when the pick has since moved club.
+  const entryRound = (entry, label) => {
+    const r = roundOf(entry.team, label);
+    return r >= 0 ? r + 1 : roundByLabel(label);
+  };
+  return { roundOf, appearedIn, roundByLabel, labelForRound, entryRound };
+}
+
 function computeScores() {
   const { byPlayer: statsByPlayer, teamMatches } = statsDerived();
   // A starter's k-th match (same round as the sub's match), and whether the
   // starter actually featured in it.
-  const roundOf = (team, label) => (teamMatches[team] || []).indexOf(label);
-  const appearedIn = (pid, label) =>
-    (statsByPlayer[pid] || []).some((r) => r.appeared && r.match_label === label);
+  const { roundOf, appearedIn, labelForRound, entryRound } =
+    roundResolvers(statsByPlayer, teamMatches);
 
   // Each match is scored against the roster locked before its kickoff.
   // Kickoff times come from fixtures.json; for matches we can't find
@@ -4212,11 +4247,11 @@ function computeScores() {
     const flex = isFlexFormation();
     const flexCache = {};
     const flexCountForRound = (rnd, roster) => flexCache[rnd] ||
-      (flexCache[rnd] = flexRoundCounting(roster, rnd, teamMatches, appearedIn));
+      (flexCache[rnd] = flexRoundCounting(roster, rnd, labelForRound, appearedIn));
     const fixedCap = !flex && maxSubsCapped();   // fixed mode with a sub cap set
     const fixedCache = {};
     const fixedSubsForRound = (rnd, roster) => fixedCache[rnd] ||
-      (fixedCache[rnd] = fixedRoundSubs(roster, rnd, teamMatches, appearedIn, maxSubsPerRound()));
+      (fixedCache[rnd] = fixedRoundSubs(roster, rnd, labelForRound, appearedIn, maxSubsPerRound()));
     const captain = captainEnabled();
     const capByRnd = {}, viceByRnd = {}, playedByRnd = {}, ptsByRnd = {};
     for (const label of statLabels) {
@@ -4237,21 +4272,21 @@ function computeScores() {
         let pts = 0;
         if (flex) {
           // Counts if the auto-sub engine keeps this player in for their round.
-          if (flexCountForRound(roundOf(entry.team, label) + 1, roster).has(entry.player_id))
+          if (flexCountForRound(entryRound(entry, label), roster).has(entry.player_id))
             pts = scored;
         } else if (!entry.is_sub) {
           pts = scored;
         } else if (fixedCap) {
           // Fixed mode with a sub cap: capped same-position cover, round-level.
-          if (fixedSubsForRound(roundOf(entry.team, label) + 1, roster).has(entry.player_id))
+          if (fixedSubsForRound(entryRound(entry, label), roster).has(entry.player_id))
             pts = scored;
         } else {
           // Fixed mode: a sub scores its round-k match only if a same-position
           // starter's team also played round-k but the starter didn't feature.
-          const r = roundOf(entry.team, label);
+          const r = entryRound(entry, label);
           const mates = starters.filter((st) => st.position === entry.position);
-          const activated = r >= 0 && mates.some((st) => {
-            const stLabel = (teamMatches[st.team] || [])[r];
+          const activated = r >= 1 && mates.some((st) => {
+            const stLabel = labelForRound(st, r);
             return stLabel && !appearedIn(st.player_id, stLabel);
           });
           if (activated) pts = scored;
@@ -4337,9 +4372,8 @@ function managerHistory(mgrId) {
   const elimAt = mgr?.eliminated_at ? Date.parse(mgr.eliminated_at) : null;
 
   const { byPlayer: statsByPlayer, teamMatches } = statsDerived();
-  const roundOf = (team, label) => (teamMatches[team] || []).indexOf(label);
-  const appearedIn = (pid, label) =>
-    (statsByPlayer[pid] || []).some((r) => r.appeared && r.match_label === label);
+  const { roundOf, appearedIn, labelForRound, entryRound } =
+    roundResolvers(statsByPlayer, teamMatches);
   const statLabels = [...new Set(S.stats.map((r) => r.match_label))].filter((l) => labelDate(l));
 
   const snaps = snapshotsByManager()[mgrId] || [];
@@ -4365,18 +4399,18 @@ function managerHistory(mgrId) {
       const scored = rows.reduce((s2, r) => s2 + calcPlayerPoints(r, entry.position), 0);
       let pts = 0;
       if (flex) {
-        if (flexRoundCounting(roster, roundOf(entry.team, label) + 1, teamMatches, appearedIn)
+        if (flexRoundCounting(roster, entryRound(entry, label), labelForRound, appearedIn)
             .has(entry.player_id)) pts = scored;
       } else if (!entry.is_sub) {
         pts = scored;
       } else if (maxSubsCapped()) {
-        if (fixedRoundSubs(roster, roundOf(entry.team, label) + 1, teamMatches, appearedIn, maxSubsPerRound())
+        if (fixedRoundSubs(roster, entryRound(entry, label), labelForRound, appearedIn, maxSubsPerRound())
             .has(entry.player_id)) pts = scored;
       } else {
-        const r = roundOf(entry.team, label);
+        const r = entryRound(entry, label);
         const mates = starters.filter((st) => st.position === entry.position);
-        if (r >= 0 && mates.some((st) => {
-          const stLabel = (teamMatches[st.team] || [])[r];
+        if (r >= 1 && mates.some((st) => {
+          const stLabel = labelForRound(st, r);
           return stLabel && !appearedIn(st.player_id, stLabel);
         }))
           pts = scored;
@@ -7244,7 +7278,11 @@ function playerStatTotal(pid, key) {
 function statsScopedRows(pid, team, round) {
   const rows = statRowsFor(pid).filter((r) => r.appeared);
   if (!round) return rows;
-  const label = (statsDerived().teamMatches[team] || [])[round - 1];
+  // Via labelForRound, so a player who changed club mid-season still shows the
+  // match they actually played that round, not their new club's fixture.
+  const { byPlayer, teamMatches } = statsDerived();
+  const label = roundResolvers(byPlayer, teamMatches)
+    .labelForRound({ player_id: pid, team }, round);
   return label ? rows.filter((r) => r.match_label === label) : [];
 }
 
@@ -7529,12 +7567,13 @@ function renderDreamTeam(round, per90, worst) {
     const m = S.managers.find((x) => x.id === pk.manager_id);
     if (m) mgrByPid[pk.player_id] = m;
   }
-  const teamMatches = statsDerived().teamMatches;
+  const { byPlayer: _byPlayer, teamMatches } = statsDerived();
+  const _labelForRound = roundResolvers(_byPlayer, teamMatches).labelForRound;
   // Owner shown per scope: cumulative = who holds them now; a specific round =
   // who had them in their locked roster for that round's match (history).
   const ownerOfP = (p) => {
     if (!round) return mgrByPid[p.player_id] || null;
-    const label = (teamMatches[p.team] || [])[round - 1];
+    const label = _labelForRound({ player_id: p.player_id, team: p.team }, round);
     const e = label ? ownerEntryAt(p.player_id, label) : null;
     return e ? S.managers.find((m) => m.id === e.manager.id) || e.manager : null;
   };
