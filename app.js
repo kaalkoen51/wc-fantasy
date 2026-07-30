@@ -6841,6 +6841,7 @@ async function toggleReaction(msgId, emoji) {
 S.admOpenLabels = null; // admin stats history: which match groups are expanded
 S.tradeTab = "deals";      // Trades tab: deals | planner | watch | history
 S.wlPos = "ALL"; S.wlTeam = ""; S.wlSort = "points"; S.wlPer90 = false; S.wlFree = false;
+S.faTarget = null;         // free agent you are chasing, carried across the flow
 
 S.poolPlannerOnly = false; // draft pool: filter to planner choices
 S.plannerPickFor = null;   // out pick id the choice picker is adding to
@@ -8344,25 +8345,30 @@ async function submitFaClaim(pick, entry) {
 /* Reorder claims to an arbitrary new sequence of ids — a nudge is just the
    two-element case. Applied locally first so the list moves under the finger,
    then the ranks are rewritten to match. */
-async function setClaimOrder(ids) {
+/* Apply a new claim sequence locally and persist it. Deliberately does NOT
+   render: the caller drives the repaint through animateReorder, which measures
+   the rows first so they can slide. Rendering here too meant two repaints per
+   move — the FLIP measured positions that had already changed, so the rows
+   jumped instead of gliding. */
+function setClaimOrder(ids) {
   const list = myClaims();
   const ranks = list.map((c) => c.rank).sort((a, b) => a - b);
   const byId = new Map(list.map((c) => [c.id, c]));
   const next = ids.map((id) => byId.get(id)).filter(Boolean);
-  if (next.length !== list.length) return;
+  if (next.length !== list.length) return false;
   next.forEach((c, i) => { c.rank = ranks[i]; });      // optimistic
-  renderTrades();
   for (const c of next) queueFieldWrite("fa_claims", c.id, "rank", c.rank);
+  return true;
 }
 
-async function reorderClaim(id, dir) {
+function reorderClaim(id, dir) {
   const list = myClaims();
   const i = list.findIndex((c) => c.id === id), j = i + dir;
   if (i < 0 || j < 0 || j >= list.length) return;
   const ids = list.map((c) => c.id);
   [ids[i], ids[j]] = [ids[j], ids[i]];
-  await setClaimOrder(ids);
-  animateReorder("fa-claim-list", "data-clrow", renderTrades, id);
+  if (setClaimOrder(ids))
+    animateReorder("fa-claim-list", "data-clrow", renderTrades, id);
 }
 
 async function cancelClaim(id) {
@@ -8548,11 +8554,26 @@ function builderHtml(me) {
 
   // ---- free agents: pick who leaves, then who arrives ----
   if (b.target === "FA") {
+    const want = S.faTarget;
     return `<div class="rounded-xl border border-wcgold bg-slate-900 p-3 space-y-2 mt-3">
-      ${head("🆓 Free agents", "step 2 of 3")}
-      <p class="text-xs text-slate-400">${waiver
-        ? "Tap the player you'd drop. Claims queue up and resolve when the window closes, in waiver order — the first still-available one lands."
-        : "Tap the player you want to drop, then choose their replacement. It applies immediately."}</p>
+      ${head(want ? `🆓 ${waiver ? "Claim" : "Sign"} ${esc(shortName(want.name))}` : "🆓 Free agents",
+             want ? "who makes way?" : "step 2 of 3")}
+      ${want ? `<div class="flex items-center gap-2 rounded-lg bg-live/10 border border-live/40 px-2 py-1.5">
+          ${avatarHtml(want.player_id, want.team, "w-8 h-8")}
+          <span class="min-w-0 flex-1 leading-tight">
+            <span class="block truncate text-sm">Coming in: <b>${esc(want.name)}</b></span>
+            <span class="block truncate text-xs text-slate-400">${esc(want.team)} · ${esc(want.position)}</span>
+          </span>
+          <button data-clearfa="1" class="shrink-0 text-xs text-slate-400 underline">change</button>
+        </div>` : ""}
+      <p class="text-xs ${waiver ? "text-amber-300" : "text-slate-400"}">${
+        want
+          ? (waiver
+              ? `Tap whoever makes way — any position. The claim queues and resolves at window close, in waiver order.`
+              : `Tap whoever makes way — any position. The swap applies immediately.`)
+          : (waiver
+              ? "Tap the player you'd drop, then choose who to claim. Claims resolve at window close, in waiver order."
+              : "Tap the player you want to drop, then choose their replacement.")}</p>
       ${squadChooserHtml(me.id, { tapAttr: "data-faswap" })}
       <button id="trade-discard" class="w-full bg-slate-800 border border-slate-700 rounded-lg py-1.5 text-xs font-semibold">Close</button>
     </div>`;
@@ -8899,18 +8920,14 @@ function tradeForShortlisted(pid) {
     openBuilder(ownPick.manager_id, null, [{ mine: "", theirs: ownPick.id }]);
     return;
   }
-  const mySwappable = managerPicks(me.id)
-    .filter((pk) => pk.slot !== "TEAM" && slotGroup(pk.slot) === p.position);
-  if (!mySwappable.length)
-    return toast(`You have no ${p.position} to swap out for ${p.name}.`);
-  if (mySwappable.length === 1) {
-    openSwap(mySwappable[0]);
-    $("swap-search").value = p.name;
-    renderSwapList();
-  } else {
-    openBuilder("FA");
-    toast(`Pick which ${p.position} to swap out for ${p.name}.`);
-  }
+  /* A free agent. Any of your players can go the other way — positions are no
+     longer locked — so the question is only "who do you drop". Remember WHO
+     you're chasing so the next screen finishes that job rather than starting a
+     fresh, unrelated swap. */
+  const mySwappable = managerPicks(me.id).filter((pk) => pk.slot !== "TEAM");
+  if (!mySwappable.length) return toast("You have no players to swap out.");
+  S.faTarget = { player_id: pid, name: p.name, team: p.team, position: p.position };
+  openBuilder("FA");
 }
 
 // Squad planner section (Trades tab): your whole squad, with planned
@@ -9067,7 +9084,8 @@ function plannerPickPool(group, { shortlistOnly, q, sortKey, unpicked, hideKO } 
     : playerStatTotal(p.player_id, key);
   const t = (q || "").trim().toLowerCase();
   return S.players
-    .filter((p) => p.position === group && !myIds.has(p.player_id)
+    // group null = any position; trades are no longer position-locked.
+    .filter((p) => (!group || p.position === group) && !myIds.has(p.player_id)
       && (!shortlistOnly || sl.has(p.player_id))
       && (!hideKO || !isEliminated(p.team))
       && (!unpicked || !owned.has(p.player_id))
@@ -9114,6 +9132,12 @@ function renderPlannerPick() {
   $("planner-hideko").textContent = "🚫 Hide KO";
   // Nobody is knocked out of a league season.
   $("planner-hideko").classList.toggle("hidden", !isCupCompetition());
+  /* Opens filtered to the slot's own position, because that is the swap you
+     usually mean — but trades are no longer position-locked, so it has to be
+     possible to turn off rather than being the only thing on offer. */
+  const anyPos = !!S.plannerAnyPos;
+  $("planner-pos").className = chipCls(!anyPos);
+  $("planner-pos").textContent = anyPos ? "⇄ any position" : `⇄ ${group} only`;
   $("planner-sort").innerHTML = STAT_SORTS.map(([k, lbl]) =>
     `<option value="${k}" ${S.plannerSort === k ? "selected" : ""}>${lbl}</option>`).join("");
 
@@ -9122,7 +9146,7 @@ function renderPlannerPick() {
   const valOf = (p) => byPoints ? playerPoints(p.player_id, p.position)
     : playerStatTotal(p.player_id, sortKey);
 
-  let list = plannerPickPool(group, {
+  let list = plannerPickPool(anyPos ? null : group, {
     shortlistOnly: S.plannerShortlistOnly, q: S.plannerSearch, sortKey,
     unpicked: S.plannerUnpicked, hideKO: S.plannerHideKO,
   });
@@ -9194,7 +9218,7 @@ function faClaimsSectionHtml(me) {
       <span class="font-mono w-5 shrink-0 ${i === 0 ? "text-wcgold font-bold" : "text-slate-400"}">${i + 1}</span>
       <span class="flex-1 min-w-0 grid grid-cols-[1fr_auto_1fr] items-center gap-1">
         ${face(c.out_player_id, c.out_player_name, "text-red-300/70")}
-        <span class="shrink-0 text-slate-500 text-xs">→</span>
+        <span class="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-700/70 text-slate-200 text-sm leading-none">→</span>
         ${face(c.in_player_id, c.in_player_name, "text-live/70")}
       </span>
       ${mine.length > 1 ? `<span class="nudge-col shrink-0 leading-none">
@@ -9301,13 +9325,13 @@ function wireTrades(me) {
   const box = $("board-trades");
   const byId = (id) => S.trades.find((t) => t.id === id);
   wireStars(box, renderTrades);
-  box.querySelectorAll("[data-claimup]").forEach((b) => b.onclick = () => reorderClaim(b.dataset.claimup, -1).catch((e) => toast(e.message)));
-  box.querySelectorAll("[data-claimdown]").forEach((b) => b.onclick = () => reorderClaim(b.dataset.claimdown, 1).catch((e) => toast(e.message)));
+  box.querySelectorAll("[data-claimup]").forEach((b) => b.onclick = () => reorderClaim(b.dataset.claimup, -1));
+  box.querySelectorAll("[data-claimdown]").forEach((b) => b.onclick = () => reorderClaim(b.dataset.claimdown, 1));
   box.querySelectorAll("[data-claimx]").forEach((b) => b.onclick = () => cancelClaim(b.dataset.claimx).catch((e) => toast(e.message)));
   const claimBox = box.querySelector("#fa-claim-list");
   if (claimBox) makeReorderable(claimBox, "data-clrow", (order, moved) => {
-    setClaimOrder(order);
-    animateReorder("fa-claim-list", "data-clrow", renderTrades, moved);
+    if (setClaimOrder(order))
+      animateReorder("fa-claim-list", "data-clrow", renderTrades, moved);
   });
   box.querySelectorAll("[data-wlpos]").forEach((b) => b.onclick = () => {
     S.wlPos = b.dataset.wlpos; renderTrades();
@@ -9363,12 +9387,27 @@ function wireTrades(me) {
   // completes the pair and immediately offers a fresh one, so multi-player
   // deals build up without an "add pair" button to find.
   box.querySelectorAll("[data-partner]").forEach((b) => b.onclick = () => {
+    if (b.dataset.partner !== "FA") S.faTarget = null;
     S.builder.target = b.dataset.partner;
     S.builder.pairs = b.dataset.partner === "FA" ? [] : [{ mine: "", theirs: "" }];
     renderTrades();
   });
-  box.querySelectorAll("[data-faswap]").forEach((b) => b.onclick = () =>
-    openSwap(S.picks.find((pk) => pk.id === b.dataset.faswap)));
+  box.querySelectorAll("[data-faswap]").forEach((b) => b.onclick = () => {
+    const out = S.picks.find((pk) => pk.id === b.dataset.faswap);
+    if (!out) return;
+    const want = S.faTarget;
+    if (!want) return openSwap(out);          // no target yet: browse the pool
+    const waiver = faDeferToClose();
+    const msg = waiver
+      ? `Queue a claim for ${want.name}, dropping ${out.player_name}? It resolves at window close, in waiver order.`
+      : `Swap ${out.player_name} out for ${want.name}?`;
+    if (!confirm(msg)) return;
+    swapOrClaim(out, { player_id: want.player_id, name: want.name, team: want.team })
+      .then(() => { S.faTarget = null; S.builder = null; renderTrades(); })
+      .catch((e) => toast(e.message));
+  });
+  const clearFa = box.querySelector("[data-clearfa]");
+  if (clearFa) clearFa.onclick = () => { S.faTarget = null; renderTrades(); };
   box.querySelectorAll("[data-pickmine]").forEach((b) => b.onclick = () => {
     const pair = S.builder.pairs.find((pr) => !pr.mine || !pr.theirs);
     if (pair) { pair.mine = b.dataset.pickmine; pair.theirs = ""; }
@@ -9392,7 +9431,7 @@ function wireTrades(me) {
     renderTrades();
   });
   const discard = box.querySelector("#trade-discard");
-  if (discard) discard.onclick = () => { S.builder = null; renderTrades(); };
+  if (discard) discard.onclick = () => { S.builder = null; S.faTarget = null; renderTrades(); };
   const submit = box.querySelector("#trade-submit");
   if (submit) submit.onclick = () => submitTrade(me).catch((e) => toast(e.message));
   box.querySelectorAll("[data-acc]").forEach((b) => b.onclick = () =>
@@ -9414,7 +9453,14 @@ async function submitTrade(me) {
   // New proposals need the window open; counters are responses and are
   // allowed even after it closes (so negotiations don't get stuck).
   if (!tradingOpen() && !b.parent) return toast(autoWindowsEnabled() ? tradeWindowMessage() : "Trading window is closed.");
-  const pairs = b.pairs.map((p) => ({ mine: pickById(p.mine), theirs: pickById(p.theirs) }));
+  /* The builder always keeps a blank pair on the end so the next swap can be
+     built without hunting for an "add" button. That trailing blank was being
+     validated along with the real ones, so a perfectly good one-for-one deal
+     was rejected with "every pair needs a player on both sides". Only complete
+     pairs are a proposal. */
+  const pairs = b.pairs
+    .filter((p) => p.mine && p.theirs)
+    .map((p) => ({ mine: pickById(p.mine), theirs: pickById(p.theirs) }));
   const err = tradeError(pairs);
   if (err) return toast(err);
   const { data, error } = await S.sb.from("trades").insert({
@@ -10858,6 +10904,7 @@ function wire() {
   $("planner-slfilter").onclick = () => { S.plannerShortlistOnly = !S.plannerShortlistOnly; renderPlannerPick(); };
   $("planner-unpicked").onclick = () => { S.plannerUnpicked = !S.plannerUnpicked; renderPlannerPick(); };
   $("planner-hideko").onclick = () => { S.plannerHideKO = !S.plannerHideKO; renderPlannerPick(); };
+  $("planner-pos").onclick = () => { S.plannerAnyPos = !S.plannerAnyPos; renderPlannerPick(); };
   $("planner-done").onclick = () => $("planner-sheet").classList.add("hidden");
   $("planner-sheet").onclick = (e) => {
     if (e.target.id === "planner-sheet") $("planner-sheet").classList.add("hidden");
