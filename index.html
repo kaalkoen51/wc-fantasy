@@ -455,8 +455,10 @@
         <p class="text-xs text-slate-400">Squads &amp; fixtures are pulled once and shared with every other league on this
           competition, so most of the time there's nothing to do here. A key is only needed if this server has none configured.</p>
         <div class="grid grid-cols-2 gap-3">
+          <!-- A list, not a free number: a league can only be created on a
+               season that hasn't already finished. -->
           <label class="block text-sm text-slate-400">Season
-            <input id="create-comp-season" type="number" placeholder="2024" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></label>
+            <select id="create-comp-season" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></select></label>
           <label class="block text-sm text-slate-400">API-Football key <span class="text-slate-400 text-xs">(optional)</span>
             <input id="create-api-key" placeholder="usually not needed" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></label>
         </div>
