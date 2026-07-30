@@ -2855,7 +2855,15 @@ function scheduleDeferredFlush() {
   }, Math.max(0, _interactUntil - Date.now()) + 60);
 }
 
+/* True only while a reorder is repainting its own list. That repaint IS the
+   gesture's response — deferring it made a nudge take the best part of a
+   second: the row flashed at once (the flash works on the old DOM) and then sat
+   still until the window closed. The window exists to hold back page-wide
+   refetch repaints, not this one. */
+let _reorderRepaint = false;
+
 function afterDrag(fn) {
+  if (_reorderRepaint) return true;
   if (!_dragging && !interacting()) return true;
   _deferredRender = fn;
   if (!_dragging) scheduleDeferredFlush();
@@ -2983,7 +2991,8 @@ function animateReorder(boxId, rowAttr, rerender, movedId) {
   const was = new Map();
   box.querySelectorAll(`[${rowAttr}]`).forEach((r) =>
     was.set(r.getAttribute(rowAttr), r.getBoundingClientRect().top));
-  rerender();
+  _reorderRepaint = true;
+  try { rerender(); } finally { _reorderRepaint = false; }
   const after = document.getElementById(boxId);
   if (after) flipRows(after, was, rowAttr);
   markQueueMoved(movedId);
