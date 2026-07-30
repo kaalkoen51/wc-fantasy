@@ -2706,14 +2706,42 @@ if (typeof window !== "undefined" && window.addEventListener) {
   });
 }
 
-/* Renders that arrive mid-drag are held until the finger comes up.
-   Returns true if the caller may proceed now, false if it has been deferred —
-   so the guard reads `if (!afterDrag(thisFn)) return;`. It must NOT invoke
-   `fn` on the idle path: callers pass themselves, and doing so recurses. */
-let _deferredRender = null;
+/* Renders that arrive mid-interaction are held until it ends.
+
+   A drag is the obvious case. The subtler one is a reorder: it writes, the
+   write echoes back over realtime, and the refetch repaints the whole page —
+   which lands, reliably, about half a second later, i.e. right in the middle
+   of the FLIP animation or the next tap of a burst. A page-wide repaint
+   rebuilds the rows with no transform, so the row being animated teleports to
+   its final position. That is the jump you feel on successive moves.
+
+   So an interaction window covers the beat after each reorder too. Returns
+   true if the caller may proceed now, false if it has been deferred — the
+   guard reads `if (!afterDrag(thisFn)) return;`. It must NOT invoke `fn` on
+   the idle path: callers pass themselves, and doing so recurses. */
+const INTERACT_MS = 700;
+let _deferredRender = null, _interactUntil = 0, _flushTimer = null;
+
+const interacting = () => Date.now() < _interactUntil;
+
+// Called by every reorder: hold page-wide repaints for a beat afterwards.
+function markInteracting(ms = INTERACT_MS) {
+  _interactUntil = Date.now() + ms;
+  scheduleDeferredFlush();
+}
+
+function scheduleDeferredFlush() {
+  clearTimeout(_flushTimer);
+  _flushTimer = setTimeout(() => {
+    if (_dragging) return;              // finish() will flush when it ends
+    flushDeferredRender();
+  }, Math.max(0, _interactUntil - Date.now()) + 60);
+}
+
 function afterDrag(fn) {
-  if (!_dragging) return true;
+  if (!_dragging && !interacting()) return true;
   _deferredRender = fn;
+  if (!_dragging) scheduleDeferredFlush();
   return false;
 }
 function flushDeferredRender() {
@@ -2832,6 +2860,7 @@ function makeReorderable(box, rowAttr, commit) {
    reorder is a jump-cut, and a fast double-tap reads as a glitch rather than
    two moves. */
 function animateReorder(boxId, rowAttr, rerender, movedId) {
+  markInteracting();          // keep a refetch from repainting over the glide
   const box = document.getElementById(boxId);
   if (!box) { rerender(); markQueueMoved(movedId); return; }
   const was = new Map();
