@@ -10031,6 +10031,64 @@ function mapApiPlayer(team, shirt, apiName) {
 // already loaded (by any other league), REUSE it — no API calls. Otherwise pull
 // teams → squads → fixtures once into the SHARED competition_pools so every
 // league on the competition reads the same data.
+/* Which drafted picks a refreshed squad list says have changed club.
+
+   Pure, so the rules are pinned rather than inferred:
+     • only players still IN the pool are considered — one who has left the
+       competition keeps the club he last played for rather than being blanked;
+     • TEAM picks are not players and are skipped;
+     • a changed POSITION is reported but never applied. Position is what the
+       squad quota was built on and what every past round was scored with, so
+       silently reclassifying a defender as a midfielder could leave a manager
+       unable to field a legal XI and would re-score history. That is an
+       admin's call, not a side effect of a data refresh.                    */
+function pickReconciliation(picks, players) {
+  const byId = new Map((players || []).map((p) => [p.player_id, p]));
+  const moves = [], repositioned = [];
+  for (const pk of (picks || [])) {
+    if (pk.slot === "TEAM") continue;
+    const p = byId.get(pk.player_id);
+    if (!p) continue;
+    if (p.team && p.team !== pk.team)
+      moves.push({ id: pk.id, name: pk.player_name, from: pk.team, to: p.team });
+    if (p.position && p.position !== pk.position)
+      repositioned.push({ name: pk.player_name, from: pk.position, to: p.position });
+  }
+  return { moves, repositioned };
+}
+
+/* Follow the player: when someone transfers within the competition they stay
+   in your squad and simply play for a different club now.
+
+   This matters well beyond the badge on their card. `team` is what the auto-sub
+   engine uses to ask "did this starter's club play in round N?", and what
+   round-scoped stats map through — so a stale club silently promotes subs that
+   should not come on and mis-files results. One write per moved player fixes
+   all of it. Past rounds are untouched: lineup snapshots carry the club as at
+   lock time, which is the club they actually played for that round. */
+async function reconcilePicksToPool(players, log) {
+  const { moves, repositioned } = pickReconciliation(S.picks, players);
+  let done = 0;
+  for (const m of moves) {
+    const { error } = await S.sb.from("picks").update({ team: m.to }).eq("id", m.id);
+    if (error) continue;
+    const pk = S.picks.find((x) => x.id === m.id);
+    if (pk) pk.team = m.to;                       // reflect locally at once
+    done++;
+  }
+  if (log && (done || repositioned.length)) {
+    const lines = [];
+    if (done) lines.push(`${done} transfer${done === 1 ? "" : "s"}: `
+      + moves.slice(0, 6).map((m) => `${m.name} ${m.from} → ${m.to}`).join(", ")
+      + (moves.length > 6 ? `, +${moves.length - 6} more` : ""));
+    if (repositioned.length) lines.push(`Position changed for ${repositioned.length} player`
+      + `${repositioned.length === 1 ? "" : "s"} (not applied — squads and past rounds depend on it): `
+      + repositioned.slice(0, 6).map((r) => `${r.name} ${r.from}→${r.to}`).join(", "));
+    log(lines.join("\n"));
+  }
+  return { moved: done, moves, repositioned };
+}
+
 async function loadCompetition() {
   const apiKey = $("adm-api-key").value.trim();
   const apiLeagueId = +$("adm-comp-select").value;
@@ -10044,6 +10102,9 @@ async function loadCompetition() {
   if ((S.stats?.length || 0) &&
       !confirm("This league already has scored games — changing competition can orphan them. Continue?")) return;
   const btn = $("adm-comp-load");
+  // A refresh of the SAME competition reconciles transfers; switching to a
+  // different one must not, or every pick would look like it had moved club.
+  const sameComp = competitionKey() === compKey;
   btn.disabled = true;
   try {
     log("Checking shared competition data…");
@@ -10079,7 +10140,28 @@ async function loadCompetition() {
     S.teams = [...new Set(players.map((p) => p.team))].sort();
     S.playerById = Object.fromEntries(players.map((p) => [p.player_id, p]));
     S.fixtures = fixtures;
-    log(`✅ ${name} ${season}: ${players.length} players, ${fixtures.length} fixtures.`);
+    let note = "";
+    if (sameComp && S.picks.length) {
+      const rec = await reconcilePicksToPool(players, null);
+      if (rec.moved) note = ` · ${rec.moved} squad player${rec.moved === 1 ? "" : "s"} moved club`;
+      if (rec.repositioned.length) note += ` · ${rec.repositioned.length} position change${
+        rec.repositioned.length === 1 ? "" : "s"} flagged (not applied)`;
+      if (rec.moved || rec.repositioned.length) {
+        // rec.moves is the list captured BEFORE the writes — recomputing here
+        // would find nothing, because the picks now agree with the pool.
+        const lines = [];
+        if (rec.moved) {
+          lines.push("Transfers applied — these players now play for their new club:");
+          for (const m of rec.moves) lines.push(`  ${m.name}: ${m.from} → ${m.to}`);
+        }
+        if (rec.repositioned.length) {
+          lines.push("Position changed upstream (left as drafted — change it by hand if you want it):");
+          for (const r of rec.repositioned) lines.push(`  ${r.name}: ${r.from} → ${r.to}`);
+        }
+        log(lines.join("\n"));
+      }
+    }
+    log(`✅ ${name} ${season}: ${players.length} players, ${fixtures.length} fixtures${note}.`);
     toast("Competition set.");
     renderAdmin(); renderBoard();
   } catch (e) {
@@ -10246,10 +10328,17 @@ async function pullStatsNow() {
     // FIFA-name normalization only applies to the legacy WC pool; an API
     // competition's stored fixtures/pool already use the API's own team names.
     const fixName = leagueCompetition() ? (n) => n : (n) => TEAM_NAME_FIX[n] || n;
-    // API-loaded pools carry the API id (match exactly); the legacy WC pool
-    // falls back to name/shirt matching.
-    const pidOf = (team, num, name, apiId) =>
-      S.playerById["api_" + apiId] ? "api_" + apiId : mapApiPlayer(team, num, name);
+    /* API-loaded pools carry the API id, so the id IS the identity — no lookup
+       needed, and none wanted. Requiring pool membership silently discarded
+       every player the squad list didn't know about: a January signing scoring
+       a hat-trick produced no rows at all, because the fallback name-matcher
+       searches the stored pool and finds nobody. Their stats now land from
+       their debut, and they become draftable when the squad refresh catches up.
+       Only the legacy World Cup pool needs name/shirt matching. */
+    const pidOf = leagueCompetition()
+      ? (team, num, name, apiId) => "api_" + apiId
+      : (team, num, name, apiId) =>
+          S.playerById["api_" + apiId] ? "api_" + apiId : mapApiPlayer(team, num, name);
     for (const f of fixtures) {
       log(`Pulling ${fixName(f.teams.home.name)} vs ${fixName(f.teams.away.name)}…`);
       const teamBlocks = await apiFootball(key, "fixtures/players", { fixture: f.fixture.id });
