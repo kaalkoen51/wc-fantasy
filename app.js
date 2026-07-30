@@ -2845,20 +2845,23 @@ function animateReorder(boxId, rowAttr, rerender, movedId) {
 
 // After a reorder the list is rebuilt, so flag the row that moved — otherwise
 // the change is something you have to infer by re-reading the order.
+/* Every reorderable list in the app, so a new one can't quietly miss the cue.
+   The waiver queue and the planner were doing exactly that: they moved, but
+   nothing flashed, because this only knew about the other three. */
+const ROW_ATTRS = ["data-qrow", "data-slrow", "data-brow", "data-clrow", "data-plrow"];
+
 function markQueueMoved(pid) {
-  const row = document.querySelector(`[data-qrow="${CSS.escape(pid)}"]`)
-           || document.querySelector(`[data-slrow="${CSS.escape(pid)}"]`)
-           || document.querySelector(`[data-brow="${CSS.escape(pid)}"]`);
+  let row = null;
+  for (const a of ROW_ATTRS) {
+    row = document.querySelector(`[${a}="${CSS.escape(pid)}"]`);
+    if (row) break;
+  }
   if (!row) return;
-  // Bench rows are already being slid into place by flipRows, and a keyframe
-  // animation outranks the inline transform that FLIP relies on — so they get
-  // the colour half of the cue only.
-  // Every reorder now slides its rows into place, and a keyframe animation
-  // outranks the inline transform FLIP relies on — so the cue is colour only.
-  const cls = "row-flash";
-  row.classList.remove(cls);
+  // Colour only: the rows are already being slid into place by flipRows, and a
+  // keyframe animation outranks the inline transform FLIP relies on.
+  row.classList.remove("row-flash");
   void row.offsetWidth;
-  row.classList.add(cls);
+  row.classList.add("row-flash");
 }
 
 function renderDraftQueue(me, myTurn) {
@@ -8368,7 +8371,7 @@ function reorderClaim(id, dir) {
   const ids = list.map((c) => c.id);
   [ids[i], ids[j]] = [ids[j], ids[i]];
   if (setClaimOrder(ids))
-    animateReorder("fa-claim-list", "data-clrow", renderTrades, id);
+    animateReorder("fa-claim-list", "data-clrow", renderClaimList, id);
 }
 
 async function cancelClaim(id) {
@@ -9211,33 +9214,67 @@ function renderPlannerPick() {
 }
 
 // Your queued waiver claims, in preference order, with reorder + cancel.
+/* One queued claim. The old row put a grey disc between two faces and gave the
+   arrow its own grid column, which ate the width the names needed — every name
+   truncated. Overlapping the two avatars says "this for that" in less space
+   than an arrow does, so the names get the room back: the outgoing player sits
+   behind in a red ring, the incoming one in front in green. */
+function faClaimRowHtml(c, i, n) {
+  return `
+    <div data-clrow="${esc(c.id)}" class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-2 py-2">
+      <span class="w-4 shrink-0 font-mono text-sm ${i === 0 ? "text-wcgold font-bold" : "text-slate-500"}">${i + 1}</span>
+      <span class="shrink-0 relative inline-flex items-center" style="width:3.15rem;height:2rem">
+        <span class="absolute left-0 top-0 rounded-full ring-2 ring-red-400/70 opacity-70 inline-flex">
+          ${avatarHtml(c.out_player_id, "", "w-7 h-7")}</span>
+        <span class="absolute right-0 top-0 rounded-full ring-2 ring-live inline-flex shadow-md shadow-black/50">
+          ${avatarHtml(c.in_player_id, "", "w-7 h-7")}</span>
+      </span>
+      <span class="min-w-0 flex-1 leading-tight">
+        <span class="block truncate text-sm"><span class="text-live">in</span> ${esc(c.in_player_name || "?")}</span>
+        <span class="block truncate text-xs text-slate-400"><span class="text-red-300/80">out</span> ${esc(c.out_player_name || "?")}</span>
+      </span>
+      ${n > 1 ? `<span class="nudge-col shrink-0 leading-none">
+        <button data-claimup="${esc(c.id)}"${i === 0 ? " disabled" : ""} class="nudge text-slate-400 ${i === 0 ? "opacity-30" : ""}" aria-label="Higher priority">▲</button>
+        <button data-claimdown="${esc(c.id)}"${i === n - 1 ? " disabled" : ""} class="nudge text-slate-400 ${i === n - 1 ? "opacity-30" : ""}" aria-label="Lower priority">▼</button>
+      </span>` : ""}
+      <button data-claimx="${esc(c.id)}" class="tap shrink-0 text-slate-500 hover:text-wcred" aria-label="Cancel claim">✕</button>
+    </div>`;
+}
+
+const faClaimRowsHtml = () => {
+  const mine = myClaims();
+  return mine.map((c, i) => faClaimRowHtml(c, i, mine.length)).join("")
+    || '<p class="text-xs text-slate-400">No claims queued — tap “Claim” on a free agent to add one.</p>';
+};
+
+/* Repaint ONLY the claim list. Reordering used to re-render the entire trades
+   page — banner, proposals, planner and all — for a two-row swap, which is
+   what made it stutter and jump. Same treatment the draft queue and the bench
+   already had. */
+function renderClaimList() {
+  const box = $("fa-claim-list");
+  if (!box) return;
+  box.innerHTML = faClaimRowsHtml();
+  wireClaimControls(box);
+}
+
+function wireClaimControls(box) {
+  box.querySelectorAll("[data-claimup]").forEach((b) => b.onclick = () => reorderClaim(b.dataset.claimup, -1));
+  box.querySelectorAll("[data-claimdown]").forEach((b) => b.onclick = () => reorderClaim(b.dataset.claimdown, 1));
+  box.querySelectorAll("[data-claimx]").forEach((b) => b.onclick = () =>
+    cancelClaim(b.dataset.claimx).catch((e) => toast(e.message)));
+  makeReorderable(box, "data-clrow", (order, moved) => {
+    if (setClaimOrder(order))
+      animateReorder("fa-claim-list", "data-clrow", renderClaimList, moved);
+  });
+}
+
+// Your queued waiver claims, in preference order, with reorder + cancel.
 function faClaimsSectionHtml(me) {
   const mine = myClaims();
   const priority = me.waiver_order != null
     ? `You're <b class="text-wcgold">#${me.waiver_order + 1}</b>`
     : "priority set at window open";
-  // Same control as every other ordered list in the app: stacked arrows, and
-  // hold a row to drag it. This IS a priority queue, so it should feel like one.
-  const face = (pid, name, tint) => `<span class="flex items-center gap-1.5 min-w-0">
-      ${avatarHtml(pid, "", "w-7 h-7")}
-      <span class="min-w-0 leading-tight">
-        <span class="block truncate text-sm">${esc(shortName(name || "?"))}</span>
-        <span class="block text-[10px] ${tint}">${tint.includes("red") ? "out" : "in"}</span>
-      </span></span>`;
-  const rows = mine.map((c, i) => `
-    <div data-clrow="${esc(c.id)}" class="flex items-center gap-1.5 rounded-lg bg-slate-800/60 px-2 py-1.5 text-sm">
-      <span class="font-mono w-5 shrink-0 ${i === 0 ? "text-wcgold font-bold" : "text-slate-400"}">${i + 1}</span>
-      <span class="flex-1 min-w-0 grid grid-cols-[1fr_auto_1fr] items-center gap-1">
-        ${face(c.out_player_id, c.out_player_name, "text-red-300/70")}
-        <span class="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-700/70 text-slate-200 text-sm leading-none">→</span>
-        ${face(c.in_player_id, c.in_player_name, "text-live/70")}
-      </span>
-      ${mine.length > 1 ? `<span class="nudge-col shrink-0 leading-none">
-        <button data-claimup="${c.id}"${i === 0 ? " disabled" : ""} class="nudge text-slate-400 ${i === 0 ? "opacity-30" : ""}" aria-label="Higher priority">▲</button>
-        <button data-claimdown="${c.id}"${i === mine.length - 1 ? " disabled" : ""} class="nudge text-slate-400 ${i === mine.length - 1 ? "opacity-30" : ""}" aria-label="Lower priority">▼</button>
-      </span>` : ""}
-      <button data-claimx="${c.id}" class="tap shrink-0 text-slate-400 hover:text-wcred" aria-label="Cancel claim">✕</button>
-    </div>`).join("") || '<p class="text-xs text-slate-400">No claims queued — tap “Claim” on a free agent to add one.</p>';
   return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2">
     <div class="flex items-center justify-between gap-2">
       <h3 class="font-semibold text-sm">⏳ Waiver claims</h3>
@@ -9245,17 +9282,15 @@ function faClaimsSectionHtml(me) {
     </div>
     <p class="text-xs text-slate-400">These resolve when the window closes, in waiver order (worst-placed picks first). Order yours by preference — the first still-available one lands.</p>
     ${waiverOrderHtml(me)}
-    <div id="fa-claim-list" class="space-y-1">${rows}</div>
+    <div id="fa-claim-list" class="space-y-1">${faClaimRowsHtml()}</div>
     ${mine.length > 1 ? '<p class="text-xs text-slate-400">Hold a row to drag it anywhere in the queue.</p>' : ""}
   </div>`;
 }
 
 /* The Activity → Trades page, as four small pages instead of one long scroll.
-
    Everything used to be on screen at once — window banner, waiver queue,
-   planner, watchlist with its own duplicate filter bar, the free-agent list
-   and the builder — which is why it read as a wall. Each of those is a
-   different job, so each gets its own tab and the page only ever shows one. */
+   planner, watchlist and the builder — which is why it read as a wall. Each is
+   a different job, so each gets a tab and the page only ever shows one. */
 const TRADE_TABS = [
   ["deals", "Deals"], ["planner", "Planner"], ["watch", "Watchlist"], ["history", "History"],
 ];
@@ -9354,14 +9389,8 @@ function wireTrades(me) {
   const box = $("board-trades");
   const byId = (id) => S.trades.find((t) => t.id === id);
   wireStars(box, renderTrades);
-  box.querySelectorAll("[data-claimup]").forEach((b) => b.onclick = () => reorderClaim(b.dataset.claimup, -1));
-  box.querySelectorAll("[data-claimdown]").forEach((b) => b.onclick = () => reorderClaim(b.dataset.claimdown, 1));
-  box.querySelectorAll("[data-claimx]").forEach((b) => b.onclick = () => cancelClaim(b.dataset.claimx).catch((e) => toast(e.message)));
   const claimBox = box.querySelector("#fa-claim-list");
-  if (claimBox) makeReorderable(claimBox, "data-clrow", (order, moved) => {
-    if (setClaimOrder(order))
-      animateReorder("fa-claim-list", "data-clrow", renderTrades, moved);
-  });
+  if (claimBox) wireClaimControls(claimBox);
   box.querySelectorAll("[data-wlpos]").forEach((b) => b.onclick = () => {
     S.wlPos = b.dataset.wlpos; renderTrades();
   });
@@ -9393,9 +9422,17 @@ function wireTrades(me) {
   const split = (v) => { const i = v.indexOf("|"); return [v.slice(0, i), v.slice(i + 1)]; };
   box.querySelectorAll("[data-plrm]").forEach((b) => b.onclick = () =>
     plannerRemoveChoice(...split(b.dataset.plrm)));
+  /* Repaint only that plan's choice list, not the whole trades page. */
+  const redrawPlan = (outId) => () => {
+    const el = document.getElementById("pl-choices-" + outId);
+    const pk = pickById(outId), mv = moveFor(outId);
+    if (!el || !pk || !mv) { renderTrades(); return; }
+    el.outerHTML = plannerMoveHtml(pk, mv, tradingOpen());
+    wireTrades(me);
+  };
   const slidePlan = (outId, pid, dir) => {
     plannerMoveChoice(outId, pid, dir);
-    animateReorder("pl-choices-" + outId, "data-plrow", renderTrades, pid);
+    animateReorder("pl-choices-" + outId, "data-plrow", redrawPlan(outId), pid);
   };
   box.querySelectorAll("[data-plup]").forEach((b) => b.onclick = () =>
     slidePlan(...split(b.dataset.plup), -1));
@@ -9405,7 +9442,7 @@ function wireTrades(me) {
     const el = box.querySelector("#pl-choices-" + CSS.escape(m.out));
     if (el) makeReorderable(el, "data-plrow", (order, moved) => {
       plannerSetChoiceOrder(m.out, order);
-      animateReorder("pl-choices-" + m.out, "data-plrow", renderTrades, moved);
+      animateReorder("pl-choices-" + m.out, "data-plrow", redrawPlan(m.out), moved);
     });
   });
   box.querySelectorAll("[data-plexec]").forEach((b) => b.onclick = () =>
