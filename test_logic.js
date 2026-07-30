@@ -2018,5 +2018,45 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
   })(), ["k1", "k3"]);
   check("empty inputs are safe", pickReconciliation(null, null).moves, []);
 
+  /* Rounds are indexed per club, so rewriting a pick's team on transfer used to
+     orphan every match the player had already played for the old club: their
+     bench cover stopped counting and the per-round views went blank. */
+  const xferSetup = (subTeam) => {
+    S.fixtures = []; S.snapshots = []; S.stages = []; S.config = null;
+    S.managers = [{ id: "m1", name: "M1", draft_position: 1 }];
+    S.picks = [
+      { manager_id: "m1", player_id: "fra_5", player_name: "Starter Def", position: "DEF",
+        team: "France", slot: "DEF", is_sub: false, pick_number: 2 },
+      { manager_id: "m1", player_id: "arg_3", player_name: "Sub Def", position: "DEF",
+        team: subTeam, slot: "SUB_DEF", is_sub: true, pick_number: 12 },
+    ];
+    S.stats = [
+      row({ player_id: "fra_9", match_label: "France vs Brazil (2026-06-13)", appeared: true, goals: 0 }),
+      row({ player_id: "arg_3", match_label: "Argentina vs Chile (2026-06-16)", appeared: true, goals: 1 }),
+    ];
+  };
+  const subPts = () => computeScores()[0].items.find((i) => i.pick.is_sub)?.pts;
+
+  xferSetup("Argentina");
+  check("sub covers a no-show starter (baseline)", subPts(), 6);
+  check("per-round rows resolve at the old club", statsScopedRows("arg_3", "Argentina", 1).length, 1);
+
+  xferSetup("Uruguay");   // reconciled to the new club after a transfer
+  check("a transferred sub still scores its earlier match", subPts(), 6);
+  check("a transferred player's history ties out", managerHistory("m1").total, computeScores()[0].total);
+  check("per-round rows follow the player, not the new club",
+    statsScopedRows("arg_3", "Uruguay", 1).map((r) => r.match_label),
+    ["Argentina vs Chile (2026-06-16)"]);
+
+  /* The fallback must not manufacture appearances: a round the player sat out
+     stays empty, and a sub with no no-show to cover still scores nothing. */
+  xferSetup("Uruguay");
+  check("a round the player sat out stays empty", statsScopedRows("arg_3", "Uruguay", 2), []);
+  // statsDerived() memoizes on the S.stats array identity, so replace it rather
+  // than mutating in place (the app swaps the array wholesale on every refetch).
+  S.stats = [...S.stats,
+    row({ player_id: "fra_5", match_label: "France vs Brazil (2026-06-13)", appeared: true, goals: 0 })];
+  check("no no-show means the transferred sub earns nothing", subPts(), 0);
+
   process.exit(fails ? 1 : 0);
 })();
