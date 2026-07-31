@@ -599,6 +599,7 @@ async function refetchAll({ initial = false } = {}) {
   route();
   // Fresh claims + fixtures + league row: the one moment we can judge whether
   // an auto-window league owes its managers a waiver run.
+  restampSnapshots().catch(() => {});
   maybeProcessAutoWaivers().catch(() => {});
   return true;
 }
@@ -3838,6 +3839,68 @@ function lastClosedTradeWindow(fixtures, nowMs, opts) {
 // time of the last window already dealt with (epoch ms, or null for none).
 const waiverDue = (win, processedUntil) =>
   !!win && (processedUntil == null || win.closeAt > processedUntil);
+
+/* The lineup lock that a change made at `nowMs` should take effect at — i.e.
+   the next one still in the future. Null when the season has no fixture left.
+
+   This is the pivot the whole design turns on. The app used to try to
+   PHOTOGRAPH each manager's XI at the moment of the lock, which needs something
+   punctual to be awake at that second; late meant wrong. Instead a change is
+   written immediately and STAMPED with the lock it applies to. rosterAtFor()
+   already ignores a snapshot until its effective_from has passed, so the XI
+   starts applying by arithmetic rather than because anything fired. */
+function nextLockMs(fixtures, nowMs, opts) {
+  const o = opts || {};
+  const lockBefore = (o.lineupLockBeforeH ?? 1) * 3600e3;
+  for (const w of matchweeksOf(fixtures)) {
+    const lockAt = w.first - lockBefore;
+    if (lockAt > nowMs) return lockAt;
+  }
+  return null;
+}
+
+/* The lock that FOLLOWS a trade window closing — when that window's waiver
+   awards should start counting. Trading shuts further out than line-ups do
+   (24h vs 1h by default), so this is always after the close.
+
+   Stamping the awards here is what makes a late resolution still correct: run
+   on time it is a future stamp, run after the games it is a past one, and
+   either way the matchweek scores with the squad the manager should have had. */
+function lockAfterWindow(fixtures, closeAtMs, opts) {
+  const o = opts || {};
+  const lockBefore = (o.lineupLockBeforeH ?? 1) * 3600e3;
+  for (const w of matchweeksOf(fixtures)) {
+    const lockAt = w.first - lockBefore;
+    if (lockAt >= closeAtMs) return lockAt;
+  }
+  return null;
+}
+
+/* Fixtures move. A snapshot already stamped for a lock that has since shifted
+   would apply to the wrong round, so any stamp still in the FUTURE gets
+   re-pointed at the current lock for its matchweek. Past stamps are left alone:
+   they describe rounds already played, and rewriting those would change
+   settled results. Returns the rows that need updating, so the caller can
+   write only what actually moved. */
+function restampPlan(snaps, fixtures, nowMs, opts) {
+  const out = [];
+  const locks = matchweeksOf(fixtures)
+    .map((w) => w.first - ((opts || {}).lineupLockBeforeH ?? 1) * 3600e3);
+  if (!locks.length) return out;
+  for (const s of snaps || []) {
+    const at = Date.parse(s.effective_from);
+    if (isNaN(at) || at <= nowMs) continue;          // already in force
+    // The lock this snapshot was aiming at is the nearest one to its stamp.
+    let best = null, bestGap = Infinity;
+    for (const l of locks) {
+      if (l <= nowMs) continue;                       // only future locks
+      const gap = Math.abs(l - at);
+      if (gap < bestGap) { bestGap = gap; best = l; }
+    }
+    if (best != null && best !== at) out.push({ id: s.id, effective_from: new Date(best).toISOString() });
+  }
+  return out;
+}
 
 /* ---------- the matchday card: "what do I do right now?" ----------
    The app knows the shape of a fantasy week — results land, the trade window
@@ -8143,6 +8206,56 @@ function orderedRoster(m) {
   return picks.slice().sort((a, b) => key(a) - key(b));
 }
 
+/* Write one manager's squad, stamped with the lock it takes effect at. Upserted
+   on (league, manager, effective_from), so editing five times before the lock
+   leaves one row — the last edit wins — instead of five. */
+async function snapshotAt(mgrId, atMs) {
+  if (!S.sb || !S.league?.id || atMs == null) return false;
+  const m = S.managers.find((x) => x.id === mgrId);
+  if (!m) return false;
+  const row = {
+    league_id: S.league.id, manager_id: mgrId,
+    effective_from: new Date(atMs).toISOString(),
+    roster: orderedRoster(m).map((pk) => ({
+      player_id: pk.player_id, player_name: pk.player_name,
+      position: pk.position, team: pk.team, is_sub: pk.is_sub, slot: pk.slot,
+      ...(m.captain_id === pk.player_id ? { is_captain: true } : {}),
+      ...(m.vice_id === pk.player_id ? { is_vice: true } : {}),
+    })),
+  };
+  const { error } = await S.sb.from("lineup_snapshots")
+    .upsert(row, { onConflict: "league_id,manager_id,effective_from" });
+  // Without the unique index the upsert has nothing to conflict on; fall back
+  // to a plain insert so an unapplied migration degrades to the old behaviour
+  // (duplicate rows) rather than losing the snapshot entirely.
+  if (error) await S.sb.from("lineup_snapshots").insert(row).then(() => {}, () => {});
+  return true;
+}
+
+// Stamp a manager's squad for the NEXT lock. Called from every path that
+// changes a roster or an XI while that lock is still ahead.
+async function snapshotForNextLock(mgrId) {
+  if (!autoWindowsEnabled()) return false;
+  const at = nextLockMs(S.fixtures || [], Date.now(), cfgOf().windows || {});
+  if (at == null) return false;
+  return snapshotAt(mgrId, at);
+}
+
+/* Re-point any snapshot whose lock has since moved. Runs on every refresh, so
+   it needs no schedule of its own; a rescheduled fixture is corrected the next
+   time anyone loads the league, and because the stamp is only data, correcting
+   it later still fixes scoring retroactively. */
+async function restampSnapshots() {
+  if (!S.sb || !autoWindowsEnabled()) return 0;
+  const plan = restampPlan(S.snapshots || [], S.fixtures || [], Date.now(), cfgOf().windows || {});
+  for (const p of plan) {
+    await S.sb.from("lineup_snapshots").update({ effective_from: p.effective_from }).eq("id", p.id);
+    const local = (S.snapshots || []).find((s) => s.id === p.id);
+    if (local) local.effective_from = p.effective_from;
+  }
+  return plan.length;
+}
+
 async function snapshotRosters() {
   const rows = activeManagers().map((m) => ({
     league_id: S.league.id,
@@ -8563,6 +8676,9 @@ async function saveLineup() {
     return { pk, isSub, slot: isSub ? "SUB_" + pk.position : pk.position };
   }).filter(({ pk, isSub }) => pk.is_sub !== isSub);
   const onSaveErr = (error) => { toast("Save failed: " + error.message); scheduleRefetch(); };
+  // Stamped for the lock this XI applies to, so it can never rewrite a round
+  // already under way — an edit made mid-matchweek lands on the NEXT lock.
+  setTimeout(() => snapshotForNextLock(me.id).catch(() => {}), 0);
   for (const { pk, isSub, slot } of changes) {
     pk.is_sub = isSub; pk.slot = slot;
     queueFieldWrite("picks", pk.id, "is_sub", isSub, onSaveErr);
@@ -8859,6 +8975,18 @@ async function processFaClaims() {
       out_player_id: c.out_player_id, out_player_name: c.out_player_name,
       in_player_id: c.in_player_id, in_player_name: c.in_player_name,
     }).then(() => {}, () => {});
+  }
+  /* Stamp the winners' squads at the lock following the window these claims
+     belong to. Run on time that is a future stamp; run late — nobody opened the
+     app and a whole matchweek went by — it is a PAST one, and the round rescores
+     with the players the manager should have had. Late becomes correct rather
+     than merely slow. */
+  if (awards.length && autoWindowsEnabled()) {
+    const win = lastClosedTradeWindow(S.fixtures || [], Date.now(), cfgOf().windows || {});
+    const at = win ? lockAfterWindow(S.fixtures || [], win.closeAt, cfgOf().windows || {}) : null;
+    if (at != null)
+      for (const mid of new Set(awards.map((c) => c.manager_id)))
+        await snapshotAt(mid, at).catch(() => {});
   }
   if (awards.length) await S.sb.from("fa_claims").update({ status: "awarded" }).in("id", awards.map((c) => c.id));
   if (failed.length) await S.sb.from("fa_claims").update({ status: "failed" }).in("id", failed);
@@ -10083,6 +10211,10 @@ async function acceptTrade(t) {
     return toast(error.message);
   }
   toast("Trade accepted — players swapped!");
+  // Both squads changed, so both need re-stamping for the coming lock.
+  await refetchAll().catch(() => {});
+  for (const mid of new Set([t.proposer_manager_id, t.target_manager_id].filter(Boolean)))
+    await snapshotForNextLock(mid).catch(() => {});
   scheduleRefetch();
 }
 
