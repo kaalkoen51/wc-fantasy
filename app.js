@@ -4320,7 +4320,12 @@ function rosterAtFor(mgrId, t, d, snaps) {
       if (String(s.effective_from).slice(0, 10) <= d) chosen = s; else break;
     }
   }
-  chosen = chosen || snaps[0];
+  /* Last resort: the match predates every snapshot, so the earliest one is the
+     closest record of what they had. A FUTURE-dated snapshot is not a record
+     though -- it is a line-up for a round still to come -- so it is never used
+     here, or a past match would score against an XI that was never in force. */
+  if (!chosen && snaps.length && Date.parse(snaps[0].effective_from) <= Date.now())
+    chosen = snaps[0];
   return chosen ? chosen.roster : managerPicks(mgrId);
 }
 
@@ -4694,7 +4699,10 @@ function managerHistory(mgrId) {
     if (idx === -1) for (let i = 0; i < snaps.length; i++) {
       if (String(snaps[i].effective_from).slice(0, 10) <= d) idx = i; else break;
     }
-    if (idx === -1 && snaps.length) idx = 0;
+    // Same rule as rosterAtFor: a snapshot still in the future is a plan, not a
+    // record, so it is never used to describe an earlier round.
+    if (idx === -1 && snaps.length && Date.parse(snaps[0].effective_from) <= Date.now())
+      idx = 0;
     return idx;
   };
   const flex = isFlexFormation();
@@ -6788,7 +6796,11 @@ function computeYetToPlay() {
   const snapsByMgr = snapshotsByManager();
   const result = {};
   for (const m of S.managers) {
-    const snaps = snapsByMgr[m.id] || [];
+    /* Only snapshots already IN FORCE describe the window we are counting in.
+       The newest row is now typically a line-up stamped for the lock ahead of
+       us, and starting the count there would put every match in the future --
+       so nothing would ever read as played. */
+    const snaps = (snapsByMgr[m.id] || []).filter((sn) => Date.parse(sn.effective_from) <= now);
     const hasSnapshot = snaps.length > 0;
     const snapshotStart = hasSnapshot ? Date.parse(snaps[snaps.length - 1].effective_from) : 0;
     const starters = managerPicks(m.id).filter(pk => !pk.is_sub && pk.position !== "TEAM");
@@ -8862,12 +8874,10 @@ function faWindowStartMs() {
     const w = autoWindowState();
     if (w.tradeWindow) return w.tradeWindow.openAt;
   }
-  let latest = 0;
-  for (const s of S.snapshots || []) {
-    const t = Date.parse(s.created_at || s.effective_from);
-    if (!isNaN(t) && t > latest) latest = t;
-  }
-  return latest;
+  // Otherwise the last lock that has actually taken effect. Keyed on
+  // effective_from for the same reason txWindowStarts is: created_at is now
+  // just "someone edited their team", which would reset the count mid-window.
+  return txWindowStarts()[0] ?? 0;
 }
 const faMovesThisWindow = (mid) => {
   const start = faWindowStartMs();
@@ -9411,9 +9421,16 @@ function swapTxCard(x) {
    renderTrades BEFORE the innerHTML assignment, so tapping History did
    nothing at all rather than showing an error.) */
 function txWindowStarts() {
+  /* Keyed on effective_from -- when the line-up LOCKED -- not on when the row
+     happened to be written. Since a save is now stamped for the lock ahead of
+     it, created_at is just "someone edited their team", which would cut the
+     window at the last edit and push everything since the real lock into
+     "earlier". Future stamps are excluded for the same reason: that lock has
+     not happened yet, so it cannot have started a window. */
+  const now = Date.now();
   return [...new Set((S.snapshots || [])
-    .map((sn) => Date.parse(sn.created_at || sn.effective_from))
-    .filter((t) => !isNaN(t)))].sort((a, b) => b - a);   // newest first
+    .map((sn) => Date.parse(sn.effective_from || sn.created_at))
+    .filter((t) => !isNaN(t) && t <= now))].sort((a, b) => b - a);   // newest first
 }
 
 function transactionsLogHtml() {
