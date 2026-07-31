@@ -475,6 +475,23 @@
       <div id="create-squad" class="pt-3 space-y-2"></div>
     </details>
 
+    <!-- 3b · Draft order -->
+    <details class="create-sec rounded-xl border border-slate-700 bg-slate-900 p-4">
+      <summary class="cursor-pointer select-none flex items-center justify-between gap-2 list-none">
+        <span class="text-sm font-semibold">🐍 Draft order</span>
+        <span class="text-xs text-slate-400 flex items-center gap-1"><span id="create-order-summary"></span><span class="sec-caret">▾</span></span>
+      </summary>
+      <div class="pt-3 space-y-3">
+        <p class="text-xs text-slate-400">Who picks first. Either way the draft snakes — the order reverses every round,
+          so picking last in round one means picking first in round two.</p>
+        <div class="flex gap-2">
+          <button type="button" data-dorder="random" class="flex-1 rounded-lg py-2 text-xs font-semibold border">Random</button>
+          <button type="button" data-dorder="manual" class="flex-1 rounded-lg py-2 text-xs font-semibold border">I'll set it</button>
+        </div>
+        <p id="create-order-note" class="text-xs text-slate-400"></p>
+      </div>
+    </details>
+
     <!-- 4 · Scoring -->
     <details class="create-sec rounded-xl border border-slate-700 bg-slate-900 p-4">
       <summary class="cursor-pointer select-none flex items-center justify-between gap-2 list-none">
@@ -670,8 +687,9 @@
       <input id="lobby-join-name" placeholder="Your manager name" class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2">
       <button id="lobby-join-go" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2 font-semibold">Join</button>
     </div>
+    <!-- Admin block reads in the order you actually do things: make the lobby
+         right, arrange the order, then start. The primary action stays last. -->
     <div id="lobby-admin" class="hidden space-y-2">
-      <button id="lobby-start" class="w-full bg-wcred hover:bg-wcred-hov disabled:bg-slate-800 disabled:text-slate-400 rounded-xl py-3 font-semibold">Start draft</button>
       <div class="flex items-center gap-2 text-xs text-slate-400 justify-center">
         <span>Managers needed:</span>
         <input id="lobby-num-input" type="number" min="2" max="15" class="w-16 rounded bg-slate-800 border border-slate-700 px-2 py-1">
@@ -679,7 +697,19 @@
         <span class="text-slate-400">(if someone drops out). Tap ✕ by a name to kick.</span>
       </div>
       <button id="lobby-addbots" class="w-full bg-slate-800 border border-slate-700 rounded-lg py-2 text-sm font-semibold">🤖 Fill empty slots with bots</button>
-      <p class="text-xs text-slate-400 text-center">Random draft order is assigned when the draft starts. Snake order.</p>
+      <!-- Manual draft order: only rendered when the league is set to it. Same
+           reorder affordances as the draft queue (hold to drag, ▲▼ to nudge). -->
+      <div id="lobby-order" class="hidden rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-2">
+        <div class="flex items-baseline justify-between gap-2">
+          <span class="text-sm font-semibold">🐍 Draft order</span>
+          <button id="lobby-order-shuffle" class="tap text-xs text-wcgold underline">Shuffle</button>
+        </div>
+        <p class="text-xs text-slate-400">Drag or nudge to set who picks first. Saved as you go.</p>
+        <ul id="lobby-order-list" class="divide-y divide-slate-800"></ul>
+        <p class="text-xs text-slate-400">Round one runs top to bottom, then reverses each round.</p>
+      </div>
+      <p id="lobby-order-note" class="text-xs text-slate-400 text-center"></p>
+      <button id="lobby-start" class="w-full bg-wcred hover:bg-wcred-hov disabled:bg-slate-800 disabled:text-slate-400 rounded-xl py-3 font-semibold">Start draft</button>
     </div>
     <p id="lobby-wait" class="text-center text-sm text-slate-400">Waiting for the admin to start the draft…</p>
     <details class="rounded-xl border border-slate-700 bg-slate-900">
