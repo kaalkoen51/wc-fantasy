@@ -2117,6 +2117,36 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
     [row({ player_id: "ars_1", match_label: "Arsenal vs City (2026-08-11)", appeared: true, goals: 1 })]);
   check("a club's third fixture can still be matchweek 2", computeScores()[0].roundPts, { 2: 6 });
 
+  /* match_stats.team places a player in rounds they MISSED, which appearance
+     inference cannot do. Starter transfers Everton -> Liverpool after MW1 and
+     is then dropped for MW2; Liverpool played, so the bench must cover. */
+  mwLeague(
+    [mwFx("Everton", "Spurs", "2026-08-01", 1), mwFx("Arsenal", "Chelsea", "2026-08-01", 1),
+     mwFx("Liverpool", "Wolves", "2026-08-08", 2), mwFx("Chelsea", "City", "2026-08-08", 2)],
+    [{ ...DEF_ST, team: "Liverpool" }, DEF_SUB],
+    [row({ player_id: "liv_1", match_label: "Everton vs Spurs (2026-08-01)", appeared: true, team: "Everton" }),
+     row({ player_id: "che_1", match_label: "Arsenal vs Chelsea (2026-08-01)", appeared: true, team: "Chelsea" }),
+     row({ player_id: "che_1", match_label: "Chelsea vs City (2026-08-08)", appeared: true, goals: 1, team: "Chelsea" })]);
+  check("a transferred starter who then sits out is covered", computeScores()[0].total, 6);
+
+  // Same rounds, but the starter's OLD club is the one playing in MW2 and he
+  // is still there, so his absence is a plain no-show at Everton.
+  mwLeague(
+    [mwFx("Everton", "Spurs", "2026-08-01", 1), mwFx("Arsenal", "Chelsea", "2026-08-01", 1),
+     mwFx("Everton", "Wolves", "2026-08-08", 2), mwFx("Chelsea", "City", "2026-08-08", 2)],
+    [{ ...DEF_ST, team: "Everton" }, DEF_SUB],
+    [row({ player_id: "liv_1", match_label: "Everton vs Spurs (2026-08-01)", appeared: true, team: "Everton" }),
+     row({ player_id: "che_1", match_label: "Chelsea vs City (2026-08-08)", appeared: true, goals: 1, team: "Chelsea" })]);
+  check("a plain no-show is still covered", computeScores()[0].total, 6);
+
+  // With no team column (legacy rows) the pick's club is used, unchanged.
+  mwLeague(
+    [mwFx("Liverpool", "Everton", "2026-08-08", 2), mwFx("Liverpool", "Wolves", "2026-08-11", 2)],
+    [DEF_ST],
+    [row({ player_id: "liv_1", match_label: "Liverpool vs Everton (2026-08-08)", appeared: true, goals: 1 }),
+     row({ player_id: "liv_1", match_label: "Liverpool vs Wolves (2026-08-11)", appeared: true, goals: 1 })]);
+  check("legacy rows without a club still score", computeScores()[0].total, 12);
+
   // A cup keeps the count-based fallback: no competition => isCupCompetition().
   S.league = { id: "L1" };
   check("a cup still counts each club's own fixtures",

@@ -300,6 +300,7 @@ const STRIPPABLE_COLUMNS = new Set([
   "offered_player_name", "requested_player_name",
   "offered_player_id", "requested_player_id", "planner",
   "owner_id", "user_id", "is_bot", "crest", "color", "bench_order", "lineups_open",
+  "team",
 ]);
 
 // Insert/upsert that tolerates an unapplied additive migration. Throws on
@@ -4223,13 +4224,39 @@ function roundResolvers(statsByPlayer, teamMatches) {
       if (r.appeared && roundByLabel(r.match_label) === rnd) return r.match_label;
     return null;
   };
+  /* Which club a player was at in a given round, read off the club stamped on
+     their stat rows (match_stats.team). A pick only carries the club the player
+     is at NOW, so after a transfer it cannot describe their earlier rounds.
+     Reading it from the rows also covers a round the player MISSED: their rows
+     either side of the gap place them, which appearance-inference alone cannot
+     do. Falls back to the pick's club when the column is absent (unapplied
+     migration, or rows pulled before it existed). */
+  const _clubs = new Map();
+  const clubHistory = (pid) => {
+    let h = _clubs.get(pid);
+    if (h) return h;
+    h = [];
+    for (const r of (statsByPlayer[pid] || []))
+      if (r.team) h.push([roundByLabel(r.match_label), r.team]);
+    h.sort((a, b) => a[0] - b[0]);
+    _clubs.set(pid, h);
+    return h;
+  };
+  const clubAtRound = (pid, rnd) => {
+    const h = clubHistory(pid);
+    if (!h.length) return null;
+    let team = h[0][1];                       // before the first row: earliest known
+    for (const [r, t] of h) { if (r > rnd) break; team = t; }
+    return team;
+  };
+  const clubOf = (entry, rnd) => clubAtRound(entry.player_id, rnd) || entry.team;
   // A club's fixtures in a given matchweek: none = a genuine blank week.
   const clubLabels = (team, rnd) => (useMW && ri.byTeamRound[team]?.[rnd]) || [];
   // The match this pick played in round `rnd`. null means "no match", which for
   // a blank gameweek is the truth and is what lets the bench come on.
   const labelForRound = (entry, rnd) => {
     if (useMW) {
-      const labels = clubLabels(entry.team, rnd);
+      const labels = clubLabels(clubOf(entry, rnd), rnd);
       const own = labels.find((l) => appearedIn(entry.player_id, l));
       // A transferred player's earlier match sits under their old club.
       return own || playerRoundLabel(entry.player_id, rnd) || labels[0] || null;
@@ -4245,10 +4272,11 @@ function roundResolvers(statsByPlayer, teamMatches) {
   const missedRound = (entry, rnd) => {
     if (useMW) {
       if (playerRoundLabel(entry.player_id, rnd)) return false;
-      const labels = clubLabels(entry.team, rnd);
+      const club = clubOf(entry, rnd);
+      const labels = clubLabels(club, rnd);
       if (!labels.length) return true;                       // blank gameweek
       if (labels.some((l) => appearedIn(entry.player_id, l))) return false;
-      return ri.finished[entry.team]?.[rnd] === true;         // played, absent
+      return ri.finished[club]?.[rnd] === true;               // played, absent
     }
     const lbl = labelForRound(entry, rnd);
     return !!lbl && !appearedIn(entry.player_id, lbl);
@@ -10341,6 +10369,9 @@ function buildFixtureStatRows(f, teamBlocks, keyField, fixName, pidOf, skipped) 
       if (!pid) { skipped && skipped.push(`${e.player.name} (${team})`); continue; }
       const row = {
         ...keyField, player_id: pid, match_label: label, appeared: true,
+        // The club they played for in THIS match, so a later transfer can't
+        // strand the row (rounds are resolved per club).
+        team,
         goals: +g.total || 0, assists: +g.assists || 0,
         clean_sheet: minutes >= 60 && !(conceded[tb.team.id] || 0),
         yellow_cards: +cards.yellow || 0, red_cards: +cards.red || 0,
