@@ -87,6 +87,7 @@ function effectiveConfig(cfg) {
     captain: cfg.captain === true,
     autoWindows: cfg.autoWindows === true,
     windows: cfg.windows || null,
+    draftOrder: cfg.draftOrder === "manual" ? "manual" : "random",
   };
 }
 // Captain/vice: the captain's round points are doubled; if the captain didn't
@@ -1006,6 +1007,8 @@ function updateCreateSummaries() {
     scoringCustom ? `${(S._createRules || []).length} custom rules` : "World Cup default";
   if ($("create-team-summary")) $("create-team-summary").textContent = S._createTeamOn
     ? `on · ${val("quota.TEAM", 1)} pick` : "off";
+  if ($("create-order-summary")) $("create-order-summary").textContent =
+    (S._createOrder === "manual") ? "set by admin" : "random";
   if ($("create-format-summary")) $("create-format-summary").textContent =
     `${S._createH2H ? "H2H" : "points"} · ${S._createWaiver ? "waiver" : "instant"}${S._createCaptain ? " · ©" : ""}${S._createAutoWin ? " · auto-windows" : ""}`;
 }
@@ -1024,6 +1027,12 @@ function syncCreateFormat() {
   for (const b of document.querySelectorAll("[data-win]"))
     b.className = "flex-1 rounded-lg py-2 text-xs font-semibold border " +
       ((b.dataset.win === "auto") === S._createAutoWin ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400");
+  for (const b of document.querySelectorAll("[data-dorder]"))
+    b.className = "flex-1 rounded-lg py-2 text-xs font-semibold border " +
+      (b.dataset.dorder === (S._createOrder || "random") ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400");
+  if ($("create-order-note")) $("create-order-note").textContent = (S._createOrder === "manual")
+    ? "You'll arrange the managers in the lobby before starting the draft."
+    : "Positions are drawn when you start the draft — nobody knows the order in advance.";
   $("create-h2h-fields").classList.toggle("hidden", !S._createH2H);
   $("create-auto-fields").classList.toggle("hidden", !S._createAutoWin);
   if (S._createH2H) updateH2HFeedback();
@@ -1355,6 +1364,7 @@ function renderCreateForm() {
   $("create-pull-history").onclick = pullCreateHistory;
   syncApi();
   S._createTeamOn = true; S._createH2H = false; S._createWaiver = false; S._createCaptain = false; S._createAutoWin = false;
+  S._createOrder = S._createOrder || "random";
   S._createRumbleScoring = "pairwise";
   S._createPreset = S._createPreset || "classic";
   S._createAdvanced = S._createPreset === "custom";
@@ -1363,6 +1373,8 @@ function renderCreateForm() {
     b.onclick = () => { S._createTeamOn = b.dataset.teamtoggle === "on"; syncCreateTeam(); };
   for (const b of document.querySelectorAll("[data-fmt]"))
     b.onclick = () => { S._createH2H = b.dataset.fmt === "h2h"; syncCreateFormat(); };
+  for (const b of document.querySelectorAll("[data-dorder]"))
+    b.onclick = () => { S._createOrder = b.dataset.dorder; syncCreateFormat(); };
   for (const b of document.querySelectorAll("[data-trade]"))
     b.onclick = () => { S._createWaiver = b.dataset.trade === "waiver"; syncCreateFormat(); };
   for (const b of document.querySelectorAll("[data-cap]"))
@@ -1434,6 +1446,7 @@ function readCreateConfig() {
     delete cfg.stageBonus;
     delete cfg.finalPickBonus;
   }
+  if (S._createOrder === "manual") cfg.draftOrder = "manual";   // admin sets it in the lobby
   if (S._createH2H) {                       // head-to-head standings format
     const g = (k) => Number(document.querySelector(`[data-view="create"] [data-cfg="${k}"]`)?.value);
     cfg.h2hEnabled = true;
@@ -1651,6 +1664,7 @@ function renderLobby() {
     !!me || S.managers.length >= L.num_managers);
   $("lobby-browse").classList.toggle("hidden", !me);
   $("lobby-browse").onclick = () => { S._browsing = true; renderBoard(); showView("board"); };
+  renderLobbyOrder();
   $("lobby-rules").innerHTML = lobbyRulesHtml();
 }
 
@@ -1720,15 +1734,104 @@ async function kickManager(id) {
   scheduleRefetch();
 }
 
+/* How pick order is decided: shuffled when the draft starts, or arranged by the
+   admin in the lobby beforehand. Snake either way — this only sets round one. */
+const draftOrderMode = () => cfgOf().draftOrder === "manual" ? "manual" : "random";
+
+const shuffled = (list) => {
+  const a = [...list];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+};
+
+// Persist an explicit order. Positions are 1-based and contiguous, which is
+// what draftSequence() assumes.
+async function setDraftOrder(ids) {
+  const res = await Promise.all(ids.map((id, i) =>
+    S.sb.from("managers").update({ draft_position: i + 1 }).eq("id", id)));
+  const bad = res.find((r) => r.error);
+  if (bad) toast(bad.error.message);
+}
+
+/* The lobby's order editor — the same affordances as the draft queue, because
+   it is the same job: hold a row to drag it anywhere, or nudge it one place.
+   Managers with no position yet fall in behind those that have one, so the list
+   is stable before anyone has touched it. */
+function lobbyOrderManagers() {
+  return [...S.managers].sort((a, b) =>
+    (a.draft_position ?? 99) - (b.draft_position ?? 99)
+    || String(a.name).localeCompare(String(b.name)));
+}
+
+function renderLobbyOrder() {
+  const box = $("lobby-order");
+  if (!box) return;
+  const manual = draftOrderMode() === "manual";
+  const admin = isAdmin();
+  box.classList.toggle("hidden", !manual || !admin);
+  const note = $("lobby-order-note");
+  if (note) note.textContent = manual
+    ? (admin ? "" : "The admin is setting the draft order.")
+    : "Draft order is drawn at random when the draft starts. Snake order.";
+  if (!manual || !admin) return;
+  if (!afterDrag(renderLobbyOrder)) return;
+
+  const list = lobbyOrderManagers();
+  const me = myManager();
+  $("lobby-order-list").innerHTML = list.map((m, n) => `
+    <li data-dorow="${esc(m.id)}" class="flex items-center gap-1.5 py-1 rounded">
+      <span class="w-4 shrink-0 text-xs text-slate-400 font-mono">${n + 1}</span>
+      <span class="shrink-0 inline-flex items-center justify-center rounded-md w-6 h-6 text-[13px]"
+            style="background:${managerColor(m)}22;border:1px solid ${managerColor(m)}88">${managerMark(m)}</span>
+      <span class="min-w-0 flex-1 truncate text-sm">${esc(m.name)}${
+        m.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}${
+        m.is_bot ? ' <span class="text-slate-400 text-xs">🤖</span>' : ""}</span>
+      ${n === 0 ? '<span class="shrink-0 text-[10px] uppercase tracking-wide text-wcgold">1st pick</span>' : ""}
+      ${list.length > 1 ? `<span class="nudge-col shrink-0 leading-none">
+        <button data-doup="${esc(m.id)}" class="nudge text-slate-400 ${n === 0 ? "opacity-30" : ""}" ${n === 0 ? "disabled" : ""} aria-label="Move up">▲</button>
+        <button data-dodn="${esc(m.id)}" class="nudge text-slate-400 ${n === list.length - 1 ? "opacity-30" : ""}" ${n === list.length - 1 ? "disabled" : ""} aria-label="Move down">▼</button>
+      </span>` : ""}
+    </li>`).join("")
+    || '<li class="text-xs text-slate-400 py-1">Nobody has joined yet.</li>';
+
+  // Write the order the admin can SEE, so a slow round-trip can't reorder the
+  // list under their finger (the same reason the draft queue works this way).
+  const commit = (ids) => {
+    ids.forEach((id, i) => {
+      const m = S.managers.find((x) => x.id === id);
+      if (m) m.draft_position = i + 1;
+    });
+    setDraftOrder(ids);
+  };
+  const slide = (id, dir) => {
+    const ids = lobbyOrderManagers().map((m) => m.id);
+    const i = ids.indexOf(id), j = i + dir;
+    if (i < 0 || j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    commit(ids);
+    animateReorder("lobby-order-list", "data-dorow", renderLobbyOrder, id);
+  };
+  $("lobby-order-list").querySelectorAll("[data-doup]").forEach((b) =>
+    b.onclick = () => slide(b.dataset.doup, -1));
+  $("lobby-order-list").querySelectorAll("[data-dodn]").forEach((b) =>
+    b.onclick = () => slide(b.dataset.dodn, 1));
+  makeReorderable($("lobby-order-list"), "data-dorow", (order) => {
+    commit(order);
+    renderLobbyOrder();
+  });
+}
+
 async function startDraft() {
   if (!isAdmin()) return;
   if (S.managers.length !== S.league.num_managers) return;
-  const shuffled = [...S.managers];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
-  await Promise.all(shuffled.map((m, i) =>
+  // Manual: keep the order the admin arranged (anyone still unplaced falls in
+  // behind, so a late joiner can never silently take pick one).
+  const order = draftOrderMode() === "manual"
+    ? lobbyOrderManagers() : shuffled(S.managers);
+  await Promise.all(order.map((m, i) =>
     S.sb.from("managers").update({ draft_position: i + 1 }).eq("id", m.id)));
   const { error } = await S.sb.from("leagues")
     .update({ current_pick: 1, pick_started_at: new Date().toISOString() })
@@ -4745,7 +4848,18 @@ function draftFactCards() {
   const secs = S.league?.pick_duration_seconds;
   const cards = [];
 
-  cards.push(["🐍", "Snake order", `${picksPerManager()} rounds, and the order reverses every round — last pick in round one picks first in round two.`]);
+  /* Say how the order was decided, and — once it exists — who actually picks
+     first, because "snake" alone never answered the question people ask. */
+  const manualOrder = draftOrderMode() === "manual";
+  const placed = draftOrderManagers().filter((m) => m.draft_position);
+  const started = (S.league?.current_pick || 0) > 0;
+  const orderLine = placed.length >= 2
+    ? ` ${started ? "Order" : "As it stands"}: ${placed.slice(0, 3).map((m) => m.name).join(" → ")}${placed.length > 3 ? " → …" : ""}.`
+    : manualOrder
+      ? " The admin arranges the order in the lobby before the draft starts."
+      : " Positions are drawn at random when the draft starts.";
+  cards.push(["🐍", manualOrder ? "Snake order · set by the admin" : "Snake order · drawn at random",
+    `${picksPerManager()} rounds, and the order reverses every round — last pick in round one picks first in round two.${orderLine}`]);
 
   cards.push(["👕", "Your squad", flex
     ? `Draft any mix you like up to ${cfgOf().squadSize ?? 15} players, as long as you can field a legal XI.`
@@ -11335,6 +11449,15 @@ function wire() {
   $("join-go").onclick = () => joinLeague().catch((e) => toast(e.message));
   $("lobby-start").onclick = () => startDraft().catch((e) => toast(e.message));
   $("lobby-addbots").onclick = () => addBots().catch((e) => toast(e.message));
+  $("lobby-order-shuffle").onclick = () => {
+    const ids = shuffled(S.managers).map((m) => m.id);
+    ids.forEach((id, i) => {
+      const m = S.managers.find((x) => x.id === id);
+      if (m) m.draft_position = i + 1;
+    });
+    setDraftOrder(ids);
+    renderLobbyOrder();
+  };
   $("home-practice").onclick = () => {
     const n = Math.max(1, Math.min(13, Number($("practice-bots").value) || 7));
     startPracticeDraft(n).catch((e) => toast("Practice draft failed: " + e.message));
