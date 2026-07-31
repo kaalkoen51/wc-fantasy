@@ -438,6 +438,9 @@ def _stat_columns(row: dict) -> dict:
     return {
         "player_id": row["player_id"],
         "match_label": row["match_label"],
+        # The club they turned out for in this match, so a later transfer
+        # cannot strand the row (the app resolves rounds per club).
+        "team": row.get("team"),
         "appeared": True,
         "goals": row["goals"],
         "assists": row["assists"],
@@ -480,7 +483,7 @@ def build_competition_payload(rows: list, competition_key: str) -> list:
 # whole write with PGRST204; we drop the offending column and retry so an
 # unapplied migration degrades gracefully (these are display-only — they
 # never affect scoring) instead of silently killing every pull.
-OPTIONAL_COLUMNS = ("home_score", "away_score", "defensive_actions", "minutes", "raw")
+OPTIONAL_COLUMNS = ("home_score", "away_score", "defensive_actions", "minutes", "raw", "team")
 
 MISSING_COLUMN_RE = re.compile(r"Could not find the '(\w+)' column")
 

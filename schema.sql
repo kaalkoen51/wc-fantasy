@@ -55,6 +55,12 @@ create table if not exists match_stats (
 -- fall back to the derived columns above.
 alter table match_stats add column if not exists raw jsonb;
 
+-- The club the player actually turned out for in that match. Rounds are
+-- resolved per club, so without this a mid-season transfer strands every match
+-- the player had already played for their old club. Additive; legacy rows are
+-- null and fall back to inferring the club from the player's appearances.
+alter table match_stats add column if not exists team text;
+
 create table if not exists team_stages (
     id uuid primary key default gen_random_uuid(),
     league_id uuid references leagues(id) on delete cascade,
@@ -408,6 +414,7 @@ create table if not exists competition_stats (
     created_at timestamptz default now(),
     unique (competition_key, player_id, match_label)
 );
+alter table competition_stats add column if not exists team text;
 alter table competition_stats add column if not exists raw jsonb;
 create index if not exists competition_stats_key_idx on competition_stats (competition_key, id);
 alter table competition_stats enable row level security;
