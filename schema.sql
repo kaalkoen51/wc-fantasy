@@ -78,6 +78,11 @@ alter table leagues add column if not exists trading_open boolean not null defau
 -- Manual windows only: line-up locking is its own deadline, separate from the
 -- trade window. Null = follow trading_open (how it behaved before).
 alter table leagues add column if not exists lineups_open boolean;
+
+-- Sandbox league: a test run with invented fixtures and results. Keeps its
+-- stats in its own match_stats rows even when it sits on a real competition,
+-- so fake results never reach the shared competition_stats other leagues read.
+alter table leagues add column if not exists sim boolean not null default false;
 alter table leagues add column if not exists admin_token text;
 alter table leagues add column if not exists num_managers int default 8;
 alter table leagues add column if not exists pick_duration_seconds int default 60;

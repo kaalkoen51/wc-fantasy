@@ -205,6 +205,30 @@ async function refreshAuthUser() {
   return S.authUser;
 }
 
+/* ---------- product owner (test-run mode) ----------
+   Accounts allowed to run a simulated season. This hides the controls; it does
+   NOT enforce anything, because the anon key can still be driven directly until
+   RLS lands. What actually protects real data is simLeague() below: fake results
+   are only ever written to a league explicitly flagged as a sandbox, and such a
+   league keeps its stats in its own match_stats rows rather than the shared
+   competition_stats every other league reads. */
+const APP_OWNER_EMAILS = ["koen.johan.c@gmail.com"];
+const isAppOwner = () => {
+  const e = String(S.authUser?.email || "").trim().toLowerCase();
+  return !!e && APP_OWNER_EMAILS.includes(e);
+};
+// A sandbox league: real squads and real matchweek logic, invented results.
+const simLeague = () => !!S.league?.sim;
+/* Where this league's stats live. A sandbox league on a real competition must
+   NOT read or write competition_stats — those rows are shared by every league
+   on that competition, so fake results there would corrupt live leagues. */
+const statsScope = () => {
+  const ck = competitionKey();
+  return ck && !simLeague()
+    ? { table: "competition_stats", column: "competition_key", value: ck }
+    : { table: "match_stats", column: "league_id", value: S.league?.id || getSession()?.leagueId };
+};
+
 /* ---------- manager identity ----------
    A league should look like a league, not a list of names. Every manager gets a
    stable accent colour derived from their id, so identity works immediately
@@ -299,7 +323,7 @@ const STRIPPABLE_COLUMNS = new Set([
   "home_score", "away_score", "minutes", "raw",
   "offered_player_name", "requested_player_name",
   "offered_player_id", "requested_player_id", "planner",
-  "owner_id", "user_id", "is_bot", "crest", "color", "bench_order", "lineups_open",
+  "owner_id", "user_id", "is_bot", "crest", "color", "bench_order", "lineups_open", "sim",
   "team",
 ]);
 
@@ -527,9 +551,8 @@ async function refetchAll({ initial = false } = {}) {
     const PAGE = 1000;
     let from = 0, all = [];
     for (;;) {
-      const q = compKey
-        ? S.sb.from("competition_stats").select("*").eq("competition_key", compKey)
-        : S.sb.from("match_stats").select("*").eq("league_id", id);
+      const sc = statsScope();
+      const q = S.sb.from(sc.table).select("*").eq(sc.column, sc.value);
       const { data, error } = await q.order("id").range(from, from + PAGE - 1);
       if (error) return { data: all, error };
       all = all.concat(data || []);
@@ -655,10 +678,8 @@ function subscribeRealtime() {
   if (!id || S.channel) return;
   // Competition leagues watch the SHARED competition_stats (any admin's pull
   // reaches every league on the competition); legacy WC leagues watch their own.
-  const ck = competitionKey();
-  const statsSub = ck
-    ? { table: "competition_stats", filter: "competition_key=eq." + ck }
-    : { table: "match_stats", filter: "league_id=eq." + id };
+  const sc = statsScope();
+  const statsSub = { table: sc.table, filter: `${sc.column}=eq.${sc.value}` };
   S.channel = S.sb.channel("league-" + id)
     .on("postgres_changes", { event: "*", schema: "public", table: "leagues",     filter: "id=eq." + id },        scheduleRefetch)
     .on("postgres_changes", { event: "*", schema: "public", table: "managers",    filter: "league_id=eq." + id }, scheduleRefetch)

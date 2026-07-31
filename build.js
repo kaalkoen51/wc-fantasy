@@ -12,9 +12,9 @@ const fs = require("fs");
 const path = require("path");
 
 const OUT = "public";
-// sim.js is a development-only tool. A production build never copies it and
-// never emits a reference to it, so it cannot be discovered or enabled by a
-// user; a dev build swaps the <!--SIM--> placeholder for the script tag.
+// sim.js ships, but its controls only render for an APP_OWNER_EMAILS account
+// and every write it makes is refused unless the league is flagged `sim`. The
+// gate below fails the build if either of those protections goes missing.
 const DEV = process.env.BUILD_ENV === "dev";
 
 // Missing a required file should fail the build loudly; the optional data files
@@ -53,11 +53,9 @@ if (missing.length) {
 // A stray inline <script> or external asset would silently defeat the CSP in
 // _headers, so fail here rather than in a user's browser.
 let html = fs.readFileSync("index.html", "utf8");
-html = html.replace("<!--SIM-->", DEV ? '<script src="sim.js"></script>' : "");
-if (DEV) {
-  fs.copyFileSync("sim.js", path.join(OUT, "sim.js"));
-  console.warn("  DEV BUILD — simulator included. Do not deploy this to users.");
-}
+html = html.replace("<!--SIM-->", '<script src="sim.js"></script>');
+fs.copyFileSync("sim.js", path.join(OUT, "sim.js"));
+copied++;
 fs.writeFileSync(path.join(OUT, "index.html"), html);
 const external = html.match(/<(?:script|link)[^>]+(?:src|href)="https?:\/\/[^"]*"/g);
 if (external) {
@@ -69,12 +67,26 @@ if (/<script>(?![\s]*<\/script>)/.test(html.replace(/<script src="[^"]*"><\/scri
   process.exit(1);
 }
 
-// Belt and braces: a production bundle must contain no trace of the simulator.
-if (!DEV) {
-  const shipped = fs.readFileSync(path.join(OUT, "index.html"), "utf8");
-  if (shipped.includes("sim.js") || fs.existsSync(path.join(OUT, "sim.js"))) {
-    console.error("\nBuild failed — simulator leaked into a production build.");
+/* The test-run tool writes invented results, so its two protections are load
+   bearing: the panel is owner-only, and no write proceeds unless the league is
+   a sandbox. Deleting either would silently arm a fake-results button for every
+   user, which no test would catch — so assert them at build time. */
+const simSrc = fs.readFileSync("sim.js", "utf8");
+const simGuards = [
+  [/function simSafe\(\)[\s\S]*?if \(!simLeague\(\)\)/, "simSafe() no longer requires a sandbox league"],
+  [/function simPanel\(\)\s*\{\s*\n\s*if \(!isAppOwner\(\)\) return;/, "simPanel() no longer checks isAppOwner()"],
+  [/function simMountHandle\(\)[\s\S]*?!isAppOwner\(\)/, "the test handle no longer checks isAppOwner()"],
+];
+for (const [re, why] of simGuards) {
+  if (!re.test(simSrc)) {
+    console.error(`\nBuild failed — ${why}. sim.js writes invented results; it must stay gated.`);
     process.exit(1);
   }
+}
+const appSrc = fs.readFileSync("app.js", "utf8");
+if (!/const statsScope = \(\) => \{[\s\S]*?!simLeague\(\)/.test(appSrc)) {
+  console.error("\nBuild failed — statsScope() no longer routes a sandbox league away from"
+    + " competition_stats; invented results would reach every league on the competition.");
+  process.exit(1);
 }
 console.log(`Built ${OUT}/ — ${copied + (DEV ? 1 : 0)} files, same-origin only${DEV ? " (DEV)" : ""}.`);
