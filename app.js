@@ -3380,12 +3380,14 @@ const maxSubsCapped = () => cfgOf().maxSubs != null;
 // Fixed-formation subs that activate this round, respecting the cap: bench
 // players (in roster order) cover a same-position no-show starter until the cap
 // (or the no-shows) run out. Only used when a cap is configured.
-function fixedRoundSubs(roster, rnd, labelFor, appeared, cap) {
+function fixedRoundSubs(roster, rnd, labelFor, appeared, cap, missed) {
   const starters = roster.filter((e) => !e.is_sub && e.position !== "TEAM");
   const noShow = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
   for (const st of starters) {
-    const lbl = labelFor(st, rnd);
-    if (lbl && !appeared(st.player_id, lbl)) noShow[st.position]++;
+    // missed() also covers a blank gameweek, where there is no label at all.
+    if (missed ? missed(st, rnd)
+               : (() => { const l = labelFor(st, rnd); return l && !appeared(st.player_id, l); })())
+      noShow[st.position]++;
   }
   const activated = new Set();
   let count = 0;
@@ -4165,47 +4167,107 @@ function statsDerived() {
   return _statsDerived;
 }
 
+const FINAL_STATUS = ["FT", "AET", "PEN"];
+
+/* The competition's OWN matchweek numbers, taken from the fixture list.
+
+   Counting a club's fixtures only works if every club plays exactly once per
+   round. Domestic leagues break that constantly: a postponed game leaves a club
+   with a blank week, a rearranged midweek game gives another club a double. The
+   two clubs' fixture counts then drift apart, so "round 3" means a different
+   week for each of them — which silently misaligns bench cover, round buckets
+   and head-to-head results. API-Football already tells us the real matchweek
+   ("Regular Season - 21"), and we already store it on every fixture.
+
+   Cups keep the count-based fallback: their round labels ("Round of 16") are
+   names, not week numbers, and in a group stage everyone does play once. */
+let _roundIdx = null, _roundIdxFor = null;
+function roundIndex() {
+  if (_roundIdxFor === S.fixtures) return _roundIdx;
+  const byLabel = {}, byTeamRound = {}, finished = {};
+  for (const f of S.fixtures || []) {
+    const n = Number(mwNo(f.round));
+    const d = String(f.kickoff_utc || "").slice(0, 10) || f.date;
+    if (!n || !d) continue;
+    const label = `${f.home} vs ${f.away} (${d})`;
+    byLabel[label] = n;
+    const done = FINAL_STATUS.includes(f.status);
+    for (const t of [f.home, f.away]) {
+      ((byTeamRound[t] ||= {})[n] ||= []).push(label);
+      if (!done) (finished[t] ||= {})[n] = false;
+      else if ((finished[t] ||= {})[n] !== false) finished[t][n] = true;
+    }
+  }
+  _roundIdxFor = S.fixtures;
+  return (_roundIdx = { byLabel, byTeamRound, finished });
+}
+
 /* Round resolution, shared by computeScores and managerHistory (they score the
    same way and must agree — there is a test tying their totals together).
 
-   Rounds are indexed PER TEAM: round k is a club's k-th fixture. That makes a
-   mid-season transfer dangerous. Once a pick's team is rewritten to the new
-   club, the player's earlier matches live in the OLD club's fixture list, so a
-   lookup by team misses them — a transferred sub silently stopped scoring the
-   matches it had already covered. These helpers fall back to the player's own
-   stat rows whenever the club lookup can't explain an appearance. */
+   Two things this has to survive. A mid-season TRANSFER: rewriting a pick's
+   team moves the player to a club whose fixture list never contained their
+   earlier matches, so lookups fall back to the player's own stat rows. And
+   BLANK/DOUBLE gameweeks: see roundIndex() above. */
 function roundResolvers(statsByPlayer, teamMatches) {
+  const ri = roundIndex();
+  // Matchweek numbering only where it is meaningful and actually present.
+  const useMW = !isCupCompetition() && Object.keys(ri.byLabel).length > 0;
   const roundOf = (team, label) => (teamMatches[team] || []).indexOf(label);
   const appearedIn = (pid, label) =>
     (statsByPlayer[pid] || []).some((r) => r.appeared && r.match_label === label);
-  const roundByLabel = (label) => roundOf(labelTeams(label)[0], label) + 1;
+  const roundByLabel = (label) =>
+    (useMW && ri.byLabel[label]) || roundOf(labelTeams(label)[0], label) + 1;
   const playerRoundLabel = (pid, rnd) => {
     for (const r of (statsByPlayer[pid] || []))
       if (r.appeared && roundByLabel(r.match_label) === rnd) return r.match_label;
     return null;
   };
-  // The club list stays the primary source, so a no-show (which has no row to
-  // find) still resolves. The player's own match is only consulted when the
-  // club lookup can't explain an appearance — i.e. exactly the transfer case.
+  // A club's fixtures in a given matchweek: none = a genuine blank week.
+  const clubLabels = (team, rnd) => (useMW && ri.byTeamRound[team]?.[rnd]) || [];
+  // The match this pick played in round `rnd`. null means "no match", which for
+  // a blank gameweek is the truth and is what lets the bench come on.
   const labelForRound = (entry, rnd) => {
+    if (useMW) {
+      const labels = clubLabels(entry.team, rnd);
+      const own = labels.find((l) => appearedIn(entry.player_id, l));
+      // A transferred player's earlier match sits under their old club.
+      return own || playerRoundLabel(entry.player_id, rnd) || labels[0] || null;
+    }
     const lbl = (teamMatches[entry.team] || [])[rnd - 1];
     if (lbl && appearedIn(entry.player_id, lbl)) return lbl;
     return playerRoundLabel(entry.player_id, rnd) || lbl || null;
   };
+  /* Did this starter fail to turn out in round `rnd`, so the bench should cover?
+     True for a blank gameweek (no fixture at all) as well as a plain no-show.
+     A fixture that simply has not kicked off yet is NOT a no-show — otherwise a
+     sub would activate mid-week and then flip back once the game lands. */
+  const missedRound = (entry, rnd) => {
+    if (useMW) {
+      if (playerRoundLabel(entry.player_id, rnd)) return false;
+      const labels = clubLabels(entry.team, rnd);
+      if (!labels.length) return true;                       // blank gameweek
+      if (labels.some((l) => appearedIn(entry.player_id, l))) return false;
+      return ri.finished[entry.team]?.[rnd] === true;         // played, absent
+    }
+    const lbl = labelForRound(entry, rnd);
+    return !!lbl && !appearedIn(entry.player_id, lbl);
+  };
   // The 1-based round a pick's match belongs to, falling back to the label's
   // own round when the pick has since moved club.
   const entryRound = (entry, label) => {
+    if (useMW) return roundByLabel(label);
     const r = roundOf(entry.team, label);
     return r >= 0 ? r + 1 : roundByLabel(label);
   };
-  return { roundOf, appearedIn, roundByLabel, labelForRound, entryRound };
+  return { roundOf, appearedIn, roundByLabel, labelForRound, missedRound, entryRound };
 }
 
 function computeScores() {
   const { byPlayer: statsByPlayer, teamMatches } = statsDerived();
   // A starter's k-th match (same round as the sub's match), and whether the
   // starter actually featured in it.
-  const { roundOf, appearedIn, labelForRound, entryRound } =
+  const { roundOf, appearedIn, roundByLabel, labelForRound, missedRound, entryRound } =
     roundResolvers(statsByPlayer, teamMatches);
 
   // Each match is scored against the roster locked before its kickoff.
@@ -4251,12 +4313,12 @@ function computeScores() {
     const fixedCap = !flex && maxSubsCapped();   // fixed mode with a sub cap set
     const fixedCache = {};
     const fixedSubsForRound = (rnd, roster) => fixedCache[rnd] ||
-      (fixedCache[rnd] = fixedRoundSubs(roster, rnd, labelForRound, appearedIn, maxSubsPerRound()));
+      (fixedCache[rnd] = fixedRoundSubs(roster, rnd, labelForRound, appearedIn, maxSubsPerRound(), missedRound));
     const captain = captainEnabled();
     const capByRnd = {}, viceByRnd = {}, playedByRnd = {}, ptsByRnd = {};
     for (const label of statLabels) {
       const d = labelDate(label);
-      const rnd = roundOf(labelTeams(label)[0], label) + 1;   // 1-based round
+      const rnd = roundByLabel(label);   // 1-based round (real matchweek)
       const roster = rosterAtFor(m.id, matchTime(label), d, snapsByMgr[m.id] || []);
       const starters = roster.filter((e) => !e.is_sub && e.position !== "TEAM");
       if (captain) {   // snapshot-locked captain, else the manager's current pick
@@ -4286,8 +4348,7 @@ function computeScores() {
           const r = entryRound(entry, label);
           const mates = starters.filter((st) => st.position === entry.position);
           const activated = r >= 1 && mates.some((st) => {
-            const stLabel = labelForRound(st, r);
-            return stLabel && !appearedIn(st.player_id, stLabel);
+            return missedRound(st, r);
           });
           if (activated) pts = scored;
         }
@@ -4372,7 +4433,7 @@ function managerHistory(mgrId) {
   const elimAt = mgr?.eliminated_at ? Date.parse(mgr.eliminated_at) : null;
 
   const { byPlayer: statsByPlayer, teamMatches } = statsDerived();
-  const { roundOf, appearedIn, labelForRound, entryRound } =
+  const { roundOf, appearedIn, roundByLabel, labelForRound, missedRound, entryRound } =
     roundResolvers(statsByPlayer, teamMatches);
   const statLabels = [...new Set(S.stats.map((r) => r.match_label))].filter((l) => labelDate(l));
 
@@ -4404,14 +4465,13 @@ function managerHistory(mgrId) {
       } else if (!entry.is_sub) {
         pts = scored;
       } else if (maxSubsCapped()) {
-        if (fixedRoundSubs(roster, entryRound(entry, label), labelForRound, appearedIn, maxSubsPerRound())
+        if (fixedRoundSubs(roster, entryRound(entry, label), labelForRound, appearedIn, maxSubsPerRound(), missedRound)
             .has(entry.player_id)) pts = scored;
       } else {
         const r = entryRound(entry, label);
         const mates = starters.filter((st) => st.position === entry.position);
         if (r >= 1 && mates.some((st) => {
-          const stLabel = labelForRound(st, r);
-          return stLabel && !appearedIn(st.player_id, stLabel);
+          return missedRound(st, r);
         }))
           pts = scored;
       }
@@ -4442,7 +4502,7 @@ function managerHistory(mgrId) {
   // Current round = the furthest round anyone has stats for (each team's Nth
   // match). Its per-player points and appearances feed the home round toggle
   // and the "played this round" highlight; credited to the live roster.
-  const roundOfLabel = (l) => roundOf(labelTeams(l)[0], l) + 1;
+  const roundOfLabel = (l) => roundByLabel(l);
   const curRound = statLabels.reduce((m, l) => Math.max(m, roundOfLabel(l)), 0);
   const curRoundLabels = statLabels.filter((l) => roundOfLabel(l) === curRound);
   const roundByPlayer = {};
