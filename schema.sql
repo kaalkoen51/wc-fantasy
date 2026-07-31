@@ -317,6 +317,18 @@ create table if not exists lineup_snapshots (
 create index if not exists lineup_snapshots_lookup_idx
     on lineup_snapshots (league_id, manager_id, effective_from);
 
+/* One snapshot per manager per lock. A line-up is written the moment it is
+   saved, stamped with the lock it takes effect at, so editing repeatedly before
+   that lock must overwrite rather than pile up — which needs something to
+   conflict on. Older databases can hold duplicates from before this rule, so
+   the extras are dropped (newest kept) before the index is built. */
+delete from lineup_snapshots a using lineup_snapshots b
+ where a.league_id = b.league_id and a.manager_id = b.manager_id
+   and a.effective_from = b.effective_from
+   and (a.created_at, a.id) < (b.created_at, b.id);
+create unique index if not exists lineup_snapshots_one_per_lock
+    on lineup_snapshots (league_id, manager_id, effective_from);
+
 -- Transaction log: one row per completed roster move, for the Trades tab's
 -- "Transactions" history. Free-agent swaps are written here by the app
 -- (doSwap); manager-to-manager trades stay in `trades` and the UI merges both
