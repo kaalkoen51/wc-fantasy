@@ -73,9 +73,12 @@ if (/<script>(?![\s]*<\/script>)/.test(html.replace(/<script src="[^"]*"><\/scri
    user, which no test would catch — so assert them at build time. */
 const simSrc = fs.readFileSync("sim.js", "utf8");
 const simGuards = [
-  [/function simSafe\(\)[\s\S]*?if \(!simLeague\(\)\)/, "simSafe() no longer requires a sandbox league"],
-  [/function simPanel\(\)\s*\{\s*\n\s*if \(!isAppOwner\(\)\) return;/, "simPanel() no longer checks isAppOwner()"],
-  [/function simMountHandle\(\)[\s\S]*?!isAppOwner\(\)/, "the test handle no longer checks isAppOwner()"],
+  // Bounded by [^}] so a check cannot be "found" inside a DIFFERENT function
+  // after the real one is deleted — that would make these assertions useless.
+  [/function simSafe\(\)\s*\{[^}]*?if \(!simLeague\(\)\)/, "simSafe() no longer requires a sandbox league"],
+  [/function simPanel\(\)\s*\{[^}]*?if \(!isAppOwner\(\)\) return;/, "simPanel() no longer checks isAppOwner()"],
+  [/function simMountHandle\(\)\s*\{[^}]*?!isAppOwner\(\)/, "the test handle no longer checks isAppOwner()"],
+  [/async function simEnable\([^)]*\)\s*\{[^}]*?if \(!isAppOwner\(\)\) return/, "simEnable() no longer checks isAppOwner()"],
 ];
 for (const [re, why] of simGuards) {
   if (!re.test(simSrc)) {

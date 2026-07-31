@@ -83,6 +83,53 @@ alter table leagues add column if not exists lineups_open boolean;
 -- stats in its own match_stats rows even when it sits on a real competition,
 -- so fake results never reach the shared competition_stats other leagues read.
 alter table leagues add column if not exists sim boolean not null default false;
+
+/* Who may flag a league as a sandbox.
+
+   The client hides the test-run panel from everyone else, but that is only a
+   UI gate: the anon key can call PostgREST directly, so without a server-side
+   check ANY user could flag ANY league as a sandbox. That is not just "they
+   get a toy" -- flipping the flag on a REAL competition league reroutes its
+   stats reads to that league's own (empty) match_stats, which zeroes every
+   score in it. So this needs enforcing in the database, not the browser.
+
+   A trigger is used rather than an RLS policy because triggers fire regardless
+   of RLS, so this holds today while the policies in rls.sql are still
+   unapplied. Seed it from the SQL editor (service role bypasses RLS):
+
+     insert into app_owners (user_id, note)
+     select id, email from auth.users where email = 'you@example.com';
+*/
+create table if not exists app_owners (
+    user_id uuid primary key,
+    note text,
+    created_at timestamptz default now()
+);
+-- No policies: with RLS on and none defined, anon can neither read this table
+-- nor add itself to it. The guard below is SECURITY DEFINER so it still can.
+alter table app_owners enable row level security;
+
+create or replace function guard_sim_flag() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+    if tg_op = 'INSERT' then
+        if not coalesce(new.sim, false) then return new; end if;
+    else
+        if coalesce(new.sim, false) is not distinct from coalesce(old.sim, false)
+            then return new; end if;
+    end if;
+    if not exists (select 1 from app_owners where user_id = auth.uid()) then
+        raise exception 'leagues.sim is restricted to product owners';
+    end if;
+    return new;
+end $$;
+
+drop trigger if exists leagues_guard_sim_ins on leagues;
+create trigger leagues_guard_sim_ins before insert on leagues
+    for each row execute function guard_sim_flag();
+drop trigger if exists leagues_guard_sim_upd on leagues;
+create trigger leagues_guard_sim_upd before update on leagues
+    for each row execute function guard_sim_flag();
 alter table leagues add column if not exists admin_token text;
 alter table leagues add column if not exists num_managers int default 8;
 alter table leagues add column if not exists pick_duration_seconds int default 60;

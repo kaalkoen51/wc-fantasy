@@ -247,8 +247,15 @@ async function simClear() {
 // Flag this league as a sandbox. Everything else refuses to write until it is.
 async function simEnable(on) {
   if (!S.league) return simToast("Open a league first.");
+  if (!isAppOwner()) return simToast("Not a product-owner account.");
   const { error } = await S.sb.from("leagues").update({ sim: on }).eq("id", S.league.id);
-  if (error) return simToast(/sim/.test(error.message) ? "Run schema.sql first." : error.message);
+  // The database has the final say (guard_sim_flag): this account must be in
+  // app_owners. A missing column instead means schema.sql has not been run.
+  if (error) {
+    if (/restricted to product owners/.test(error.message))
+      return simToast("Your account is not in app_owners — see schema.sql.");
+    return simToast(/'sim' column/.test(error.message) ? "Run schema.sql first." : error.message);
+  }
   S.league.sim = on;
   if (!on) localStorage.removeItem(SIM_KEY());
   simPanelRefresh();
