@@ -79,6 +79,12 @@ alter table leagues add column if not exists trading_open boolean not null defau
 -- trade window. Null = follow trading_open (how it behaved before).
 alter table leagues add column if not exists lineups_open boolean;
 
+-- Close time of the last trade window whose waiver claims have been resolved.
+-- Auto-window leagues have no admin tap to resolve on, so whichever client
+-- notices the window has shut does the work; this column is the lock that lets
+-- exactly one of them win, so a claim can never be awarded twice.
+alter table leagues add column if not exists fa_processed_until timestamptz;
+
 -- Sandbox league: a test run with invented fixtures and results. Keeps its
 -- stats in its own match_stats rows even when it sits on a real competition,
 -- so fake results never reach the shared competition_stats other leagues read.
