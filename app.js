@@ -325,6 +325,7 @@ const STRIPPABLE_COLUMNS = new Set([
   "offered_player_name", "requested_player_name",
   "offered_player_id", "requested_player_id", "planner",
   "owner_id", "user_id", "is_bot", "crest", "color", "bench_order", "lineups_open", "sim",
+  "fa_processed_until",
   "team",
 ]);
 
@@ -596,6 +597,9 @@ async function refetchAll({ initial = false } = {}) {
   ptsCache = null;
   markConnection(true);
   route();
+  // Fresh claims + fixtures + league row: the one moment we can judge whether
+  // an auto-window league owes its managers a waiver run.
+  maybeProcessAutoWaivers().catch(() => {});
   return true;
 }
 
@@ -3805,6 +3809,35 @@ function fixtureWindows(fixtures, nowMs, opts) {
   const lineupOpen = lineupLockAt != null && nowMs < lineupLockAt;
   return { tradeOpen, tradeWindow, lineupOpen, lineupLockAt, upcoming, weeks };
 }
+
+/* The most recently CLOSED trade window — the one whose queued claims are now
+   due. fixtureWindows() only ever reports the window currently OPEN, so once it
+   shuts there is nothing left describing it, which is why waiver claims in an
+   auto-window league were never resolved at all: the only thing that resolved
+   them was the manual open/close toggle, and that returns early in auto mode.
+
+   Same arithmetic as fixtureWindows so the two can't drift. A window whose
+   close would land at or before its open is degenerate (the matchweeks are too
+   close together for the configured hours) and is not a window at all. */
+function lastClosedTradeWindow(fixtures, nowMs, opts) {
+  const H = 3600e3, o = opts || {};
+  const openAfter = (o.tradeOpenAfterH ?? 1) * H;
+  const closeBefore = (o.tradeCloseBeforeH ?? 24) * H;
+  const weeks = matchweeksOf(fixtures);
+  let last = null;
+  for (let i = 0; i + 1 < weeks.length; i++) {
+    const openAt = weeks[i].last + openAfter;
+    const closeAt = weeks[i + 1].first - closeBefore;
+    if (closeAt > openAt && closeAt <= nowMs)
+      last = { from: weeks[i].round, to: weeks[i + 1].round, openAt, closeAt };
+  }
+  return last;
+}
+
+// Are this window's claims still owed a resolution? processedUntil is the close
+// time of the last window already dealt with (epoch ms, or null for none).
+const waiverDue = (win, processedUntil) =>
+  !!win && (processedUntil == null || win.closeAt > processedUntil);
 
 /* ---------- the matchday card: "what do I do right now?" ----------
    The app knows the shape of a fantasy week — results land, the trade window
@@ -8835,6 +8868,66 @@ async function processFaClaims() {
   toast(`Waivers processed: ${awards.length} awarded, ${failed.length} failed.`);
 }
 
+/* Resolve an auto-window league's claims once its trade window shuts.
+
+   Manual leagues resolve on the admin's close-the-window tap. Auto leagues have
+   no such tap — the window closes by clock — so nothing ever called this and
+   claims sat pending for good. There is no server-side scheduler, so whichever
+   client notices first does the work.
+
+   That makes double-processing the danger, and awarding the same player twice
+   is far worse than a batch running late. So the league row is claimed with a
+   compare-and-swap FIRST: exactly one client can move fa_processed_until
+   forward to this window's close, and everyone else matches zero rows and does
+   nothing. The cost is that a client dying mid-run leaves the batch unfinished;
+   the admin's "Process now" button is the recovery path for that. */
+let _waiverRunning = false;
+async function maybeProcessAutoWaivers() {
+  if (_waiverRunning) return false;
+  if (!S.sb || !S.league?.id) return false;
+  if (!autoWindowsEnabled() || !faDeferToClose()) return false;
+  if (!(S.faClaims || []).some((c) => c.status === "pending")) return false;
+  const win = lastClosedTradeWindow(S.fixtures || [], Date.now(), cfgOf().windows || {});
+  const seen = S.league.fa_processed_until ? Date.parse(S.league.fa_processed_until) : null;
+  if (!waiverDue(win, isNaN(seen) ? null : seen)) return false;
+
+  _waiverRunning = true;
+  try {
+    const iso = new Date(win.closeAt).toISOString();
+    let q = S.sb.from("leagues").update({ fa_processed_until: iso }).eq("id", S.league.id);
+    q = seen == null || isNaN(seen)
+      ? q.is("fa_processed_until", null)
+      : q.lt("fa_processed_until", iso);
+    const { data, error } = await q.select("id");
+    if (error) {
+      // Unapplied migration: stay quiet rather than resolving with no lock,
+      // which would let every open client award the same claims.
+      if (/fa_processed_until/.test(error.message || "")) return false;
+      return false;
+    }
+    if (!data || !data.length) return false;   // another client claimed it
+    S.league.fa_processed_until = iso;
+    await processFaClaims();
+    return true;
+  } finally { _waiverRunning = false; }
+}
+
+// Admin escape hatch: resolve whatever is still pending, right now. Also the
+// recovery path if an automatic run was interrupted part-way.
+async function processWaiversNow() {
+  if (!isAdmin()) return;
+  const pending = (S.faClaims || []).filter((c) => c.status === "pending");
+  if (!pending.length) return toast("No claims are waiting.");
+  if (!confirm(`Resolve ${pending.length} waiting claim${pending.length === 1 ? "" : "s"} now?`)) return;
+  const win = lastClosedTradeWindow(S.fixtures || [], Date.now(), cfgOf().windows || {});
+  if (win) {
+    const iso = new Date(win.closeAt).toISOString();
+    await S.sb.from("leagues").update({ fa_processed_until: iso }).eq("id", S.league.id);
+    S.league.fa_processed_until = iso;
+  }
+  await processFaClaims();
+}
+
 /* ---------- trading: manager-to-manager ---------- */
 
 const pickById = (id) => S.picks.find((p) => p.id === id);
@@ -11136,6 +11229,29 @@ function renderAdmin() {
   // team "out", so the whole section is meaningless there.
   $("adm-sec-ko")?.classList.toggle("hidden", !isCupCompetition());
   $("adm-stages-card")?.classList.toggle("hidden", !isCupCompetition());
+
+  /* Waiver claims only need an admin nudge where nothing else can give one:
+     an auto-window league in waiver mode. Manual leagues resolve on the
+     close-the-window tap, so the card would just be a second way to do it. */
+  const wv = $("adm-waivers");
+  if (wv) {
+    const relevant = autoWindowsEnabled() && faDeferToClose();
+    wv.classList.toggle("hidden", !relevant);
+    if (relevant) {
+      const pending = (S.faClaims || []).filter((c) => c.status === "pending").length;
+      const win = lastClosedTradeWindow(S.fixtures || [], Date.now(), cfgOf().windows || {});
+      const seen = S.league?.fa_processed_until ? Date.parse(S.league.fa_processed_until) : null;
+      $("adm-waiver-status").textContent = !pending
+        ? "Nothing waiting."
+        : `${pending} claim${pending === 1 ? "" : "s"} waiting · ${
+            waiverDue(win, isNaN(seen) ? null : seen)
+              ? "the window has shut, so these resolve on the next refresh"
+              : "they resolve when the window shuts"}.`;
+      $("adm-waiver-run").disabled = !pending;
+      $("adm-waiver-run").classList.toggle("opacity-40", !pending);
+      $("adm-waiver-run").onclick = () => processWaiversNow().catch((e) => toast(e.message));
+    }
+  }
 
   /* Trading windows: fixture-driven or admin-driven, switchable mid-season.
      Switching to manual pins the CURRENT automatic answer into trading_open
