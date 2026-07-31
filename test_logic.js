@@ -28,7 +28,7 @@ const lsStub = { getItem: (k) => k === "wcf_session" ? _session : null,
 globalThis.appended = appended;
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid, pitchHtml, pitchFacingHtml, pitchRowsHtml, squadBoardHtml, historyViewHtml, benchInOrder, moveBench, orderedRoster, flipRows, wireLineupControls, markQueueMoved, matchdayCtaAct, matchdayCardHtml, renderLineup, renderHomeTab, openH2HPreview, openH2HFixture, lineupRowHtml, dugoutHtml, renderFixturesTab, h2hRoundFixtures, h2hTotalRounds, h2hFormOf, h2hStandingsHtml, seasonChartHtml, renderScoutList, renderStatsTab, renderPredraftShortlist, preDraftBrowsing, shortlistCoverage, coverageHint, scoringByPositionHtml, openScoringSheet, animateReorder, applyLocalOverrides, queueManagerWrite, wireStars, starHtml, draftFactCards, draftRulesHtml, lobbyRulesHtml, scoringHtml, applyVisibleOrder, makeReorderable, refetchAll, markConnection, enterLeagueWithFeedback, route, showView, dragActive, afterDrag, overrideStillWins, queueManagerWrite, applyLocalOverrides, keepLocalPick, autoPickStale, makePick, autoPick, tickTimer, mergeOptimisticPicks, pickKey, queueFieldWrite, OVERRIDE_TABLES, setPlanner, saveLineup, toggleKeeper, setFinalPick, txWindowStarts, txWhen, txShell, txAvatar, txMgrChip, tradeTxCard, swapTxCard, transactionsLogHtml, renderTrades, builderHtml, faClaimsSectionHtml, waiverOrderHtml, shortlistSectionHtml, plannerSectionHtml, plannerMoveHtml, squadChooserHtml, tradeSectionHtml, setClaimOrder, reorderClaim, tradeForShortlisted, submitTrade, TRADE_TABS, tradeTabBodyHtml, faClaimRowHtml, faClaimRowsHtml, renderClaimList, wireClaimControls, ROW_ATTRS, plannerMoveChoice, plannerSetChoiceOrder, plannerPickPool, renderPlannerPick, setWindowMode, toggleLineups, squadPitchHtml, squadShape, renderDreamTeam, dreamTeam, renderChat, chatThreads, interacting, markInteracting, scheduleDeferredFlush, INTERACT_MS, animateReorder, flipRows, flushDeferredRender, currentSeasonFor, seasonOptions, seasonLabel, backtestSeason, createCompKind, createPreviewSeason, loadScoringPreviewData, pullCreateHistory, renderCreateBalance, updateCreatePullStatus, renderCreateForm, pickReconciliation, reconcilePicksToPool, mapApiPlayer, loadCompetition };"
+  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid, pitchHtml, pitchFacingHtml, pitchRowsHtml, squadBoardHtml, historyViewHtml, benchInOrder, moveBench, orderedRoster, flipRows, wireLineupControls, markQueueMoved, matchdayCtaAct, matchdayCardHtml, renderLineup, renderHomeTab, openH2HPreview, openH2HFixture, lineupRowHtml, dugoutHtml, renderFixturesTab, h2hRoundFixtures, h2hTotalRounds, h2hFormOf, h2hStandingsHtml, seasonChartHtml, renderScoutList, renderStatsTab, renderPredraftShortlist, preDraftBrowsing, shortlistCoverage, coverageHint, scoringByPositionHtml, openScoringSheet, animateReorder, applyLocalOverrides, queueManagerWrite, wireStars, starHtml, draftFactCards, draftRulesHtml, lobbyRulesHtml, scoringHtml, applyVisibleOrder, makeReorderable, refetchAll, markConnection, enterLeagueWithFeedback, route, showView, dragActive, afterDrag, overrideStillWins, queueManagerWrite, applyLocalOverrides, keepLocalPick, autoPickStale, makePick, autoPick, tickTimer, mergeOptimisticPicks, pickKey, queueFieldWrite, OVERRIDE_TABLES, setPlanner, saveLineup, toggleKeeper, setFinalPick, txWindowStarts, txWhen, txShell, txAvatar, txMgrChip, tradeTxCard, swapTxCard, transactionsLogHtml, renderTrades, builderHtml, faClaimsSectionHtml, waiverOrderHtml, shortlistSectionHtml, plannerSectionHtml, plannerMoveHtml, squadChooserHtml, tradeSectionHtml, setClaimOrder, reorderClaim, tradeForShortlisted, submitTrade, TRADE_TABS, tradeTabBodyHtml, faClaimRowHtml, faClaimRowsHtml, renderClaimList, wireClaimControls, ROW_ATTRS, plannerMoveChoice, plannerSetChoiceOrder, plannerPickPool, renderPlannerPick, setWindowMode, toggleLineups, squadPitchHtml, squadShape, renderDreamTeam, dreamTeam, renderChat, chatThreads, interacting, markInteracting, scheduleDeferredFlush, INTERACT_MS, animateReorder, flipRows, flushDeferredRender, currentSeasonFor, seasonOptions, seasonLabel, backtestSeason, createCompKind, createPreviewSeason, loadScoringPreviewData, pullCreateHistory, renderCreateBalance, updateCreatePullStatus, renderCreateForm, pickReconciliation, reconcilePicksToPool, mapApiPlayer, loadCompetition, roundResolvers, roundIndex, mwNo, FINAL_STATUS };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -57,7 +57,8 @@ const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcT
         seasonSeries, headToHead,
         currentRoundNo, currentRoundDreamIds,
         chatThreads, messagesForThread, threadUnread, markThreadSeen,
-        koRoundOf, knockoutBracket, needsSummary, lineupValid } = api;
+        koRoundOf, knockoutBracket, needsSummary, lineupValid,
+        roundResolvers, roundIndex } = api;
 let fails = 0;
 const check = (label, got, want) => {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -2057,6 +2058,70 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
   S.stats = [...S.stats,
     row({ player_id: "fra_5", match_label: "France vs Brazil (2026-06-13)", appeared: true, goals: 0 })];
   check("no no-show means the transferred sub earns nothing", subPts(), 0);
+
+  /* Matchweeks. Counting a club's fixtures only works if every club plays once
+     per round; a domestic league breaks that with blanks and doubles, and the
+     clubs' counts then drift so "round 3" means a different week per club. */
+  const mwFx = (home, away, date, mw, status) => ({
+    home, away, kickoff_utc: date + "T14:00:00Z", date,
+    round: "Regular Season - " + mw, status: status || "FT" });
+  const mwLeague = (fixtures, picks, stats) => {
+    S.snapshots = []; S.stages = []; S.config = null;
+    S.league = { id: "L1", competition: { apiLeagueId: 39, season: 2026, name: "Premier League" } };
+    S.managers = [{ id: "m1", name: "M1", draft_position: 1 }];
+    S.fixtures = fixtures; S.picks = picks; S.stats = stats;
+  };
+  const DEF_ST = { manager_id: "m1", player_id: "liv_1", player_name: "Starter", position: "DEF",
+    team: "Liverpool", slot: "DEF", is_sub: false, pick_number: 1 };
+  const DEF_SUB = { manager_id: "m1", player_id: "che_1", player_name: "Bench", position: "DEF",
+    team: "Chelsea", slot: "SUB_DEF", is_sub: true, pick_number: 9 };
+
+  // Liverpool blank in MW2; Chelsea play and the bench player scores.
+  mwLeague(
+    [mwFx("Liverpool", "Everton", "2026-08-01", 1), mwFx("Arsenal", "Chelsea", "2026-08-01", 1),
+     mwFx("Chelsea", "City", "2026-08-08", 2),
+     mwFx("Liverpool", "Spurs", "2026-08-15", 3)],
+    [DEF_ST, DEF_SUB],
+    [row({ player_id: "liv_1", match_label: "Liverpool vs Everton (2026-08-01)", appeared: true }),
+     row({ player_id: "che_1", match_label: "Chelsea vs City (2026-08-08)", appeared: true, goals: 1 }),
+     row({ player_id: "liv_1", match_label: "Liverpool vs Spurs (2026-08-15)", appeared: true })]);
+  check("a blank gameweek lets the bench come on", computeScores()[0].total, 6);
+  check("points land in the real matchweek, not the club's game count",
+    Object.keys(computeScores()[0].roundPts).filter((k) => computeScores()[0].roundPts[k] > 0), ["2"]);
+
+  // Same shape, but Liverpool's MW2 game merely hasn't kicked off yet.
+  mwLeague(
+    [mwFx("Liverpool", "Everton", "2026-08-01", 1), mwFx("Arsenal", "Chelsea", "2026-08-01", 1),
+     mwFx("Chelsea", "City", "2026-08-08", 2), mwFx("Liverpool", "Wolves", "2026-08-09", 2, "NS")],
+    [DEF_ST, DEF_SUB],
+    [row({ player_id: "liv_1", match_label: "Liverpool vs Everton (2026-08-01)", appeared: true }),
+     row({ player_id: "che_1", match_label: "Chelsea vs City (2026-08-08)", appeared: true, goals: 1 })]);
+  check("a fixture still to be played is not a no-show", computeScores()[0].total, 0);
+
+  // Double gameweek: a starter's club plays twice in MW2, so both games count.
+  mwLeague(
+    [mwFx("Liverpool", "Everton", "2026-08-08", 2), mwFx("Liverpool", "Wolves", "2026-08-11", 2)],
+    [DEF_ST],
+    [row({ player_id: "liv_1", match_label: "Liverpool vs Everton (2026-08-08)", appeared: true, goals: 1 }),
+     row({ player_id: "liv_1", match_label: "Liverpool vs Wolves (2026-08-11)", appeared: true, goals: 1 })]);
+  check("a double gameweek scores both games", computeScores()[0].total, 12);
+  check("both games bucket into the same matchweek", computeScores()[0].roundPts, { 2: 12 });
+
+  // Drift: Arsenal play twice in MW2 while Liverpool blank, so a count-based
+  // round would call Liverpool's MW3 game "round 2" and misalign the two.
+  mwLeague(
+    [mwFx("Arsenal", "Chelsea", "2026-08-01", 1), mwFx("Liverpool", "Everton", "2026-08-01", 1),
+     mwFx("Arsenal", "Spurs", "2026-08-08", 2), mwFx("Arsenal", "City", "2026-08-11", 2),
+     mwFx("Liverpool", "Wolves", "2026-08-15", 3)],
+    [{ ...DEF_ST, player_id: "ars_1", team: "Arsenal" }],
+    [row({ player_id: "ars_1", match_label: "Arsenal vs City (2026-08-11)", appeared: true, goals: 1 })]);
+  check("a club's third fixture can still be matchweek 2", computeScores()[0].roundPts, { 2: 6 });
+
+  // A cup keeps the count-based fallback: no competition => isCupCompetition().
+  S.league = { id: "L1" };
+  check("a cup still counts each club's own fixtures",
+    (() => { const { roundByLabel } = roundResolvers({}, { France: ["France vs Brazil (2026-06-13)"] });
+             return roundByLabel("France vs Brazil (2026-06-13)"); })(), 1);
 
   process.exit(fails ? 1 : 0);
 })();
