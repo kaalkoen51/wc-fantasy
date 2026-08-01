@@ -1327,7 +1327,10 @@ const CREATE_PRESETS = {
   },
   custom: {
     blurb: "Every setting, including the scoring editor — design your own points system and check it's balanced across positions against real past seasons.",
-    apply: () => {},
+    // No team bonus by default: it is a knockout-tournament layer (a national
+    // side banking points as it advances) and means nothing in a league season,
+    // which is what most people building their own will be drafting.
+    apply: () => { S._createTeamOn = false; },
   },
 };
 
@@ -8037,10 +8040,21 @@ function dreamTeam(round, per90, worst) {
     for (const x of out[pos]) used.add(x.p.player_id);
     out.total += out[pos].reduce((s, x) => s + x.pts, 0);
   }
+  /* The fluid places used to go to the best outfielders full stop, ignoring
+     each position's ceiling -- so a strong week for defenders produced a
+     "best XI" of seven of them, eleven players in a shape no manager could
+     ever field. The ceilings are the same ones a real line-up must satisfy. */
   if (flex > 0) {
-    out.FLEX = OUTFIELD.flatMap((pos) => byPos[pos])
-      .filter((x) => !used.has(x.p.player_id))
-      .sort(bySort).slice(0, flex);
+    const { maxs } = lineupShape();
+    const room = { DEF: 0, MID: 0, FWD: 0 };
+    for (const pos of OUTFIELD) room[pos] = Math.max(0, (maxs[pos] ?? Infinity) - out[pos].length);
+    for (const x of OUTFIELD.flatMap((pos) => byPos[pos])
+      .filter((x) => !used.has(x.p.player_id)).sort(bySort)) {
+      if (out.FLEX.length >= flex) break;
+      const pos = x.p.position;
+      if (!room[pos]) continue;                       // that position is already full
+      room[pos]--; out.FLEX.push(x); used.add(x.p.player_id);
+    }
     out.total += out.FLEX.reduce((s, x) => s + x.pts, 0);
   }
   return out;
@@ -12024,7 +12038,12 @@ function wire() {
   };
   // Built-in creds mean the config screen is never auto-shown; let
   // "Reconfigure" open it on demand to override with a different project.
-  $("home-reconfig").onclick = () => { localStorage.removeItem("wcf_config"); showView("config"); };
+  /* The "change Supabase connection" link is gone from Home. The connection is
+     baked into the build (BUILTIN_SUPABASE_*), so for a hosted product there is
+     nothing a user should be pointing anywhere else -- and clearing it stranded
+     them on a setup screen asking for a project URL they do not have. The
+     config VIEW stays, as the fallback when a build genuinely ships without
+     credentials (see the showView("config") in boot). */
   $("home-resume-go").onclick = () => enterLeagueWithFeedback();
   $("home-resume-leave").onclick = leaveLeague;
   $("error-retry").onclick = () => enterLeagueWithFeedback();
