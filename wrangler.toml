@@ -13,5 +13,16 @@
 name = "draftbaron"
 compatibility_date = "2025-06-01"
 
+# One canonical origin: draftbaron.com and nothing else.
+#
+# Sessions and auth are per-origin, so every extra hostname the app answers on
+# is a hostname that has to be allowlisted in Supabase -- and a user who signed
+# in on one and later typed the other would look logged out. Left at their
+# defaults, wrangler would also publish draftbaron.<account>.workers.dev and a
+# fresh preview URL for every deployment, which for a paid product means every
+# version is quietly browsable.
+workers_dev = false
+preview_urls = false
+
 [assets]
 directory = "./public"
