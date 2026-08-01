@@ -3483,6 +3483,67 @@ const DEFAULT_FORMATION = { GK: [1, 1], DEF: [3, 5], MID: [2, 5], FWD: [1, 3], s
 const isFlexFormation = () => cfgOf().formationMode === "flex";
 const formationBounds = () => ({ ...DEFAULT_FORMATION, ...(cfgOf().formation || {}) });
 
+/* Choose a legal starting XI from a squad, changing as little as possible.
+
+   A waiver resolves while nobody is watching, and it can leave an XI that no
+   longer adds up -- a keeper claimed into an outfielder's place, or a position
+   left short. The manager then plays the week with an illegal side through no
+   act of their own. So the close repairs it rather than reporting it.
+
+   Order of business: keep whoever is already starting (they are the manager's
+   stated preference), meet every minimum, then fill the remaining places. Bench
+   order is respected throughout, so the player a manager put first among the
+   substitutes is the first one promoted.
+
+   Pure: takes the squad and the bounds, returns the set of pick ids that should
+   start. Returns null when the squad simply cannot field a legal XI, so the
+   caller can leave it alone rather than write something half-repaired. */
+function repairStarters(picks, mins, maxs, total) {
+  const squad = (picks || []).filter((pk) => pk.position !== "TEAM" && pk.slot !== "TEAM");
+  if (squad.length < total) return null;
+  const GROUPS4 = ["GK", "DEF", "MID", "FWD"];
+  const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+  // Current starters first, then the bench in its own order.
+  squad.forEach((pk, i) => { if (byPos[pk.position]) byPos[pk.position].push({ pk, i }); });
+  for (const g of GROUPS4)
+    byPos[g].sort((a, b) => (a.pk.is_sub ? 1 : 0) - (b.pk.is_sub ? 1 : 0) || a.i - b.i);
+
+  const chosen = new Set(), count = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+  const take = (g, x) => { chosen.add(x.pk.id); count[g]++; };
+
+  // 1 · every minimum, or there is no legal side to build.
+  for (const g of GROUPS4) {
+    const want = mins[g] || 0;
+    for (const x of byPos[g]) { if (count[g] >= want) break; take(g, x); }
+    if (count[g] < want) return null;            // squad cannot cover this position
+  }
+  // 2 · fill the rest, respecting each position's ceiling. Starters before
+  //     substitutes again, so the fewest people are moved.
+  const rest = GROUPS4.flatMap((g) => byPos[g].filter((x) => !chosen.has(x.pk.id)).map((x) => ({ g, ...x })))
+    .sort((a, b) => (a.pk.is_sub ? 1 : 0) - (b.pk.is_sub ? 1 : 0) || a.i - b.i);
+  for (const x of rest) {
+    if (chosen.size >= total) break;
+    if (count[x.g] >= (maxs[x.g] ?? Infinity)) continue;
+    take(x.g, x);
+  }
+  return chosen.size === total ? chosen : null;
+}
+
+// The mins/maxs/total a legal XI must satisfy in this league's mode.
+function lineupShape() {
+  if (isFlexFormation()) {
+    const b = formationBounds();
+    return { mins: { GK: b.GK[0], DEF: b.DEF[0], MID: b.MID[0], FWD: b.FWD[0] },
+             maxs: { GK: b.GK[1], DEF: b.DEF[1], MID: b.MID[1], FWD: b.FWD[1] },
+             total: b.starters };
+  }
+  const q = starterQuota(), fx = lineupFlex();
+  const total = (q.GK || 0) + (q.DEF || 0) + (q.MID || 0) + (q.FWD || 0) + fx;
+  // Fixed mode: the quota IS the shape; flex places may go to any outfielder.
+  return { mins: q, maxs: { GK: q.GK || 0, DEF: (q.DEF || 0) + fx,
+                            MID: (q.MID || 0) + fx, FWD: (q.FWD || 0) + fx }, total };
+}
+
 // Is a per-position starter count { GK,DEF,MID,FWD } a legal formation?
 function formationValid(counts, bounds) {
   const b = bounds || formationBounds();
@@ -8378,6 +8439,29 @@ async function restampSnapshots() {
   return plan.length;
 }
 
+/* Put one manager's XI back inside the rules, writing only what moved. Returns
+   the number of picks changed (0 when it was already legal, or when the squad
+   cannot field a legal side at all -- there is nothing useful to write then). */
+async function repairLineupFor(mgrId) {
+  const picks = managerPicks(mgrId).filter((pk) => pk.slot !== "TEAM");
+  if (!picks.length) return 0;
+  const counts = posCounts(picks.filter((pk) => !pk.is_sub));
+  if (lineupValid(counts)) return 0;                       // already legal
+  const { mins, maxs, total } = lineupShape();
+  const want = repairStarters(picks, mins, maxs, total);
+  if (!want) return 0;                                     // cannot be made legal
+  let moved = 0;
+  for (const pk of picks) {
+    const shouldStart = want.has(pk.id);
+    if (pk.is_sub !== !shouldStart) continue;              // already on the right side
+    pk.is_sub = !shouldStart;
+    pk.slot = shouldStart ? pk.position : "SUB_" + pk.position;
+    await S.sb.from("picks").update({ is_sub: pk.is_sub, slot: pk.slot }).eq("id", pk.id);
+    moved++;
+  }
+  return moved;
+}
+
 async function snapshotRosters() {
   const rows = activeManagers().map((m) => ({
     league_id: S.league.id,
@@ -9136,6 +9220,11 @@ async function processFaClaims() {
       for (const mid of new Set(awards.map((c) => c.manager_id)))
         await snapshotAt(mid, at).catch(() => {});
   }
+  /* A claim can land a keeper in an outfielder's place and leave the XI
+     illegal. The manager was not there to see it, so fix it rather than let
+     them play the week with a side that does not add up. */
+  for (const mid of new Set(awards.map((c) => c.manager_id)))
+    await repairLineupFor(mid).catch(() => {});
   if (awards.length) await S.sb.from("fa_claims").update({ status: "awarded" }).in("id", awards.map((c) => c.id));
   if (failed.length) await S.sb.from("fa_claims").update({ status: "failed" }).in("id", failed);
   for (const m of S.managers)
