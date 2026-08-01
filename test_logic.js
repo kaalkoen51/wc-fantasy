@@ -1096,10 +1096,20 @@ check("history total is 6 banked + 4 current", mh.total, 10);
 check("current view itemises the former player",
   mh.current.former.map((f) => [f.entry.player_id, f.pts]), [["fra_5", 6]]);
 check("current view shows current player credited", mh.current.items[0].pts, 4);
-check("two past rounds, one per lock period",
-  mh.rounds.map((r) => [r.n, r.subtotal]), [[1, 6], [2, 4]]);
-check("round 1 covers the pre-trade matchday", mh.rounds[0].dates, ["2026-06-12"]);
-S.fixtures = []; S.snapshots = []; S.picks = []; S.playerById = {};
+/* History is grouped by MATCHWEEK now, not by lock period. Both clubs here are
+   playing their FIRST game, so the two matchdays are one round of the
+   competition -- and the round has to carry BOTH the player held for the first
+   game and the one held for the second, or its subtotal would not match what
+   was banked. */
+check("both first games are one matchweek",
+  managerHistory("m1").rounds.map((r) => r.n), [1]);
+check("the round banks the whole week, across a mid-week change",
+  managerHistory("m1").rounds[0].subtotal, 10);
+check("both the old and the new player are itemised",
+  managerHistory("m1").rounds[0].items.map((it) => it.entry.player_id).sort(),
+  ["bra_2", "fra_5"]);
+check("the round covers both matchdays",
+  managerHistory("m1").rounds[0].dates, ["2026-06-12", "2026-06-16"]);
 
 /* "played since last lock" highlight + starters-yet-to-play counter */
 S.fixtures = [];
