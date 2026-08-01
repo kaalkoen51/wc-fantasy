@@ -33,6 +33,21 @@
 
 
 -- ---------------------------------------------------------------------------
+-- HOW TO RUN — close the app first
+-- ---------------------------------------------------------------------------
+-- Every `drop policy` needs an AccessExclusiveLock on its table, which
+-- conflicts with ANY other access. The app holds realtime subscriptions and
+-- polls on load, so a single open browser tab is enough to fight this file for
+-- locks and produce "deadlock detected". Close every tab on the site (and wait
+-- for any scheduled pull to finish) before running.
+--
+-- lock_timeout makes that failure fast and legible -- a clear "could not obtain
+-- lock" after 5s instead of two processes grappling until Postgres kills one.
+-- The whole file is idempotent, so just re-run it once the app is closed.
+set lock_timeout = '5s';
+
+
+-- ---------------------------------------------------------------------------
 -- 0 · Rollback (run this alone to get back to the wide-open behaviour)
 -- ---------------------------------------------------------------------------
 -- do $$ declare t text; begin
@@ -86,13 +101,20 @@ grant  execute on function public.is_league_owner(uuid)  to authenticated;
 -- together, so leaving one wide-open policy in place makes every policy below
 -- it decorative: the dashboard would list them, the app would work perfectly,
 -- and every league would still be readable by anyone holding the anon key.
-do $$ declare t text; begin
-  foreach t in array array['leagues','managers','picks','team_stages','trades',
-    'trade_items','lineup_snapshots','match_stats','messages','transactions',
-    'fa_claims','competition_pools','competition_stats']
+-- Clears EVERY policy on these tables rather than the two known names, so a
+-- re-run after a partial failure starts from the same place as a first run.
+-- Without that, `create policy` would fail with "already exists" and you would
+-- have to unpick by hand. app_owners is deliberately absent: it has RLS on and
+-- no policies, which is what keeps the anon key out of the owner list.
+do $$ declare r record; begin
+  for r in
+    select tablename, policyname from pg_policies
+    where schemaname = 'public'
+      and tablename = any (array['leagues','managers','picks','team_stages','trades',
+        'trade_items','lineup_snapshots','match_stats','messages','transactions',
+        'fa_claims','competition_pools','competition_stats'])
   loop
-    execute format('drop policy if exists %I_all on %I', t, t);
-    execute format('drop policy if exists "open access" on %I', t);
+    execute format('drop policy if exists %I on public.%I', r.policyname, r.tablename);
   end loop;
 end $$;
 
