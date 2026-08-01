@@ -11589,29 +11589,72 @@ function renderHome() {
 }
 
 // Toggle the account card between signed-in and signed-out states.
-let _accountSignup = false;
+/* The signed-out panel does three jobs: sign in, sign up, and ask for a reset
+   link. A fourth state -- setting the new password -- is NOT a mode here,
+   because by then Supabase has already signed the user in (that is how it
+   proves they own the mailbox). It is driven by _pwRecovery instead, and takes
+   precedence over the signed-in panel, or the user would land on their account
+   page having never been asked for a new password. */
+let _accountMode = "signin";   // "signin" | "signup" | "reset"
+let _pwRecovery = false;
 function renderAccount() {
-  const inEl = $("account-in"), outEl = $("account-out");
+  const inEl = $("account-in"), outEl = $("account-out"), newEl = $("account-newpw");
   if (!inEl || !outEl) return;
   const u = authUser();
-  inEl.classList.toggle("hidden", !u);
+  const recovering = _pwRecovery && !!u;
+  if (newEl) newEl.classList.toggle("hidden", !recovering);
+  inEl.classList.toggle("hidden", !u || recovering);
   outEl.classList.toggle("hidden", !!u);
+  if (recovering) return;
   if (u) { $("account-email-label").textContent = u.email || "your account"; loadMyLeagues(); return; }
-  const signup = _accountSignup;
-  $("account-mode-title").textContent = signup ? "Create an account" : "Sign in";
-  $("account-toggle").textContent = signup ? "I already have an account" : "Create an account";
-  $("account-submit").textContent = signup ? "Create account" : "Sign in";
+  const reset = _accountMode === "reset", signup = _accountMode === "signup";
+  $("account-mode-title").textContent =
+    reset ? "Reset your password" : signup ? "Create an account" : "Sign in";
+  $("account-toggle").textContent =
+    _accountMode === "signup" ? "I already have an account" : "Create an account";
+  $("account-submit").textContent =
+    reset ? "Email me a reset link" : signup ? "Create account" : "Sign in";
+  // Nothing to type in the password box when all we need is the address, and
+  // nothing about Google or "stay signed in" belongs on a reset screen.
+  $("account-pw").classList.toggle("hidden", reset);
+  $("account-google")?.classList.toggle("hidden", reset);
+  $("account-or")?.classList.toggle("hidden", reset);
+  $("account-toggle")?.classList.toggle("hidden", reset);
+  const blurb = $("account-blurb");
+  if (blurb) blurb.textContent = reset
+    ? "Enter the email address you signed up with and we'll send you a link to set a new password."
+    : "Optional — sign in so your leagues and teams follow you across devices. Stay signed in until you sign out. You can still just join with an invite code.";
   $("account-pw").autocomplete = signup ? "new-password" : "current-password";
+  // Offering "forgot password" while creating an account makes no sense, and
+  // while already on the reset screen it is the way back that matters.
+  const forgot = $("account-forgot");
+  if (forgot) {
+    forgot.classList.toggle("hidden", signup);
+    forgot.textContent = reset ? "Back to sign in" : "Forgot your password?";
+  }
 }
 
 async function submitAccount() {
   const email = $("account-email").value.trim();
   const pw = $("account-pw").value;
   const msg = (t, ok) => { const el = $("account-msg"); el.textContent = t; el.className = "text-xs " + (ok ? "text-emerald-400" : "text-slate-400"); };
+  if (_accountMode === "reset") {
+    if (!email) return msg("Enter your email address.");
+    const btn0 = $("account-submit"); btn0.disabled = true;
+    try {
+      const { error } = await S.sb.auth.resetPasswordForEmail(email, {
+        redirectTo: location.origin + location.pathname,   // must be allowlisted in Supabase
+      });
+      if (error) return msg(error.message);
+      /* Deliberately the same reply whether or not that address has an account:
+         a different one would let anyone check who has signed up here. */
+      return msg("If that address has an account, a reset link is on its way.", true);
+    } finally { btn0.disabled = false; }
+  }
   if (!email || !pw) return msg("Enter your email and password.");
   const btn = $("account-submit"); btn.disabled = true;
   try {
-    if (_accountSignup) {
+    if (_accountMode === "signup") {
       const { data, error } = await S.sb.auth.signUp({ email, password: pw });
       if (error) return msg(error.message);
       // With email confirmation on, there's a user but no session until confirmed.
@@ -11625,6 +11668,31 @@ async function submitAccount() {
     $("account-pw").value = "";
     renderAccount();
   } finally { btn.disabled = false; }
+}
+
+/* Finish a reset: the user is already signed in off the back of the emailed
+   link, so this just sets the password on that session. */
+async function saveNewPassword() {
+  const el = $("account-newpw-input"), out = $("account-newpw-msg");
+  const msg = (t, ok) => { if (out) { out.textContent = t; out.className = "text-xs " + (ok ? "text-emerald-400" : "text-slate-400"); } };
+  const pw = el ? el.value : "";
+  // Checked here as well as server-side, so the reply is instant and specific
+  // rather than a round trip ending in "Password should be at least...".
+  if (pw.length < 6) return msg("Use at least 6 characters.");
+  const btn = $("account-newpw-save"); if (btn) btn.disabled = true;
+  try {
+    const { data, error } = await S.sb.auth.updateUser({ password: pw });
+    if (error) return msg(error.message);
+    if (el) el.value = "";
+    _pwRecovery = false;
+    /* Take the user straight from the reply rather than re-reading the session.
+       A second round trip here can fail transiently, and the cost of that is
+       the user appearing signed OUT the instant after they set a password --
+       which reads as "it didn't work" and sends them round again. */
+    if (data?.user) S.authUser = data.user;
+    msg("Password updated — you're signed in.", true);
+    renderAccount();
+  } finally { if (btn) btn.disabled = false; }
 }
 
 // Google OAuth: redirects to Google and back to this page, where
@@ -11690,7 +11758,15 @@ function wire() {
   };
   $("home-create").onclick = () => { renderCreateForm(); showView("create"); };
   $("home-join").onclick = () => showView("join");
-  $("account-toggle").onclick = () => { _accountSignup = !_accountSignup; $("account-msg").textContent = ""; renderAccount(); };
+  $("account-toggle").onclick = () => {
+    _accountMode = _accountMode === "signup" ? "signin" : "signup";
+    $("account-msg").textContent = ""; renderAccount();
+  };
+  $("account-forgot").onclick = () => {
+    _accountMode = _accountMode === "reset" ? "signin" : "reset";
+    $("account-msg").textContent = ""; renderAccount();
+  };
+  $("account-newpw-save").onclick = () => saveNewPassword();
   $("account-google").onclick = () => signInWithGoogle().catch((e) => toast(e.message));
   $("account-submit").onclick = () => submitAccount().catch((e) => toast(e.message));
   $("account-signout").onclick = () => signOutAccount().catch((e) => toast(e.message));
@@ -11854,8 +11930,13 @@ async function init() {
     },
   });
   await refreshAuthUser();
-  S.sb.auth.onAuthStateChange((_e, session) => {
+  S.sb.auth.onAuthStateChange((event, session) => {
     S.authUser = session?.user || null;
+    /* Arriving from a reset link signs the user in AND fires PASSWORD_RECOVERY.
+       Without catching it they would simply land on their account page, still
+       not knowing their password and with no way to set one. */
+    if (event === "PASSWORD_RECOVERY") _pwRecovery = true;
+    if (event === "SIGNED_OUT") _pwRecovery = false;
     renderAccount();
     if (_shownView === "home") renderHome();
   });
