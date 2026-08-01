@@ -1387,6 +1387,14 @@ function renderCreateForm() {
   syncApi();
   S._createTeamOn = true; S._createH2H = false; S._createWaiver = false; S._createCaptain = false; S._createAutoWin = false;
   S._createOrder = S._createOrder || "random";
+  /* Checkboxes and text inputs keep their own state across re-renders, unlike
+     the S._create* flags reset above. A rumble ticked while exploring one
+     preset therefore survived into whatever league was finally created --
+     silently, since nothing else on the form mentions it again. */
+  if ($("create-h2h-rumble")) $("create-h2h-rumble").checked = false;
+  if ($("create-h2h-rounds")) $("create-h2h-rounds").value = "";
+  if ($("create-rumble-points")) $("create-rumble-points").value = "";
+  S._createRumbleScoring = "pairwise";
   S._createRumbleScoring = "pairwise";
   S._createPreset = S._createPreset || "classic";
   S._createAdvanced = S._createPreset === "custom";
@@ -4246,15 +4254,25 @@ function h2hStandings() {
   const scores = h2hRoundScores();
   const maxRound = Math.max(0, ...Object.values(scores).map((a) => a.length));
   const cfg = h2hConfig();
-  // Rumble rounds are honoured only when configured; the planned round count
-  // defaults to whatever has been played so a legacy H2H league is unchanged.
-  const plan = cfg.rumble ? h2hSchedulePlan(ids.length, cfg.rounds || maxRound, { rumble: true }) : null;
+  /* Rumbles fill the LEFTOVER rounds at the end of a season, so they need to
+     know how long the season is. Falling back to "rounds played so far" made
+     that number 1 in round one -- less than a full round-robin cycle, so every
+     round counted as leftover and the whole league became a rumble from the
+     first week: no wins, no losses, and a log that never moved.
+
+     Without an explicit round count there is no such thing as a leftover
+     round, so the schedule is simply a rolling round-robin. */
+  const plan = (cfg.rumble && cfg.rounds > 0)
+    ? h2hSchedulePlan(ids.length, cfg.rounds, { rumble: true }) : null;
   let fixOpts = {}, placement = null;
   if (plan && plan.valid && plan.rumble) {
     if (cfg.rumble_scoring === "placement") {
       const rounds = [];                                    // the rumble rounds seen so far
       for (let r = plan.rumbleFrom; r <= maxRound; r++) rounds.push(r);
-      placement = { rounds, points: cfg.rumble_points || [] };
+      /* An empty points list awards nobody anything, which reads as a league
+         where nothing counts. Fall back to the 3-2-1 the create form offers. */
+      const pts = (cfg.rumble_points || []).length ? cfg.rumble_points : [3, 2, 1];
+      placement = { rounds, points: pts };
       fixOpts = { placementFrom: plan.rumbleFrom };         // no pairwise fixtures for them
     } else {
       fixOpts = { rumbleFrom: plan.rumbleFrom };            // all-play-all pairwise
