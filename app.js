@@ -6656,7 +6656,7 @@ function renderBannerDetail() {
    instead of three rows of buttons, and a section only shows a secondary
    switcher when it actually has more than one view. */
 const NAV_LABEL = { lb: "Table", fixtures: "Fixtures", rosters: "Squads", bracket: "Bracket",
-  trades: "Trades", chat: "Chat", home: "Team", stats: "Players" };
+  trades: "Trades", chat: "Chat", home: "Team", stats: "Players", test: "Test bench" };
 
 // A knockout bracket is meaningless for a 38-round league season. Legacy
 // leagues (no competition) are World Cup ones, so they keep it.
@@ -6677,6 +6677,11 @@ function navGroups() {
     ],
     players: ["stats"],
     activity: ["trades", "chat"],
+    /* The test bench is a nav destination like any other, but only for a
+       product-owner account. Everything it can actually DO is still gated on
+       the league being a sandbox -- see simSafe() -- so this only decides
+       whether the tab is offered, never whether a write is allowed. */
+    ...(isAppOwner() ? { test: ["test"] } : {}),
   };
 }
 const groupOfTab = (tab) => {
@@ -6731,6 +6736,7 @@ function setBoardTab(tab) {
   $("board-rosters").classList.toggle("hidden", tab !== "rosters");
   $("board-trades").classList.toggle("hidden", tab !== "trades");
   $("board-chat").classList.toggle("hidden", tab !== "chat");
+  $("board-test")?.classList.toggle("hidden", tab !== "test");
   renderBoardNav(tab);
   updateNavDot();
   updateTradeBadge();
@@ -7437,6 +7443,7 @@ function renderBoard() {
       renderHistInto("hist-lb-" + m.id, m.id, `${m.name}'s lineup`);
     renderFixturesTab();
     renderRosters("board-rosters"); renderStatsTab(); renderTrades(); renderChat(); renderBracket();
+    renderTestBench();
     return;
   }
   $("board-lb").innerHTML = chartHtml + toggleHtml + scores.map((s, i) => {
@@ -7494,6 +7501,17 @@ function renderBoard() {
   renderTrades();
   renderChat();
   renderBracket();
+  renderTestBench();
+}
+
+/* The test bench lives in sim.js. app.js must not depend on it existing, so
+   this is the only seam between them: if the file is absent, or the account is
+   not a product owner, nothing happens and no tab was offered in the first
+   place. */
+function renderTestBench() {
+  if (typeof renderTestTab === "function" && isAppOwner()) {
+    try { renderTestTab(); } catch (e) { console.error("test bench:", e); }
+  }
 }
 
 /* ---------- player stats tab ---------- */
