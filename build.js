@@ -76,8 +76,7 @@ const simGuards = [
   // Bounded by [^}] so a check cannot be "found" inside a DIFFERENT function
   // after the real one is deleted — that would make these assertions useless.
   [/function simSafe\(\)\s*\{[^}]*?if \(!simLeague\(\)\)/, "simSafe() no longer requires a sandbox league"],
-  [/function simPanel\(\)\s*\{[^}]*?if \(!isAppOwner\(\)\) return;/, "simPanel() no longer checks isAppOwner()"],
-  [/function simMountHandle\(\)\s*\{[^}]*?!isAppOwner\(\)/, "the test handle no longer checks isAppOwner()"],
+  [/function renderTestTab\(\)\s*\{[^}]*?isAppOwner\(\)/, "the test tab no longer checks isAppOwner()"],
   [/async function simEnable\([^)]*\)\s*\{[^}]*?if \(!isAppOwner\(\)\) return/, "simEnable() no longer checks isAppOwner()"],
 ];
 for (const [re, why] of simGuards) {
