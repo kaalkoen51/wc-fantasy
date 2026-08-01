@@ -5947,7 +5947,7 @@ async function shareRecap() {
   if (r.best) centre(`Best pick: ${r.best.entry.player_name} (${r.best.pts})`,
     790, "600 34px system-ui, sans-serif", "#e2e8f0");
   centre(`${r.benchPts} points left on the bench`, 850, "500 30px system-ui, sans-serif", "#94a3b8");
-  centre("FantasyDraft", Hh - 70, "700 30px system-ui, sans-serif", "#FFC72C");
+  centre("DraftBaron", Hh - 70, "700 30px system-ui, sans-serif", "#FFC72C");
 
   const blob = await new Promise((res) => c.toBlob(res, "image/png"));
   if (!blob) return toast("Could not build the image.");

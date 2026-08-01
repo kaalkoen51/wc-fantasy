@@ -1,7 +1,7 @@
 {
-  "name": "fantasy-draft",
+  "name": "draftbaron",
   "private": true,
-  "description": "Fantasy draft league app. index.html is the app; styles.css is built from it.",
+  "description": "DraftBaron — draft league app for any sport. index.html is the app; styles.css is built from it.",
   "scripts": {
     "build:css": "tailwindcss -i src.css -o styles.css --minify",
     "watch:css": "tailwindcss -i src.css -o styles.css --watch",
