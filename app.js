@@ -772,12 +772,23 @@ const notSub = (pk) => pk.slot ? !String(pk.slot).startsWith("SUB_") : !pk.is_su
 // Slots left for `group` under minimums + a shared outfield flex pool. GK is
 // capped at its minimum; each outfield may take up to its minimum plus flex,
 // but never so many that another position's minimum can't be met.
-function flexLeft(counts, group, mins, flex) {
-  if (group === "GK") return Math.max(0, (mins.GK || 0) - (counts.GK || 0));
+/* How many more of `group` will still fit.
+
+   gkFixed says whether keepers are capped at the minimum. TRUE for a starting
+   XI -- a flex formation fields exactly the keepers it says. FALSE for a SQUAD,
+   because you need a backup: the formation minimum governs how many can START,
+   not how many you may own, and capping the squad at it meant a flex league let
+   you draft exactly one keeper and no cover.
+
+   Either way the OTHER positions' minimums stay reserved, so filling up on
+   keepers can never leave you unable to field a legal XI. */
+function flexLeft(counts, group, mins, flex, gkFixed = true) {
+  if (group === "GK" && gkFixed) return Math.max(0, (mins.GK || 0) - (counts.GK || 0));
   const size = (mins.GK || 0) + (mins.DEF || 0) + (mins.MID || 0) + (mins.FWD || 0) + (flex || 0);
   const cur = (counts.GK || 0) + (counts.DEF || 0) + (counts.MID || 0) + (counts.FWD || 0);
-  let reserved = Math.max(0, (mins.GK || 0) - (counts.GK || 0));
-  for (const p of OUTFIELD) if (p !== group) reserved += Math.max(0, (mins[p] || 0) - (counts[p] || 0));
+  let reserved = 0;
+  for (const p of ["GK", ...OUTFIELD])
+    if (p !== group) reserved += Math.max(0, (mins[p] || 0) - (counts[p] || 0));
   return Math.max(0, size - cur - reserved);
 }
 // A squad/lineup is complete when every slot is filled, the GK count is exact,
@@ -1919,6 +1930,13 @@ function pickInfo(p) {
   return seq[Math.min(p, seq.length) - 1];
 }
 
+// Every unpicked player, whatever their position (TEAM picks excluded -- they
+// are a different kind of thing and are never swapped this way).
+function availableForAnyGroup() {
+  const picked = pickedIdSet();
+  return S.players.filter((pl) => pl.position !== "TEAM" && !picked.has(pl.player_id));
+}
+
 function availableForGroup(group) {
   const picked = pickedIdSet();
   if (group === "TEAM") {
@@ -2278,7 +2296,14 @@ function plannerBadge(pid) {
 function quotaLeft(mgrPicks, group) {
   if (group === "TEAM")
     return (posQuota().TEAM || 0) - mgrPicks.filter((pk) => pk.position === "TEAM").length;
-  return flexLeft(posCounts(mgrPicks), group, posQuota(), leagueFlex());
+  /* Two different "flex" models, and only one of them is wrong about keepers.
+     REDRAFT flex (phase_flex) grants extra fluid slots that are outfield-only
+     by design, and its GK quota is whatever the admin set -- leave it alone.
+     FLEX FORMATION derives the quota from the FORMATION minimums, which
+     describe the starting XI, so capping the squad there meant a league could
+     draft exactly one keeper and no cover. Only that case unfixes GK. */
+  return flexLeft(posCounts(mgrPicks), group, posQuota(), leagueFlex(),
+                  !isFlexFormation());
 }
 
 // First picks in a group fill the starter spots (minimums + flex), the rest
@@ -8439,7 +8464,12 @@ const PITCH_MARKS =
 function dugoutHtml(subs, opts = {}) {
   if (!subs.length) return "";
   return `<div class="dugout">${subs.map((e, i) => {
-    const tap = opts.tapAttr ? `${opts.tapAttr}="${esc(e.player_id)}"` : "";
+    /* Pick id when the caller supplies one, matching pitchRowsHtml. The two
+       disagreed: the pitch wrote e.id and the dugout wrote e.player_id, so the
+       trade handlers -- which all look up S.picks by id -- silently found
+       nothing for a bench player. You could only ever trade a starter. */
+    const tapVal = e.id != null ? e.id : e.player_id;
+    const tap = opts.tapAttr ? `${opts.tapAttr}="${esc(tapVal)}"` : "";
     return `<button type="button" ${tap} class="sub-chip">
       <span class="sub-no">${i + 1}</span>
       <span class="relative inline-flex">
@@ -8775,6 +8805,9 @@ function openSwap(pick) {
       S.teams.map((t) => `<option>${esc(t)}</option>`).join("");
   }
   $("swap-team").value = "";
+  // Default to the pick's own position -- the common case -- but "All" is one
+  // tap away, which is the whole point of it being a filter now.
+  $("swap-pos").value = slotGroup(pick.slot) || "";
   renderSwapList();
   $("swap-sheet").classList.remove("hidden");
 }
@@ -8795,18 +8828,25 @@ function renderSwapList() {
   const pick = S.swapPick;
   if (!pick) return;
   const me = myManager();
+  /* The list used to be hard-locked to the pick's own position, with no way to
+     look at any other -- so a forward could only ever be swapped or traded for
+     another forward. That contradicts the rule the rest of the app follows
+     (see pairValid: any position for any position; the squad quota bites when
+     you next pick an XI). It is now a FILTER, defaulting to the pick's own
+     position because that is the common case, with "All" one tap away. */
   const group = slotGroup(pick.slot);
+  const posF = $("swap-pos").value;
   const teamF = $("swap-team").value;
   const q = $("swap-search").value.trim().toLowerCase();
   const match = (name, team) => (!teamF || team === teamF)
     && (!q || name.toLowerCase().includes(q) || team.toLowerCase().includes(q));
 
-  const free = availableForGroup(group)
+  const free = (posF ? availableForGroup(posF) : availableForAnyGroup())
     .filter((e) => match(e.name, e.team) && !isEliminated(e.team)).slice(0, 60);
-  // Same-position players already on other rosters: tapping one jumps
-  // straight into a trade proposal with their owner.
+  // Players already on other rosters: tapping one jumps straight into a trade
+  // proposal with their owner.
   const owned = S.picks
-    .filter((pk) => pk.position === group && pk.slot !== "TEAM"
+    .filter((pk) => (!posF || pk.position === posF) && pk.slot !== "TEAM"
       && pk.manager_id !== me?.id && match(pk.player_name, pk.team))
     .map((pk) => ({ pk, owner: S.managers.find((m) => m.id === pk.manager_id) }))
     .slice(0, 40);
@@ -8866,8 +8906,15 @@ async function doSwap(pick, entry) {
   if (!tradingOpen()) return toast(autoWindowsEnabled() ? tradeWindowMessage() : "Trading window is closed.");
   if (faMovesLeft(pick.manager_id) <= 0)
     return toast(`No free-agent moves left this window — the cap is ${maxFaPerWindow()}.`);
+  /* The POSITION has to travel with the player. Without it a keeper swapped
+     into a forward's pick stays recorded as a forward -- and scoring reads the
+     pick's position, so they would be scored as one: no clean sheets, wrong
+     value per goal, saves ignored. The slot follows, keeping bench players on
+     the bench. (accept_trade does the same thing server-side for trades.) */
+  const inPos = S.playerById[entry.player_id]?.position || entry.position || pick.position;
   const { error } = await S.sb.from("picks")
-    .update({ player_id: entry.player_id, player_name: entry.name, team: entry.team })
+    .update({ player_id: entry.player_id, player_name: entry.name, team: entry.team,
+              position: inPos, slot: pick.is_sub ? "SUB_" + inPos : inPos })
     .eq("id", pick.id).eq("player_id", pick.player_id);
   if (error) {
     toast(error.code === "23505" ? "That player was just taken — pick another." : error.message);
@@ -9000,9 +9047,15 @@ async function processFaClaims() {
   const { awards, failed, order: newOrder } =
     resolveFaClaims(pending, order, taken, maxFaPerWindow(), holds);
   for (const c of awards) {
-    const team = S.playerById[c.in_player_id]?.team || null;
-    const { error } = await S.sb.from("picks")
-      .update({ player_id: c.in_player_id, player_name: c.in_player_name, team })
+    const inP = S.playerById[c.in_player_id];
+    const team = inP?.team || null;
+    const outPick = S.picks.find((pk) => pk.id === c.pick_id);
+    // Same rule as doSwap: the position travels with the player, or scoring
+    // will value them as whoever used to hold the slot.
+    const pos = inP?.position || outPick?.position || null;
+    const upd = { player_id: c.in_player_id, player_name: c.in_player_name, team };
+    if (pos) { upd.position = pos; upd.slot = outPick?.is_sub ? "SUB_" + pos : pos; }
+    const { error } = await S.sb.from("picks").update(upd)
       .eq("id", c.pick_id).eq("player_id", c.out_player_id);
     if (!error) S.sb.from("transactions").insert({
       league_id: S.league.id, manager_id: c.manager_id, kind: "waiver",
@@ -11916,6 +11969,7 @@ function wire() {
   $("chart-sheet").onclick = (e) => { if (e.target.id === "chart-sheet") closeChartSheet(); };  // tap backdrop
   $("swap-search").oninput = renderSwapList;
   $("swap-team").onchange = renderSwapList;
+  $("swap-pos").onchange = renderSwapList;
   $("lineup-secondary").onclick = () => {
     if (S.lineupEdit) return discardLineupEdit();          // back to viewing
     $("lineup-sheet").classList.add("hidden"); lockScroll(false);
