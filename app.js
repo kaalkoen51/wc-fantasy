@@ -4802,19 +4802,32 @@ function managerHistory(mgrId) {
     return out;
   };
 
+  /* History is grouped by MATCHWEEK, not by snapshot.
+
+     It used to be one entry per snapshot, which worked only because a snapshot
+     was written for everyone at every lineup lock. Line-ups are now stamped
+     when they CHANGE, so a manager who set their XI once had a single snapshot
+     -- and therefore a single round in the pager, however many weeks had been
+     played. Rounds are a property of the competition, not of how often someone
+     edited their team. */
   const earnedByPlayer = {};
-  const periodPts = snaps.map(() => ({}));
-  const periodDates = snaps.map(() => new Set());
+  const periodPts = {}, periodDates = {}, periodRoster = {};
   for (const label of statLabels) {
     const t = matchTimeFor(label), d = labelDate(label);
     if (elimAt && t > elimAt) continue;        // stop crediting after elimination
     const idx = snapIndexAt(t, d);
     const roster = idx >= 0 ? snaps[idx].roster : managerPicks(mgrId);
+    const rnd = roundByLabel(label);
+    // The LAST roster used in the round: a trade mid-week means more than one
+    // was in force, and the one you finished with is the one to show.
+    if (rnd >= 1) periodRoster[rnd] = roster;
     const mp = matchPoints(roster, label);
     for (const pid in mp) {
       earnedByPlayer[pid] = (earnedByPlayer[pid] || 0) + mp[pid];
-      if (idx >= 0) { periodPts[idx][pid] = (periodPts[idx][pid] || 0) + mp[pid];
-                      periodDates[idx].add(d); }
+      if (rnd >= 1) {
+        (periodPts[rnd] ||= {})[pid] = ((periodPts[rnd] || {})[pid] || 0) + mp[pid];
+        (periodDates[rnd] ||= new Set()).add(d);
+      }
     }
   }
 
@@ -4867,15 +4880,29 @@ function managerHistory(mgrId) {
   const computedTotal = items.reduce((s, i) => s + i.pts, 0)
     + former.reduce((s, f) => s + f.pts, 0);
 
-  const rounds = [];
-  snaps.forEach((sn, i) => {
-    if (!periodDates[i].size) return;
-    const roundItems = (sn.roster || []).map((e) => ({
-      entry: e, pts: e.position === "TEAM" ? null : (periodPts[i][e.player_id] || 0),
-    }));
-    rounds.push({ n: rounds.length + 1, dates: [...periodDates[i]].sort(),
-      items: roundItems, subtotal: roundItems.reduce((s, it) => s + (it.pts || 0), 0) });
-  });
+  // One entry per matchweek that has results, oldest first, showing the squad
+  // that was in force for it.
+  const rounds = Object.keys(periodDates).map(Number).sort((a, b) => a - b)
+    .map((rnd) => {
+      const pts = periodPts[rnd] || {};
+      const shown = periodRoster[rnd] || [];
+      const have = new Set(shown.map((e) => e.player_id));
+      const roundItems = shown.map((e) => ({
+        entry: e, pts: e.position === "TEAM" ? null : (pts[e.player_id] || 0),
+      }));
+      /* Anyone who scored this round but is not in the roster we are showing --
+         traded away mid-week, or replaced at a waiver close. Without them the
+         round's subtotal would silently disagree with the points actually
+         banked, which is the sort of gap nobody can explain later. */
+      for (const pid of Object.keys(pts)) {
+        if (have.has(pid) || !pts[pid]) continue;
+        const pl = S.playerById[pid] || { name: pid, position: "", team: "" };
+        roundItems.push({ entry: { player_id: pid, player_name: pl.name,
+          position: pl.position, team: pl.team, slot: "—", is_sub: false }, pts: pts[pid] });
+      }
+      return { n: rnd, dates: [...periodDates[rnd]].sort(), items: roundItems,
+        subtotal: roundItems.reduce((s, it) => s + (it.pts || 0), 0) };
+    });
 
   return {
     eliminated: !!mgr?.eliminated,
@@ -8093,7 +8120,12 @@ function renderStatsTab() {
   const dream = (S.statsView === "dream" || worst) && !scouting;
   if (scouting) S.statsView = "list";
   $("stats-view").classList.toggle("hidden", scouting);
-  $("stats-scope").classList.toggle("hidden", scouting || dream);
+  /* The Dream/Nightmare XI is per-round and per-90 like everything else --
+     dreamTeam() has always taken both -- but the row carrying those controls
+     was hidden for it, so there was no way to look at any round but "all". The
+     team/sort/search row below stays hidden: ordering a best XI by club is
+     meaningless. */
+  $("stats-scope").classList.toggle("hidden", scouting);
   $("stats-filters").classList.toggle("hidden", scouting || dream);
   // Nobody is knocked out of a league season, so the filter is noise there.
   $("stats-hideko").classList.toggle("hidden", !isCupCompetition());
