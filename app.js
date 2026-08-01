@@ -281,11 +281,17 @@ function myManager() {
   return bySession;
 }
 function isAdmin() {
-  // The league creator (owner_id === your account) is always admin; the legacy
-  // admin-token still works for token-based / pre-account leagues.
-  if (S.league?.owner_id && authUid() && S.league.owner_id === authUid()) return true;
+  /* An OWNED league is admin-by-account only. The token must not also work,
+     because finding a league by invite code has to be possible before you are
+     a member -- so leagues.admin_token is readable by any signed-in user. If a
+     matching token still conferred admin, anyone could read another league's
+     token and take it over. Every league the app creates now has an owner, so
+     the token path survives only for pre-account leagues that never had one. */
+  if (!S.league) return false;
+  const uid = authUid();
+  if (S.league.owner_id) return !!uid && S.league.owner_id === uid;
   const s = getSession();
-  return !!(S.league && s?.adminToken && s.adminToken === S.league.admin_token);
+  return !!(s?.adminToken && s.adminToken === S.league.admin_token);
 }
 
 let _shownView = null;
@@ -1483,7 +1489,21 @@ function readCreateConfig() {
   return JSON.stringify(effectiveConfig(cfg)) === JSON.stringify(effectiveConfig({})) ? null : cfg;
 }
 
+/* Every row these paths create is owned by an auth identity, and the RLS
+   policies key off it. Without an account there is no uid, so the write would
+   be refused by the database with a message nobody could act on -- better to
+   say so up front. */
+function requireAccount(what) {
+  if (authUid()) return true;
+  toast(`Create an account or sign in first — ${what} is tied to your account.`);
+  showView("home");
+  const el = $("account-email");
+  if (el) { el.scrollIntoView({ block: "center" }); el.focus(); }
+  return false;
+}
+
 async function createLeague() {
+  if (!requireAccount("a league")) return;
   const name = $("create-name").value.trim();
   const num = parseInt($("create-num").value, 10);
   const dur = parseInt($("create-dur").value, 10);
@@ -1516,7 +1536,7 @@ async function createLeague() {
     };
     if (config) row.config = config;
     if (competition) row.competition = competition;
-    if (authUid()) row.owner_id = authUid();   // creator's account → admin across devices
+    row.owner_id = authUid();   // creator's account → admin, and the RLS owner
     const { data, error } = await insertLeagueRow(row);
     if (error) throw new Error(error.message);
 
@@ -1602,13 +1622,15 @@ function joinSessionBase() {
 }
 
 async function joinLeague() {
+  if (!requireAccount("your manager")) return;
   const name = $("join-name").value.trim();
   if (!name) return toast("Enter your manager name.");
   if (S.joinManagers.some((m) => m.name.toLowerCase() === name.toLowerCase()))
     return toast("That name is taken — pick another or reclaim it below.");
   if (S.joinManagers.length >= S.joinTarget.num_managers) return toast("League is full.");
-  const row = { league_id: S.joinTarget.id, name, join_token: crypto.randomUUID() };
-  if (authUid()) row.user_id = authUid();   // link this manager to your account
+  // Always set: RLS only lets you insert a manager that belongs to you.
+  const row = { league_id: S.joinTarget.id, name, join_token: crypto.randomUUID(),
+                user_id: authUid() };
   const { data, error } = await insertManagerRow(row);
   if (error) return toast("Join failed: " + error.message);
   setSession({ ...joinSessionBase(), managerId: data.id });
@@ -1674,12 +1696,13 @@ function renderLobby() {
 }
 
 async function joinFromLobby() {
+  if (!requireAccount("your manager")) return;
   const name = $("lobby-join-name").value.trim();
   if (!name) return toast("Enter a name.");
   if (S.managers.some((m) => m.name.toLowerCase() === name.toLowerCase()))
     return toast("That name is taken.");
-  const row = { league_id: S.league.id, name, join_token: crypto.randomUUID() };
-  if (authUid()) row.user_id = authUid();
+  const row = { league_id: S.league.id, name, join_token: crypto.randomUUID(),
+                user_id: authUid() };
   const { data, error } = await insertManagerRow(row);
   if (error) return toast(error.message);
   setSession({ ...getSession(), managerId: data.id });
@@ -1708,17 +1731,18 @@ async function addBots(n) {
 // One tap from the home screen: a throwaway league against bots, so you can
 // rehearse a draft (and your shortlist) before the real one.
 async function startPracticeDraft(bots) {
+  if (!requireAccount("a practice league")) return;
   const row = {
     name: "Practice draft", num_managers: bots + 1, pick_duration_seconds: 30,
     invite_code: genInviteCode(), admin_token: crypto.randomUUID(), current_pick: 0,
   };
-  if (authUid()) row.owner_id = authUid();
+  row.owner_id = authUid();
   const { data: league, error } = await insertLeagueRow(row);
   if (error) throw new Error(error.message);
   setSession({ leagueId: league.id, adminToken: league.admin_token, managerId: null });
   S.league = league;
-  const meRow = { league_id: league.id, name: "You", join_token: crypto.randomUUID() };
-  if (authUid()) meRow.user_id = authUid();
+  const meRow = { league_id: league.id, name: "You", join_token: crypto.randomUUID(),
+                  user_id: authUid() };
   const { data: me, error: me2 } = await insertManagerRow(meRow);
   if (me2) throw new Error(me2.message);
   setSession({ ...getSession(), managerId: me.id });
@@ -11623,7 +11647,7 @@ function renderAccount() {
   const blurb = $("account-blurb");
   if (blurb) blurb.textContent = reset
     ? "Enter the email address you signed up with and we'll send you a link to set a new password."
-    : "Optional — sign in so your leagues and teams follow you across devices. Stay signed in until you sign out. You can still just join with an invite code.";
+    : "Sign in to create or join a league. Your teams follow you across devices, and you stay signed in until you sign out.";
   $("account-pw").autocomplete = signup ? "new-password" : "current-password";
   // Offering "forgot password" while creating an account makes no sense, and
   // while already on the reset screen it is the way back that matters.

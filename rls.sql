@@ -16,14 +16,19 @@
 -- Section 0 has a one-statement rollback if anything is wrong.
 --
 -- PREREQUISITE — every user must have an auth identity, because these policies
--- key off auth.uid():
---   • Accounts (email / Google) are already wired up in the app.
---   • For people who join by invite code WITHOUT signing up, enable
---     Authentication → Providers → "Anonymous sign-ins" in the Supabase
---     dashboard and have the app call signInAnonymously() on boot. They then
---     get a durable uid and these policies work for them too.
--- Until one of those covers every user, DO NOT apply this file — unauthenticated
--- visitors would lose all access.
+-- key off auth.uid(). That is now guaranteed: the app requires an account to
+-- create a league, join one, or start a practice draft (requireAccount()), and
+-- every manager and league row it writes carries user_id / owner_id.
+--
+-- WHAT THIS DOES AND DOES NOT BUY YOU. It buys league ISOLATION: someone who is
+-- not in your league cannot read or write a single row of it. It does NOT buy
+-- intra-league integrity -- a member can still write rows belonging to other
+-- members of the SAME league, because the draft, trade and waiver engines all
+-- do exactly that from an ordinary member's session (a pick advances
+-- leagues.current_pick; resolving waivers rewrites other managers' picks and
+-- waiver order). Closing that needs those writes moved behind SECURITY DEFINER
+-- functions that re-check whose turn it is. Isolation first; integrity is a
+-- separate, larger piece of work.
 -- ============================================================================
 
 
@@ -39,7 +44,7 @@
 --     execute format('drop policy if exists %I_read on %I', t, t);
 --     execute format('drop policy if exists %I_insert on %I', t, t);
 --     execute format('drop policy if exists %I_owner_delete on %I', t, t);
---     execute format('create policy %I_all on %I for all using (true) with check (true)', t, t);
+--     execute format('create policy "open access" on %I for all using (true) with check (true)', t);
 --   end loop;
 -- end $$;
 
@@ -73,12 +78,21 @@ grant  execute on function public.is_league_owner(uuid)  to authenticated;
 -- ---------------------------------------------------------------------------
 -- 2 · Drop the open policies
 -- ---------------------------------------------------------------------------
+-- schema.sql names these two ways: most tables get a policy literally called
+-- "open access" (note the space), while competition_pools, competition_stats
+-- and fa_claims get <table>_all. BOTH have to go.
+--
+-- This matters more than it reads. Postgres policies are permissive and OR'd
+-- together, so leaving one wide-open policy in place makes every policy below
+-- it decorative: the dashboard would list them, the app would work perfectly,
+-- and every league would still be readable by anyone holding the anon key.
 do $$ declare t text; begin
   foreach t in array array['leagues','managers','picks','team_stages','trades',
     'trade_items','lineup_snapshots','match_stats','messages','transactions',
     'fa_claims','competition_pools','competition_stats']
   loop
     execute format('drop policy if exists %I_all on %I', t, t);
+    execute format('drop policy if exists "open access" on %I', t);
   end loop;
 end $$;
 
@@ -115,18 +129,27 @@ create policy leagues_owner_delete on leagues
 create policy managers_read on managers
   for select to authenticated using (true);
 
--- Join a league as yourself. user_id must be you (or null for a legacy row the
--- app is about to claim).
+-- Join a league as yourself -- or, as the league's owner, add a bot. Bots
+-- deliberately have no user_id (nobody owns them), so without the second clause
+-- "fill empty slots with bots" would be refused.
 create policy managers_insert on managers
   for insert to authenticated
-  with check (user_id = auth.uid() or user_id is null);
+  with check (
+    user_id = auth.uid()
+    or (coalesce(is_bot, false) and is_league_owner(league_id))
+  );
 
--- Your own manager row, or any row in a league you own (admin edits draft
--- position, waiver order, eliminations, kicks).
+-- Any member of the league, NOT just the owner or the row's own user. This is
+-- wider than it looks like it should be, and it is deliberate: resolving
+-- waivers rewrites every manager's waiver_order, and whichever member's client
+-- notices the window has shut is the one doing it. Restricting this to the
+-- owner would leave waivers unresolved whenever the owner was not the one with
+-- the app open. `user_id is null` is gone -- that clause let anyone edit any
+-- unclaimed row, and the app no longer creates human managers without an owner.
 create policy managers_update on managers
   for update to authenticated
-  using (user_id = auth.uid() or user_id is null or is_league_owner(league_id))
-  with check (user_id = auth.uid() or user_id is null or is_league_owner(league_id));
+  using (is_league_member(league_id))
+  with check (is_league_member(league_id));
 
 create policy managers_owner_delete on managers
   for delete to authenticated using (is_league_owner(league_id));
