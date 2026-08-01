@@ -1,0 +1,17 @@
+# Cloudflare Workers Static Assets.
+#
+# The site is plain static files -- build.js assembles them into public/ -- so
+# this is an ASSETS-ONLY Worker: there is no `main` script, and every request is
+# served straight from the edge. That matters for cost as well as simplicity,
+# because requests that never invoke a Worker script are not Worker invocations.
+#
+# Deliberately NOT setting not_found_handling. The app has no path-based routing
+# (route() never touches the URL), so nothing needs a catch-all. Turning on
+# single-page-application mode would answer a request for a missing
+# fixtures.json with index.html and a 200, which the fetch would then fail to
+# parse -- a silently empty fixture list instead of an honest 404.
+name = "draftbaron"
+compatibility_date = "2025-06-01"
+
+[assets]
+directory = "./public"
