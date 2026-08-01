@@ -2400,5 +2400,28 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
     repairStarters([...legal, { id:"t1", position:"TEAM", slot:"TEAM" }],
       F.mins, F.maxs, F.total).has("t1"), false);
 
+  /* Rumbles fill LEFTOVER rounds at the end of a season. Substituting "rounds
+     played so far" for the season length made round one leftover -- so a whole
+     league became a rumble from the first week, with no wins, no losses and a
+     log that never moved. */
+  S.managers = ["m1","m2","m3","m4","m5"].map((id) => ({ id, name: id }));
+  S.league = { id: "L1", config: { h2hEnabled: true,
+    h2h: { win: 3, draw: 1, loss: 0, rumble: true, rumble_scoring: "placement" } } };
+  // Round 1 played, season length never configured.
+  S.picks = []; S.stats = []; S.snapshots = []; S.fixtures = [];
+  const planNoRounds = h2hSchedulePlan(5, 1, { rumble: true });
+  check("one round of a five-manager cycle IS leftover", planNoRounds.rumble, true);
+  check("...and would rumble from round one", planNoRounds.rumbleFrom, 1);
+  // Which is why an unset round count must not reach the planner at all.
+  check("a full cycle leaves nothing over", h2hSchedulePlan(5, 5, { rumble: true }).rumble, false);
+  check("only the genuine remainder rumbles",
+    h2hSchedulePlan(5, 7, { rumble: true }).rumbleFrom, 6);
+
+  // Placement with no points configured used to award nobody anything.
+  check("empty placement points award nothing",
+    Object.values(rumblePlacement({ a: 10, b: 5 }, [])), [0, 0]);
+  check("the 3-2-1 fallback actually separates them",
+    rumblePlacement({ a: 10, b: 5, c: 1 }, [3, 2, 1]).a, 3);
+
   process.exit(fails ? 1 : 0);
 })();
