@@ -2521,7 +2521,24 @@ function botChoice(manager) {
     scored.sort((a, b) => b.v - a.v);
     return scored[Math.floor(Math.random() * Math.min(5, scored.length))].e;   // top-5 jitter
   }
-  return cands[Math.floor(Math.random() * Math.min(12, cands.length))];
+  /* No stats to rank by (the usual case in a fresh draft). Pick a POSITION
+     first, then a player in it.
+
+     Taking the first 12 of the flat list looked random and was not: the pool is
+     built group by group, so those 12 were all the same position. Bots drafted
+     nothing but defenders and could never field a legal XI. Groups still needing
+     players are weighted by how many they need, so a squad fills out sensibly
+     rather than uniformly. */
+  const byGroup = {};
+  for (const e of cands) (byGroup[e.position] ||= []).push(e);
+  const groups = Object.keys(byGroup);
+  if (!groups.length) return null;
+  const need = (g) => Math.max(1, quotaLeft(managerPicks(manager.id), g));
+  let roll = Math.random() * groups.reduce((a, g) => a + need(g), 0);
+  let group = groups[groups.length - 1];
+  for (const g of groups) { roll -= need(g); if (roll <= 0) { group = g; break; } }
+  const list = byGroup[group];
+  return list[Math.floor(Math.random() * list.length)];
 }
 
 // A short, varied "thinking" pause so a bot draft feels like a draft rather
@@ -7735,16 +7752,24 @@ function formDots(pid, pos) {
 // managerId the status is relative to that manager (Starter/Sub/not in
 // team); without it (global Stats view) it shows who fielded them and how.
 function matchLogHtml(pid, position, team, managerId) {
-  const labels = teamMatchLabels(team);
-  if (!labels.length)
-    return '<p class="text-xs text-slate-400">No matches played yet — this fills in as games are pulled.</p>';
   const rowByLabel = {};
   for (const r of statRowsFor(pid)) rowByLabel[r.match_label] = r;
+  /* The player's OWN games, plus their current club's -- not the club's alone.
+     Listing only the current club meant a transferred player lost their whole
+     history the moment they moved: their old games vanished and the new club's
+     earlier fixtures appeared against their name marked "did not play". */
+  const labels = [...new Set([...Object.keys(rowByLabel), ...teamMatchLabels(team)])]
+    .sort((a, b) => String(labelDate(b)).localeCompare(String(labelDate(a))));
+  if (!labels.length)
+    return '<p class="text-xs text-slate-400">No matches played yet — this fills in as games are pulled.</p>';
   return `<div class="space-y-1">${labels.map((label) => {
     const r = rowByLabel[label];
     const [home, away] = labelTeams(label);
-    const opp = home === team ? away : home;
-    const homeAt = home === team;
+    // Which club they turned out for THAT day: the stat row knows (match_stats
+    // carries it), and only falls back to the current club when it does not.
+    const mine = (r && r.team) || team;
+    const opp = home === mine ? away : home;
+    const homeAt = home === mine;
     const [hs, as] = matchScore(label);
     const played = !!(r && r.appeared);
     const mins = played ? (r.minutes != null ? `${r.minutes}'` : "played") : "did not play";
@@ -7879,7 +7904,11 @@ function openPlayerDetail(pid, managerId, perspectiveLabel) {
    came on for five minutes and touched the ball twice. */
 function dreamTeam(round, per90, worst) {
   const quota = starterQuota();
-  const flex = leagueFlex();
+  /* lineupFlex, not leagueFlex. leagueFlex is everything in a SQUAD beyond the
+     formation minimums -- in a flex league that is squadSize minus the mins,
+     so the "best XI" came out as a full 15-man roster. The XI's fluid places
+     are what belong here. */
+  const flex = lineupFlex();
   const bySort = worst
     ? (a, b) => a.val - b.val || a.pts - b.pts || a.p.name.localeCompare(b.p.name)
     : (a, b) => b.val - a.val || b.pts - a.pts || a.p.name.localeCompare(b.p.name);
