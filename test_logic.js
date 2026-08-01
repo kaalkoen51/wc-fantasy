@@ -2423,5 +2423,36 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
   check("the 3-2-1 fallback actually separates them",
     rumblePlacement({ a: 10, b: 5, c: 1 }, [3, 2, 1]).a, 3);
 
+  /* A Dream XI has to be a formation someone could actually field. Counting to
+     eleven is not enough: the fluid places used to go to the best outfielders
+     regardless of position, so a big week for defenders produced seven of them. */
+  S.league = { id: "L1", config: { formationMode: "flex", squadSize: 15,
+    formation: { GK: [1, 1], DEF: [3, 5], MID: [2, 5], FWD: [1, 3], starters: 11 } } };
+  S.managers = []; S.picks = []; S.snapshots = []; S.fixtures = [];
+  // Twelve defenders scoring heavily, and just enough of everyone else.
+  const dpl = (id, pos) => ({ player_id: id, name: id, position: pos, team: "A" });
+  S.players = [dpl("gk1", "GK"), dpl("gk2", "GK"),
+    ...Array.from({ length: 12 }, (_, i) => dpl("d" + i, "DEF")),
+    ...Array.from({ length: 6 }, (_, i) => dpl("m" + i, "MID")),
+    ...Array.from({ length: 4 }, (_, i) => dpl("f" + i, "FWD"))];
+  S.playerById = Object.fromEntries(S.players.map((p) => [p.player_id, p]));
+  S.stats = S.players.map((p, i) => row({ player_id: p.player_id,
+    match_label: "A vs B (2026-08-01)", appeared: true,
+    goals: p.position === "DEF" ? 3 : 0, minutes: 90 }));
+  const xi = dreamTeam(0, false, false);
+  const xiCnt = { GK: xi.GK.length, DEF: xi.DEF.length, MID: xi.MID.length, FWD: xi.FWD.length };
+  for (const x of xi.FLEX) xiCnt[x.p.position]++;
+  check("the Dream XI is eleven players",
+    xiCnt.GK + xiCnt.DEF + xiCnt.MID + xiCnt.FWD, 11);
+  check("it never exceeds a position's ceiling, however well they scored",
+    xiCnt.DEF <= 5 && xiCnt.MID <= 5 && xiCnt.FWD <= 3 && xiCnt.GK <= 1, true);
+  check("it is a formation that would actually pass validation",
+    formationValid(xiCnt, { GK: [1, 1], DEF: [3, 5], MID: [2, 5], FWD: [1, 3], starters: 11 }), true);
+  const worst = dreamTeam(0, false, true);
+  const wc = { GK: worst.GK.length, DEF: worst.DEF.length, MID: worst.MID.length, FWD: worst.FWD.length };
+  for (const x of worst.FLEX) wc[x.p.position]++;
+  check("the Nightmare XI is legal too",
+    formationValid(wc, { GK: [1, 1], DEF: [3, 5], MID: [2, 5], FWD: [1, 3], starters: 11 }), true);
+
   process.exit(fails ? 1 : 0);
 })();
