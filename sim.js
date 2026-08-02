@@ -153,7 +153,7 @@ const simStage = () => {
 
 // Plausible-but-random match stats, weighted by position so forwards score and
 // keepers make saves — enough for scoring, recaps and the H2H log to look real.
-function simPlayerRow(p, team, label, clean, homeScore, awayScore) {
+function simPlayerRow(p, team, label, clean, homeScore, awayScore, round) {
   const r = (n) => Math.floor(Math.random() * n);
   const pos = p.position;
   const minutes = Math.random() < 0.15 ? r(60) : 90;
@@ -165,6 +165,7 @@ function simPlayerRow(p, team, label, clean, homeScore, awayScore) {
   const def = pos === "DEF" ? 2 + r(6) : pos === "MID" ? 1 + r(4) : r(2);
   const yellow = Math.random() < 0.12 ? 1 : 0;
   return simStatRow(p, team, label, {
+    round,
     minutes, goals, assists, saves, defensive_actions: def, yellow_cards: yellow,
     red_cards: Math.random() < 0.02 ? 1 : 0,
     clean_sheet: clean && minutes >= 60 && pos !== "FWD",
@@ -179,6 +180,8 @@ function simStatRow(p, team, label, v) {
   const n = (x) => Number(x) || 0;
   const row = {
     league_id: S.league.id, player_id: p.player_id, match_label: label, team,
+    // Same stamp the real pullers write: the matchweek this row belongs to.
+    round: Number(v.round) || null,
     appeared: true,
     goals: n(v.goals), assists: n(v.assists),
     clean_sheet: !!v.clean_sheet,
@@ -231,7 +234,8 @@ async function simPlayWeek() {
       // Whoever the pool currently says is at this club — so a simulated
       // transfer shows up in the next week's results, as it would for real.
       const squad = S.players.filter((p) => p.team === team).slice(0, 14);
-      for (const p of squad) rows.push(simPlayerRow(p, team, label, clean, hs, as));
+      for (const p of squad)
+        rows.push(simPlayerRow(p, team, label, clean, hs, as, Number(mwNo(f.round))));
     }
   }
   if (!rows.length) return simToast("Nothing to play.");
@@ -351,7 +355,8 @@ async function simSetStat(pid, label, values) {
   if (!fx) return simToast("Pick a fixture that exists.");
   const team = [fx.home, fx.away].includes(p.team) ? p.team : fx.home;
   const row = simStatRow(p, team, label, {
-    ...values, home_score: fx.home_score, away_score: fx.away_score,
+    ...values, round: Number(mwNo(fx.round)) || null,
+    home_score: fx.home_score, away_score: fx.away_score,
   });
   await resilientWrite("match_stats", [row],
     { upsert: true, onConflict: "league_id,player_id,match_label" });

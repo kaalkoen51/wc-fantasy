@@ -279,6 +279,12 @@ def extract_player_rows(
     home = fixture["teams"]["home"]
     away = fixture["teams"]["away"]
     goals = fixture.get("goals", {})
+    # The matchweek number, stamped while the fixture is in hand. Rounds used
+    # to be re-derived later from the fixture list, which moves when games are
+    # rescheduled. Cup rounds ("Round of 16") have no number -> None.
+    # Digits must follow the dash: "Round of 16" is a tie, not matchweek 16.
+    round_match = re.search(r"-\s*(\d+)\s*$", str(fixture.get("league", {}).get("round") or ""))
+    round_no = int(round_match.group(1)) if round_match else None
     namefn = (lambda n: n) if use_api_ids else fix_team_name
     match_label = (
         f"{namefn(home['name'])} vs {namefn(away['name'])} "
@@ -328,6 +334,7 @@ def extract_player_rows(
 
             rows.append(
                 {
+                    "round": round_no,
                     "player_id": resolved_id,
                     "player_name": resolved_name,
                     "api_player_id": str(player.get("id")),
@@ -441,6 +448,7 @@ def _stat_columns(row: dict) -> dict:
         # The club they turned out for in this match, so a later transfer
         # cannot strand the row (the app resolves rounds per club).
         "team": row.get("team"),
+        "round": row.get("round"),
         "appeared": True,
         "goals": row["goals"],
         "assists": row["assists"],
@@ -483,7 +491,7 @@ def build_competition_payload(rows: list, competition_key: str) -> list:
 # whole write with PGRST204; we drop the offending column and retry so an
 # unapplied migration degrades gracefully (these are display-only — they
 # never affect scoring) instead of silently killing every pull.
-OPTIONAL_COLUMNS = ("home_score", "away_score", "defensive_actions", "minutes", "raw", "team")
+OPTIONAL_COLUMNS = ("home_score", "away_score", "defensive_actions", "minutes", "raw", "team", "round")
 
 MISSING_COLUMN_RE = re.compile(r"Could not find the '(\w+)' column")
 

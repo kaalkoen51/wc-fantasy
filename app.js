@@ -127,7 +127,11 @@ function lineupOpen() {
 }
 // Human-readable "when do lineups lock / when does trading reopen" strings for
 // auto-window mode. mwNo() pulls the matchweek number out of the round label.
-const mwNo = (round) => { const m = String(round || "").match(/(\d+)\s*$/); return m ? m[1] : null; };
+/* The matchweek number out of an API round label. The digits must follow the
+   dash separator ("Regular Season - 21", "Group Stage - 1"): a bare trailing
+   number is NOT a week -- "Round of 16" is a knockout tie, and stamping it as
+   matchweek 16 would scatter cup scoring. Caught by test before shipping. */
+const mwNo = (round) => { const m = String(round || "").match(/-\s*(\d+)\s*$/); return m ? m[1] : null; };
 const fmtWhen = (ms) => ms == null ? "" : new Date(ms).toLocaleString([], {
   weekday: "short", hour: "2-digit", minute: "2-digit", month: "short", day: "numeric" });
 function lineupLockMessage() {
@@ -331,7 +335,7 @@ const STRIPPABLE_COLUMNS = new Set([
   "offered_player_name", "requested_player_name",
   "offered_player_id", "requested_player_id", "planner",
   "owner_id", "user_id", "is_bot", "crest", "color", "bench_order", "lineups_open", "sim",
-  "window_key",
+  "window_key", "round",
   "fa_processed_until",
   "team",
 ]);
@@ -4519,9 +4523,14 @@ function teamMatchLabels(team) {
 let _statsDerived = null, _statsDerivedFor = null;
 function statsDerived() {
   if (_statsDerivedFor === S.stats) return _statsDerived;
-  const byPlayer = {}, playedByDate = {}, teamLabels = {};
+  const byPlayer = {}, playedByDate = {}, teamLabels = {}, recRound = {};
   for (const r of S.stats || []) {
     (byPlayer[r.player_id] ||= []).push(r);
+    // The round RECORDED on the row when it was written (Phase 0 of
+    // ROUNDS_DESIGN.md). Authoritative wherever present: it says what week the
+    // match belonged to at the time, which no later reschedule can change.
+    const rr = Number(r.round);
+    if (rr >= 1 && !recRound[r.match_label]) recRound[r.match_label] = rr;
     const d = labelDate(r.match_label);
     if (d) for (const t of labelTeams(r.match_label)) {
       (playedByDate[d] ||= new Set()).add(t);
@@ -4538,7 +4547,7 @@ function statsDerived() {
       String(labelDate(a)).localeCompare(String(labelDate(b))));
   }
   _statsDerivedFor = S.stats;
-  _statsDerived = { byPlayer, playedByDate, teamMatches };
+  _statsDerived = { byPlayer, playedByDate, teamMatches, recRound };
   return _statsDerived;
 }
 
@@ -4584,6 +4593,7 @@ function roundIndex() {
    team moves the player to a club whose fixture list never contained their
    earlier matches, so lookups fall back to the player's own stat rows. And
    BLANK/DOUBLE gameweeks: see roundIndex() above. */
+const _recRoundMemo = new WeakMap();
 function roundResolvers(statsByPlayer, teamMatches) {
   const ri = roundIndex();
   // Matchweek numbering only where it is meaningful and actually present.
@@ -4591,8 +4601,31 @@ function roundResolvers(statsByPlayer, teamMatches) {
   const roundOf = (team, label) => (teamMatches[team] || []).indexOf(label);
   const appearedIn = (pid, label) =>
     (statsByPlayer[pid] || []).some((r) => r.appeared && r.match_label === label);
+  /* The round RECORDED on the rows themselves, stamped by whichever puller
+     wrote them (ROUNDS_DESIGN.md, Phase 0). Built from statsByPlayer rather
+     than read from statsDerived() so this stays a pure function of its inputs;
+     memoized because statsDerived's output is identity-stable per S.stats. */
+  let recRound = _recRoundMemo.get(statsByPlayer);
+  if (!recRound) {
+    recRound = {};
+    for (const pid in statsByPlayer)
+      for (const r of statsByPlayer[pid]) {
+        const rr = Number(r.round);
+        if (rr >= 1 && !recRound[r.match_label]) recRound[r.match_label] = rr;
+      }
+    _recRoundMemo.set(statsByPlayer, recRound);
+  }
+  /* Preference order, everywhere a round is resolved:
+       1. recorded on the row  — what the week WAS when the match was played;
+                                 no later reschedule or transfer can move it
+       2. the fixture list     — for matches with no stats yet (league mode)
+       3. counting club games  — cups and legacy data
+     The fallbacks are load-bearing for old rows and the World Cup pool; they
+     are scheduled for review in Phase 2, not deletion here. */
   const roundByLabel = (label) =>
-    (useMW && ri.byLabel[label]) || roundOf(labelTeams(label)[0], label) + 1;
+    recRound[label]
+    || (useMW && ri.byLabel[label])
+    || roundOf(labelTeams(label)[0], label) + 1;
   const playerRoundLabel = (pid, rnd) => {
     for (const r of (statsByPlayer[pid] || []))
       if (r.appeared && roundByLabel(r.match_label) === rnd) return r.match_label;
@@ -4658,6 +4691,7 @@ function roundResolvers(statsByPlayer, teamMatches) {
   // The 1-based round a pick's match belongs to, falling back to the label's
   // own round when the pick has since moved club.
   const entryRound = (entry, label) => {
+    if (recRound[label]) return recRound[label];   // recorded wins in any mode
     if (useMW) return roundByLabel(label);
     const r = roundOf(entry.team, label);
     return r >= 0 ? r + 1 : roundByLabel(label);
@@ -11088,6 +11122,10 @@ function buildFixtureStatRows(f, teamBlocks, keyField, fixName, pidOf, skipped) 
         // The club they played for in THIS match, so a later transfer can't
         // strand the row (rounds are resolved per club).
         team,
+        /* The matchweek this row belongs to, stamped now while the API fixture
+           is in hand. Cups get null -- their round labels are names, not
+           numbers -- and readers fall back to inference (ROUNDS_DESIGN.md). */
+        round: Number(mwNo(f.league?.round)) || null,
         goals: +g.total || 0, assists: +g.assists || 0,
         clean_sheet: minutes >= 60 && !(conceded[tb.team.id] || 0),
         yellow_cards: +cards.yellow || 0, red_cards: +cards.red || 0,

@@ -377,6 +377,7 @@ S.league = {};
     teams: { home: { id: 10, name: "Home" }, away: { id: 20, name: "Away" } },
     goals: { home: 2, away: 0 },
     fixture: { id: 1, date: "2026-03-01T15:00:00+00:00", status: { short: "FT" } },
+    league: { round: "Regular Season - 27" },
   };
   const teamBlocks = [
     { team: { id: 10, name: "Home" }, players: [
@@ -397,6 +398,12 @@ S.league = {};
   check("buildFixtureStatRows: MOTM = top rating ≥7.5", rows[0].motm, true);
   check("buildFixtureStatRows: rows scoped by competition key", rows[0].competition_key, "39-2024");
   check("buildFixtureStatRows: maxMin + clean-sheet diagnostics", [maxMin, cs], [90, 2]);
+  // Phase 0 (ROUNDS_DESIGN.md): the writer stamps the matchweek it knows NOW.
+  check("buildFixtureStatRows: the matchweek is stamped on every row",
+    rows.map((r) => r.round), [27, 27]);
+  const cupF = { ...f, league: { round: "Round of 16" } };
+  check("buildFixtureStatRows: a cup round name stamps null, not a number",
+    buildFixtureStatRows(cupF, teamBlocks, {}, (n) => n, pidOf, []).rows[0].round, null);
 }
 
 /* The matchday card: which stage of the week is it, and what's the one thing
@@ -2493,6 +2500,65 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
   S.transactions = [{ manager_id: "m1", kind: "swap",
     created_at: new Date(NOWM - 9 * CAPD).toISOString() }];
   check("a legacy row outside the window is ignored", faMovesThisWindow("m1"), 0);
+
+  /* Phase 0 of ROUNDS_DESIGN.md: a round recorded on the row when it was
+     written beats every later inference. The point is that nothing that moves
+     afterwards -- fixtures rescheduled, a player transferred, a club's game
+     count drifting -- can relocate a match that already happened. */
+  const p0fx = (home, away, date, mw, status) => ({
+    home, away, kickoff_utc: date + "T14:00:00Z", date,
+    round: "Regular Season - " + mw, status: status || "FT" });
+  S.league = { id: "L1", competition: { apiLeagueId: 39, season: 2026, name: "Premier League" } };
+  S.managers = [{ id: "m1", name: "M1", draft_position: 1 }];
+  S.snapshots = []; S.config = null; S.stages = [];
+  S.picks = [{ id: "pk1", manager_id: "m1", player_id: "liv_1", player_name: "Starter",
+    position: "FWD", team: "Liverpool", slot: "FWD", is_sub: false, pick_number: 1 }];
+
+  // The row RECORDS round 2. The fixture list then gets rebuilt so the same
+  // label would derive as round 3. The recorded value must win.
+  S.fixtures = [p0fx("Liverpool", "Everton", "2026-08-01", 1),
+                p0fx("Arsenal", "Spurs", "2026-08-05", 2),
+                p0fx("Liverpool", "Wolves", "2026-08-08", 3)];
+  S.stats = [row({ player_id: "liv_1", match_label: "Liverpool vs Wolves (2026-08-08)",
+                   appeared: true, goals: 1, team: "Liverpool", round: 2 })];
+  check("a recorded round beats a rescheduled fixture list",
+    computeScores()[0].roundPts, { 2: 4 });
+  check("manager history agrees with it",
+    managerHistory("m1").rounds.map((r) => r.n), [2]);
+
+  // No fixture list at all: the recorded round still buckets correctly, where
+  // the count-based fallback would have said round 1.
+  S.fixtures = [];
+  S.stats = [row({ player_id: "liv_1", match_label: "Liverpool vs Wolves (2026-08-08)",
+                   appeared: true, goals: 1, team: "Liverpool", round: 5 })];
+  check("a recorded round needs no fixture list", computeScores()[0].roundPts, { 5: 4 });
+
+  // A transferred SUB with recorded rounds: no inference required at all.
+  S.picks = [
+    { id: "pk1", manager_id: "m1", player_id: "fra_5", player_name: "Starter", position: "DEF",
+      team: "France", slot: "DEF", is_sub: false, pick_number: 1 },
+    { id: "pk2", manager_id: "m1", player_id: "arg_3", player_name: "Sub", position: "DEF",
+      team: "Uruguay", slot: "SUB_DEF", is_sub: true, pick_number: 2 }];
+  S.fixtures = [p0fx("France", "Brazil", "2026-08-01", 1), p0fx("Argentina", "Chile", "2026-08-02", 1)];
+  S.stats = [
+    row({ player_id: "fra_9", match_label: "France vs Brazil (2026-08-01)", appeared: true, team: "France", round: 1 }),
+    row({ player_id: "arg_3", match_label: "Argentina vs Chile (2026-08-02)", appeared: true, goals: 1, team: "Argentina", round: 1 })];
+  check("a transferred sub with recorded rounds still covers",
+    computeScores()[0].items.find((i) => i.pick.is_sub)?.pts, 6);
+
+  // Legacy rows (no round) must go on using inference -- proven by the whole
+  // suite above this line, but pinned here explicitly for the cup path.
+  S.league = { id: "L1" };   // no competition => cup => count-based
+  const rr = roundResolvers(
+    { p1: [{ match_label: "France vs Brazil (2026-06-13)", appeared: true }] },
+    { France: ["France vs Brazil (2026-06-13)"] });
+  check("a legacy row without a round still counts club games",
+    rr.roundByLabel("France vs Brazil (2026-06-13)"), 1);
+  const rr2 = roundResolvers(
+    { p1: [{ match_label: "France vs Brazil (2026-06-13)", appeared: true, round: 4 }] },
+    { France: ["France vs Brazil (2026-06-13)"] });
+  check("a recorded round wins even on the cup path",
+    rr2.roundByLabel("France vs Brazil (2026-06-13)"), 4);
 
   process.exit(fails ? 1 : 0);
 })();
