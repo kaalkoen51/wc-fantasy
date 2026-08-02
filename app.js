@@ -2876,7 +2876,12 @@ function flashPick(pk) {
 function announceNewPicks() {
   _pickJustLanded = false;
   const last = S.picks.reduce((a, b) => (a && a.pick_number > b.pick_number ? a : b), null);
-  if (!last) return;
+  /* An empty board still seeds the marker. Returning without seeding it left
+     the marker null until the first pick LANDED, and the backlog guard below
+     then read that pick as the backlog and swallowed it — so the one pick that
+     never announced was the draft's opening one, which is exactly the moment
+     someone is watching for it. */
+  if (!last) { if (_lastPickSeen === null) _lastPickSeen = 0; return; }
   if (_lastPickSeen === null) { _lastPickSeen = last.pick_number; return; }
   if (last.pick_number <= _lastPickSeen) return;
   _lastPickSeen = last.pick_number;

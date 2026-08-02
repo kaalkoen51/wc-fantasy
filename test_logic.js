@@ -1357,22 +1357,32 @@ check("auto-pick preview falls back to the pool when the shortlist is empty",
     player_id: "px", player_name: "New Guy", position: "FWD", slot: "FWD", team: "Spurs" });
 
   appended.length = 0;
+
+  /* A draft OPENING, which is where this is actually watched from. The marker
+     has to be seeded on this render, with no picks on the board yet — seeding
+     it on the first render that HAS a pick instead means that pick is taken for
+     the backlog, and the draft's opening pick is the one pick that never
+     announces. */
+  S.picks = [];
+  announceNewPicks();
+  check("flash: nothing to announce before the draft starts", appended.length, 0);
+
   S.picks = [pick(1, "mA")];
-  announceNewPicks();                       // first render just seeds the marker
-  check("flash: silent on the first render", appended.length, 0);
+  announceNewPicks();
+  check("flash: the draft's opening pick announces", appended.length, 1);
 
   S.picks = [pick(1, "mA"), pick(2, "mB")];
   announceNewPicks();
-  check("flash: fires for a new pick", appended.length, 1);
+  check("flash: fires for a new pick", appended.length, 2);
   check("flash: names the drafter and the player",
-    /Bo picked/.test(appended[0].innerHTML) && /New Guy/.test(appended[0].innerHTML), true);
+    /Bo picked/.test(appended[1].innerHTML) && /New Guy/.test(appended[1].innerHTML), true);
 
   announceNewPicks();                       // same picks again — e.g. a re-render
-  check("flash: does not repeat on a re-render", appended.length, 1);
+  check("flash: does not repeat on a re-render", appended.length, 2);
 
   S.picks = [pick(1, "mA"), pick(2, "mB"), pick(3, "mA")];
   announceNewPicks();
-  check("flash: fires again for the next pick", appended.length, 2);
+  check("flash: fires again for the next pick", appended.length, 3);
 
   S.managers = saveM; S.picks = saveP; S.league = saveL; S.playerById = saveById;
 }
