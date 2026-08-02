@@ -275,9 +275,14 @@ async function simTransfer(pid, toTeam) {
 async function simClear() {
   const bad = simSafe();
   if (bad) return simToast(bad);
-  if (!confirm("Delete every result in this sandbox league? Invented data only.")) return;
+  if (!confirm("Delete every result, snapshot, transaction and waiver claim in this sandbox league? Invented data only.")) return;
   await S.sb.from("match_stats").delete().eq("league_id", S.league.id);
   await S.sb.from("lineup_snapshots").delete().eq("league_id", S.league.id);
+  /* Transactions and claims too. They are what the per-window free-agent cap
+     counts, so leaving them behind means a freshly cleared league still says
+     you have used your transfers. */
+  await S.sb.from("transactions").delete().eq("league_id", S.league.id).then(() => {}, () => {});
+  await S.sb.from("fa_claims").delete().eq("league_id", S.league.id).then(() => {}, () => {});
   localStorage.removeItem("wcf_recap_" + S.league.id);
   S._recapChecked = false;
   scheduleRefetch();

@@ -331,6 +331,7 @@ const STRIPPABLE_COLUMNS = new Set([
   "offered_player_name", "requested_player_name",
   "offered_player_id", "requested_player_id", "planner",
   "owner_id", "user_id", "is_bot", "crest", "color", "bench_order", "lineups_open", "sim",
+  "window_key",
   "fa_processed_until",
   "team",
 ]);
@@ -9150,6 +9151,7 @@ async function doSwap(pick, entry) {
   // transactions table hasn't been added yet, the swap still succeeds).
   S.sb.from("transactions").insert({
     league_id: S.league.id, manager_id: pick.manager_id, kind: "swap",
+    window_key: faWindowKey(),
     out_player_id: pick.player_id, out_player_name: pick.player_name,
     in_player_id: entry.player_id, in_player_name: entry.name,
   }).then(() => {}, () => {});
@@ -9176,11 +9178,32 @@ function faWindowStartMs() {
   // just "someone edited their team", which would reset the count mid-window.
   return txWindowStarts()[0] ?? 0;
 }
+/* Which trade window a move belongs to, recorded ON the move when it is made.
+
+   Counting by timestamp against faWindowStartMs() looked equivalent and is not:
+   that boundary is derived from the fixture list and stored nowhere, so it
+   moves whenever the fixtures do. A rescheduled game -- or a rebuilt test
+   calendar -- drags last window's moves into this one, and a manager who has
+   made no transfers is told they have used their cap.
+
+   The key is the matchweek the window leads INTO, which survives the dates
+   shifting under it. */
+function faWindowKey() {
+  if (autoWindowsEnabled()) {
+    const w = autoWindowState();
+    if (w?.tradeWindow) return String(w.tradeWindow.to || w.tradeWindow.closeAt);
+  }
+  return "lock:" + (txWindowStarts()[0] ?? 0);
+}
+
 const faMovesThisWindow = (mid) => {
-  const start = faWindowStartMs();
+  const key = faWindowKey(), start = faWindowStartMs();
   return (S.transactions || []).filter((t) => t.manager_id === mid
     && (t.kind === "swap" || t.kind === "waiver")
-    && Date.parse(t.created_at || 0) >= start).length;
+    // Rows written before the key existed still fall back to the old test, so
+    // an unapplied migration behaves exactly as it did.
+    && (t.window_key ? t.window_key === key
+                     : Date.parse(t.created_at || 0) >= start)).length;
 };
 const faMovesLeft = (mid) => {
   const cap = maxFaPerWindow();
@@ -9288,6 +9311,7 @@ async function processFaClaims() {
       .eq("id", c.pick_id).eq("player_id", c.out_player_id);
     if (!error) S.sb.from("transactions").insert({
       league_id: S.league.id, manager_id: c.manager_id, kind: "waiver",
+      window_key: faWindowKey(),
       out_player_id: c.out_player_id, out_player_name: c.out_player_name,
       in_player_id: c.in_player_id, in_player_name: c.in_player_name,
     }).then(() => {}, () => {});
