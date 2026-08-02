@@ -4647,6 +4647,23 @@ function roundIndex() {
 // stats, hand-entered rows) — those keep the timestamp path.
 const roundKeyOfLabel = (label) => roundIndex().keyByLabel[label] || null;
 
+/* Has this round's settlement actually run? (ROUNDS_DESIGN.md Phase 2.)
+
+   The recorded answer, not a guess from the clock: a round is settled when a
+   `rounds` row says so. Anything else -- no row, a claim still in flight, a
+   league that has never run the migration -- is LIVE, which is the safe
+   direction: live points are recomputed every render, so treating a settled
+   round as live costs a little work and changes no number, while the reverse
+   would freeze a round that is still moving.
+
+   Matched on the key, falling back to the number for rows written before
+   Phase 1.5 gave rounds a key. */
+function isRoundSettled(roundKey, roundNo) {
+  return (S.rounds || []).some((r) => r.status === "settled"
+    && ((r.round_key != null && roundKey != null && r.round_key === roundKey)
+        || (r.round_key == null && roundNo != null && r.round_no === roundNo)));
+}
+
 /* Round resolution, shared by computeScores and managerHistory (they score the
    same way and must agree — there is a test tying their totals together).
 
@@ -4795,8 +4812,11 @@ function computeScores() {
     if (m.eliminated) {
       const tb = managerTeamBonus(m.id);
       const items = tb ? [{ pick: tb.pick, pts: tb.pts, note: stageOf(tb.pick.team) }] : [];
+      // A removed manager's player points are frozen by definition — that is
+      // settled in the plainest sense. Their TEAM pick is still live.
       return { manager: m, total: (m.frozen_points || 0) + (tb ? tb.pts : 0),
-               teamPts: (tb ? tb.pts : 0), items, eliminated: true };
+               teamPts: (tb ? tb.pts : 0), items, eliminated: true,
+               settledTotal: (m.frozen_points || 0), liveTotal: 0 };
     }
     let total = 0;
     const earnedByPlayer = {};
@@ -4813,11 +4833,13 @@ function computeScores() {
       (fixedCache[rnd] = fixedRoundSubs(roster, rnd, labelForRound, appearedIn, maxSubsPerRound(), missedRound));
     const captain = captainEnabled();
     const capByRnd = {}, viceByRnd = {}, playedByRnd = {}, ptsByRnd = {};
+    const rndKey = {};                 // round number -> its recorded round key
     for (const label of statLabels) {
       const d = labelDate(label);
       const rnd = roundByLabel(label);   // 1-based round (real matchweek)
-      const roster = rosterAtFor(m.id, matchTime(label), d, snapsByMgr[m.id] || [],
-        roundKeyOfLabel(label));
+      const rKey = roundKeyOfLabel(label);
+      if (rnd >= 1 && rndKey[rnd] === undefined) rndKey[rnd] = rKey;
+      const roster = rosterAtFor(m.id, matchTime(label), d, snapsByMgr[m.id] || [], rKey);
       const starters = roster.filter((e) => !e.is_sub && e.position !== "TEAM");
       if (captain) {   // snapshot-locked captain, else the manager's current pick
         capByRnd[rnd] = roster.find((e) => e.is_captain)?.player_id ?? m.captain_id ?? capByRnd[rnd];
@@ -4870,6 +4892,24 @@ function computeScores() {
       earnedByPlayer[eff] = (earnedByPlayer[eff] || 0) + bonus;
     }
 
+    /* Phase 2: the same points, split by whether their round's settlement has
+       been RECORDED. Nothing here changes a total -- settled + live is the
+       whole player score by construction, which is the property the tests pin.
+       What it buys is a boundary: everything in `settled` is finished, and a
+       later step can read it straight from the recorded rounds instead of
+       recomputing it from stats and snapshots on every render.
+
+       Points from a label with no resolvable round (rnd < 1: legacy rows, a
+       hand-entered match with no fixture) stay live -- they are never inside a
+       settled round, so they are never frozen. TEAM points below are live for
+       a real reason rather than a technical one: a country's stage bonus keeps
+       moving as the tournament advances, long after any matchweek is done. */
+    const playerTotal = total;
+    let settledTotal = 0;
+    for (const rnd of Object.keys(roundPts))
+      if (isRoundSettled(rndKey[rnd], Number(rnd))) settledTotal += roundPts[rnd];
+    const liveTotal = playerTotal - settledTotal;
+
     const mPicks = managerPicks(m.id).sort((a, b) =>
       (SLOT_RANK[a.slot] ?? 9) - (SLOT_RANK[b.slot] ?? 9) || a.pick_number - b.pick_number);
     const items = mPicks.map((pk) => {
@@ -4905,7 +4945,7 @@ function computeScores() {
     // a "player points only" view (total − teamPts).
     const teamPts = items.filter((it) => it.pick.slot === "TEAM" || it.pick.slot === "WIN")
       .reduce((s, it) => s + it.pts, 0);
-    return { manager: m, total, items, roundPts, teamPts };
+    return { manager: m, total, items, roundPts, teamPts, settledTotal, liveTotal };
   });
 }
 

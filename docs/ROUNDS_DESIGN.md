@@ -173,15 +173,42 @@ Two things deliberately left alone:
 
 ### Phase 2 — settled/live scoring split
 
-- `settledPoints`: pure read of recorded rounds (round snapshot ×
-  round-stamped stats — both halves now exist, keyed the same way). No
-  `Date.now()`, no fixture list. Cacheable.
-- `livePoints`: current round only, recomputed as today.
+**2a — the boundary, shipped ✅**
 
-Only after this is verified: delete `pinHistory()`, the forward-stamp
-restamping (`restampPlan`/`restampSnapshots`), and the snapshot-fallback
-guards. **Nothing is deleted before its replacement is proven** — the deletion
-list is the acceptance criterion of this phase, not a side effect.
+`computeScores()` now returns `settledTotal` / `liveTotal` beside `total`. A
+round is settled when a `rounds` row says so (`isRoundSettled()`) — the
+recorded answer, never a guess from the clock. Everything else is LIVE, which
+is the safe direction: a live round is recomputed every render, so misfiling a
+settled round as live costs a little work and changes no number, while the
+reverse would freeze a round still in motion.
+
+The point of this step is that it moves **no** number. `settled + live` is the
+player score exactly, in every settlement state, and the tests pin that: a
+worked example holds `total = 8` while settled goes 0 → 4 → 8 as rounds are
+recorded. A split that changed a total would not be a split; it would be a
+second, disagreeing scoring engine.
+
+TEAM points stay live for a real reason rather than a technical one: a stage
+bonus keeps moving as the tournament advances, long after any matchweek is
+done. Points from a label with no resolvable round stay live too — they are
+never inside a settled round, so they can never be frozen.
+
+**2b — make `settledPoints` actually pure (next)**
+
+The boundary exists; the settled side is still computed the same way. Next is
+reading it from the recorded round instead of recomputing it from stats and
+snapshots on every render: no `Date.now()`, no fixture list, cacheable. Only
+two `Date.now()` calls remain anywhere in the scoring path, both in the
+snapshot-fallback last resort (`rosterAtFor`, `snapIndexAt`) — which are on the
+deletion list below.
+
+**2c — the deletions, once 2b is proven**
+
+Delete `pinHistory()` (6 references), the forward-stamp restamping
+(`restampPlan`/`restampSnapshots`, 6), and the snapshot-fallback guards; then
+`fa_processed_until` (14). **Nothing is deleted before its replacement is
+proven** — the deletion list is the acceptance criterion of this phase, not a
+side effect.
 
 ### Phase 3 (optional) — retire label parsing
 
@@ -225,7 +252,7 @@ readable in one place.
 | ✅ | **The `schema.sql` re-run trap closed** — re-runs can never again undo the RLS lockdown |
 | ✅ | **Knockout fallback** — a window closing into an unnumbered round settles through the legacy path instead of being dropped |
 | ✅ | **Phase 1.5** — the round key is the label, so cups are recordable; line-up snapshots carry the round they were for |
-| ⬜ | **Phase 2** — settled/live scoring split, then delete `pinHistory()`, the restamp machinery and `fa_processed_until` |
+| ◐ | **Phase 2a** — the settled/live boundary, proven to move no number ✅; 2b (pure `settledPoints`) and 2c (the deletions) remain |
 | ⬜ | **Phase 3** (optional) — retire label parsing |
 
 ### Database steps for Phase 1 — in order, the middle one is not optional
