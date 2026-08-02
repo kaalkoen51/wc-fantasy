@@ -8,7 +8,12 @@
  * which is committed and served from the same origin as the app.
  */
 module.exports = {
-  content: ["./index.html", "./app.js"],
+  /* sim.js too: the test bench builds its own markup, and five classes used
+     only there (invisible, col-span-2, text-wcred, border-wcred/60,
+     min-h-[1.5em]) were being purged -- so the bench rendered with a broken
+     grid and an "invisible" that showed. A file that generates markup has to
+     be scanned, or Tailwind removes exactly the styles it needs. */
+  content: ["./index.html", "./app.js", "./sim.js"],
   theme: {
     extend: {
       colors: {
