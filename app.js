@@ -9122,6 +9122,12 @@ function renderSwapList() {
 }
 
 async function doSwap(pick, entry) {
+  /* Belt and braces. swapOrClaim() is the router that sends a waiver league's
+     moves to the queue, but relying on every caller to go through it means one
+     missed call site hands a manager a free agent nobody got to bid against --
+     silently, and irreversibly once the window shuts. So the instant swap
+     refuses on its own terms rather than trusting the path that reached it. */
+  if (faDeferToClose()) return submitFaClaim(pick, entry);
   if (!tradingOpen()) return toast(autoWindowsEnabled() ? tradeWindowMessage() : "Trading window is closed.");
   if (faMovesLeft(pick.manager_id) <= 0)
     return toast(`No free-agent moves left this window — the cap is ${maxFaPerWindow()}.`);
