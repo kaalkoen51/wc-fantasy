@@ -128,7 +128,11 @@ function simApply(stage, weeks, quirks) {
   const cfg = { ...(S.league.config || {}), autoWindows: true };
   S.league.config = cfg;
   S.sb.from("leagues").update({ config: cfg }).eq("id", S.league.id).then(() => {}, () => {});
-  route();
+  /* A refetch, not a bare re-render. Moving the calendar is exactly what closes
+     a trade window, and the settlement transition (advanceRound) hangs off
+     refetchAll -- so re-rendering alone left the bench showing "window closed"
+     while nothing had actually settled and waiver claims sat pending. */
+  scheduleRefetch();
   const wk = [...new Set(fx.map((f) => f.round))].length;
   simToast(`${fx.length} fixtures over ${wk} weeks · ${stage}${quirks ? " · blank + double" : ""}`);
 }
@@ -287,6 +291,11 @@ async function simClear() {
      you have used your transfers. */
   await S.sb.from("transactions").delete().eq("league_id", S.league.id).then(() => {}, () => {});
   await S.sb.from("fa_claims").delete().eq("league_id", S.league.id).then(() => {}, () => {});
+  /* Settled-round records as well. A round only settles once, so leaving these
+     behind means a cleared league replays the same matchweek with settlement
+     already marked done -- the ritual stands down and the waiver claims made on
+     the re-run never resolve. Same trap as the transactions above. */
+  await S.sb.from("rounds").delete().eq("league_id", S.league.id).then(() => {}, () => {});
   localStorage.removeItem("wcf_recap_" + S.league.id);
   S._recapChecked = false;
   scheduleRefetch();
@@ -330,7 +339,7 @@ function simAddFixture({ round, home, away, daysFromNow, status, hs, as }) {
     away_score: played ? (Number(as) || 0) : null,
   }].sort((a, b) => Date.parse(a.kickoff_utc) - Date.parse(b.kickoff_utc));
   simSave(simStage());
-  route(); renderTestTab();
+  scheduleRefetch(); renderTestTab();     // a new fixture can close a window too
   simToast(`Added ${home} v ${away} to round ${rnd}.`);
 }
 
@@ -338,7 +347,7 @@ function simRemoveFixture(label) {
   const bad = simSafe(); if (bad) return simToast(bad);
   S.fixtures = (S.fixtures || []).filter((f) => simLabel(f) !== label);
   simSave(simStage());
-  route(); renderTestTab();
+  scheduleRefetch(); renderTestTab();     // ...and removing one can open one
   simToast("Fixture removed. Its results, if any, are still there — use Clear to drop them.");
 }
 
@@ -517,5 +526,8 @@ document.addEventListener("DOMContentLoaded", () => {
     clearInterval(t);
   }, 1000);
   setTimeout(() => clearInterval(t), 30000);
-  setTimeout(() => { if (S.league && simLeague()) { simRestore(); route(); } }, 1500);
+  /* The sandbox calendar is restored AFTER the initial refetch, so the
+     settlement hook has already run against the wrong fixture list by now.
+     Re-run it against the real one rather than only repainting. */
+  setTimeout(() => { if (S.league && simLeague()) { simRestore(); scheduleRefetch(); } }, 1500);
 });
