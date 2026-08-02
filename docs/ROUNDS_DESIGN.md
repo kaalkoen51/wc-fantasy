@@ -1,6 +1,8 @@
 # Rounds: record at decision time, don't re-derive
 
-**Status:** Phases 0 and 1 shipped. Phases 2–3 planned, each its own reviewed step.
+**Status:** Phases 0 and 1 shipped. Phases 2–3 planned, each its own reviewed
+step. See [Progress log](#progress-log) at the bottom for where each phase
+stands and what the database still needs.
 
 ## Why this document exists
 
@@ -73,6 +75,19 @@ Shipped with three decisions the original sketch left open:
   rounds table, marked deprecated. Its deletion is Phase 2's acceptance
   criterion.
 
+**Two things fall back to it, not one.** A `rounds` row is keyed by
+`(league_id, round_no)`, so a round whose label carries no matchweek number
+cannot be recorded — and every knockout label is one ("Round of 16", "Final";
+the World Cup calendar is six in a row). The first cut treated "no number" as
+"nothing to settle", which would have silently stopped waivers resolving for
+the whole knockout stage of the app's flagship competition — bug row 6 of the
+table above, reintroduced. `advanceRound()` now distinguishes them: `"no-table"`
+(unmigrated) and `"no-round"` (unnumbered) both hand off to the legacy path.
+The fallback resolves waivers and repairs the winners' line-ups — exactly the
+pre-Phase-1 behaviour — but not the ritual's league-wide line-up repair. That
+gap is bounded and documented rather than silent, and it closes in Phase 2 when
+rounds get a key knockout labels can satisfy.
+
 Also fixed here because Phase 1 touched it: re-running `schema.sql` used to
 drop-and-recreate the "open access" policies, silently undoing an applied
 `rls.sql` lockdown. The open-policy block now refuses to run once the lockdown
@@ -136,3 +151,57 @@ urgency once rounds are first-class.
 3. `npm run build:css` clean, `node build.js` clean, sim guards bite.
 4. A hand test in the bench: play two weeks, transfer, reschedule (rebuild
    calendar), edit a lineup — totals for played rounds must not move.
+
+## Progress log
+
+Kept here rather than in commit messages so the current state of the rework is
+readable in one place.
+
+| | |
+|---|---|
+| ✅ | **Phase 0** — every stat row stamped with its matchweek at write time |
+| ✅ | **Phase 1** — settlement is a recorded, CAS-claimed transition (`rounds` + `advanceRound()`): waivers → line-up repair → settled, exactly once, any client may race |
+| ✅ | **The `schema.sql` re-run trap closed** — re-runs can never again undo the RLS lockdown |
+| ✅ | **Knockout fallback** — a window closing into an unnumbered round settles through the legacy path instead of being dropped |
+| ⬜ | **Phase 2** — settled/live scoring split, then delete `pinHistory()`, the restamp machinery and `fa_processed_until` |
+| ⬜ | **Phase 3** (optional) — retire label parsing |
+
+### Database steps for Phase 1 — in order, the middle one is not optional
+
+1. Run the new `schema.sql` (adds `rounds`, closes the re-run trap).
+2. **Re-run `rls.sql`.** If `schema.sql` was re-run at any point after the
+   lockdown — it was, twice, for `window_key` and for the round columns — every
+   table has been silently open to the anon key since. This closes it. The file
+   is idempotent by design.
+3. Re-run the three-row verification. All three must be ✅, especially
+   *"wide-open policies: none left"*.
+
+That ordering is safe permanently from here: a `schema.sql` re-run can no
+longer reopen a locked database.
+
+> The verification query itself lives only in the chat that produced it. It
+> belongs in `rls.sql` next to the section 8 checklist — worth committing so it
+> survives the conversation.
+
+### Due-diligence tally, Phase 1
+
+- One critical latent hole found and closed: the lockdown-undo. The app kept
+  working and the dashboard kept listing policies throughout, which is what
+  made it the worst kind of regression.
+- One broken fix caught by its own test before shipping: `to_regproc` does not
+  accept a signature, `to_regprocedure` does — the first guard silently never
+  fired and resurrected the very trap it existed to close.
+- One regression caught in review after the phase was verified: `"no round
+  number"` conflated with `"no settlement owed"`, which would have taken out
+  automatic waiver resolution across the entire knockout stage. The lesson is
+  the general one — a null returned for two different reasons needs two
+  different answers.
+- The legacy waiver path kept verbatim as the fallback. Nothing deleted ahead
+  of its replacement being proven; the deletion list is Phase 2's acceptance
+  criterion, not a side effect.
+- 649 unit tests and all eleven browser suites green.
+
+Phase 2 is the payoff phase: scoring splits into **settled** (a pure read of
+recorded rounds — immune to edits and reschedules by construction) and
+**live**, after which three compensating mechanisms come *out* rather than
+going in.

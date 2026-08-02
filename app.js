@@ -9414,14 +9414,25 @@ async function processFaClaims() {
    the history-rewrite bug that forward-stamping and pinHistory exist to
    prevent. History is their job; settlement is this one's. */
 
-// Which round's settlement is due: the matchweek the last CLOSED window led
-// into. Pure. Null when nothing has closed, or in cup/legacy mode (no numbered
-// matchweeks -- those leagues run on the admin's manual toggle).
-function roundToSettle(fixtures, nowMs, opts) {
+/* The last CLOSED window and the round it led into. Pure; null only when no
+   window has closed at all. `roundNo` is null when that round's label carries
+   no matchweek number -- every knockout label is one ("Round of 16", "Final"),
+   and the World Cup calendar is six of them in a row. The distinction matters:
+   a settlement that cannot be RECORDED is still OWED. */
+function closedWindowRound(fixtures, nowMs, opts) {
   const win = lastClosedTradeWindow(fixtures || [], nowMs, opts || {});
   if (!win) return null;
   const n = Number(mwNo(win.to));
-  return n >= 1 ? { roundNo: n, win } : null;
+  return { roundNo: n >= 1 ? n : null, win };
+}
+
+// Which round's settlement is due AND recordable: the matchweek the last closed
+// window led into. Null when nothing has closed, or when the round has no
+// number to key a `rounds` row by -- those settle through the legacy path, see
+// maybeAdvanceRounds().
+function roundToSettle(fixtures, nowMs, opts) {
+  const r = closedWindowRound(fixtures, nowMs, opts);
+  return r && r.roundNo != null ? { roundNo: r.roundNo, win: r.win } : null;
 }
 
 const SETTLE_STALE_MS = 10 * 60e3;
@@ -9432,8 +9443,15 @@ let _advanceRunning = false;
 async function advanceRound() {
   if (_advanceRunning) return false;
   if (!S.sb || !S.league?.id || !autoWindowsEnabled()) return false;
-  const due = roundToSettle(S.fixtures, Date.now(), cfgOf().windows || {});
-  if (!due) return false;
+  const closed = closedWindowRound(S.fixtures, Date.now(), cfgOf().windows || {});
+  if (!closed) return false;
+  /* The window closed into a round with no matchweek number, so there is no key
+     to claim a `rounds` row with. The settlement it implies is still owed --
+     treating "unrecordable" as "nothing to do" is precisely how waivers stopped
+     resolving in auto leagues the first time, and it would have taken out the
+     entire World Cup knockout stage. Hand it to the legacy path instead. */
+  if (closed.roundNo == null) return "no-round";
+  const due = { roundNo: closed.roundNo, win: closed.win };
   // Already recorded as settled (or freshly claimed by someone else)?
   const seen = (S.rounds || []).find((r) => r.round_no === due.roundNo);
   if (seen && (seen.status === "settled"
@@ -9482,11 +9500,21 @@ async function advanceRound() {
   } finally { _advanceRunning = false; }
 }
 
-// The refetch hook: rounds-table path first; databases that have not run the
-// migration fall back to the legacy fa_processed_until CAS below, unchanged.
+/* The refetch hook: rounds-table path first, legacy fa_processed_until CAS as
+   the fallback. TWO things fall back, and both must, because each is a league
+   that is owed a settlement the new path cannot record:
+
+     "no-table" — the database has not run the migration.
+     "no-round" — the window closed into an unnumbered (knockout) round.
+
+   The fallback resolves waivers and repairs the winners' line-ups, which is
+   exactly the pre-Phase-1 behaviour; it does not do the ritual's league-wide
+   line-up repair. That is a known, bounded difference rather than a silent one,
+   and it disappears when Phase 2 gives rounds a key that knockout labels can
+   satisfy. */
 async function maybeAdvanceRounds() {
   const r = await advanceRound().catch(() => false);
-  if (r === "no-table") return maybeProcessAutoWaivers();
+  if (r === "no-table" || r === "no-round") return maybeProcessAutoWaivers();
   return r;
 }
 
