@@ -263,7 +263,14 @@ longer reopen a locked database.
 - The legacy waiver path kept verbatim as the fallback. Nothing deleted ahead
   of its replacement being proven; the deletion list is Phase 2's acceptance
   criterion, not a side effect.
-- 665 unit tests green. The browser suites need a re-run against Phase 1.5;
+- One bug found by the hand test in the bench (verification step 4), not by
+  the suite: `managerHistory()` built its list of rounds from `periodDates`,
+  which was only populated for matches where *that* manager had a player with
+  a stat row. A manager whose whole squad had a blank week got no round entry
+  at all — no pager, stuck on "season to date" while everyone else advanced.
+  Bug row 3's exact shape: the set of rounds re-derived from one manager's
+  scoring activity instead of from what the league played.
+- 669 unit tests green. The browser suites need a re-run against Phase 1.5;
   they were last verified at Phase 1.
 
 ### Phase 1.5 addendum

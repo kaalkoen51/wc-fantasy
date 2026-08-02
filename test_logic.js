@@ -1120,6 +1120,28 @@ check("both the old and the new player are itemised",
 check("the round covers both matchdays",
   managerHistory("m1").rounds[0].dates, ["2026-06-12", "2026-06-16"]);
 
+/* A round happened to the LEAGUE, not to one manager. A manager whose whole
+   squad had a blank week used to get no round entry at all -- the pager never
+   appeared for them and their card sat on "season to date" while everyone else
+   advanced through round 1. The round must exist for them too, worth zero. */
+S.managers = [{ id: "m1", name: "Koen" }, { id: "m2", name: "Ada" }];
+S.picks = [...S.picks, { id: "p9", manager_id: "m2", player_id: "arg_9",
+  player_name: "Bench Warmer", position: "FWD", team: "Argentina", slot: "FWD",
+  is_sub: false, pick_number: 2 }];
+S.playerById.arg_9 = { player_id: "arg_9", name: "Bench Warmer",
+  position: "FWD", team: "Argentina" };
+check("a manager whose players did not feature still has the round",
+  managerHistory("m2").rounds.map((r) => r.n), [1]);
+check("...worth zero, rather than missing",
+  managerHistory("m2").rounds[0].subtotal, 0);
+check("...and it carries the league's matchdays, not that manager's",
+  managerHistory("m2").rounds[0].dates, ["2026-06-12", "2026-06-16"]);
+check("the scoring manager is unaffected",
+  managerHistory("m1").rounds[0].subtotal, 10);
+S.managers = [{ id: "m1", name: "Koen" }];
+S.picks = S.picks.filter((p) => p.manager_id === "m1");
+delete S.playerById.arg_9;
+
 /* "played since last lock" highlight + starters-yet-to-play counter */
 S.fixtures = [];
 S.managers = [{ id: "m1", name: "Koen" }];

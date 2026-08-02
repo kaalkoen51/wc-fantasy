@@ -4985,16 +4985,25 @@ function managerHistory(mgrId) {
     const idx = snapIndexAt(t, d);
     const roster = idx >= 0 ? snaps[idx].roster : managerPicks(mgrId);
     const rnd = roundByLabel(label);
-    // The LAST roster used in the round: a trade mid-week means more than one
-    // was in force, and the one you finished with is the one to show.
-    if (rnd >= 1) periodRoster[rnd] = roster;
+    /* The LAST roster used in the round: a trade mid-week means more than one
+       was in force, and the one you finished with is the one to show.
+
+       A round is recorded here because the LEAGUE played it, not because this
+       manager's players featured in it. periodDates used to be filled inside
+       the scoring loop below, so a manager whose whole squad had a blank week
+       got no round entry at all — no pager, no zero-point round, just "season
+       to date" while everyone else advanced. Same shape as the history-pager
+       bug in ROUNDS_DESIGN.md: the set of rounds was re-derived from one
+       manager's scoring activity instead of from what the league played. */
+    if (rnd >= 1) {
+      periodRoster[rnd] = roster;
+      (periodDates[rnd] ||= new Set()).add(d);
+    }
     const mp = matchPoints(roster, label);
     for (const pid in mp) {
       earnedByPlayer[pid] = (earnedByPlayer[pid] || 0) + mp[pid];
-      if (rnd >= 1) {
+      if (rnd >= 1)
         (periodPts[rnd] ||= {})[pid] = ((periodPts[rnd] || {})[pid] || 0) + mp[pid];
-        (periodDates[rnd] ||= new Set()).add(d);
-      }
     }
   }
 
