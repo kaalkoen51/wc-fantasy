@@ -8465,6 +8465,25 @@ async function snapshotAt(mgrId, atMs) {
   return true;
 }
 
+/* Freeze what has already been played, before a change can rewrite it.
+
+   rosterAtFor() falls back to the LIVE roster when no snapshot is in force.
+   That is the only sane answer for a league where nothing has been played yet
+   -- but once a round HAS been played it means any edit retroactively rewrites
+   that round's score, and the head-to-head log with it. A manager who moved a
+   substitute would watch last week's result change under them.
+
+   Must be called BEFORE the change is applied, or it pins the new state and
+   protects nothing. */
+async function pinHistory(mgrId) {
+  if (!S.sb || !S.league?.id) return false;
+  if (!(S.stats || []).length) return false;          // nothing played to protect
+  const now = Date.now();
+  const snaps = snapshotsByManager()[mgrId] || [];
+  if (snaps.some((sn) => Date.parse(sn.effective_from) <= now)) return false;   // covered
+  return snapshotAt(mgrId, now);
+}
+
 // Stamp a manager's squad for the NEXT lock. Called from every path that
 // changes a roster or an XI while that lock is still ahead.
 async function snapshotForNextLock(mgrId) {
@@ -8937,6 +8956,11 @@ async function saveLineup() {
     return { pk, isSub, slot: isSub ? "SUB_" + pk.position : pk.position };
   }).filter(({ pk, isSub }) => pk.is_sub !== isSub);
   const onSaveErr = (error) => { toast("Save failed: " + error.message); scheduleRefetch(); };
+  /* Freeze the rounds already played BEFORE any pick is touched. Without this
+     the edit rewrites their scores through rosterAtFor's live-roster fallback,
+     and last week's result changes under the manager. `changes` above only
+     computed what to do -- nothing has been mutated yet. */
+  await pinHistory(me.id).catch(() => {});
   // Stamped for the lock this XI applies to, so it can never rewrite a round
   // already under way — an edit made mid-matchweek lands on the NEXT lock.
   setTimeout(() => snapshotForNextLock(me.id).catch(() => {}), 0);
@@ -9106,6 +9130,7 @@ async function doSwap(pick, entry) {
      pick's position, so they would be scored as one: no clean sheets, wrong
      value per goal, saves ignored. The slot follows, keeping bench players on
      the bench. (accept_trade does the same thing server-side for trades.) */
+  await pinHistory(pick.manager_id).catch(() => {});   // freeze played rounds first
   const inPos = S.playerById[entry.player_id]?.position || entry.position || pick.position;
   const { error } = await S.sb.from("picks")
     .update({ player_id: entry.player_id, player_name: entry.name, team: entry.team,
@@ -9241,6 +9266,9 @@ async function processFaClaims() {
   const holds = Object.fromEntries(S.picks.map((p) => [p.id, p.player_id]));
   const { awards, failed, order: newOrder } =
     resolveFaClaims(pending, order, taken, maxFaPerWindow(), holds);
+  // Same reason as saveLineup: pin the played rounds before the squads move.
+  for (const mid of new Set(awards.map((c) => c.manager_id)))
+    await pinHistory(mid).catch(() => {});
   for (const c of awards) {
     const inP = S.playerById[c.in_player_id];
     const team = inP?.team || null;
@@ -10497,6 +10525,10 @@ async function acceptTrade(t) {
   const err = tradeError(pairs);
   if (err) return toast("Trade is no longer valid: " + err);
   if (!confirm("Accept this trade? Players swap immediately.")) return;
+  // Before the swap, not after: pinning afterwards would record the new squads
+  // as history and protect nothing.
+  for (const mid of new Set([t.proposer_manager_id, t.target_manager_id].filter(Boolean)))
+    await pinHistory(mid).catch(() => {});
   const { error } = await S.sb.rpc("accept_trade", { p_trade_id: t.id });
   if (error) {
     // accept_trade raises a clear sentence (stale player / already closed);
