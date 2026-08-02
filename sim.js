@@ -128,6 +128,13 @@ function simApply(stage, weeks, quirks) {
   const cfg = { ...(S.league.config || {}), autoWindows: true };
   S.league.config = cfg;
   S.sb.from("leagues").update({ config: cfg }).eq("id", S.league.id).then(() => {}, () => {});
+  /* Every recorded settlement refers to dates that no longer exist. A round
+     settles ONCE, so leaving those rows behind is what made the bench look
+     broken: the first pass through the stages settled rounds 3 and 4, and every
+     later pass -- with claims queued this time -- found them already recorded
+     and correctly stood down. Nothing announced that, so it read as "waivers
+     never resolve". Regenerating the calendar drops them with it. */
+  S.sb.from("rounds").delete().eq("league_id", S.league.id).then(() => {}, () => {});
   /* A refetch, not a bare re-render. Moving the calendar is exactly what closes
      a trade window, and the settlement transition (advanceRound) hangs off
      refetchAll -- so re-rendering alone left the bench showing "window closed"
@@ -212,6 +219,25 @@ function simStatRow(p, team, label, v) {
 }
 
 const simLabel = (f) => `${f.home} vs ${f.away} (${f.date || String(f.kickoff_utc).slice(0, 10)})`;
+
+/* What the settlement transition can see right now. The bench moves the
+   calendar under the app, so "the window shut but nothing resolved" is the
+   question it gets asked most -- and every answer so far has been invisible
+   state (already recorded, no window closed yet, no claims pending). Put it on
+   the card instead of leaving it to be inferred. */
+function simSettlementNote() {
+  if (typeof closedWindowRound !== "function") return "";
+  const due = closedWindowRound(S.fixtures || [], Date.now(), cfgOf().windows || {});
+  const pending = (S.faClaims || []).filter((c) => c.status === "pending").length;
+  const claims = pending ? `${pending} claim${pending === 1 ? "" : "s"} pending` : "no claims pending";
+  if (!due) return `Settlement: no trade window has closed yet — nothing due · ${claims}`;
+  const rec = (S.rounds || []).find((r) =>
+    (r.round_key != null && r.round_key === due.roundKey)
+    || (r.round_key == null && due.roundNo != null && r.round_no === due.roundNo));
+  return `Settlement due for <b>${esc(due.roundKey)}</b> · ${
+    rec ? `already recorded (${esc(rec.status)}) — it will not run again`
+        : "not recorded yet — the next refresh runs it"} · ${claims}`;
+}
 
 // Play the earliest matchweek that has kicked off but has no results yet.
 async function simPlayWeek() {
@@ -424,6 +450,7 @@ function renderTestTab() {
            include a blank &amp; a double week</label>
        </div>
        <p class="text-xs text-slate-500">A blank week gives a club no fixture; a double gives one two games. Both are shapes that have broken round numbering before.</p>
+       <p class="text-xs text-slate-400 border-t border-slate-800 pt-2">${simSettlementNote()}</p>
        <div class="space-y-1">
          ${Object.entries(SIM_STAGES).map(([k, v]) => `
            <button data-stage="${k}" class="w-full text-left rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2">
