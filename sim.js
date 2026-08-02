@@ -118,7 +118,7 @@ function simSave(stage) {
   localStorage.setItem(SIM_KEY(), JSON.stringify({ stage, fixtures: S.fixtures || [] }));
 }
 
-function simApply(stage, weeks, quirks) {
+async function simApply(stage, weeks, quirks) {
   const bad = simSafe(); if (bad) return simToast(bad);
   const fx = simCalendar(stage, weeks, quirks);
   if (!fx.length) return simToast("No squads loaded yet — wait for the pool, then retry.");
@@ -134,14 +134,24 @@ function simApply(stage, weeks, quirks) {
      later pass -- with claims queued this time -- found them already recorded
      and correctly stood down. Nothing announced that, so it read as "waivers
      never resolve". Regenerating the calendar drops them with it. */
-  S.sb.from("rounds").delete().eq("league_id", S.league.id).then(() => {}, () => {});
+  // Awaited, not fired and forgotten: the refetch below re-reads `rounds`, and
+  // reading them back before the delete lands would stand the ritual down again.
+  await S.sb.from("rounds").delete().eq("league_id", S.league.id).then(() => {}, () => {});
+  const wk = [...new Set(fx.map((f) => f.round))].length;
+  simToast(`${fx.length} fixtures over ${wk} weeks · ${stage}${quirks ? " · blank + double" : ""}`);
+  /* Play the weeks it just put BEHIND you, so the season the results describe
+     is the season the calendar describes. Without this the stage is a claim
+     about the fixture list alone, and Play week spends three clicks catching
+     up to it while settlement talks about a round with no scores. */
+  const caught = await simCatchUpPast();
   /* A refetch, not a bare re-render. Moving the calendar is exactly what closes
      a trade window, and the settlement transition (advanceRound) hangs off
      refetchAll -- so re-rendering alone left the bench showing "window closed"
      while nothing had actually settled and waiver claims sat pending. */
   scheduleRefetch();
-  const wk = [...new Set(fx.map((f) => f.round))].length;
-  simToast(`${fx.length} fixtures over ${wk} weeks · ${stage}${quirks ? " · blank + double" : ""}`);
+  renderTestTab();
+  if (caught.length)
+    simToast(`Played the ${caught.length} week${caught.length === 1 ? "" : "s"} now behind you: ${caught.join(", ")}.`);
 }
 
 // Re-apply the saved calendar after a reload, so a test season (including any
@@ -239,22 +249,21 @@ function simSettlementNote() {
         : "not recorded yet — the next refresh runs it"} · ${claims}`;
 }
 
-// Play the earliest matchweek that has kicked off but has no results yet.
-async function simPlayWeek() {
-  const bad = simSafe();
-  if (bad) return simToast(bad);
+// The calendar's matchweeks, earliest first, plus the labels already played.
+function simWeeks() {
   const played = new Set((S.stats || []).map((r) => r.match_label));
   const weeks = {};
   for (const f of S.fixtures || []) (weeks[f.round] ||= []).push(f);
   const order = Object.keys(weeks).sort((a, b) =>
     Math.min(...weeks[a].map((f) => Date.parse(f.kickoff_utc)))
     - Math.min(...weeks[b].map((f) => Date.parse(f.kickoff_utc))));
-  const target = order.find((rd) =>
-    weeks[rd].some((f) => !played.has(simLabel(f))));
-  if (!target) return simToast("Every matchweek already has results.");
+  return { weeks, order, played };
+}
 
+// One matchweek's invented player rows, skipping fixtures already scored.
+function simRoundRows(fixtures, played) {
   const rows = [];
-  for (const f of weeks[target]) {
+  for (const f of fixtures) {
     const label = simLabel(f);
     if (played.has(label)) continue;
     const hs = f.home_score ?? Math.floor(Math.random() * 4);
@@ -268,7 +277,6 @@ async function simPlayWeek() {
         rows.push(simPlayerRow(p, team, label, clean, hs, as, Number(mwNo(f.round))));
     }
   }
-  if (!rows.length) return simToast("Nothing to play.");
   // Award the top-rated player in each match, like the real pull does.
   const best = {};
   for (const r of rows) {
@@ -276,9 +284,54 @@ async function simPlayWeek() {
     if (!best[k] || r.raw.rating > best[k].raw.rating) best[k] = r;
   }
   for (const r of Object.values(best)) { r.motm = true; r.raw.motm = 1; }
+  return rows;
+}
+
+const simWriteRows = (rows) => resilientWrite("match_stats", rows,
+  { upsert: true, onConflict: "league_id,player_id,match_label" });
+
+/* Give every matchweek the calendar has placed in the PAST its results.
+
+   "Build a calendar" says it moves the dates so that now lands at the stage you
+   pick -- but it only ever wrote FIXTURES, so the weeks it put behind you had
+   no results, and "Play week" started at week 1 catching up on a season the
+   calendar already claimed had happened. The two halves of the bench described
+   different seasons, and settlement -- which follows the calendar -- then
+   looked unrelated to the scores on screen. This makes them agree.
+
+   No snapshots are written here. These weeks are being invented in bulk right
+   now, so stamping CURRENT squads at old lock times is exactly the
+   late-snapshot mistake ROUNDS_DESIGN.md exists to prevent. rosterAtFor falls
+   back to today's picks, which for invented history is the honest answer. */
+async function simCatchUpPast() {
+  const { weeks, order, played } = simWeeks();
+  const now = Date.now();
+  const done = [];
+  for (const rd of order) {
+    // Every game in the week has kicked off, and something is still unscored.
+    if (!weeks[rd].every((f) => Date.parse(f.kickoff_utc) < now)) continue;
+    const rows = simRoundRows(weeks[rd], played);
+    if (!rows.length) continue;
+    await simWriteRows(rows);
+    for (const f of weeks[rd]) played.add(simLabel(f));
+    done.push(rd);
+  }
+  return done;
+}
+
+// Play the earliest matchweek that has kicked off but has no results yet.
+async function simPlayWeek() {
+  const bad = simSafe();
+  if (bad) return simToast(bad);
+  const { weeks, order, played } = simWeeks();
+  const target = order.find((rd) => weeks[rd].some((f) => !played.has(simLabel(f))));
+  if (!target) return simToast("Every matchweek already has results.");
+
+  const rows = simRoundRows(weeks[target], played);
+  if (!rows.length) return simToast("Nothing to play.");
 
   simToast(`Playing ${target} — ${rows.length} player rows…`);
-  await resilientWrite("match_stats", rows, { upsert: true, onConflict: "league_id,player_id,match_label" });
+  await simWriteRows(rows);
   await snapshotRosters().catch(() => {});
   S._recapChecked = false;   // let the round recap offer itself again
   scheduleRefetch();
@@ -440,7 +493,7 @@ function renderTestTab() {
        </div>`)}
 
     ${simCard("📅 Build a calendar",
-      "Generates a whole season over this league's clubs and moves the dates so that <b>now</b> lands at the stage you pick. That is how the real window logic gets tested — it compares the clock against kick-offs.",
+      "Generates a whole season over this league's clubs, moves the dates so <b>now</b> lands at the stage you pick, and plays every week that leaves behind you — so the results agree with the calendar instead of trailing it. <b>Play week</b> then plays the next one forward.",
       `<div class="flex items-center gap-2 text-xs">
          <label class="text-slate-400">Weeks
            <input id="sim-weeks" type="number" min="2" max="20" value="6"
@@ -524,7 +577,7 @@ function renderTestTab() {
   document.getElementById("sim-enable").onclick = () =>
     simEnable(!simLeague()).catch((e) => simToast(e.message));
   box.querySelectorAll("[data-stage]").forEach((b) => b.onclick = () =>
-    simApply(b.dataset.stage, weeks(), chk("sim-quirks")));
+    simApply(b.dataset.stage, weeks(), chk("sim-quirks")).catch((e) => simToast(e.message)));
   document.getElementById("sim-fx-add").onclick = () => simAddFixture({
     round: num("sim-fx-round"), home: val("sim-fx-home"), away: val("sim-fx-away"),
     daysFromNow: num("sim-fx-days"), status: val("sim-fx-status"),
