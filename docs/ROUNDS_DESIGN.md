@@ -270,8 +270,30 @@ longer reopen a locked database.
   at all — no pager, stuck on "season to date" while everyone else advanced.
   Bug row 3's exact shape: the set of rounds re-derived from one manager's
   scoring activity instead of from what the league played.
-- 669 unit tests green. The browser suites need a re-run against Phase 1.5;
-  they were last verified at Phase 1.
+- 670 unit tests green, and the settlement path verified by hand in the bench:
+  build a calendar on `transfers`, queue waiver claims, move to `lineup` — the
+  claims resolve and the round records as settled.
+
+That hand test took five attempts, and the reason is worth keeping: **every
+failure on the way was invisible.** `advanceRound()` returned a bare `false`
+from every path except success, so "the database refused the insert", "this
+league is on manual windows" and "nothing is due" were indistinguishable from
+each other and from the transition never having run. A phase whose entire
+premise is that settlement should be a visible, recorded event had no way to
+say why it had not happened. It now records the reason and the bench prints it.
+
+The lesson generalises past this phase: a transition that can decline needs to
+say so. Silence is the one outcome that cannot be debugged.
+
+### Still open
+
+- **Only the most recent closed window settles.** `lastClosedTradeWindow()`
+  returns one window, so where three have shut — a fortnight with nobody
+  opening the app, or any jump forward in the bench — the intermediate rounds
+  never settle and their queued claims never resolve. Pre-existing (the legacy
+  waiver path behaved identically), but real, and it wants its own reviewed
+  step.
+- **The browser suites** have not been re-run since Phase 1.
 
 ### Phase 1.5 addendum
 
