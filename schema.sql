@@ -61,6 +61,14 @@ alter table match_stats add column if not exists raw jsonb;
 -- null and fall back to inferring the club from the player's appearances.
 alter table match_stats add column if not exists team text;
 
+-- The competition's own matchweek number, stamped when the row is written --
+-- the writer (either puller, or the test bench) holds it at that moment.
+-- Rounds used to be re-derived later from the fixture list or by counting a
+-- club's games, which is what broke scoring for transfers and for blank and
+-- double gameweeks. Additive; legacy rows are null and fall back to inference.
+-- (docs/ROUNDS_DESIGN.md, Phase 0.)
+alter table match_stats add column if not exists round int;
+
 create table if not exists team_stages (
     id uuid primary key default gen_random_uuid(),
     league_id uuid references leagues(id) on delete cascade,
@@ -492,6 +500,7 @@ create table if not exists competition_stats (
     unique (competition_key, player_id, match_label)
 );
 alter table competition_stats add column if not exists team text;
+alter table competition_stats add column if not exists round int;
 alter table competition_stats add column if not exists raw jsonb;
 create index if not exists competition_stats_key_idx on competition_stats (competition_key, id);
 alter table competition_stats enable row level security;
