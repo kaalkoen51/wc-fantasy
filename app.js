@@ -3978,19 +3978,26 @@ function fixtureWindows(fixtures, nowMs, opts) {
    Same arithmetic as fixtureWindows so the two can't drift. A window whose
    close would land at or before its open is degenerate (the matchweeks are too
    close together for the configured hours) and is not a window at all. */
-function lastClosedTradeWindow(fixtures, nowMs, opts) {
+function closedTradeWindows(fixtures, nowMs, opts) {
   const H = 3600e3, o = opts || {};
   const openAfter = (o.tradeOpenAfterH ?? 1) * H;
   const closeBefore = (o.tradeCloseBeforeH ?? 24) * H;
   const weeks = matchweeksOf(fixtures);
-  let last = null;
+  const out = [];
   for (let i = 0; i + 1 < weeks.length; i++) {
     const openAt = weeks[i].last + openAfter;
     const closeAt = weeks[i + 1].first - closeBefore;
     if (closeAt > openAt && closeAt <= nowMs)
-      last = { from: weeks[i].round, to: weeks[i + 1].round, openAt, closeAt };
+      out.push({ from: weeks[i].round, to: weeks[i + 1].round, openAt, closeAt });
   }
-  return last;
+  return out;
+}
+
+// The newest of them — what every display path wants, and what settlement used
+// to believe was the only one that existed.
+function lastClosedTradeWindow(fixtures, nowMs, opts) {
+  const all = closedTradeWindows(fixtures, nowMs, opts);
+  return all.length ? all[all.length - 1] : null;
 }
 
 // Are this window's claims still owed a resolution? processedUntil is the close
@@ -9503,11 +9510,18 @@ async function processFaClaims() {
    the wrong thing to key on: the World Cup calendar is six such rounds in a
    row, so keying by number made the app's own competition unrecordable for
    half a tournament. */
+function closedWindowRounds(fixtures, nowMs, opts) {
+  return closedTradeWindows(fixtures || [], nowMs, opts || {}).map((win) => {
+    const n = Number(mwNo(win.to));
+    return { roundKey: String(win.to), roundNo: n >= 1 ? n : null, win };
+  });
+}
+
+// The newest one. Display and the bench readout want this; settlement works
+// through closedWindowRounds() so a backlog is not silently skipped.
 function closedWindowRound(fixtures, nowMs, opts) {
-  const win = lastClosedTradeWindow(fixtures || [], nowMs, opts || {});
-  if (!win) return null;
-  const n = Number(mwNo(win.to));
-  return { roundKey: String(win.to), roundNo: n >= 1 ? n : null, win };
+  const all = closedWindowRounds(fixtures, nowMs, opts);
+  return all.length ? all[all.length - 1] : null;
 }
 
 // Which round's settlement is due, as a number. Retained for the display and
@@ -9529,92 +9543,141 @@ const _missingRoundsTable = (e) =>
    test bench reads this to say what actually happened. */
 let advanceStalled = null;
 
+/* Settle ONE round: claim it, run the ritual, mark it settled. Returns true,
+   false (someone else holds it / refused), or a fallback token. `resolveClaims`
+   is false for the older rounds of a backlog — fa_claims carry no window and
+   are cleared when a window reopens, so anything pending belongs to the NEWEST
+   closed window, not to a round being caught up on. */
+async function settleRound(due, resolveClaims) {
+  const stop = (why) => { advanceStalled = why; return false; };
+  const w = due.win;
+  const row = {
+    league_id: S.league.id, round_key: due.roundKey, round_no: due.roundNo,
+    status: "settling",
+    opens_at: new Date(w.openAt).toISOString(),
+    locks_at: new Date(w.closeAt).toISOString(),
+    claimed_at: new Date().toISOString(),
+  };
+  // Whichever column identifies this round in the database we are talking to.
+  let keyed = (q) => q.eq("round_key", due.roundKey);
+
+  let claimed = false;
+  let ins = await S.sb.from("rounds").insert(row).select("id");
+  /* Unapplied Phase 1.5 migration. A numbered round can still be claimed the
+     old way; an unnumbered one has nothing left to key on, so it falls back
+     to the legacy settlement path rather than going unsettled. */
+  if (ins.error && /round_key/.test(ins.error.message || "")) {
+    if (due.roundNo == null) return "no-round";
+    delete row.round_key;
+    keyed = (q) => q.eq("round_no", due.roundNo);
+    ins = await S.sb.from("rounds").insert(row).select("id");
+  }
+  if (!ins.error) claimed = true;
+  else if (/permission denied|row-level security|42501/i.test(
+             (ins.error.message || "") + (ins.error.code || ""))) {
+    /* RLS refused the claim. Almost always an rls.sql predating the `rounds`
+       table: the table then has RLS enabled by schema.sql and no policy at
+       all, so reads come back empty and writes are refused -- which looks
+       exactly like "nothing has settled yet", forever. */
+    return stop("the database refused to record it — re-run rls.sql (it must "
+      + "include `rounds`, added in Phase 1)");
+  }
+  else if (ins.error.code === "23505" || /duplicate key/.test(ins.error.message || "")) {
+    /* A stale half-run may be retaken; a live one may not. The conflict can
+       also come from the legacy (league_id, round_no) unique when an older
+       client already settled this round under a key we cannot see — then this
+       matches nothing, and standing down is the right answer. */
+    const cutoff = new Date(Date.now() - SETTLE_STALE_MS).toISOString();
+    const take = await keyed(S.sb.from("rounds")
+      .update({ claimed_at: new Date().toISOString() })
+      .eq("league_id", S.league.id))
+      .eq("status", "settling").lt("claimed_at", cutoff).select("id");
+    claimed = !take.error && (take.data || []).length > 0;
+  } else if (_missingRoundsTable(ins.error)) {
+    return "no-table";                    // caller falls back to the legacy path
+  } else {
+    return stop("could not record it: " + (ins.error.message || "unknown error"));
+  }
+  if (!claimed) return false;             // a live claim by someone else; fine
+
+  /* The settlement ritual, in order. Each step is itself idempotent and
+     late-safe (waiver awards stamp at the lock that follows their window;
+     repair only writes picks that actually move), so a retaken half-run
+     finishes cleanly rather than double-applying. */
+  if (resolveClaims && faDeferToClose()
+      && (S.faClaims || []).some((c) => c.status === "pending"))
+    await processFaClaims();
+  for (const m of activeManagers())
+    await repairLineupFor(m.id).catch(() => {});
+
+  await keyed(S.sb.from("rounds")
+    .update({ status: "settled", settled_at: new Date().toISOString() })
+    .eq("league_id", S.league.id));
+  S.rounds = [...(S.rounds || []).filter((r) => r.round_key !== due.roundKey),
+              { ...row, round_key: due.roundKey, status: "settled" }];
+  advanceStalled = null;
+  return true;
+}
+
+// The row already recording a round, if any. Keyed rows match on the key;
+// rows written before Phase 1.5 have none, so those match on the number.
+const roundRowFor = (due) => (S.rounds || []).find((r) =>
+  (r.round_key != null && r.round_key === due.roundKey)
+  || (r.round_key == null && due.roundNo != null && r.round_no === due.roundNo));
+
+/* Which closed rounds still owe a settlement, oldest first.
+
+   lastClosedTradeWindow() named only the NEWEST closed window, so a league
+   nobody opened for a fortnight settled one round and skipped the rest for
+   good. Today that costs the skipped rounds their waivers; once Phase 2 reads
+   scores from recorded rounds it would cost them their POINTS.
+
+   The catch-up is bounded deliberately. Phase 1 chose not to backfill old
+   seasons, and a first run against a season already in progress must not
+   suddenly settle a dozen historical rounds. So: the newest closed round is
+   always eligible, and older ones only once something later has been recorded
+   — which is exactly the "we were here, then we went away" case. A database
+   with no rounds at all still settles only the newest. */
+function roundsOwedSettlement(fixtures, nowMs, opts) {
+  const all = closedWindowRounds(fixtures, nowMs, opts);
+  if (!all.length) return [];
+  /* Start AT the last recorded round, not after it: a row that is still
+     `settling` counts as recorded for the purpose of "how far back do we go",
+     but the round itself may yet be a dead claim the filter below retakes.
+     Starting past it made a half-run by a client that died unrecoverable. */
+  let start = all.length - 1;                       // no backfill by default
+  for (let i = all.length - 1; i >= 0; i--)
+    if (roundRowFor(all[i])) { start = i; break; }
+  return all.slice(start).filter((due) => {
+    const row = roundRowFor(due);
+    return !(row && (row.status === "settled"
+      || Date.now() - Date.parse(row.claimed_at || 0) < SETTLE_STALE_MS));
+  });
+}
+
 let _advanceRunning = false;
 async function advanceRound() {
   const stop = (why) => { advanceStalled = why; return false; };
   if (_advanceRunning) return false;
   if (!S.sb || !S.league?.id) return stop("no league loaded");
   if (!autoWindowsEnabled()) return stop("this league is on manual windows — settlement only runs on auto");
-  const due = closedWindowRound(S.fixtures, Date.now(), cfgOf().windows || {});
-  if (!due) return false;
 
-  /* Already recorded? Matched on the round KEY, plus — for rows written before
-     Phase 1.5, which have no key — on the number. Missing that second arm would
-     let a numbered round already settled by an older client be settled again. */
-  const seen = (S.rounds || []).find((r) =>
-    (r.round_key != null && r.round_key === due.roundKey)
-    || (r.round_key == null && due.roundNo != null && r.round_no === due.roundNo));
-  if (seen && (seen.status === "settled"
-      || Date.now() - Date.parse(seen.claimed_at || 0) < SETTLE_STALE_MS)) return false;
+  const all = closedWindowRounds(S.fixtures, Date.now(), cfgOf().windows || {});
+  if (!all.length) return false;
+  const owed = roundsOwedSettlement(S.fixtures, Date.now(), cfgOf().windows || {});
+  if (!owed.length) return false;
+  const newestKey = all[all.length - 1].roundKey;
 
   _advanceRunning = true;
   try {
-    const w = due.win;
-    const row = {
-      league_id: S.league.id, round_key: due.roundKey, round_no: due.roundNo,
-      status: "settling",
-      opens_at: new Date(w.openAt).toISOString(),
-      locks_at: new Date(w.closeAt).toISOString(),
-      claimed_at: new Date().toISOString(),
-    };
-    // Whichever column identifies this round in the database we are talking to.
-    let keyed = (q) => q.eq("round_key", due.roundKey);
-
-    let claimed = false;
-    let ins = await S.sb.from("rounds").insert(row).select("id");
-    /* Unapplied Phase 1.5 migration. A numbered round can still be claimed the
-       old way; an unnumbered one has nothing left to key on, so it falls back
-       to the legacy settlement path rather than going unsettled. */
-    if (ins.error && /round_key/.test(ins.error.message || "")) {
-      if (due.roundNo == null) return "no-round";
-      delete row.round_key;
-      keyed = (q) => q.eq("round_no", due.roundNo);
-      ins = await S.sb.from("rounds").insert(row).select("id");
+    let any = false;
+    for (const due of owed) {
+      // Pending claims belong to the newest closed window; see settleRound.
+      const r = await settleRound(due, due.roundKey === newestKey);
+      if (r === "no-table" || r === "no-round") return r;
+      if (r) any = true;
     }
-    if (!ins.error) claimed = true;
-    else if (/permission denied|row-level security|42501/i.test(
-               (ins.error.message || "") + (ins.error.code || ""))) {
-      /* RLS refused the claim. Almost always an rls.sql predating the `rounds`
-         table: the table then has RLS enabled by schema.sql and no policy at
-         all, so reads come back empty and writes are refused -- which looks
-         exactly like "nothing has settled yet", forever. */
-      return stop("the database refused to record it — re-run rls.sql (it must "
-        + "include `rounds`, added in Phase 1)");
-    }
-    else if (ins.error.code === "23505" || /duplicate key/.test(ins.error.message || "")) {
-      /* A stale half-run may be retaken; a live one may not. The conflict can
-         also come from the legacy (league_id, round_no) unique when an older
-         client already settled this round under a key we cannot see — then this
-         matches nothing, and standing down is the right answer. */
-      const cutoff = new Date(Date.now() - SETTLE_STALE_MS).toISOString();
-      const take = await keyed(S.sb.from("rounds")
-        .update({ claimed_at: new Date().toISOString() })
-        .eq("league_id", S.league.id))
-        .eq("status", "settling").lt("claimed_at", cutoff).select("id");
-      claimed = !take.error && (take.data || []).length > 0;
-    } else if (_missingRoundsTable(ins.error)) {
-      return "no-table";                    // caller falls back to the legacy path
-    } else {
-      return stop("could not record it: " + (ins.error.message || "unknown error"));
-    }
-    if (!claimed) return false;             // a live claim by someone else; fine
-
-    /* The settlement ritual, in order. Each step is itself idempotent and
-       late-safe (waiver awards stamp at the lock that follows their window;
-       repair only writes picks that actually move), so a retaken half-run
-       finishes cleanly rather than double-applying. */
-    if (faDeferToClose() && (S.faClaims || []).some((c) => c.status === "pending"))
-      await processFaClaims();
-    for (const m of activeManagers())
-      await repairLineupFor(m.id).catch(() => {});
-
-    await keyed(S.sb.from("rounds")
-      .update({ status: "settled", settled_at: new Date().toISOString() })
-      .eq("league_id", S.league.id));
-    S.rounds = [...(S.rounds || []).filter((r) => r.round_key !== due.roundKey),
-                { ...row, round_key: due.roundKey, status: "settled" }];
-    advanceStalled = null;
-    return true;
+    return any;
   } finally { _advanceRunning = false; }
 }
 

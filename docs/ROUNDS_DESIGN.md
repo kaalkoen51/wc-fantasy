@@ -192,7 +192,7 @@ urgency once rounds are first-class.
 
 ## Invariants to hold at every phase
 
-- All ~630 unit tests and every browser suite pass unchanged, or the change to
+- The full unit suite passes unchanged, or the change to
   a test is itself reviewed (a test that encodes the old wrong behaviour gets
   rewritten, never silently bent).
 - Legacy World Cup leagues (count-based rounds, no API matchweek) keep working
@@ -204,7 +204,7 @@ urgency once rounds are first-class.
 
 ## Verification checklist per phase
 
-1. Full unit suite + all browser harness suites.
+1. Full unit suite. (There is no browser harness — see the progress log.)
 2. The specific historical bugs re-run as scenarios (transfer, blank, double,
    reschedule, lineup-edit-after-round) — they exist as tests already; they
    must pass through the *new* path (assert the recorded value is used, not
@@ -287,13 +287,24 @@ say so. Silence is the one outcome that cannot be debugged.
 
 ### Still open
 
-- **Only the most recent closed window settles.** `lastClosedTradeWindow()`
-  returns one window, so where three have shut — a fortnight with nobody
-  opening the app, or any jump forward in the bench — the intermediate rounds
-  never settle and their queued claims never resolve. Pre-existing (the legacy
-  waiver path behaved identically), but real, and it wants its own reviewed
-  step.
-- **The browser suites** have not been re-run since Phase 1.
+- ~~Only the most recent closed window settles.~~ ✅ Fixed. `advanceRound()`
+  now works through `roundsOwedSettlement()`, oldest first, claiming each round
+  as its own row. Bounded deliberately: the newest closed round is always
+  eligible, older ones only once something later has been recorded — so a first
+  run against a season already under way still settles one round, honouring
+  Phase 1's decision not to backfill, while a league nobody opened for a
+  fortnight catches up in full. Waivers resolve only on the newest round:
+  `fa_claims` carry no window and are cleared when one reopens, so anything
+  pending belongs to the newest closed window, never to a round being caught
+  up on.
+- **The "browser suites" do not exist.** Phase 1's commit message claims
+  "eleven suites green" and the checklist above names "all browser harness
+  suites", but the whole git history contains three test artifacts —
+  `test_logic.js`, `test_daily_pull.py`, `backtest.py`. No harness, no
+  Playwright/Puppeteer/vitest, nothing in CI. Those runs were hand walkthroughs
+  in the bench, described as suites and never committed. Either build the
+  harness or stop citing it; a verification step that cannot be performed is
+  worse than no step at all.
 
 ### Phase 1.5 addendum
 

@@ -35,7 +35,7 @@ const lsStub = {
 globalThis.appended = appended;
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid, pitchHtml, pitchFacingHtml, pitchRowsHtml, squadBoardHtml, historyViewHtml, benchInOrder, moveBench, orderedRoster, flipRows, wireLineupControls, markQueueMoved, matchdayCtaAct, matchdayCardHtml, renderLineup, renderHomeTab, openH2HPreview, openH2HFixture, lineupRowHtml, dugoutHtml, renderFixturesTab, h2hRoundFixtures, h2hTotalRounds, h2hFormOf, h2hStandingsHtml, seasonChartHtml, renderScoutList, renderStatsTab, renderPredraftShortlist, preDraftBrowsing, shortlistCoverage, coverageHint, scoringByPositionHtml, openScoringSheet, animateReorder, applyLocalOverrides, queueManagerWrite, wireStars, starHtml, draftFactCards, draftRulesHtml, lobbyRulesHtml, scoringHtml, applyVisibleOrder, makeReorderable, refetchAll, markConnection, enterLeagueWithFeedback, route, showView, dragActive, afterDrag, overrideStillWins, queueManagerWrite, applyLocalOverrides, keepLocalPick, autoPickStale, makePick, autoPick, tickTimer, mergeOptimisticPicks, pickKey, queueFieldWrite, OVERRIDE_TABLES, setPlanner, saveLineup, toggleKeeper, setFinalPick, txWindowStarts, txWhen, txShell, txAvatar, txMgrChip, tradeTxCard, swapTxCard, transactionsLogHtml, renderTrades, builderHtml, faClaimsSectionHtml, waiverOrderHtml, shortlistSectionHtml, plannerSectionHtml, plannerMoveHtml, squadChooserHtml, tradeSectionHtml, setClaimOrder, reorderClaim, tradeForShortlisted, submitTrade, TRADE_TABS, tradeTabBodyHtml, faClaimRowHtml, faClaimRowsHtml, renderClaimList, wireClaimControls, ROW_ATTRS, plannerMoveChoice, plannerSetChoiceOrder, plannerPickPool, renderPlannerPick, setWindowMode, toggleLineups, squadPitchHtml, squadShape, renderDreamTeam, dreamTeam, renderChat, chatThreads, interacting, markInteracting, scheduleDeferredFlush, INTERACT_MS, animateReorder, flipRows, flushDeferredRender, currentSeasonFor, seasonOptions, seasonLabel, backtestSeason, createCompKind, createPreviewSeason, loadScoringPreviewData, pullCreateHistory, renderCreateBalance, updateCreatePullStatus, renderCreateForm, pickReconciliation, reconcilePicksToPool, mapApiPlayer, loadCompetition, roundResolvers, roundIndex, mwNo, FINAL_STATUS, draftOrderMode, lobbyOrderManagers, shuffled, setDraftOrder, renderLobbyOrder, lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow, nextLockMs, lockAfterWindow, restampPlan, snapshotAt, snapshotForNextLock, restampSnapshots, rosterAtFor, setSession, getSession, repairStarters, lineupShape, repairLineupFor, faWindowKey, roundToSettle, closedWindowRound, roundKeyLockedAt, roundKeyOfLabel, roundIndex, rosterAtFor, snapshotsByManager, advanceRound, maybeAdvanceRounds };"
+  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid, pitchHtml, pitchFacingHtml, pitchRowsHtml, squadBoardHtml, historyViewHtml, benchInOrder, moveBench, orderedRoster, flipRows, wireLineupControls, markQueueMoved, matchdayCtaAct, matchdayCardHtml, renderLineup, renderHomeTab, openH2HPreview, openH2HFixture, lineupRowHtml, dugoutHtml, renderFixturesTab, h2hRoundFixtures, h2hTotalRounds, h2hFormOf, h2hStandingsHtml, seasonChartHtml, renderScoutList, renderStatsTab, renderPredraftShortlist, preDraftBrowsing, shortlistCoverage, coverageHint, scoringByPositionHtml, openScoringSheet, animateReorder, applyLocalOverrides, queueManagerWrite, wireStars, starHtml, draftFactCards, draftRulesHtml, lobbyRulesHtml, scoringHtml, applyVisibleOrder, makeReorderable, refetchAll, markConnection, enterLeagueWithFeedback, route, showView, dragActive, afterDrag, overrideStillWins, queueManagerWrite, applyLocalOverrides, keepLocalPick, autoPickStale, makePick, autoPick, tickTimer, mergeOptimisticPicks, pickKey, queueFieldWrite, OVERRIDE_TABLES, setPlanner, saveLineup, toggleKeeper, setFinalPick, txWindowStarts, txWhen, txShell, txAvatar, txMgrChip, tradeTxCard, swapTxCard, transactionsLogHtml, renderTrades, builderHtml, faClaimsSectionHtml, waiverOrderHtml, shortlistSectionHtml, plannerSectionHtml, plannerMoveHtml, squadChooserHtml, tradeSectionHtml, setClaimOrder, reorderClaim, tradeForShortlisted, submitTrade, TRADE_TABS, tradeTabBodyHtml, faClaimRowHtml, faClaimRowsHtml, renderClaimList, wireClaimControls, ROW_ATTRS, plannerMoveChoice, plannerSetChoiceOrder, plannerPickPool, renderPlannerPick, setWindowMode, toggleLineups, squadPitchHtml, squadShape, renderDreamTeam, dreamTeam, renderChat, chatThreads, interacting, markInteracting, scheduleDeferredFlush, INTERACT_MS, animateReorder, flipRows, flushDeferredRender, currentSeasonFor, seasonOptions, seasonLabel, backtestSeason, createCompKind, createPreviewSeason, loadScoringPreviewData, pullCreateHistory, renderCreateBalance, updateCreatePullStatus, renderCreateForm, pickReconciliation, reconcilePicksToPool, mapApiPlayer, loadCompetition, roundResolvers, roundIndex, mwNo, FINAL_STATUS, draftOrderMode, lobbyOrderManagers, shuffled, setDraftOrder, renderLobbyOrder, lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow, nextLockMs, lockAfterWindow, restampPlan, snapshotAt, snapshotForNextLock, restampSnapshots, rosterAtFor, setSession, getSession, repairStarters, lineupShape, repairLineupFor, faWindowKey, roundToSettle, closedWindowRound, closedWindowRounds, closedTradeWindows, roundsOwedSettlement, roundKeyLockedAt, roundKeyOfLabel, roundIndex, rosterAtFor, snapshotsByManager, advanceRound, maybeAdvanceRounds };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -70,7 +70,8 @@ const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcT
         lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow,
         nextLockMs, lockAfterWindow, restampPlan, snapshotAt, snapshotForNextLock, restampSnapshots,
         txWindowStarts, rosterAtFor, setSession, getSession, faWindowKey, roundToSettle,
-        closedWindowRound, roundKeyLockedAt, roundKeyOfLabel,
+        closedWindowRound, closedWindowRounds, closedTradeWindows, roundsOwedSettlement,
+        roundKeyLockedAt, roundKeyOfLabel,
         repairStarters, lineupShape, repairLineupFor } = api;
 let fails = 0;
 const check = (label, got, want) => {
@@ -2637,6 +2638,55 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
   check("...its key being the label, not the number",
     closedWindowRound(rsSeason, rsClose + CAPH, {}).roundKey, "Regular Season - 4");
   check("no fixtures, nothing owed", closedWindowRound([], 99 * CAPD, {}), null);
+
+  /* A backlog. lastClosedTradeWindow names only the NEWEST closed window, so a
+     league nobody opened for a fortnight settled one round and skipped the
+     rest for good -- today that loses their waivers, and once Phase 2 scores
+     from recorded rounds it would lose their points. */
+  const bl = [...rsWk(1, 0), ...rsWk(2, 7 * CAPD), ...rsWk(3, 14 * CAPD),
+              ...rsWk(4, 21 * CAPD)];
+  const late = 21 * CAPD;          // stood at week 4's kickoff: three windows shut
+  check("every closed window is enumerated, oldest first",
+    closedTradeWindows(bl, late, {}).map((w) => w.to),
+    ["Regular Season - 2", "Regular Season - 3", "Regular Season - 4"]);
+  check("...and the newest is still what the display asks for",
+    closedWindowRound(bl, late, {}).roundKey, "Regular Season - 4");
+
+  /* Bounded on purpose: with nothing recorded, only the newest is owed. Phase 1
+     chose not to backfill old seasons, and a first run against a season already
+     under way must not settle a dozen historical rounds. */
+  S.rounds = [];
+  check("nothing recorded → only the newest settles, no backfill",
+    roundsOwedSettlement(bl, late, {}).map((r) => r.roundKey),
+    ["Regular Season - 4"]);
+
+  // ...but once a round HAS been recorded, everything after it is owed.
+  S.rounds = [{ round_key: "Regular Season - 2", round_no: 2, status: "settled" }];
+  check("after a recorded round, the ones behind it are caught up",
+    roundsOwedSettlement(bl, late, {}).map((r) => r.roundKey),
+    ["Regular Season - 3", "Regular Season - 4"]);
+
+  S.rounds = [{ round_key: "Regular Season - 4", round_no: 4, status: "settled" }];
+  check("the newest already settled → nothing owed",
+    roundsOwedSettlement(bl, late, {}).map((r) => r.roundKey), []);
+
+  // A pre-1.5 row carries no key, so it has to match on the number instead.
+  S.rounds = [{ round_key: null, round_no: 3, status: "settled" }];
+  check("a keyless legacy row still counts as recorded",
+    roundsOwedSettlement(bl, late, {}).map((r) => r.roundKey), ["Regular Season - 4"]);
+
+  // A fresh claim by another client is not owed; a stale one is retaken.
+  S.rounds = [{ round_key: "Regular Season - 3", round_no: 3, status: "settled" },
+              { round_key: "Regular Season - 4", round_no: 4, status: "settling",
+                claimed_at: new Date(Date.now() - 60e3).toISOString() }];
+  check("a live claim by someone else is left alone",
+    roundsOwedSettlement(bl, late, {}).map((r) => r.roundKey), []);
+  S.rounds = [{ round_key: "Regular Season - 3", round_no: 3, status: "settled" },
+              { round_key: "Regular Season - 4", round_no: 4, status: "settling",
+                claimed_at: new Date(Date.now() - 40 * 60e3).toISOString() }];
+  check("a claim whose client died is retaken",
+    roundsOwedSettlement(bl, late, {}).map((r) => r.roundKey), ["Regular Season - 4"]);
+  S.rounds = [];
 
   /* Phase 1.5: the round a lock is FOR, stamped by the writer that knows it
      rather than recovered later by matching timestamps to the nearest lock. */
