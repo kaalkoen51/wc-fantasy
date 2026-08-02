@@ -345,6 +345,13 @@ create table if not exists transactions (
     in_player_name text,
     created_at timestamptz default now()
 );
+
+-- Which trade window this move counted against, recorded when it was made. The
+-- per-window free-agent cap used to compare timestamps against a boundary
+-- derived from the fixture list -- which moves when a game is rescheduled,
+-- dragging an earlier window's moves into the current one. Additive; rows
+-- without it fall back to the timestamp comparison.
+alter table transactions add column if not exists window_key text;
 create index if not exists transactions_league_idx
     on transactions (league_id, created_at);
 
