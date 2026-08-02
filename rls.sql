@@ -53,7 +53,7 @@ set lock_timeout = '5s';
 -- do $$ declare t text; begin
 --   foreach t in array array['leagues','managers','picks','team_stages','trades',
 --     'trade_items','lineup_snapshots','match_stats','messages','transactions',
---     'fa_claims','competition_pools','competition_stats']
+--     'fa_claims','competition_pools','competition_stats','rounds']
 --   loop
 --     execute format('drop policy if exists %I_member on %I', t, t);
 --     execute format('drop policy if exists %I_read on %I', t, t);
@@ -112,7 +112,7 @@ do $$ declare r record; begin
     where schemaname = 'public'
       and tablename = any (array['leagues','managers','picks','team_stages','trades',
         'trade_items','lineup_snapshots','match_stats','messages','transactions',
-        'fa_claims','competition_pools','competition_stats'])
+        'fa_claims','competition_pools','competition_stats','rounds'])
   loop
     execute format('drop policy if exists %I on public.%I', r.policyname, r.tablename);
   end loop;
@@ -186,7 +186,7 @@ create policy managers_owner_delete on managers
 -- nothing at all, which is the property that actually matters here.
 do $$ declare t text; begin
   foreach t in array array['picks','team_stages','trades','lineup_snapshots',
-    'match_stats','messages','transactions','fa_claims']
+    'match_stats','messages','transactions','fa_claims','rounds']
   loop
     execute format($f$
       create policy %1$I_member on %1$I
