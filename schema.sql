@@ -550,18 +550,49 @@ begin
     end loop;
 end $$;
 
--- RLS with open policies: this is a casual fantasy app for a friend group,
--- not a public product. Tighten these if that ever changes.
--- (drop-then-create keeps re-runs of this file error-free)
+/* One row per matchweek per league, recording that the round's SETTLEMENT ran
+   (ROUNDS_DESIGN.md, Phase 1). Rows are claimed lazily by whichever client
+   notices the trade window has closed -- insert wins the claim, the unique key
+   makes racers lose -- so nothing pre-creates rows and old seasons need no
+   backfill. Persisted status is deliberately minimal (settling | settled):
+   upcoming/open/locked/live are display states and stay derived. */
+create table if not exists rounds (
+    id uuid primary key default gen_random_uuid(),
+    league_id uuid references leagues(id) on delete cascade,
+    round_no int not null,
+    status text not null default 'settling',
+    opens_at timestamptz,
+    locks_at timestamptz,
+    first_kickoff timestamptz,
+    last_kickoff timestamptz,
+    claimed_at timestamptz default now(),
+    settled_at timestamptz,
+    unique (league_id, round_no)
+);
+
+-- RLS. Open policies are created ONLY while the rls.sql lockdown has never
+-- been applied (detected by its is_league_member() helper). This block used to
+-- drop-and-recreate "open access" unconditionally, which meant re-running
+-- schema.sql for any later additive migration silently UNDID the lockdown and
+-- reopened every table to the anon key -- the worst kind of regression, since
+-- the app keeps working and the dashboard still lists policies. Once locked
+-- down, this block only ensures RLS stays enabled and touches no policies.
 do $$
 declare t text;
+-- to_regprocedure, not to_regproc: only the former accepts a signature.
+-- (to_regproc with '(uuid)' returns null, which made `locked` always false
+-- and quietly resurrected the trap this block exists to close.)
+declare locked boolean := to_regprocedure('public.is_league_member(uuid)') is not null;
 begin
     foreach t in array array['leagues','managers','picks','match_stats',
                              'team_stages','trades','trade_items',
-                             'lineup_snapshots','transactions','messages'] loop
+                             'lineup_snapshots','transactions','messages',
+                             'rounds'] loop
         execute format('alter table %I enable row level security', t);
-        execute format('drop policy if exists "open access" on %I', t);
-        execute format(
-            'create policy "open access" on %I for all using (true) with check (true)', t);
+        if not locked then
+            execute format('drop policy if exists "open access" on %I', t);
+            execute format(
+                'create policy "open access" on %I for all using (true) with check (true)', t);
+        end if;
     end loop;
 end $$;

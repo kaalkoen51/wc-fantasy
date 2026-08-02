@@ -605,13 +605,19 @@ async function refetchAll({ initial = false } = {}) {
   S.messages = msg && !msg.error ? (msg.data || []) : [];
   // fa_claims likewise optional (waiver mode); empty if not migrated.
   S.faClaims = fac && !fac.error ? (fac.data || []) : [];
+  /* Settlement records (Phase 1). Missing table = unmigrated database: keep an
+     empty list and the settlement hook falls back to the legacy path. */
+  try {
+    const rd = await S.sb.from("rounds").select("*").eq("league_id", id);
+    S.rounds = rd.error ? [] : (rd.data || []);
+  } catch { S.rounds = []; }
   ptsCache = null;
   markConnection(true);
   route();
   // Fresh claims + fixtures + league row: the one moment we can judge whether
   // an auto-window league owes its managers a waiver run.
   restampSnapshots().catch(() => {});
-  maybeProcessAutoWaivers().catch(() => {});
+  maybeAdvanceRounds().catch(() => {});
   return true;
 }
 
@@ -9388,6 +9394,105 @@ async function processFaClaims() {
    forward to this window's close, and everyone else matches zero rows and does
    nothing. The cost is that a client dying mid-run leaves the batch unfinished;
    the admin's "Process now" button is the recovery path for that. */
+/* ---------- Phase 1 (ROUNDS_DESIGN.md): the round-settlement transition ----------
+
+   "The window closed" used to be a predicate that nobody acted on; the effects
+   it implies were scattered (waivers here, repairs there) and each grew its own
+   ad-hoc lock. This is the one transition that owns them, in order, exactly
+   once per round -- recorded as a row in `rounds` so it is visible, idempotent,
+   and safe for any number of clients to race.
+
+   The claim is the INSERT: unique (league_id, round_no) means exactly one
+   racer wins; the rest get 23505 and stand down. A claim older than
+   SETTLE_STALE_MS whose ritual never finished (client died mid-run) may be
+   retaken with a guarded UPDATE -- the same shape as the old
+   fa_processed_until CAS, now owned by the entity it belongs to.
+
+   Deliberately NOT in the ritual: snapshotting every roster at the lock. This
+   transition usually runs LATE (whenever someone next opens the app), and a
+   late snapshot would stamp CURRENT squads at an old lock time -- recreating
+   the history-rewrite bug that forward-stamping and pinHistory exist to
+   prevent. History is their job; settlement is this one's. */
+
+// Which round's settlement is due: the matchweek the last CLOSED window led
+// into. Pure. Null when nothing has closed, or in cup/legacy mode (no numbered
+// matchweeks -- those leagues run on the admin's manual toggle).
+function roundToSettle(fixtures, nowMs, opts) {
+  const win = lastClosedTradeWindow(fixtures || [], nowMs, opts || {});
+  if (!win) return null;
+  const n = Number(mwNo(win.to));
+  return n >= 1 ? { roundNo: n, win } : null;
+}
+
+const SETTLE_STALE_MS = 10 * 60e3;
+const _missingRoundsTable = (e) =>
+  /rounds/.test(e?.message || "") && /schema cache|does not exist|42P01|PGRST205/i.test((e?.message || "") + (e?.code || ""));
+
+let _advanceRunning = false;
+async function advanceRound() {
+  if (_advanceRunning) return false;
+  if (!S.sb || !S.league?.id || !autoWindowsEnabled()) return false;
+  const due = roundToSettle(S.fixtures, Date.now(), cfgOf().windows || {});
+  if (!due) return false;
+  // Already recorded as settled (or freshly claimed by someone else)?
+  const seen = (S.rounds || []).find((r) => r.round_no === due.roundNo);
+  if (seen && (seen.status === "settled"
+      || Date.now() - Date.parse(seen.claimed_at || 0) < SETTLE_STALE_MS)) return false;
+
+  _advanceRunning = true;
+  try {
+    const w = due.win;
+    const row = {
+      league_id: S.league.id, round_no: due.roundNo, status: "settling",
+      opens_at: new Date(w.openAt).toISOString(),
+      locks_at: new Date(w.closeAt).toISOString(),
+      claimed_at: new Date().toISOString(),
+    };
+    let claimed = false;
+    const ins = await S.sb.from("rounds").insert(row).select("id");
+    if (!ins.error) claimed = true;
+    else if (ins.error.code === "23505" || /duplicate key/.test(ins.error.message || "")) {
+      // A stale half-run may be retaken; a live one may not.
+      const cutoff = new Date(Date.now() - SETTLE_STALE_MS).toISOString();
+      const take = await S.sb.from("rounds")
+        .update({ claimed_at: new Date().toISOString() })
+        .eq("league_id", S.league.id).eq("round_no", due.roundNo)
+        .eq("status", "settling").lt("claimed_at", cutoff).select("id");
+      claimed = !take.error && (take.data || []).length > 0;
+    } else if (_missingRoundsTable(ins.error)) {
+      return "no-table";                    // caller falls back to the legacy path
+    }
+    if (!claimed) return false;
+
+    /* The settlement ritual, in order. Each step is itself idempotent and
+       late-safe (waiver awards stamp at the lock that follows their window;
+       repair only writes picks that actually move), so a retaken half-run
+       finishes cleanly rather than double-applying. */
+    if (faDeferToClose() && (S.faClaims || []).some((c) => c.status === "pending"))
+      await processFaClaims();
+    for (const m of activeManagers())
+      await repairLineupFor(m.id).catch(() => {});
+
+    await S.sb.from("rounds")
+      .update({ status: "settled", settled_at: new Date().toISOString() })
+      .eq("league_id", S.league.id).eq("round_no", due.roundNo);
+    S.rounds = [...(S.rounds || []).filter((r) => r.round_no !== due.roundNo),
+                { ...row, status: "settled" }];
+    return true;
+  } finally { _advanceRunning = false; }
+}
+
+// The refetch hook: rounds-table path first; databases that have not run the
+// migration fall back to the legacy fa_processed_until CAS below, unchanged.
+async function maybeAdvanceRounds() {
+  const r = await advanceRound().catch(() => false);
+  if (r === "no-table") return maybeProcessAutoWaivers();
+  return r;
+}
+
+/* DEPRECATED (ROUNDS_DESIGN.md Phase 2 removes it): the pre-rounds settlement
+   path, kept verbatim as the fallback for databases without the rounds table.
+   Its fa_processed_until CAS is the pattern advanceRound() generalises. */
 let _waiverRunning = false;
 async function maybeProcessAutoWaivers() {
   if (_waiverRunning) return false;
@@ -9428,6 +9533,15 @@ async function processWaiversNow() {
   if (!confirm(`Resolve ${pending.length} waiting claim${pending.length === 1 ? "" : "s"} now?`)) return;
   const win = lastClosedTradeWindow(S.fixtures || [], Date.now(), cfgOf().windows || {});
   if (win) {
+    // Record the manual settlement on the round row too, so the automatic
+    // path knows this round is done (best-effort: table may not exist yet).
+    const n = Number(mwNo(win.to));
+    if (n >= 1) await S.sb.from("rounds").upsert({
+      league_id: S.league.id, round_no: n, status: "settled",
+      opens_at: new Date(win.openAt).toISOString(),
+      locks_at: new Date(win.closeAt).toISOString(),
+      settled_at: new Date().toISOString(),
+    }, { onConflict: "league_id,round_no" }).then(() => {}, () => {});
     const iso = new Date(win.closeAt).toISOString();
     await S.sb.from("leagues").update({ fa_processed_until: iso }).eq("id", S.league.id);
     S.league.fa_processed_until = iso;

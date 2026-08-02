@@ -1,6 +1,6 @@
 # Rounds: record at decision time, don't re-derive
 
-**Status:** Phase 0 shipped. Phases 1–3 planned, each its own reviewed step.
+**Status:** Phases 0 and 1 shipped. Phases 2–3 planned, each its own reviewed step.
 
 ## Why this document exists
 
@@ -55,7 +55,31 @@ migration degrades to exactly today's behaviour.
 **What this kills permanently for new data:** the transfer, blank-week and
 double-week classes — the row itself says which round it was.
 
-### Phase 1 — the `rounds` table and `advanceRound()`
+### Phase 1 — the `rounds` table and `advanceRound()` ✅
+
+Shipped with three decisions the original sketch left open:
+
+- **The table records settlement, not the display lifecycle.** Rows are
+  claimed lazily (INSERT wins, unique key makes racers lose) by whichever
+  client notices a window closed — no pre-creation writer, no backfill of old
+  seasons. Persisted status is `settling → settled`; upcoming/open/locked/live
+  stay derived, because for pure display derivation is correct.
+- **The ritual does NOT snapshot every roster at the lock.** It usually runs
+  late, and a late snapshot would stamp *current* squads at an old lock time —
+  recreating the history-rewrite bug forward-stamping exists to prevent.
+  Ritual = resolve waivers (already late-safe) → repair every line-up →
+  mark settled.
+- **`fa_processed_until` survives as the fallback** for databases without the
+  rounds table, marked deprecated. Its deletion is Phase 2's acceptance
+  criterion.
+
+Also fixed here because Phase 1 touched it: re-running `schema.sql` used to
+drop-and-recreate the "open access" policies, silently undoing an applied
+`rls.sql` lockdown. The open-policy block now refuses to run once the lockdown
+marker (`is_league_member`) exists — proven against real Postgres, including
+the re-run.
+
+Original sketch:
 
 ```
 rounds: league_id (or competition_key) · round_no · opens_at · locks_at ·
