@@ -9522,10 +9522,19 @@ const SETTLE_STALE_MS = 10 * 60e3;
 const _missingRoundsTable = (e) =>
   /rounds/.test(e?.message || "") && /schema cache|does not exist|42P01|PGRST205/i.test((e?.message || "") + (e?.code || ""));
 
+/* Why the last settlement attempt stopped. A transition whose whole purpose is
+   to be VISIBLE was, on every path except success, returning a bare false: an
+   insert refused by RLS, a league with auto-windows off and a genuine "nothing
+   due" were indistinguishable from each other and from never having run. The
+   test bench reads this to say what actually happened. */
+let advanceStalled = null;
+
 let _advanceRunning = false;
 async function advanceRound() {
+  const stop = (why) => { advanceStalled = why; return false; };
   if (_advanceRunning) return false;
-  if (!S.sb || !S.league?.id || !autoWindowsEnabled()) return false;
+  if (!S.sb || !S.league?.id) return stop("no league loaded");
+  if (!autoWindowsEnabled()) return stop("this league is on manual windows — settlement only runs on auto");
   const due = closedWindowRound(S.fixtures, Date.now(), cfgOf().windows || {});
   if (!due) return false;
 
@@ -9563,6 +9572,15 @@ async function advanceRound() {
       ins = await S.sb.from("rounds").insert(row).select("id");
     }
     if (!ins.error) claimed = true;
+    else if (/permission denied|row-level security|42501/i.test(
+               (ins.error.message || "") + (ins.error.code || ""))) {
+      /* RLS refused the claim. Almost always an rls.sql predating the `rounds`
+         table: the table then has RLS enabled by schema.sql and no policy at
+         all, so reads come back empty and writes are refused -- which looks
+         exactly like "nothing has settled yet", forever. */
+      return stop("the database refused to record it — re-run rls.sql (it must "
+        + "include `rounds`, added in Phase 1)");
+    }
     else if (ins.error.code === "23505" || /duplicate key/.test(ins.error.message || "")) {
       /* A stale half-run may be retaken; a live one may not. The conflict can
          also come from the legacy (league_id, round_no) unique when an older
@@ -9576,8 +9594,10 @@ async function advanceRound() {
       claimed = !take.error && (take.data || []).length > 0;
     } else if (_missingRoundsTable(ins.error)) {
       return "no-table";                    // caller falls back to the legacy path
+    } else {
+      return stop("could not record it: " + (ins.error.message || "unknown error"));
     }
-    if (!claimed) return false;
+    if (!claimed) return false;             // a live claim by someone else; fine
 
     /* The settlement ritual, in order. Each step is itself idempotent and
        late-safe (waiver awards stamp at the lock that follows their window;
@@ -9593,6 +9613,7 @@ async function advanceRound() {
       .eq("league_id", S.league.id));
     S.rounds = [...(S.rounds || []).filter((r) => r.round_key !== due.roundKey),
                 { ...row, round_key: due.roundKey, status: "settled" }];
+    advanceStalled = null;
     return true;
   } finally { _advanceRunning = false; }
 }

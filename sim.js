@@ -127,7 +127,11 @@ async function simApply(stage, weeks, quirks) {
   // Auto-windows are part of what we're testing; make sure they're on.
   const cfg = { ...(S.league.config || {}), autoWindows: true };
   S.league.config = cfg;
-  S.sb.from("leagues").update({ config: cfg }).eq("id", S.league.id).then(() => {}, () => {});
+  /* Awaited. The refetch below re-reads the league row, so a config write still
+     in flight would be read back at its OLD value -- and settlement gives up
+     immediately on a league it thinks is on manual windows. */
+  await S.sb.from("leagues").update({ config: cfg }).eq("id", S.league.id)
+    .then(() => {}, () => {});
   /* Every recorded settlement refers to dates that no longer exist. A round
      settles ONCE, so leaving those rows behind is what made the bench look
      broken: the first pass through the stages settled rounds 3 and 4, and every
@@ -244,9 +248,15 @@ function simSettlementNote() {
   const rec = (S.rounds || []).find((r) =>
     (r.round_key != null && r.round_key === due.roundKey)
     || (r.round_key == null && due.roundNo != null && r.round_no === due.roundNo));
+  /* When it is due and still unrecorded, the interesting question is not "has
+     it run" but "what stopped it" -- advanceRound records that now. */
+  const stalled = typeof advanceStalled === "string" && advanceStalled
+    ? ` · <span class="text-wcred">stalled: ${esc(advanceStalled)}</span>` : "";
+  const waiver = typeof faDeferToClose === "function" && !faDeferToClose()
+    ? " · note: this league is not in waiver mode, so settling a round resolves no claims" : "";
   return `Settlement due for <b>${esc(due.roundKey)}</b> · ${
     rec ? `already recorded (${esc(rec.status)}) — it will not run again`
-        : "not recorded yet — the next refresh runs it"} · ${claims}`;
+        : "not recorded yet — the next refresh runs it"} · ${claims}${stalled}${waiver}`;
 }
 
 // The calendar's matchweeks, earliest first, plus the labels already played.
