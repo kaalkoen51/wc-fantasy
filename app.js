@@ -338,6 +338,10 @@ const STRIPPABLE_COLUMNS = new Set([
   "window_key", "round",
   "fa_processed_until",
   "team",
+  // round_key is read by scoring, not display-only -- but a snapshot without it
+  // falls back to the timestamp path, i.e. exactly the pre-1.5 behaviour, so
+  // dropping it degrades correctly rather than wrongly.
+  "round_key",
 ]);
 
 // Insert/upsert that tolerates an unapplied additive migration. Throws on
@@ -4008,6 +4012,24 @@ function nextLockMs(fixtures, nowMs, opts) {
   return null;
 }
 
+/* The round a lock taken at `atMs` is locking FOR (ROUNDS_DESIGN.md Phase 1.5).
+
+   A lock always precedes the games it freezes, so the round being locked is the
+   next matchweek still to kick off. `>=` rather than `>` so a zero-hour lock
+   (lockAt === first kickoff) names its own round rather than the one after.
+   Falls back to the last matchweek when the season has no fixture left, and to
+   null when there are no fixtures at all — an unstamped snapshot is valid and
+   simply uses the timestamp path.
+
+   This is the whole point of the phase: the writer knows the round, so it
+   writes it. restampPlan() has to GUESS it back later by matching timestamps to
+   the nearest lock, which is wrong the moment a fixture moves. */
+function roundKeyLockedAt(fixtures, atMs) {
+  const weeks = matchweeksOf(fixtures);
+  for (const w of weeks) if (w.first >= atMs) return w.round;
+  return weeks.length ? weeks[weeks.length - 1].round : null;
+}
+
 /* The lock that FOLLOWS a trade window closing — when that window's waiver
    awards should start counting. Trading shuts further out than line-ups do
    (24h vs 1h by default), so this is always after the close.
@@ -4468,8 +4490,17 @@ function snapshotsByManager() {
 // counts when none predates kickoff), falling back to the baseline
 // snapshot then current picks. This is the exact rule the leaderboard
 // scores by, shared so the player detail can show per-match lineup status.
-function rosterAtFor(mgrId, t, d, snaps) {
+function rosterAtFor(mgrId, t, d, snaps, roundKey) {
   snaps = snaps || snapshotsByManager()[mgrId] || [];
+  /* Phase 1.5: a snapshot that says which round it was FOR answers outright.
+     No timestamp arithmetic, so no reschedule can move which round it applies
+     to — the property restampSnapshots() currently has to maintain by hand.
+     Snapshots are oldest-first, so the last match is the newest line-up saved
+     for that round, which is the one that took effect. */
+  if (roundKey) {
+    for (let i = snaps.length - 1; i >= 0; i--)
+      if (snaps[i].round_key === roundKey) return snaps[i].roster;
+  }
   let chosen = null;
   for (const s of snaps) {
     if (Date.parse(s.effective_from) <= t) chosen = s; else break;
@@ -4497,17 +4528,17 @@ function slotLabel(entry) {
 
 // The player's roster entry in one manager's locked lineup for a match.
 function entryForManagerAt(mgrId, pid, label) {
-  return rosterAtFor(mgrId, matchTimeFor(label), labelDate(label))
-    .find((e) => e.player_id === pid) || null;
+  return rosterAtFor(mgrId, matchTimeFor(label), labelDate(label), null,
+    roundKeyOfLabel(label)).find((e) => e.player_id === pid) || null;
 }
 
 // Which manager (if any) had the player in their locked roster for a match,
 // and their entry. Picks are unique per league, so at most one matches.
 function ownerEntryAt(pid, label) {
-  const t = matchTimeFor(label), d = labelDate(label);
+  const t = matchTimeFor(label), d = labelDate(label), key = roundKeyOfLabel(label);
   const byMgr = snapshotsByManager();
   for (const m of S.managers) {
-    const e = rosterAtFor(m.id, t, d, byMgr[m.id] || []).find((x) => x.player_id === pid);
+    const e = rosterAtFor(m.id, t, d, byMgr[m.id] || [], key).find((x) => x.player_id === pid);
     if (e) return { manager: m, entry: e };
   }
   return null;
@@ -4574,12 +4605,19 @@ const FINAL_STATUS = ["FT", "AET", "PEN"];
 let _roundIdx = null, _roundIdxFor = null;
 function roundIndex() {
   if (_roundIdxFor === S.fixtures) return _roundIdx;
-  const byLabel = {}, byTeamRound = {}, finished = {};
+  const byLabel = {}, byTeamRound = {}, finished = {}, keyByLabel = {};
   for (const f of S.fixtures || []) {
     const n = Number(mwNo(f.round));
     const d = String(f.kickoff_utc || "").slice(0, 10) || f.date;
-    if (!n || !d) continue;
+    if (!d) continue;
     const label = `${f.home} vs ${f.away} (${d})`;
+    /* The round's own label, verbatim and for EVERY competition — the Phase 1.5
+       round key. Built before the numbering check below deliberately: byLabel
+       and friends stay numbers-only because the blank/double-week logic they
+       feed is meaningless without a matchweek number, but the KEY has to exist
+       for cups too or knockout rounds stay unrecordable. */
+    if (f.round != null && f.round !== "") keyByLabel[label] = String(f.round);
+    if (!n) continue;
     byLabel[label] = n;
     const done = FINAL_STATUS.includes(f.status);
     for (const t of [f.home, f.away]) {
@@ -4589,8 +4627,13 @@ function roundIndex() {
     }
   }
   _roundIdxFor = S.fixtures;
-  return (_roundIdx = { byLabel, byTeamRound, finished });
+  return (_roundIdx = { byLabel, byTeamRound, finished, keyByLabel });
 }
+
+// The round key of the match behind a label, for looking up the snapshot that
+// was stamped for that round. Null for a match with no fixture row (legacy
+// stats, hand-entered rows) — those keep the timestamp path.
+const roundKeyOfLabel = (label) => roundIndex().keyByLabel[label] || null;
 
 /* Round resolution, shared by computeScores and managerHistory (they score the
    same way and must agree — there is a test tying their totals together).
@@ -4761,7 +4804,8 @@ function computeScores() {
     for (const label of statLabels) {
       const d = labelDate(label);
       const rnd = roundByLabel(label);   // 1-based round (real matchweek)
-      const roster = rosterAtFor(m.id, matchTime(label), d, snapsByMgr[m.id] || []);
+      const roster = rosterAtFor(m.id, matchTime(label), d, snapsByMgr[m.id] || [],
+        roundKeyOfLabel(label));
       const starters = roster.filter((e) => !e.is_sub && e.position !== "TEAM");
       if (captain) {   // snapshot-locked captain, else the manager's current pick
         capByRnd[rnd] = roster.find((e) => e.is_captain)?.player_id ?? m.captain_id ?? capByRnd[rnd];
@@ -8483,13 +8527,14 @@ function orderedRoster(m) {
 /* Write one manager's squad, stamped with the lock it takes effect at. Upserted
    on (league, manager, effective_from), so editing five times before the lock
    leaves one row — the last edit wins — instead of five. */
-async function snapshotAt(mgrId, atMs) {
+async function snapshotAt(mgrId, atMs, roundKey) {
   if (!S.sb || !S.league?.id || atMs == null) return false;
   const m = S.managers.find((x) => x.id === mgrId);
   if (!m) return false;
   const row = {
     league_id: S.league.id, manager_id: mgrId,
     effective_from: new Date(atMs).toISOString(),
+    ...(roundKey ? { round_key: roundKey } : {}),
     roster: orderedRoster(m).map((pk) => ({
       player_id: pk.player_id, player_name: pk.player_name,
       position: pk.position, team: pk.team, is_sub: pk.is_sub, slot: pk.slot,
@@ -8497,8 +8542,16 @@ async function snapshotAt(mgrId, atMs) {
       ...(m.vice_id === pk.player_id ? { is_vice: true } : {}),
     })),
   };
-  const { error } = await S.sb.from("lineup_snapshots")
+  const put = () => S.sb.from("lineup_snapshots")
     .upsert(row, { onConflict: "league_id,manager_id,effective_from" });
+  let { error } = await put();
+  /* Unapplied Phase 1.5 migration: drop the stamp and keep the snapshot. The
+     read side treats an unstamped snapshot as "use the timestamp path", so this
+     degrades to exactly the pre-1.5 behaviour rather than to an error. */
+  if (error && /round_key/.test(error.message || "")) {
+    delete row.round_key;
+    ({ error } = await put());
+  }
   // Without the unique index the upsert has nothing to conflict on; fall back
   // to a plain insert so an unapplied migration degrades to the old behaviour
   // (duplicate rows) rather than losing the snapshot entirely.
@@ -8522,6 +8575,11 @@ async function pinHistory(mgrId) {
   const now = Date.now();
   const snaps = snapshotsByManager()[mgrId] || [];
   if (snaps.some((sn) => Date.parse(sn.effective_from) <= now)) return false;   // covered
+  /* Deliberately NOT round-stamped. This is a mid-round safety net taken at
+     `now`, not a record of a round's line-up: matches earlier in the same round
+     were played against the LOCK snapshot, and keying this one to that round
+     would hand those matches the post-pin squad instead. It belongs on the
+     timestamp path, which is also where Phase 2 deletes it from. */
   return snapshotAt(mgrId, now);
 }
 
@@ -8531,7 +8589,7 @@ async function snapshotForNextLock(mgrId) {
   if (!autoWindowsEnabled()) return false;
   const at = nextLockMs(S.fixtures || [], Date.now(), cfgOf().windows || {});
   if (at == null) return false;
-  return snapshotAt(mgrId, at);
+  return snapshotAt(mgrId, at, roundKeyLockedAt(S.fixtures || [], at));
 }
 
 /* Re-point any snapshot whose lock has since moved. Runs on every refresh, so
@@ -8573,9 +8631,13 @@ async function repairLineupFor(mgrId) {
 }
 
 async function snapshotRosters() {
+  // A manual lock is still a lock, so it names the round it is locking for.
+  // Null in a league with no fixtures at all, which keeps the timestamp path.
+  const roundKey = roundKeyLockedAt(S.fixtures || [], Date.now());
   const rows = activeManagers().map((m) => ({
     league_id: S.league.id,
     manager_id: m.id,
+    ...(roundKey ? { round_key: roundKey } : {}),
     roster: orderedRoster(m).map((pk) => ({
       player_id: pk.player_id, player_name: pk.player_name,
       position: pk.position, team: pk.team, is_sub: pk.is_sub, slot: pk.slot,
@@ -8585,7 +8647,11 @@ async function snapshotRosters() {
     })),
   }));
   if (!rows.length) return;
-  const { error } = await S.sb.from("lineup_snapshots").insert(rows);
+  let { error } = await S.sb.from("lineup_snapshots").insert(rows);
+  // Unapplied Phase 1.5 migration: keep the lock, drop the stamp (see snapshotAt).
+  if (error && /round_key/.test(error.message || ""))
+    ({ error } = await S.sb.from("lineup_snapshots")
+      .insert(rows.map(({ round_key, ...r }) => r)));
   if (error) toast("Lineup lock failed: " + error.message);
 }
 
@@ -9366,7 +9432,7 @@ async function processFaClaims() {
     const at = win ? lockAfterWindow(S.fixtures || [], win.closeAt, cfgOf().windows || {}) : null;
     if (at != null)
       for (const mid of new Set(awards.map((c) => c.manager_id)))
-        await snapshotAt(mid, at).catch(() => {});
+        await snapshotAt(mid, at, roundKeyLockedAt(S.fixtures || [], at)).catch(() => {});
   }
   /* A claim can land a keeper in an outfielder's place and leave the XI
      illegal. The manager was not there to see it, so fix it rather than let
@@ -9415,21 +9481,24 @@ async function processFaClaims() {
    prevent. History is their job; settlement is this one's. */
 
 /* The last CLOSED window and the round it led into. Pure; null only when no
-   window has closed at all. `roundNo` is null when that round's label carries
-   no matchweek number -- every knockout label is one ("Round of 16", "Final"),
-   and the World Cup calendar is six of them in a row. The distinction matters:
-   a settlement that cannot be RECORDED is still OWED. */
+   window has closed at all.
+
+   `roundKey` is the round's own label, verbatim, and is ALWAYS present — that
+   is the Phase 1.5 change. `roundNo` is that label parsed to an int and stays
+   null for every knockout round ("Round of 16", "Final"), which is why it was
+   the wrong thing to key on: the World Cup calendar is six such rounds in a
+   row, so keying by number made the app's own competition unrecordable for
+   half a tournament. */
 function closedWindowRound(fixtures, nowMs, opts) {
   const win = lastClosedTradeWindow(fixtures || [], nowMs, opts || {});
   if (!win) return null;
   const n = Number(mwNo(win.to));
-  return { roundNo: n >= 1 ? n : null, win };
+  return { roundKey: String(win.to), roundNo: n >= 1 ? n : null, win };
 }
 
-// Which round's settlement is due AND recordable: the matchweek the last closed
-// window led into. Null when nothing has closed, or when the round has no
-// number to key a `rounds` row by -- those settle through the legacy path, see
-// maybeAdvanceRounds().
+// Which round's settlement is due, as a number. Retained for the display and
+// ordering paths that want a matchweek int; the settlement claim itself keys on
+// roundKey and no longer cares whether this is null.
 function roundToSettle(fixtures, nowMs, opts) {
   const r = closedWindowRound(fixtures, nowMs, opts);
   return r && r.roundNo != null ? { roundNo: r.roundNo, win: r.win } : null;
@@ -9443,17 +9512,15 @@ let _advanceRunning = false;
 async function advanceRound() {
   if (_advanceRunning) return false;
   if (!S.sb || !S.league?.id || !autoWindowsEnabled()) return false;
-  const closed = closedWindowRound(S.fixtures, Date.now(), cfgOf().windows || {});
-  if (!closed) return false;
-  /* The window closed into a round with no matchweek number, so there is no key
-     to claim a `rounds` row with. The settlement it implies is still owed --
-     treating "unrecordable" as "nothing to do" is precisely how waivers stopped
-     resolving in auto leagues the first time, and it would have taken out the
-     entire World Cup knockout stage. Hand it to the legacy path instead. */
-  if (closed.roundNo == null) return "no-round";
-  const due = { roundNo: closed.roundNo, win: closed.win };
-  // Already recorded as settled (or freshly claimed by someone else)?
-  const seen = (S.rounds || []).find((r) => r.round_no === due.roundNo);
+  const due = closedWindowRound(S.fixtures, Date.now(), cfgOf().windows || {});
+  if (!due) return false;
+
+  /* Already recorded? Matched on the round KEY, plus — for rows written before
+     Phase 1.5, which have no key — on the number. Missing that second arm would
+     let a numbered round already settled by an older client be settled again. */
+  const seen = (S.rounds || []).find((r) =>
+    (r.round_key != null && r.round_key === due.roundKey)
+    || (r.round_key == null && due.roundNo != null && r.round_no === due.roundNo));
   if (seen && (seen.status === "settled"
       || Date.now() - Date.parse(seen.claimed_at || 0) < SETTLE_STALE_MS)) return false;
 
@@ -9461,20 +9528,36 @@ async function advanceRound() {
   try {
     const w = due.win;
     const row = {
-      league_id: S.league.id, round_no: due.roundNo, status: "settling",
+      league_id: S.league.id, round_key: due.roundKey, round_no: due.roundNo,
+      status: "settling",
       opens_at: new Date(w.openAt).toISOString(),
       locks_at: new Date(w.closeAt).toISOString(),
       claimed_at: new Date().toISOString(),
     };
+    // Whichever column identifies this round in the database we are talking to.
+    let keyed = (q) => q.eq("round_key", due.roundKey);
+
     let claimed = false;
-    const ins = await S.sb.from("rounds").insert(row).select("id");
+    let ins = await S.sb.from("rounds").insert(row).select("id");
+    /* Unapplied Phase 1.5 migration. A numbered round can still be claimed the
+       old way; an unnumbered one has nothing left to key on, so it falls back
+       to the legacy settlement path rather than going unsettled. */
+    if (ins.error && /round_key/.test(ins.error.message || "")) {
+      if (due.roundNo == null) return "no-round";
+      delete row.round_key;
+      keyed = (q) => q.eq("round_no", due.roundNo);
+      ins = await S.sb.from("rounds").insert(row).select("id");
+    }
     if (!ins.error) claimed = true;
     else if (ins.error.code === "23505" || /duplicate key/.test(ins.error.message || "")) {
-      // A stale half-run may be retaken; a live one may not.
+      /* A stale half-run may be retaken; a live one may not. The conflict can
+         also come from the legacy (league_id, round_no) unique when an older
+         client already settled this round under a key we cannot see — then this
+         matches nothing, and standing down is the right answer. */
       const cutoff = new Date(Date.now() - SETTLE_STALE_MS).toISOString();
-      const take = await S.sb.from("rounds")
+      const take = await keyed(S.sb.from("rounds")
         .update({ claimed_at: new Date().toISOString() })
-        .eq("league_id", S.league.id).eq("round_no", due.roundNo)
+        .eq("league_id", S.league.id))
         .eq("status", "settling").lt("claimed_at", cutoff).select("id");
       claimed = !take.error && (take.data || []).length > 0;
     } else if (_missingRoundsTable(ins.error)) {
@@ -9491,27 +9574,27 @@ async function advanceRound() {
     for (const m of activeManagers())
       await repairLineupFor(m.id).catch(() => {});
 
-    await S.sb.from("rounds")
+    await keyed(S.sb.from("rounds")
       .update({ status: "settled", settled_at: new Date().toISOString() })
-      .eq("league_id", S.league.id).eq("round_no", due.roundNo);
-    S.rounds = [...(S.rounds || []).filter((r) => r.round_no !== due.roundNo),
-                { ...row, status: "settled" }];
+      .eq("league_id", S.league.id));
+    S.rounds = [...(S.rounds || []).filter((r) => r.round_key !== due.roundKey),
+                { ...row, round_key: due.roundKey, status: "settled" }];
     return true;
   } finally { _advanceRunning = false; }
 }
 
 /* The refetch hook: rounds-table path first, legacy fa_processed_until CAS as
-   the fallback. TWO things fall back, and both must, because each is a league
-   that is owed a settlement the new path cannot record:
+   the fallback. Two things still fall back, both of them unmigrated databases:
 
-     "no-table" — the database has not run the migration.
-     "no-round" — the window closed into an unnumbered (knockout) round.
+     "no-table" — no `rounds` table at all (pre-Phase-1).
+     "no-round" — no `rounds.round_key` column (pre-Phase-1.5) AND an unnumbered
+                  round, so nothing left to key the claim on.
 
-   The fallback resolves waivers and repairs the winners' line-ups, which is
-   exactly the pre-Phase-1 behaviour; it does not do the ritual's league-wide
-   line-up repair. That is a known, bounded difference rather than a silent one,
-   and it disappears when Phase 2 gives rounds a key that knockout labels can
-   satisfy. */
+   Once Phase 1.5 is applied the second case cannot arise: every round has a
+   label, so every round is recordable, and knockout rounds settle through the
+   ritual like any other. The fallback resolves waivers and repairs the winners'
+   line-ups but not the ritual's league-wide repair — a bounded difference that
+   now only affects databases behind on migrations. */
 async function maybeAdvanceRounds() {
   const r = await advanceRound().catch(() => false);
   if (r === "no-table" || r === "no-round") return maybeProcessAutoWaivers();
@@ -9561,15 +9644,27 @@ async function processWaiversNow() {
   if (!confirm(`Resolve ${pending.length} waiting claim${pending.length === 1 ? "" : "s"} now?`)) return;
   const win = lastClosedTradeWindow(S.fixtures || [], Date.now(), cfgOf().windows || {});
   if (win) {
-    // Record the manual settlement on the round row too, so the automatic
-    // path knows this round is done (best-effort: table may not exist yet).
+    /* Record the manual settlement on the round row too, so the automatic path
+       knows this round is done. Keyed by label since Phase 1.5, which means a
+       knockout round now records here as readily as a numbered one — before, an
+       admin resolving the Round of 16 by hand left no trace at all. Best-effort
+       throughout: the legacy write below is the fallback either way. */
     const n = Number(mwNo(win.to));
-    if (n >= 1) await S.sb.from("rounds").upsert({
-      league_id: S.league.id, round_no: n, status: "settled",
+    const rnd = {
+      league_id: S.league.id, round_key: String(win.to),
+      round_no: n >= 1 ? n : null, status: "settled",
       opens_at: new Date(win.openAt).toISOString(),
       locks_at: new Date(win.closeAt).toISOString(),
       settled_at: new Date().toISOString(),
-    }, { onConflict: "league_id,round_no" }).then(() => {}, () => {});
+    };
+    const rec = await S.sb.from("rounds")
+      .upsert(rnd, { onConflict: "league_id,round_key" }).then((r) => r, (e) => ({ error: e }));
+    // Pre-1.5 database: record it the old way, which only numbered rounds have.
+    if (rec?.error && /round_key/.test(rec.error.message || "") && n >= 1) {
+      delete rnd.round_key;
+      await S.sb.from("rounds").upsert(rnd, { onConflict: "league_id,round_no" })
+        .then(() => {}, () => {});
+    }
     const iso = new Date(win.closeAt).toISOString();
     await S.sb.from("leagues").update({ fa_processed_until: iso }).eq("id", S.league.id);
     S.league.fa_processed_until = iso;

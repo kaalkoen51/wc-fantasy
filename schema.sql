@@ -570,6 +570,34 @@ create table if not exists rounds (
     unique (league_id, round_no)
 );
 
+/* Phase 1.5: the round KEY is the competition's own round label, verbatim
+   ("Regular Season - 4", "Round of 16"). round_no above is the label parsed
+   down to an int, which only some competitions can express -- every knockout
+   label parses to null, so a cup's rounds were unrecordable and the whole
+   rework silently degraded to the inference fallbacks for the half of a
+   tournament people care about. Storing what the writer actually knew fixes
+   that, and round_no stays for display and ordering.
+
+   Rows written before this migration keep a null round_key and are NOT
+   backfilled -- "4" is not the key, it is a different fact, and inventing one
+   would be the re-derivation this whole design exists to stop. They stay
+   guarded by the old (league_id, round_no) unique, which is left in place for
+   exactly that reason: nulls are distinct in Postgres so it no longer blocks
+   knockout rows, while a numbered round still cannot be settled twice. */
+alter table rounds add column if not exists round_key text;
+create unique index if not exists rounds_one_per_key
+    on rounds (league_id, round_key);
+
+/* Phase 1.5, the other half: which round a line-up snapshot was FOR. The stamp
+   is written by the path that creates the snapshot, which knows the lock it is
+   aiming at and therefore the round -- rather than recovered later by matching
+   timestamps to the nearest lock (restampPlan), which stops being true the
+   moment a fixture moves. Nullable: an unstamped snapshot falls back to the
+   timestamp path, i.e. exactly the pre-1.5 behaviour. */
+alter table lineup_snapshots add column if not exists round_key text;
+create index if not exists lineup_snapshots_round_idx
+    on lineup_snapshots (league_id, manager_id, round_key);
+
 -- RLS. Open policies are created ONLY while the rls.sql lockdown has never
 -- been applied (detected by its is_league_member() helper). This block used to
 -- drop-and-recreate "open access" unconditionally, which meant re-running

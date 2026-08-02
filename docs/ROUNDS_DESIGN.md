@@ -1,8 +1,8 @@
 # Rounds: record at decision time, don't re-derive
 
-**Status:** Phases 0 and 1 shipped. Phases 2–3 planned, each its own reviewed
-step. See [Progress log](#progress-log) at the bottom for where each phase
-stands and what the database still needs.
+**Status:** Phases 0, 1 and 1.5 shipped. Phases 2–3 planned, each its own
+reviewed step. See [Progress log](#progress-log) at the bottom for where each
+phase stands and what the database still needs.
 
 ## Why this document exists
 
@@ -85,8 +85,9 @@ table above, reintroduced. `advanceRound()` now distinguishes them: `"no-table"`
 (unmigrated) and `"no-round"` (unnumbered) both hand off to the legacy path.
 The fallback resolves waivers and repairs the winners' line-ups — exactly the
 pre-Phase-1 behaviour — but not the ritual's league-wide line-up repair. That
-gap is bounded and documented rather than silent, and it closes in Phase 2 when
-rounds get a key knockout labels can satisfy.
+gap is bounded and documented rather than silent. Phase 1.5 below closes it:
+with a text key every round is recordable, so the knockout fallback now only
+serves databases behind on migrations.
 
 Also fixed here because Phase 1 touched it: re-running `schema.sql` used to
 drop-and-recreate the "open access" policies, silently undoing an applied
@@ -111,10 +112,70 @@ repair line-ups → snapshot every roster → mark settled. Any client, pg_cron 
 an Action may call it; the CAS lets them race safely.
 `leagues.fa_processed_until` and its bespoke CAS collapse into this.
 
+### Phase 1.5 — the round KEY is the label, and snapshots carry it ✅
+
+Two gaps that only became visible once Phase 1 was built.
+
+**The key was a number, and not every round has one.** `rounds.round_no` is
+`mwNo()` — the matchweek parsed out of the round label. Every knockout label
+returns null from it ("Round of 16", "Quarter-finals", "Final"), and so does
+`daily_pull.py`'s identical regex, and so does `buildFixtureStatRows` ("Cups
+get null — their round labels are names, not numbers"). The whole rework was
+therefore numbered-matchweek-shaped: for the World Cup knockout stage — six
+consecutive rounds, the half of the tournament anyone cares about — Phase 0
+stamped null, Phase 1 could not claim a row, and everything ran on the
+inference fallbacks. Phase 2's acceptance criterion (deleting those fallbacks)
+was unreachable by construction.
+
+The key is now the competition's own round label, verbatim: `rounds.round_key`,
+with `round_no` demoted to display and ordering. Principle #1 applied honestly
+— stamp what the writer knew, rather than parsing it down to a representation
+some competitions cannot express. The old `(league_id, round_no)` unique stays
+in place: nulls are distinct in Postgres so it no longer blocks knockout rows,
+while it still stops a pre-1.5 client settling a numbered round twice. Legacy
+rows are deliberately **not** backfilled — `"4"` is not the key, it is a
+different fact, and inventing one would be the re-derivation this design exists
+to stop.
+
+**Phase 2's left operand did not exist.** `settledPoints` is defined below as
+"round snapshot × round-stamped stats". Phase 0 built the stats half. The
+snapshot half was never built — Phase 1 deliberately declined to snapshot at
+the lock, correctly. What stood in for it was `rosterAtFor()`'s three layers of
+timestamp fallback, kept honest by `restampPlan()`, which recovers *which round
+a snapshot was for* by nearest-gap matching:
+
+```js
+const gap = Math.abs(l - at);
+if (gap < bestGap) { bestGap = gap; best = l; }
+```
+
+That is the pattern in the table at the top of this document, still running.
+`snapshotForNextLock()` computes the lock from `matchweeksOf()` and therefore
+knows the round exactly; it stored a timestamp and discarded it.
+
+`lineup_snapshots.round_key` now records it (`roundKeyLockedAt()`), and
+`rosterAtFor()` takes a round key and answers from the stamp when one matches,
+falling back to today's timestamp logic otherwise. A reschedule can no longer
+move which round a line-up applies to — the property `restampSnapshots()`
+currently maintains by hand.
+
+Two things deliberately left alone:
+
+- **`pinHistory()` stays unstamped.** It is a mid-round safety net taken at
+  `now`, not a record of a round's line-up. Matches earlier in the same round
+  were played against the *lock* snapshot, so keying the pin to that round
+  would hand those matches the post-pin squad. It belongs on the timestamp
+  path — which is where Phase 2 deletes it from anyway.
+- **Nothing is deleted yet.** `restampPlan`/`restampSnapshots` still run. Their
+  replacement is now in place but not yet proven across a full season, and the
+  invariant below is explicit that the deletion list is Phase 2's acceptance
+  criterion, not a side effect of building the replacement.
+
 ### Phase 2 — settled/live scoring split
 
 - `settledPoints`: pure read of recorded rounds (round snapshot ×
-  round-stamped stats). No `Date.now()`, no fixture list. Cacheable.
+  round-stamped stats — both halves now exist, keyed the same way). No
+  `Date.now()`, no fixture list. Cacheable.
 - `livePoints`: current round only, recomputed as today.
 
 Only after this is verified: delete `pinHistory()`, the forward-stamp
@@ -163,12 +224,15 @@ readable in one place.
 | ✅ | **Phase 1** — settlement is a recorded, CAS-claimed transition (`rounds` + `advanceRound()`): waivers → line-up repair → settled, exactly once, any client may race |
 | ✅ | **The `schema.sql` re-run trap closed** — re-runs can never again undo the RLS lockdown |
 | ✅ | **Knockout fallback** — a window closing into an unnumbered round settles through the legacy path instead of being dropped |
+| ✅ | **Phase 1.5** — the round key is the label, so cups are recordable; line-up snapshots carry the round they were for |
 | ⬜ | **Phase 2** — settled/live scoring split, then delete `pinHistory()`, the restamp machinery and `fa_processed_until` |
 | ⬜ | **Phase 3** (optional) — retire label parsing |
 
 ### Database steps for Phase 1 — in order, the middle one is not optional
 
-1. Run the new `schema.sql` (adds `rounds`, closes the re-run trap).
+1. Run the new `schema.sql` (adds `rounds` and the Phase 1.5 `round_key`
+   columns, closes the re-run trap). Additive and idempotent — safe to re-run
+   as each phase lands, which is the whole point of the trap being closed.
 2. **Re-run `rls.sql`.** If `schema.sql` was re-run at any point after the
    lockdown — it was, twice, for `window_key` and for the round columns — every
    table has been silently open to the anon key since. This closes it. The file
@@ -199,9 +263,20 @@ longer reopen a locked database.
 - The legacy waiver path kept verbatim as the fallback. Nothing deleted ahead
   of its replacement being proven; the deletion list is Phase 2's acceptance
   criterion, not a side effect.
-- 649 unit tests and all eleven browser suites green.
+- 665 unit tests green. The browser suites need a re-run against Phase 1.5;
+  they were last verified at Phase 1.
+
+### Phase 1.5 addendum
+
+Found while sizing Phase 2, and both are the same lesson as the six bugs in the
+table at the top: a fact was parsed down to a representation that could not
+hold it (`round_no`), and a fact the writer knew was discarded and guessed back
+later (which round a snapshot was for). Neither was a bug you could see from
+the app — the fallbacks covered them, which is exactly why they survived three
+phases of review.
 
 Phase 2 is the payoff phase: scoring splits into **settled** (a pure read of
 recorded rounds — immune to edits and reschedules by construction) and
 **live**, after which three compensating mechanisms come *out* rather than
-going in.
+going in. Its first task is to prove the Phase 1.5 stamp across a full season
+in the bench, because the deletion list depends on it.

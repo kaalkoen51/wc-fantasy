@@ -35,7 +35,7 @@ const lsStub = {
 globalThis.appended = appended;
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid, pitchHtml, pitchFacingHtml, pitchRowsHtml, squadBoardHtml, historyViewHtml, benchInOrder, moveBench, orderedRoster, flipRows, wireLineupControls, markQueueMoved, matchdayCtaAct, matchdayCardHtml, renderLineup, renderHomeTab, openH2HPreview, openH2HFixture, lineupRowHtml, dugoutHtml, renderFixturesTab, h2hRoundFixtures, h2hTotalRounds, h2hFormOf, h2hStandingsHtml, seasonChartHtml, renderScoutList, renderStatsTab, renderPredraftShortlist, preDraftBrowsing, shortlistCoverage, coverageHint, scoringByPositionHtml, openScoringSheet, animateReorder, applyLocalOverrides, queueManagerWrite, wireStars, starHtml, draftFactCards, draftRulesHtml, lobbyRulesHtml, scoringHtml, applyVisibleOrder, makeReorderable, refetchAll, markConnection, enterLeagueWithFeedback, route, showView, dragActive, afterDrag, overrideStillWins, queueManagerWrite, applyLocalOverrides, keepLocalPick, autoPickStale, makePick, autoPick, tickTimer, mergeOptimisticPicks, pickKey, queueFieldWrite, OVERRIDE_TABLES, setPlanner, saveLineup, toggleKeeper, setFinalPick, txWindowStarts, txWhen, txShell, txAvatar, txMgrChip, tradeTxCard, swapTxCard, transactionsLogHtml, renderTrades, builderHtml, faClaimsSectionHtml, waiverOrderHtml, shortlistSectionHtml, plannerSectionHtml, plannerMoveHtml, squadChooserHtml, tradeSectionHtml, setClaimOrder, reorderClaim, tradeForShortlisted, submitTrade, TRADE_TABS, tradeTabBodyHtml, faClaimRowHtml, faClaimRowsHtml, renderClaimList, wireClaimControls, ROW_ATTRS, plannerMoveChoice, plannerSetChoiceOrder, plannerPickPool, renderPlannerPick, setWindowMode, toggleLineups, squadPitchHtml, squadShape, renderDreamTeam, dreamTeam, renderChat, chatThreads, interacting, markInteracting, scheduleDeferredFlush, INTERACT_MS, animateReorder, flipRows, flushDeferredRender, currentSeasonFor, seasonOptions, seasonLabel, backtestSeason, createCompKind, createPreviewSeason, loadScoringPreviewData, pullCreateHistory, renderCreateBalance, updateCreatePullStatus, renderCreateForm, pickReconciliation, reconcilePicksToPool, mapApiPlayer, loadCompetition, roundResolvers, roundIndex, mwNo, FINAL_STATUS, draftOrderMode, lobbyOrderManagers, shuffled, setDraftOrder, renderLobbyOrder, lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow, nextLockMs, lockAfterWindow, restampPlan, snapshotAt, snapshotForNextLock, restampSnapshots, rosterAtFor, setSession, getSession, repairStarters, lineupShape, repairLineupFor, faWindowKey, roundToSettle, closedWindowRound, advanceRound, maybeAdvanceRounds };"
+  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid, pitchHtml, pitchFacingHtml, pitchRowsHtml, squadBoardHtml, historyViewHtml, benchInOrder, moveBench, orderedRoster, flipRows, wireLineupControls, markQueueMoved, matchdayCtaAct, matchdayCardHtml, renderLineup, renderHomeTab, openH2HPreview, openH2HFixture, lineupRowHtml, dugoutHtml, renderFixturesTab, h2hRoundFixtures, h2hTotalRounds, h2hFormOf, h2hStandingsHtml, seasonChartHtml, renderScoutList, renderStatsTab, renderPredraftShortlist, preDraftBrowsing, shortlistCoverage, coverageHint, scoringByPositionHtml, openScoringSheet, animateReorder, applyLocalOverrides, queueManagerWrite, wireStars, starHtml, draftFactCards, draftRulesHtml, lobbyRulesHtml, scoringHtml, applyVisibleOrder, makeReorderable, refetchAll, markConnection, enterLeagueWithFeedback, route, showView, dragActive, afterDrag, overrideStillWins, queueManagerWrite, applyLocalOverrides, keepLocalPick, autoPickStale, makePick, autoPick, tickTimer, mergeOptimisticPicks, pickKey, queueFieldWrite, OVERRIDE_TABLES, setPlanner, saveLineup, toggleKeeper, setFinalPick, txWindowStarts, txWhen, txShell, txAvatar, txMgrChip, tradeTxCard, swapTxCard, transactionsLogHtml, renderTrades, builderHtml, faClaimsSectionHtml, waiverOrderHtml, shortlistSectionHtml, plannerSectionHtml, plannerMoveHtml, squadChooserHtml, tradeSectionHtml, setClaimOrder, reorderClaim, tradeForShortlisted, submitTrade, TRADE_TABS, tradeTabBodyHtml, faClaimRowHtml, faClaimRowsHtml, renderClaimList, wireClaimControls, ROW_ATTRS, plannerMoveChoice, plannerSetChoiceOrder, plannerPickPool, renderPlannerPick, setWindowMode, toggleLineups, squadPitchHtml, squadShape, renderDreamTeam, dreamTeam, renderChat, chatThreads, interacting, markInteracting, scheduleDeferredFlush, INTERACT_MS, animateReorder, flipRows, flushDeferredRender, currentSeasonFor, seasonOptions, seasonLabel, backtestSeason, createCompKind, createPreviewSeason, loadScoringPreviewData, pullCreateHistory, renderCreateBalance, updateCreatePullStatus, renderCreateForm, pickReconciliation, reconcilePicksToPool, mapApiPlayer, loadCompetition, roundResolvers, roundIndex, mwNo, FINAL_STATUS, draftOrderMode, lobbyOrderManagers, shuffled, setDraftOrder, renderLobbyOrder, lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow, nextLockMs, lockAfterWindow, restampPlan, snapshotAt, snapshotForNextLock, restampSnapshots, rosterAtFor, setSession, getSession, repairStarters, lineupShape, repairLineupFor, faWindowKey, roundToSettle, closedWindowRound, roundKeyLockedAt, roundKeyOfLabel, roundIndex, rosterAtFor, snapshotsByManager, advanceRound, maybeAdvanceRounds };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -70,7 +70,7 @@ const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcT
         lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow,
         nextLockMs, lockAfterWindow, restampPlan, snapshotAt, snapshotForNextLock, restampSnapshots,
         txWindowStarts, rosterAtFor, setSession, getSession, faWindowKey, roundToSettle,
-        closedWindowRound,
+        closedWindowRound, roundKeyLockedAt, roundKeyOfLabel,
         repairStarters, lineupShape, repairLineupFor } = api;
 let fails = 0;
 const check = (label, got, want) => {
@@ -2593,13 +2593,78 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
     closedWindowRound(rsSeason, 3 * CAPH, {}), null);
   check("a knockout window HAS closed...",
     !!closedWindowRound(koSeason, 30 * CAPD, {}), true);
-  check("...it just has no round number to record it under",
+  check("...it just has no round NUMBER",
     closedWindowRound(koSeason, 30 * CAPD, {}).roundNo, null);
-  check("...and it still carries the window, so the legacy path can settle it",
-    closedWindowRound(koSeason, 30 * CAPD, {}).win.to, "Round of 16");
-  check("a numbered round reports its number here too",
+  /* Phase 1.5: ...which is why the number was the wrong key. The label is
+     always there, so a knockout round is as recordable as any other and
+     settles through the ritual rather than the fallback. */
+  check("...but it has a round KEY, so it is recordable after all",
+    closedWindowRound(koSeason, 30 * CAPD, {}).roundKey, "Round of 16");
+  check("a numbered round reports both",
     closedWindowRound(rsSeason, rsClose + CAPH, {}).roundNo, 4);
+  check("...its key being the label, not the number",
+    closedWindowRound(rsSeason, rsClose + CAPH, {}).roundKey, "Regular Season - 4");
   check("no fixtures, nothing owed", closedWindowRound([], 99 * CAPD, {}), null);
+
+  /* Phase 1.5: the round a lock is FOR, stamped by the writer that knows it
+     rather than recovered later by matching timestamps to the nearest lock. */
+  const lkFx = [
+    { round: "Group Stage - 1", kickoff_utc: new Date(0).toISOString() },
+    { round: "Round of 16", kickoff_utc: new Date(7 * CAPD).toISOString() },
+    { round: "Final", kickoff_utc: new Date(14 * CAPD).toISOString() },
+  ];
+  check("a lock an hour before kickoff names the round it locks",
+    roundKeyLockedAt(lkFx, 7 * CAPD - CAPH), "Round of 16");
+  check("...knockout labels included — that is the point",
+    roundKeyLockedAt(lkFx, 14 * CAPD - CAPH), "Final");
+  check("a zero-hour lock names its own round, not the next",
+    roundKeyLockedAt(lkFx, 7 * CAPD), "Round of 16");
+  check("a lock just after a kickoff belongs to the round ahead",
+    roundKeyLockedAt(lkFx, 7 * CAPD + CAPH), "Final");
+  check("past the last fixture, the last round is the answer",
+    roundKeyLockedAt(lkFx, 99 * CAPD), "Final");
+  check("no fixtures → no stamp, and the timestamp path takes over",
+    roundKeyLockedAt([], 5 * CAPD), null);
+
+  /* The keyed roster read. A snapshot that says which round it was for is
+     immune to the fixture list moving underneath it -- which is the whole
+     reason restampSnapshots() exists, and why Phase 2 can delete it. */
+  const kSnaps = [
+    { effective_from: new Date(6 * CAPD).toISOString(), round_key: "Round of 16",
+      roster: [{ player_id: "keyed" }] },
+    { effective_from: new Date(13 * CAPD).toISOString(), round_key: "Final",
+      roster: [{ player_id: "final" }] },
+  ];
+  check("the round-keyed snapshot answers directly",
+    rosterAtFor("m1", 7 * CAPD, "", kSnaps, "Round of 16")[0].player_id, "keyed");
+  check("...and a reschedule moving the match cannot change that",
+    rosterAtFor("m1", 99 * CAPD, "", kSnaps, "Round of 16")[0].player_id, "keyed");
+  check("...while the timestamp path alone would have drifted to the later one",
+    rosterAtFor("m1", 99 * CAPD, "", kSnaps)[0].player_id, "final");
+  check("a round with no snapshot of its own falls back to the timestamps",
+    rosterAtFor("m1", 13 * CAPD, "", kSnaps, "Quarter-finals")[0].player_id, "final");
+  const unstamped = [{ effective_from: new Date(6 * CAPD).toISOString(),
+    roster: [{ player_id: "old" }] }];
+  check("an unstamped snapshot degrades to exactly the pre-1.5 behaviour",
+    rosterAtFor("m1", 7 * CAPD, "", unstamped, "Round of 16")[0].player_id, "old");
+
+  /* The label→key map has to cover cups, or knockout rounds stay invisible.
+     roundIndex's numeric maps deliberately do not, so this is its own check. */
+  S.fixtures = [
+    { home: "Brazil", away: "France", kickoff_utc: "2026-07-05T14:00:00Z",
+      date: "2026-07-05", round: "Round of 16", status: "FT" },
+    { home: "Spain", away: "Italy", kickoff_utc: "2026-06-15T14:00:00Z",
+      date: "2026-06-15", round: "Group Stage - 2", status: "FT" },
+  ];
+  check("a knockout match resolves to its round key",
+    roundKeyOfLabel("Brazil vs France (2026-07-05)"), "Round of 16");
+  check("a numbered match resolves to its label, not its number",
+    roundKeyOfLabel("Spain vs Italy (2026-06-15)"), "Group Stage - 2");
+  check("the numeric index still skips cup rounds, as it always did",
+    roundIndex().byLabel["Brazil vs France (2026-07-05)"], undefined);
+  check("a match with no fixture row has no key, and keeps the timestamp path",
+    roundKeyOfLabel("Nobody vs Nobody (2026-01-01)"), null);
+  S.fixtures = [];
 
   process.exit(fails ? 1 : 0);
 })();
