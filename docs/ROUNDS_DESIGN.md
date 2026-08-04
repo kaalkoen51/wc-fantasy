@@ -243,7 +243,7 @@ Delete `pinHistory()` (6 references), the forward-stamp restamping
 proven** — the deletion list is the acceptance criterion of this phase, not a
 side effect.
 
-### Phase 2.5 — round ORDER is the last derived thing
+### Phase 2.5 — round ORDER is the last derived thing ✅
 
 The round *tag* is now recorded everywhere, because API-Football supplies it on
 every fixture: `league.round` is a string for all competitions ("Regular Season
@@ -256,10 +256,26 @@ earliest kickoff, i.e. from dates, which move. Reschedule a knockout tie earlier
 than a group game and the derived order flips — and window arithmetic between
 "consecutive" rounds, plus the settlement backlog order, follow it.
 
-API-Football has `/fixtures/rounds?league=&season=`, which returns the round
-names in canonical order. Recording that ordering is the same fix as everything
-else in this document, applied to the one field still inferred from data that
-keeps moving.
+`/fixtures/rounds?league=&season=` returns the round names in canonical order.
+`competition_pools.round_order` now stores it, pulled beside the fixtures, and
+`matchweeksOf()` orders by it — falling back to the kickoff sort when it is
+empty, so an unpulled pool behaves exactly as before. A round the recorded
+order has never heard of (one hand-added in the bench) sorts after the ones it
+knows rather than vanishing or leading.
+
+**What this does not do is clean up much code**, and that is worth stating
+plainly because it is the natural assumption. `matchweeksOf()` still has to
+compute each round's first and last kickoff — the trade window between two
+rounds is arithmetic on those times, so the dates are load-bearing regardless
+of who decides the order. This is a correctness fix for a real edge case, not
+a simplification.
+
+**The significant cleanup is Phase 3**, and it is now much closer. `match_label`
+("Home vs Away (date)") is parsed by regex in ~31 places because it is the
+de-facto match key. The real key — the API's own `fixture.id` — is in hand at
+pull time (`f.fixture.id`, used to fetch the player blocks) and thrown away.
+Stamping it on stat rows is the same move as `round` and `round_key`, one field
+later, and it is what lets the label become an opaque display string.
 
 ### Phase 3 (optional) — retire label parsing
 
@@ -304,7 +320,8 @@ readable in one place.
 | ✅ | **Knockout fallback** — a window closing into an unnumbered round settles through the legacy path instead of being dropped |
 | ✅ | **Phase 1.5** — the round key is the label, so cups are recordable; line-up snapshots carry the round they were for |
 | ◐ | **Phase 2** — 2a boundary ✅, 2b round key on stat rows ✅, 2c purity proven ✅; the cache and the deletions remain |
-| ⬜ | **Phase 2.5** — record round ORDER from `/fixtures/rounds`, the last thing still derived from dates |
+| ✅ | **Phase 2.5** — round ORDER recorded from `/fixtures/rounds` rather than inferred from kickoff dates |
+| ⬜ | **Phase 3** — stamp the API `fixture.id` on stat rows, then retire label parsing (~31 regex sites) |
 | ⬜ | **Phase 3** (optional) — retire label parsing |
 
 ### Database steps for Phase 1 — in order, the middle one is not optional

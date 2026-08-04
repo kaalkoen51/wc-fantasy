@@ -2871,5 +2871,38 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
   check("settled points do not move when the clock does", shifted, withFx);
   S.rounds = []; S.fixtures = []; S.stats = []; S.picks = [];
 
+  /* ---- Phase 2.5: round ORDER comes from the competition, not the clock ----
+     Sorting rounds by earliest kickoff means a rescheduled tie can reorder the
+     season -- and the trade window between two rounds is arithmetic on
+     CONSECUTIVE ones, so a flipped pair silently moves a deadline. */
+  const koFx = [
+    { home: "A", away: "B", kickoff_utc: "2026-07-10T14:00:00Z", date: "2026-07-10",
+      round: "Round of 16" },
+    { home: "C", away: "D", kickoff_utc: "2026-07-20T14:00:00Z", date: "2026-07-20",
+      round: "Quarter-finals" },
+    // Postponed group game, replayed AFTER the Round of 16 has been played.
+    { home: "E", away: "F", kickoff_utc: "2026-07-15T14:00:00Z", date: "2026-07-15",
+      round: "Group Stage - 3" },
+  ];
+  S.roundOrder = [];
+  check("without a recorded order, kickoff dates decide — and get it wrong",
+    matchweeksOf(koFx).map((w) => w.round),
+    ["Round of 16", "Group Stage - 3", "Quarter-finals"]);
+
+  S.roundOrder = ["Group Stage - 3", "Round of 16", "Quarter-finals", "Final"];
+  check("the competition's own order wins over the dates",
+    matchweeksOf(koFx).map((w) => w.round),
+    ["Group Stage - 3", "Round of 16", "Quarter-finals"]);
+  check("...and the kickoff bounds each round still carries are untouched",
+    matchweeksOf(koFx)[0].first, Date.parse("2026-07-15T14:00:00Z"));
+
+  // A round the recorded order never heard of (hand-added in the bench) sorts
+  // after the ones it knows, by kickoff, rather than vanishing or leading.
+  S.roundOrder = ["Group Stage - 3", "Round of 16"];
+  check("an unknown round sorts last rather than jumping the queue",
+    matchweeksOf(koFx).map((w) => w.round),
+    ["Group Stage - 3", "Round of 16", "Quarter-finals"]);
+  S.roundOrder = [];
+
   process.exit(fails ? 1 : 0);
 })();

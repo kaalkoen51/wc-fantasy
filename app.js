@@ -480,6 +480,19 @@ async function fetchCompetitionFixtures(key, apiLeagueId, season) {
   return (await apiFootball(key, "fixtures", { league: apiLeagueId, season })).map(parseApiFixture);
 }
 
+/* The competition's rounds in the order the competition itself runs them
+   (ROUNDS_DESIGN.md Phase 2.5). The API returns them ordered -- ["Group Stage
+   - 1", ..., "Round of 16", "Quarter-finals", "Final"] -- which is the one
+   round fact we were still inferring from data that moves: matchweeksOf()
+   sorts rounds by earliest kickoff, so moving a knockout tie ahead of a group
+   game reorders the season. Endpoint returns bare strings, not objects. */
+async function fetchCompetitionRounds(key, apiLeagueId, season) {
+  try {
+    const r = await apiFootball(key, "fixtures/rounds", { league: apiLeagueId, season });
+    return (r || []).map(String).filter(Boolean);
+  } catch { return []; }          // optional: order falls back to kickoff sort
+}
+
 // The league's competition key, resolving it from the DB when S.league isn't
 // populated yet (loadPlayers runs before refetchAll sets S.league).
 async function resolveCompetitionKey() {
@@ -510,6 +523,9 @@ async function loadCompetitionPool() {
 async function loadPlayers() {
   if (S.players.length) return;
   const pool = await loadCompetitionPool();
+  // The competition's own round order, when the pool has been pulled since
+  // Phase 2.5. Empty = fall back to ordering rounds by kickoff, as before.
+  S.roundOrder = pool?.round_order || [];
   if (pool?.players?.length) {
     S.players = pool.players;                       // API competition pool
   } else {
@@ -3941,9 +3957,18 @@ function matchweeksOf(fixtures) {
     if (r == null || t == null || isNaN(t)) continue;
     (by[r] ||= []).push(t);
   }
+  /* Ordered by the competition's OWN round order when we have it, and only
+     by earliest kickoff when we do not (ROUNDS_DESIGN.md Phase 2.5). Sorting
+     by kickoff means a rescheduled tie can reorder the season -- and since the
+     trade window between two rounds is arithmetic on "consecutive" ones, a
+     flipped pair silently moves a deadline. A round the recorded order does not
+     mention sorts after the ones it does, by kickoff, so a hand-added fixture
+     in the test bench still lands somewhere sensible. */
+  const order = S.roundOrder || [];
+  const rank = (r) => { const i = order.indexOf(r); return i === -1 ? Infinity : i; };
   return Object.keys(by).map((r) => ({
     round: r, first: Math.min(...by[r]), last: Math.max(...by[r]),
-  })).sort((a, b) => a.first - b.first);
+  })).sort((a, b) => (rank(a.round) - rank(b.round)) || (a.first - b.first));
 }
 function fixtureWindows(fixtures, nowMs, opts) {
   const H = 3600e3, o = opts || {};
@@ -11373,11 +11398,12 @@ async function loadCompetition() {
     const existing = await S.sb.from("competition_pools").select("*")
       .eq("competition_key", compKey).maybeSingle();
     if (existing.error) throw new Error(existing.error.message);
-    let players, fixtures;
+    let players, fixtures, roundOrder = [];
     if (existing.data?.players?.length &&
         confirm(`${name} ${season} is already loaded (${existing.data.players.length} players shared across leagues). Reuse it without re-pulling?  (Cancel = re-pull fresh squads from the API.)`)) {
       players = existing.data.players;
       fixtures = existing.data.fixtures || [];
+      roundOrder = existing.data.round_order || [];
       log(`Reusing shared pool: ${players.length} players.`);
     } else {
       
@@ -11389,15 +11415,18 @@ async function loadCompetition() {
       if (!players.length) throw new Error("No players returned — check the season for this competition.");
       log(`${players.length} players across ${built.teams.length} teams. Fetching fixtures…`);
       fixtures = await fetchCompetitionFixtures(apiKey, apiLeagueId, season);
+      roundOrder = await fetchCompetitionRounds(apiKey, apiLeagueId, season);
       const up = await S.sb.from("competition_pools").upsert(
-        { competition_key: compKey, players, fixtures, updated_at: new Date().toISOString() });
+        { competition_key: compKey, players, fixtures, round_order: roundOrder,
+          updated_at: new Date().toISOString() });
       if (up.error) throw new Error(up.error.message);
     }
     const upd = await S.sb.from("leagues").update({ competition }).eq("id", S.league.id);
     if (upd.error) throw new Error(upd.error.message);
     // Reflect locally without a reload.
     S.league.competition = competition;
-    S._compPool = { players, fixtures };
+    S._compPool = { players, fixtures, round_order: roundOrder };
+    S.roundOrder = roundOrder;
     S.players = players;
     S.teams = [...new Set(players.map((p) => p.team))].sort();
     S.playerById = Object.fromEntries(players.map((p) => [p.player_id, p]));

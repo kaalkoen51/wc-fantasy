@@ -474,6 +474,14 @@ create table if not exists competition_pools (
     updated_at timestamptz default now()
 );
 alter table competition_pools add column if not exists scheduled boolean not null default false;
+
+/* The competition's rounds in the order it runs them, as the API reports them
+   (ROUNDS_DESIGN.md Phase 2.5). Round ORDER was the last round fact still
+   inferred from data that moves: matchweeksOf() sorted rounds by earliest
+   kickoff, so rescheduling a knockout tie ahead of a group game reordered the
+   season -- and the trade window between two rounds is arithmetic on
+   consecutive ones. Empty = fall back to the kickoff sort. */
+alter table competition_pools add column if not exists round_order jsonb not null default '[]';
 alter table competition_pools enable row level security;
 do $$ begin
     create policy competition_pools_all on competition_pools for all using (true) with check (true);
