@@ -75,6 +75,16 @@ alter table match_stats add column if not exists round int;
    through the same inference fallbacks they always did. */
 alter table match_stats add column if not exists round_key text;
 
+/* API-Football's own fixture id -- the match's identity, as opposed to
+   match_label, which describes it. The label ("Home vs Away (date)") became
+   the de-facto key by default and is parsed by regex in ~31 places; a rename,
+   a re-spelt country or a date correction all break those parses, and none of
+   them are identity changes. Nullable: rows written before this migration, and
+   any hand-entered or sandbox row with no API fixture behind it, keep the
+   label path. (ROUNDS_DESIGN.md Phase 3.) */
+alter table match_stats add column if not exists fixture_id bigint;
+create index if not exists match_stats_fixture_idx on match_stats (fixture_id);
+
 create table if not exists team_stages (
     id uuid primary key default gen_random_uuid(),
     league_id uuid references leagues(id) on delete cascade,
@@ -521,6 +531,16 @@ alter table competition_stats add column if not exists round int;
    rounds.round_key. Nullable: rows written before this migration keep working
    through the same inference fallbacks they always did. */
 alter table competition_stats add column if not exists round_key text;
+
+/* API-Football's own fixture id -- the match's identity, as opposed to
+   match_label, which describes it. The label ("Home vs Away (date)") became
+   the de-facto key by default and is parsed by regex in ~31 places; a rename,
+   a re-spelt country or a date correction all break those parses, and none of
+   them are identity changes. Nullable: rows written before this migration, and
+   any hand-entered or sandbox row with no API fixture behind it, keep the
+   label path. (ROUNDS_DESIGN.md Phase 3.) */
+alter table competition_stats add column if not exists fixture_id bigint;
+create index if not exists competition_stats_fixture_idx on competition_stats (fixture_id);
 alter table competition_stats add column if not exists raw jsonb;
 create index if not exists competition_stats_key_idx on competition_stats (competition_key, id);
 alter table competition_stats enable row level security;

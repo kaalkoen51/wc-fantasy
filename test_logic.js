@@ -406,6 +406,20 @@ S.league = {};
   const cupF = { ...f, league: { round: "Round of 16" } };
   check("buildFixtureStatRows: a cup round name stamps null, not a number",
     buildFixtureStatRows(cupF, teamBlocks, {}, (n) => n, pidOf, []).rows[0].round, null);
+  // Phase 1.5: ...but the round KEY is there for the cup too, which is the
+  // whole reason the number stopped being the key.
+  check("buildFixtureStatRows: the round key is stamped for a cup round",
+    buildFixtureStatRows(cupF, teamBlocks, {}, (n) => n, pidOf, []).rows[0].round_key,
+    "Round of 16");
+  /* Phase 3: and WHICH MATCH it was, by the API's own id. match_label
+     describes the match; this names it. The label is what ~31 read sites
+     parse back apart, and a rename or a corrected date breaks every one of
+     them without the match having changed at all. */
+  check("buildFixtureStatRows: the fixture id is stamped on every row",
+    rows.map((r) => r.fixture_id), [1, 1]);
+  check("buildFixtureStatRows: no fixture id available stamps null, not a guess",
+    buildFixtureStatRows({ ...f, fixture: { ...f.fixture, id: undefined } },
+      teamBlocks, {}, (n) => n, pidOf, []).rows[0].fixture_id, null);
 }
 
 /* The matchday card: which stage of the week is it, and what's the one thing
@@ -1791,6 +1805,9 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
     goals: { home: null, away: null }, league: { round: "Regular Season - 1" } });
   check("parseApiFixture matches the fixtures.json shape",
     [fx.home, fx.away, fx.date, fx.status, fx.round], ["Arsenal", "Chelsea", "2026-08-15", "NS", "Regular Season - 1"]);
+  // Phase 3: the fixture id survives the parse, so a stat row's fixture_id has
+  // something on the fixture side to join to.
+  check("parseApiFixture keeps the API's fixture id", fx.fixture_id, 9);
 
   // fetchCompetitionPool: teams → squads, deduping a player in two squads.
   const savedFetch = global.fetch;

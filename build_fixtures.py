@@ -61,6 +61,11 @@ def main() -> None:
             away = away if away in valid else "TBC"
         goals = f.get("goals") or {}
         fixtures.append({
+            # API-Football's own fixture id: the match's real identity.
+            # Everything else here describes the match; only this names it.
+            # (ROUNDS_DESIGN.md Phase 3 -- match_label is parsed by regex in
+            # ~31 places precisely because there was nothing else to key on.)
+            "fixture_id": (f.get("fixture") or {}).get("id"),
             "home": home,
             "away": away,
             "kickoff_utc": f["fixture"]["date"],

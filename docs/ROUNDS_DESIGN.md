@@ -308,7 +308,29 @@ pull time (`f.fixture.id`, used to fetch the player blocks) and thrown away.
 Stamping it on stat rows is the same move as `round` and `round_key`, one field
 later, and it is what lets the label become an opaque display string.
 
-### Phase 3 (optional) — retire label parsing
+### Phase 3a — stamp the match's identity ✅
+
+`match_label` ("Home vs Away (date)") became the de-facto match key by default:
+nothing else was stored, so ~31 read sites parse it back apart with regexes.
+A club rename, a re-spelt country or a corrected kickoff date breaks every one
+of them — and none of those is an identity change.
+
+The real key was in hand the whole time and thrown away. Both pullers use
+`fixture.id` to fetch the player blocks, then discard it; `parseApiFixture()`
+dropped it, so `fixtures.json` had no id either. Neither side of the join
+carried the identity.
+
+Now both do: `parseApiFixture()` and `build_fixtures.py` keep `fixture_id`, and
+`match_stats.fixture_id` / `competition_stats.fixture_id` are stamped by the
+in-app puller and `daily_pull.py` (with `fixture_id` in OPTIONAL_COLUMNS and
+STRIPPABLE_COLUMNS, so an unapplied migration still writes). Nullable
+throughout: a hand-entered or sandbox row has no API fixture behind it and
+keeps the label path.
+
+Same pattern as Phase 0 and Phase 1.5, one field later — the writer knew the
+identity and did not store it.
+
+### Phase 3b — retire label parsing (next)
 
 `match_label` ("Home vs Away (date)") is today's de-facto match key, parsed by
 regex in ~43 places. Identity becomes `(round_no, home, away)` or the API
@@ -352,7 +374,8 @@ readable in one place.
 | ✅ | **Phase 1.5** — the round key is the label, so cups are recordable; line-up snapshots carry the round they were for |
 | ◐ | **Phase 2** — 2a boundary ✅, 2b round key on stat rows ✅, 2c purity proven ✅; the cache and the deletions remain |
 | ✅ | **Phase 2.5** — round ORDER recorded from `/fixtures/rounds` rather than inferred from kickoff dates |
-| ⬜ | **Phase 3** — stamp the API `fixture.id` on stat rows, then retire label parsing (~31 regex sites) |
+| ✅ | **Phase 3a** — the API `fixture.id` stamped on stat rows and kept on fixtures, so both sides of the join carry the match's identity |
+| ⬜ | **Phase 3b** — migrate the ~31 label-parsing sites onto it; the label becomes an opaque display string |
 | ⬜ | **Phase 3** (optional) — retire label parsing |
 
 ### Database steps for Phase 1 — in order, the middle one is not optional

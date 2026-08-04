@@ -341,7 +341,7 @@ const STRIPPABLE_COLUMNS = new Set([
   // round_key is read by scoring, not display-only -- but a snapshot without it
   // falls back to the timestamp path, i.e. exactly the pre-1.5 behaviour, so
   // dropping it degrades correctly rather than wrongly.
-  "round_key",
+  "round_key", "fixture_id",
 ]);
 
 // Insert/upsert that tolerates an unapplied additive migration. Throws on
@@ -448,6 +448,9 @@ function parseSquadPlayer(ap, teamName, teamCode, teamLogo) {
 // One API fixture → the app's fixture record (same shape as fixtures.json).
 function parseApiFixture(f) {
   return {
+    // The match's real identity, kept rather than reconstructed later from
+    // "Home vs Away (date)" (ROUNDS_DESIGN.md Phase 3).
+    fixture_id: f.fixture?.id ?? null,
     home: f.teams.home.name, away: f.teams.away.name,
     kickoff_utc: f.fixture.date, date: String(f.fixture.date || "").slice(0, 10),
     status: f.fixture.status?.short || "NS",
@@ -11567,6 +11570,9 @@ function buildFixtureStatRows(f, teamBlocks, keyField, fixName, pidOf, skipped) 
            knockout stage -- the same gap Phase 1.5 closed for `rounds` and
            `lineup_snapshots`. Settled scoring keys on this. */
         round_key: f.league?.round != null ? String(f.league.round) : null,
+        // ...and which match this was, by the API's own id rather than by a
+        // label that has to be parsed back apart to be useful.
+        fixture_id: f.fixture?.id ?? null,
         goals: +g.total || 0, assists: +g.assists || 0,
         clean_sheet: minutes >= 60 && !(conceded[tb.team.id] || 0),
         yellow_cards: +cards.yellow || 0, red_cards: +cards.red || 0,

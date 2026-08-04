@@ -291,6 +291,9 @@ def extract_player_rows(
     # Phase 1.5 made for the rounds table and the lineup snapshots.
     raw_round = fixture.get("league", {}).get("round")
     round_key = str(raw_round) if raw_round else None
+    # The match's real identity. match_label is a display string that ~31 read
+    # sites parse back apart with regexes; this is what it should be keyed by.
+    fixture_id = (fixture.get("fixture") or {}).get("id")
     namefn = (lambda n: n) if use_api_ids else fix_team_name
     match_label = (
         f"{namefn(home['name'])} vs {namefn(away['name'])} "
@@ -342,6 +345,7 @@ def extract_player_rows(
                 {
                     "round": round_no,
                     "round_key": round_key,
+                    "fixture_id": fixture_id,
                     "player_id": resolved_id,
                     "player_name": resolved_name,
                     "api_player_id": str(player.get("id")),
@@ -457,6 +461,7 @@ def _stat_columns(row: dict) -> dict:
         "team": row.get("team"),
         "round": row.get("round"),
         "round_key": row.get("round_key"),
+        "fixture_id": row.get("fixture_id"),
         "appeared": True,
         "goals": row["goals"],
         "assists": row["assists"],
@@ -499,7 +504,7 @@ def build_competition_payload(rows: list, competition_key: str) -> list:
 # whole write with PGRST204; we drop the offending column and retry so an
 # unapplied migration degrades gracefully (these are display-only — they
 # never affect scoring) instead of silently killing every pull.
-OPTIONAL_COLUMNS = ("home_score", "away_score", "defensive_actions", "minutes", "raw", "team", "round", "round_key")
+OPTIONAL_COLUMNS = ("home_score", "away_score", "defensive_actions", "minutes", "raw", "team", "round", "round_key", "fixture_id")
 
 MISSING_COLUMN_RE = re.compile(r"Could not find the '(\w+)' column")
 
