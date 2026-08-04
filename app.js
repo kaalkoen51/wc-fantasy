@@ -8916,6 +8916,10 @@ async function repairLineupFor(mgrId) {
     if (pk.is_sub !== !shouldStart) continue;              // already on the right side
     pk.is_sub = !shouldStart;
     pk.slot = shouldStart ? pk.position : "SUB_" + pk.position;
+    /* Mutated IN PLACE, so S.picks is the same array it was and the scores
+       memo would go on serving the score from before the change. Identity
+       cannot see this; only saying so can. */
+    bustScores();
     await S.sb.from("picks").update({ is_sub: pk.is_sub, slot: pk.slot }).eq("id", pk.id);
     moved++;
   }
@@ -9365,6 +9369,7 @@ async function saveLineup() {
   setTimeout(() => snapshotForNextLock(me.id).catch(() => {}), 0);
   for (const { pk, isSub, slot } of changes) {
     pk.is_sub = isSub; pk.slot = slot;
+    bustScores();          // in-place: see repairLineupFor
     queueFieldWrite("picks", pk.id, "is_sub", isSub, onSaveErr);
     queueFieldWrite("picks", pk.id, "slot", slot, onSaveErr);
   }

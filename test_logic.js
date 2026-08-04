@@ -3060,5 +3060,43 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
     totals(computeScores()), totals(computeScoresUncached()));
   S.rounds = []; S.fixtures = []; S.stats = []; S.picks = []; bustScores();
 
+  /* The memo's real hazard: a row mutated IN PLACE. S.picks is then the same
+     array it was, so the key is unchanged and the cache hits -- serving the
+     score from before the change. saveLineup() and repairLineupFor() both do
+     exactly this (pk.is_sub = ...), which is why they clear it by hand. */
+  S.league = { id: "L1", competition: { apiLeagueId: 39, season: 2026, name: "PL" } };
+  S.managers = [{ id: "m1", name: "M1", draft_position: 1 }];
+  S.snapshots = []; S.stages = []; S.rounds = []; S.transactions = [];
+  S.playerById = { a1: { player_id: "a1", name: "A", position: "FWD", team: "A" },
+                   a2: { player_id: "a2", name: "B", position: "FWD", team: "A" } };
+  S.picks = [
+    { id: "p1", manager_id: "m1", player_id: "a1", player_name: "A", position: "FWD",
+      team: "A", slot: "FWD", is_sub: false, pick_number: 1 },
+    { id: "p2", manager_id: "m1", player_id: "a2", player_name: "B", position: "FWD",
+      team: "A", slot: "SUB_FWD", is_sub: true, pick_number: 2 },
+  ];
+  S.fixtures = [{ home: "A", away: "B", kickoff_utc: "2026-08-01T14:00:00Z",
+    date: "2026-08-01", round: "Regular Season - 1", status: "FT" }];
+  S.stats = [
+    row({ player_id: "a1", match_label: "A vs B (2026-08-01)", appeared: true,
+          goals: 1, team: "A", round: 1, round_key: "Regular Season - 1" }),
+    row({ player_id: "a2", match_label: "A vs B (2026-08-01)", appeared: true,
+          goals: 3, team: "A", round: 1, round_key: "Regular Season - 1" }),
+  ];
+  bustScores();
+  const startersOnly = computeScores()[0].total;
+
+  // Bench the starter and promote the sub, the way saveLineup does it.
+  S.picks[0].is_sub = true;  S.picks[0].slot = "SUB_FWD";
+  S.picks[1].is_sub = false; S.picks[1].slot = "FWD";
+  check("an in-place line-up change is invisible to the memo's key",
+    computeScores()[0].total, startersOnly);      // still the OLD answer
+  bustScores();
+  check("...and clearing it, which those paths now do, gives the new one",
+    computeScores()[0].total, computeScoresUncached()[0].total);
+  check("...which is genuinely a different number",
+    computeScores()[0].total === startersOnly, false);
+  S.picks = []; S.stats = []; S.fixtures = []; bustScores();
+
   process.exit(fails ? 1 : 0);
 })();
