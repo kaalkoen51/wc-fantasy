@@ -441,17 +441,87 @@ test("a sub who came on is shown on the pitch, not left on the bench", async ({ 
     const el = document.getElementById("board-lb");
     const pitchEl = el.querySelector(".pitch");
     const names = [...(pitchEl?.querySelectorAll(".pp-name") || [])].map((n) => n.textContent.trim());
-    return { names, html: pitchEl?.innerHTML || "", benchText: el.textContent };
+    const dug = el.querySelector(".dugout");
+    const bench = [...(dug?.querySelectorAll(".sub-chip") || [])].map((c) => ({
+      name: c.querySelector(".sub-name")?.textContent.trim(),
+      mark: c.querySelector(".sub-no")?.textContent.trim(),
+    }));
+    return { names, html: pitchEl?.innerHTML || "", bench, benchText: el.textContent };
   }, [round.n]);
 
-  const cameOnNames = await page.evaluate((ids) =>
-    ids.map((id) => shortName(S.playerById[id]?.name || "")), round.cameOn);
+  const nameOf = (ids) => page.evaluate((xs) =>
+    xs.map((id) => shortName(S.playerById[id]?.name || "")), ids);
+  const cameOnNames = await nameOf(round.cameOn);
+  const [missedName] = await nameOf([seed.benchStarter]);
 
   for (const n of cameOnNames)
     expect(pitch.names, `"${n}" came on but is not on the pitch`).toContain(n);
   expect(pitch.html, "the sub who came on carries no marker").toContain("▲");
   expect(pitch.benchText, "the bench does not say anyone came on").toMatch(/came on/);
 
+  /* The other half of the swap. A ▲ on its own says someone came up without
+     ever saying who for -- so the starter who did not turn out has to come
+     DOWN to the bench, and be marked as such rather than numbered, since "3rd
+     off the bench" is a lie about a player who was picked to start. */
+  expect(pitch.names, `"${missedName}" never played but is still on the pitch`)
+    .not.toContain(missedName);
+  const chip = pitch.bench.find((b) => b.name === missedName);
+  expect(chip, `"${missedName}" left the pitch but is not on the bench either`)
+    .toBeTruthy();
+  expect(chip.mark, "the dropped starter is numbered like a sub, not marked")
+    .toBe("▼");
+  expect(pitch.benchText, "the bench does not say anyone dropped out")
+    .toMatch(/did not play/);
+
   expectCleanSweep(await sweepAllViews(page));
   await expectScreensAgree(page);
+});
+
+/* Which round a past match belonged to, on the player's own card.
+ *
+ * A match log reading "vs Spain 2–1 · Starter · 90'" says everything except
+ * the one thing you need to place it in the season. Both halves are checked
+ * because they are different code paths: a numbered round is shortened, and a
+ * knockout tie is not -- reducing "Round of 16" to a number is the exact
+ * mistake mwNo() exists to refuse, and it would be a silent one here.
+ */
+const matchLogRounds = (page) => page.evaluate(() => {
+  const pid = managerPicks(myManager().id).find((p) => !p.is_sub).player_id;
+  openPlayerDetail(pid);
+  const body = document.getElementById("player-sheet-body");
+  return [...body.querySelectorAll(".space-y-1 > .rounded-lg")]
+    .map((row) => row.textContent.replace(/\s+/g, " ").trim());
+});
+
+test("a player's match log says which round each game was", async ({ page }) => {
+  await openLeague(page, { managers: 2, played: 3 });
+
+  const rows = await matchLogRounds(page);
+  expect(rows.length, "the match log drew no rows at all").toBeGreaterThan(1);
+  for (const row of rows)
+    expect(row, `a match log row names no round: "${row}"`).toMatch(/MW \d+/);
+
+  /* Every row carrying the SAME round would also satisfy the loop above, and
+     would mean the label was being read from somewhere that does not vary --
+     the current round, say, rather than the match's own. */
+  const seen = new Set(rows.map((r) => r.match(/MW \d+/)[0]));
+  expect(seen.size, `every game claims the same round: ${[...seen]}`)
+    .toBeGreaterThan(1);
+
+  expectCleanSweep(await sweepAllViews(page));
+});
+
+test("...and a knockout tie is named, not numbered", async ({ page }) => {
+  await openLeague(page, { managers: 2, played: 3, knockout: true });
+
+  const rows = await matchLogRounds(page);
+  expect(rows.length, "the match log drew no rows at all").toBeGreaterThan(1);
+  for (const row of rows) {
+    expect(row, `a knockout row names no round: "${row}"`)
+      .toMatch(/Round of 16|Quarter-finals|Semi-finals|Final/);
+    expect(row, `"Round of 16" was reduced to a matchweek: "${row}"`)
+      .not.toMatch(/MW \d+/);
+  }
+
+  expectCleanSweep(await sweepAllViews(page));
 });

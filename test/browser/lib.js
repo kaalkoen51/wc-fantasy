@@ -145,13 +145,13 @@ function seedLeague({ managers = 2, played = 3, quirk = null,
     // Null for a knockout round, exactly as both pullers stamp it.
     const m = String(f.round).match(/-\s*(\d+)\s*$/);
     const n = m ? Number(m[1]) : null;
+    /* benchSub: a named starter simply never turns out, so the bench cover in
+       the same position is the one whose points count. That is the state the
+       round view has to make legible -- and without a scenario that produces
+       it, nothing here was ever drawn with a sub on the pitch. */
     for (const club of [f.home, f.away])
-      /* benchSub: a named starter simply never turns out, so the bench cover
-         in the same position is the one whose points count. That is the state
-         the round view has to make legible -- and without a scenario that
-         produces it, nothing here was ever drawn with a sub on the pitch. */
-      for (const club of [f.home, f.away])
-      for (const p of picked.filter((x) => x.team === club && !(benchSub && x.player_id === benchStarter)))
+      for (const p of picked.filter((x) =>
+        x.team === club && !(benchSub && x.player_id === benchStarter)))
         tables.match_stats.push({
           league_id: LEAGUE, player_id: p.player_id, match_label: label,
           appeared: true, minutes: 90, goals: p.position === "FWD" ? 1 : 0,

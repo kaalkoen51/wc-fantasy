@@ -4747,6 +4747,21 @@ function roundIndex() {
 // stats, hand-entered rows) — those keep the timestamp path.
 const roundKeyOfLabel = (label) => roundIndex().keyByLabel[label] || null;
 
+/* A round key shortened for display. The key is the competition's own text
+   ("Regular Season - 4", "Group Stage - 1", "Round of 16"), and in a league
+   the prefix is identical on every row, so it is dropped and the number kept.
+   Anything else is shown as written — "Round of 16" IS the whole fact, and
+   abbreviating a knockout tie is how rounds got mis-numbered in the first
+   place (mwNo() deliberately refuses to read 16 out of it). */
+function roundLabelShort(key) {
+  const s = String(key ?? "").trim();
+  if (!s) return "";
+  const n = mwNo(s);
+  if (!n) return s;
+  const prefix = s.slice(0, s.lastIndexOf("-")).trim();
+  return /^regular season$/i.test(prefix) || !prefix ? `MW ${n}` : `${prefix} ${n}`;
+}
+
 /* Has this round's settlement actually run? (ROUNDS_DESIGN.md Phase 2.)
 
    The recorded answer, not a guess from the clock: a round is settled when a
@@ -5704,25 +5719,23 @@ function squadBoardHtml(items, mgrId, opts = {}) {
   const ptsOf = (it) => (roundMode ? it.roundPts : it.pts);
   const anyPts = play.some((it) => (ptsOf(it) || 0) > 0);
 
-  const onPitch = (it) => !it.entry.is_sub || cameOnSet.has(it.entry.player_id);
+  const onPitch = (it) => cameOnSet.has(it.entry.player_id)
+    || (!it.entry.is_sub && !missedSet.has(it.entry.player_id));
   const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
   for (const it of play) {
     const e = it.entry;
     if (!onPitch(it) || !byPos[e.position]) continue;
-    const up = cameOnSet.has(e.player_id), out = missedSet.has(e.player_id);
+    const up = cameOnSet.has(e.player_id);
     byPos[e.position].push({
       id: e.player_id, player_id: e.player_id, name: e.player_name, team: e.team,
       opp: oppShort(e.team),
       note: anyPts ? (ptsOf(it) || 0) : undefined,
-      /* The sub badge wins over the captain armband: coming on is the rarer
-         fact and the one being asked about. A starter who did not turn out is
-         only dimmed -- the badge is gold, which reads as good news, and "did
-         not play" is not that. */
+      // The sub badge wins over the captain armband: coming on is the rarer
+      // fact and the one being asked about.
       badge: up ? "▲" : (!captainEnabled() ? ""
            : mgr?.captain_id === e.player_id ? "C"
            : mgr?.vice_id === e.player_id ? "V" : ""),
-      dim: out,
-      title: up ? "Came on from the bench" : out ? "Did not play" : undefined,
+      title: up ? "Came on from the bench" : undefined,
     });
   }
   // Locked rounds are snapshotted in sub order already; the live view sorts by
@@ -5732,21 +5745,35 @@ function squadBoardHtml(items, mgrId, opts = {}) {
   if (order.length) subs.sort((a, b) =>
     (rank.has(a.entry.id) ? rank.get(a.entry.id) : 1e6)
     - (rank.has(b.entry.id) ? rank.get(b.entry.id) : 1e6));
+  /* A named starter who did not turn out comes DOWN here, after the bench, so
+     the swap reads as a pair: someone went up with a ▲, someone came down with
+     a ▼. Leaving them on the pitch dimmed said "a sub came on" without ever
+     saying who for. */
+  const dropped = play.filter((it) => !it.entry.is_sub && missedSet.has(it.entry.player_id));
 
   const rowOpts = { roundMode, curView };
   return `
     ${pitchHtml(byPos, { tapAttr: "data-hp", crests: true })}
-    ${subs.length ? `<div class="mt-2">
+    ${(subs.length || dropped.length) ? `<div class="mt-2">
       <div class="flex items-baseline justify-between gap-2 mb-1">
-        <span class="eyebrow">Bench · ${subs.length}</span>
+        <span class="eyebrow">Bench · ${subs.length + dropped.length}</span>
         <span class="text-[11px] text-slate-400">${cameOnSet.size
-          ? `${cameOnSet.size} came on ▲` : "in the order they come on"}</span>
+          ? `${cameOnSet.size} came on ▲ · ${dropped.length} did not play ▼`
+          : "in the order they come on"}</span>
       </div>
-      ${dugoutHtml(subs.map((it) => ({
-        player_id: it.entry.player_id, name: it.entry.player_name,
-        team: it.entry.team, position: it.entry.position,
-        note: anyPts ? (ptsOf(it) || 0) : undefined,
-      })), { tapAttr: "data-hp" })}
+      ${dugoutHtml([
+        ...subs.map((it) => ({
+          player_id: it.entry.player_id, name: it.entry.player_name,
+          team: it.entry.team, position: it.entry.position,
+          note: anyPts ? (ptsOf(it) || 0) : undefined,
+        })),
+        ...dropped.map((it) => ({
+          player_id: it.entry.player_id, name: it.entry.player_name,
+          team: it.entry.team, position: it.entry.position,
+          note: anyPts ? (ptsOf(it) || 0) : undefined,
+          mark: "▼", dim: true, title: "Named to start, did not play",
+        })),
+      ], { tapAttr: "data-hp" })}
     </div>` : ""}
     ${bonus.length ? `<div class="mt-2 space-y-1">${bonus.map((it) =>
       lineupRowHtml(it, mgrId, false, rowOpts)).join("")}</div>` : ""}
@@ -8241,6 +8268,12 @@ function matchLogHtml(pid, position, team, managerId) {
     const played = !!(r && r.appeared);
     const mins = played ? (r.minutes != null ? `${r.minutes}'` : "played") : "did not play";
     const pts = r ? calcPlayerPoints(r, position) : 0;
+    /* Which round this game belonged to. The row is asked first and the
+       fixture list second, the same order as everywhere else: the round the
+       writer stamped cannot be moved by a later reschedule. Blank for a match
+       neither knows — a hand-entered row against no fixture — rather than a
+       guess, because a wrong round here is worse than none. */
+    const rnd = roundLabelShort((r && r.round_key) || roundKeyOfLabel(label));
     let status;
     if (managerId) {
       const s = slotLabel(entryForManagerAt(managerId, pid, label));
@@ -8264,6 +8297,7 @@ function matchLogHtml(pid, position, team, managerId) {
           pts > 0 ? "text-wcgold" : pts < 0 ? "text-red-400" : "text-slate-400"}">${pts}p</span>
       </div>
       <div class="flex items-center gap-2 text-xs mt-0.5">
+        ${rnd ? `<span class="shrink-0 rounded bg-slate-700/60 px-1 py-px text-[10px] font-semibold uppercase tracking-wide text-slate-300">${esc(rnd)}</span>` : ""}
         <span class="shrink-0">${status}</span>
         <span class="text-slate-400 shrink-0">${mins}</span>
         <span class="ml-auto truncate text-slate-400">${played ? (statBits(r) || "no stats") : ""}</span>
@@ -9122,8 +9156,13 @@ function dugoutHtml(subs, opts = {}) {
        nothing for a bench player. You could only ever trade a starter. */
     const tapVal = e.id != null ? e.id : e.player_id;
     const tap = opts.tapAttr ? `${opts.tapAttr}="${esc(tapVal)}"` : "";
-    return `<button type="button" ${tap} class="sub-chip">
-      <span class="sub-no">${i + 1}</span>
+    /* A chip can be a real substitute, numbered in the order they come on, or
+       a named starter who did not turn out and has been moved down here for a
+       past round. The second is marked rather than numbered -- "3rd off the
+       bench" is a lie about someone who was picked to start. */
+    return `<button type="button" ${tap}${e.title ? ` title="${esc(e.title)}"` : ""}
+      class="sub-chip ${e.dim ? "opacity-50" : ""}">
+      <span class="sub-no${e.mark ? " sub-no-mark" : ""}">${e.mark ? esc(e.mark) : i + 1}</span>
       <span class="relative inline-flex">
         ${avatarHtml(e.player_id, e.team, "w-9 h-9")}
         ${teamCrestHtml(e.team) ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${teamCrestHtml(e.team, "w-3 h-3")}</span>` : ""}
