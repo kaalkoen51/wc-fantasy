@@ -54,3 +54,12 @@ jobs:
       # runners ship Postgres, so this needs no service container.
       - name: SQL tests (schema.sql + rls.sql on real Postgres)
         run: bash test_sql.sh
+
+      # Does the assembled site actually start? The logic suite loads app.js
+      # into a stub DOM, so it cannot see a script that 404s, a CSP that blocks
+      # something, or a stylesheet whose classes were purged. Runs against
+      # public/, i.e. what gets deployed.
+      - name: Install Chromium for the browser harness
+        run: npx playwright install --with-deps chromium
+      - name: Browser tests
+        run: npx playwright test

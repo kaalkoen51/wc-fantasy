@@ -5,3 +5,5 @@ SquadLists.pdf
 __pycache__/
 node_modules/
 public/
+test-results/
+playwright-report/

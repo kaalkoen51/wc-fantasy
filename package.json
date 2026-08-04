@@ -11,7 +11,8 @@
     "bundle": "node build.js",
     "build:dev": "npm run build:css && npm run vendor:supabase && BUILD_ENV=dev node build.js",
     "test:sql": "bash test_sql.sh",
-    "test:all": "node test_logic.js && bash test_sql.sh"
+    "test:all": "node test_logic.js && bash test_sql.sh && playwright test",
+    "test:browser": "playwright test"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
