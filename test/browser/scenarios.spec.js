@@ -1,5 +1,6 @@
 const { test, expect } = require("@playwright/test");
-const { openLeague, sweepAllViews, expectCleanSweep } = require("./lib");
+const { openLeague, sweepAllViews, expectCleanSweep, expectScreensAgree,
+        expectLineupOnScreen } = require("./lib");
 
 /* Real-league scenarios, each checked across EVERY screen.
  *
@@ -13,6 +14,7 @@ const { openLeague, sweepAllViews, expectCleanSweep } = require("./lib");
 test("a mid-season league renders every screen it offers", async ({ page }) => {
   await openLeague(page, { managers: 2, played: 3 });
   expectCleanSweep(await sweepAllViews(page));
+  await expectScreensAgree(page);
 });
 
 test("a transfer shows on the new squad and never on the rounds before it", async ({ page }) => {
@@ -75,7 +77,27 @@ test("a transfer shows on the new squad and never on the rounds before it", asyn
       .not.toContain(view.inId);
   }
 
+  /* ...and the SCREEN says so too. Everything above reads what the functions
+     return; a render can drop a player while every number behind it stays
+     right, and only the DOM catches that. */
+  const names = await page.evaluate(([inId, outId]) => ({
+    inName: S.playerById[inId]?.name, outName: S.playerById[outId]?.name,
+  }), [moved.inId, moved.outId]);
+  const home = await expectLineupOnScreen(page, null, [names.inName]);
+  /* The player who left may still appear -- but only under "Former players
+     (traded out)", where the app shows the points they banked while you had
+     them. That is correct, and asserting a bare absence called it a bug. So
+     assert WHERE the name appears: anywhere before that heading means they
+     are still being shown as part of the squad. */
+  const formerAt = home.indexOf("Former players");
+  const outAt = home.indexOf(names.outName);
+  if (outAt !== -1)
+    expect(formerAt !== -1 && outAt > formerAt,
+      `"${names.outName}" was transferred away but still appears in the squad itself`)
+      .toBe(true);
+
   expectCleanSweep(await sweepAllViews(page));
+  await expectScreensAgree(page);
 });
 
 test("a blank gameweek does not break any screen", async ({ page }) => {
@@ -87,6 +109,7 @@ test("a blank gameweek does not break any screen", async ({ page }) => {
     managerHistory(myManager().id).rounds.map((r) => r.n));
   expect(rounds, "a blank week swallowed a round").toEqual([1, 2, 3]);
   expectCleanSweep(await sweepAllViews(page));
+  await expectScreensAgree(page);
 });
 
 test("a double gameweek does not break any screen", async ({ page }) => {
@@ -95,6 +118,7 @@ test("a double gameweek does not break any screen", async ({ page }) => {
     managerHistory(myManager().id).rounds.map((r) => r.n));
   expect(rounds, "a double week split into an extra round").toEqual([1, 2, 3]);
   expectCleanSweep(await sweepAllViews(page));
+  await expectScreensAgree(page);
 });
 
 test("the leaderboard and the history pager agree on every manager", async ({ page }) => {
@@ -137,6 +161,7 @@ test("waiver claims resolve when the window shuts, and the squad changes", async
     .not.toEqual(before.squad);
 
   expectCleanSweep(await sweepAllViews(page));
+  await expectScreensAgree(page);
 });
 
 test("editing the line-up does not rescore the rounds already played", async ({ page }) => {
@@ -165,6 +190,7 @@ test("editing the line-up does not rescore the rounds already played", async ({ 
   expect(after, "a line-up edit rewrote the score of a round already played")
     .toEqual(before);
   expectCleanSweep(await sweepAllViews(page));
+  await expectScreensAgree(page);
 });
 
 test("a head-to-head league renders its fixtures and standings", async ({ page }) => {
@@ -175,6 +201,7 @@ test("a head-to-head league renders its fixtures and standings", async ({ page }
     Object.values(navGroups()).flat().includes("fixtures"));
   expect(has, "a head-to-head league is not offering its fixtures tab").toBe(true);
   expectCleanSweep(await sweepAllViews(page));
+  await expectScreensAgree(page);
 });
 
 test("a knockout competition settles its rounds and renders everywhere", async ({ page }) => {
@@ -207,4 +234,5 @@ test("a knockout competition settles its rounds and renders everywhere", async (
     .toContain(rows[0].key);
   expect(rows[0].no, "a knockout round should have no matchweek number").toBeNull();
   expectCleanSweep(await sweepAllViews(page));
+  await expectScreensAgree(page);
 });

@@ -190,8 +190,15 @@ async function sweepAllViews(page) {
 
   const visited = await page.evaluate(async () => {
     const seen = [];
+    /* Capture the TEXT as well as the size. "It rendered something" is a very
+       low bar -- a pane full of "undefined" clears it -- so the checks below
+       read what a person would actually see. */
     const note = (name, el) => seen.push({
-      name, html: (el?.innerHTML || "").length, hidden: !!el?.classList?.contains("hidden") });
+      name,
+      html: (el?.innerHTML || "").length,
+      text: (el?.textContent || "").replace(/\s+/g, " ").trim(),
+      hidden: !!el?.classList?.contains("hidden"),
+    });
 
     showView("board");
     for (const [group, tabs] of Object.entries(navGroups())) {
@@ -245,14 +252,86 @@ async function sweepAllViews(page) {
   return { errors, visited, overlayErrors };
 }
 
-// Assert the sweep was clean AND actually rendered, so a silent empty pane
-// cannot pass as "no errors".
+/* Text that means a value did not survive the trip to the screen. These are
+   what a broken render actually looks like in this app -- a missing player
+   becomes "undefined", a missing number becomes "NaN", a date that failed to
+   parse becomes "Invalid Date", and an object rendered by accident becomes
+   "[object Object]". None of them throw, so none of them were caught before. */
+const BAD_TEXT = [
+  ["undefined", /\bundefined\b/],
+  ["NaN", /\bNaN\b/],
+  ["[object Object]", /\[object Object\]/],
+  ["Invalid Date", /Invalid Date/],
+  ["null", /(^|[\s>])null([\s<]|$)/],
+];
+
+// Assert the sweep was clean AND actually rendered something legible, so a
+// pane full of "undefined" cannot pass as "no errors".
 function expectCleanSweep(res) {
   expect(res.errors, `errors while sweeping:\n${res.errors.join("\n")}`).toEqual([]);
   expect(res.overlayErrors, `overlays threw:\n${res.overlayErrors.join("\n")}`).toEqual([]);
   const empty = res.visited.filter((v) => v.html === 0);
   expect(empty, `panes rendered nothing: ${JSON.stringify(empty)}`).toEqual([]);
   expect(res.visited.length, "swept nothing at all").toBeGreaterThan(5);
+
+  const broken = [];
+  for (const v of res.visited)
+    for (const [label, re] of BAD_TEXT)
+      if (re.test(v.text))
+        broken.push(`${v.name}: "${label}" in "${
+          (v.text.match(new RegExp(`.{0,40}${re.source}.{0,40}`)) || [v.text.slice(0, 80)])[0]}"`);
+  expect(broken, `values did not survive rendering:\n${broken.join("\n")}`).toEqual([]);
 }
 
-module.exports = { openLeague, sweepAllViews, expectCleanSweep, seedLeague, LEAGUE, POOL, DAY };
+/* Cross-screen consistency: the same fact, read off different screens, has to
+   agree. This is where this app's bugs live -- each screen is individually
+   plausible and they contradict each other, which is invisible unless you put
+   them side by side. */
+async function expectScreensAgree(page) {
+  const facts = await page.evaluate(() => {
+    const out = { managers: [], rounds: [] };
+    for (const row of computeScores()) {
+      const h = managerHistory(row.manager.id);
+      out.managers.push({
+        id: row.manager.id,
+        board: row.total,
+        history: h.total,
+        // The pager's rounds plus what is still live must be the whole score.
+        roundSum: h.rounds.reduce((s, r) => s + r.subtotal, 0),
+        settled: row.settledTotal, live: row.liveTotal,
+        // Every player the pager shows for a round must be a real player.
+        unknown: h.rounds.flatMap((r) => r.items
+          .filter((i) => i.entry.player_id && !S.playerById[i.entry.player_id]
+            && !String(i.entry.player_id).startsWith("__"))
+          .map((i) => `${r.n}:${i.entry.player_id}`)),
+      });
+    }
+    return out;
+  });
+
+  for (const m of facts.managers) {
+    expect(m.history, `manager ${m.id}: leaderboard ${m.board} vs history ${m.history}`)
+      .toBe(m.board);
+    expect(m.settled + m.live, `manager ${m.id}: settled+live ${m.settled + m.live} vs total ${m.board}`)
+      .toBe(m.board);
+    expect(m.unknown, `manager ${m.id}: the pager shows players that are not in the pool`)
+      .toEqual([]);
+  }
+  return facts;
+}
+
+/* What the SCREEN says, not what the functions return. A render can drop a
+   player while every underlying number stays right, and only reading the DOM
+   catches that. */
+async function expectLineupOnScreen(page, mgrId, names) {
+  const text = await page.evaluate(() => {
+    setBoardTab("home");
+    return (document.getElementById("board-home")?.textContent || "").replace(/\s+/g, " ");
+  });
+  for (const n of names)
+    expect(text, `"${n}" is in the squad but not on the team screen`).toContain(n);
+  return text;
+}
+
+module.exports = { openLeague, sweepAllViews, expectCleanSweep, expectScreensAgree,
+                   expectLineupOnScreen, seedLeague, LEAGUE, POOL, DAY };
