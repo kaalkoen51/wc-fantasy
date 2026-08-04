@@ -408,3 +408,50 @@ test("a trade between two managers swaps the squads and leaves history alone", a
   expectCleanSweep(await sweepAllViews(page));
   await expectScreensAgree(page);
 });
+
+test("a sub who came on is shown on the pitch, not left on the bench", async ({ page }) => {
+  /* A named starter never turns out, so the bench cover in that position is
+     what actually scored. Before this, the only sign was a number against a
+     bench player -- the round view drew the squad that was NAMED rather than
+     the one that played, and there was no way to tell the two apart. */
+  const seed = await openLeague(page, { managers: 2, played: 3, benchSub: true });
+
+  const round = await page.evaluate(() => {
+    const h = managerHistory(myManager().id);
+    const r = h.rounds[h.rounds.length - 1];
+    return { n: r.n, cameOn: r.cameOn, missed: r.missed,
+             subs: managerPicks(myManager().id).filter((p) => p.is_sub).map((p) => p.player_id) };
+  });
+
+  expect(round.cameOn.length, "no sub was recorded as coming on").toBeGreaterThan(0);
+  expect(round.missed, "the starter who never played was not recorded as missing")
+    .toContain(seed.benchStarter);
+  for (const id of round.cameOn)
+    expect(round.subs, "a player marked as coming on is not actually a sub").toContain(id);
+
+  // ...and the pitch draws them, with the marker.
+  const pitch = await page.evaluate(([rn]) => {
+    showView("board"); setBoardTab("lb");
+    const me = myManager().id;
+    const h = managerHistory(me);
+    // The pager is keyed per manager, and 0 is the live view: index 1 is the
+    // most recent locked round, so a round's index counts back from the end.
+    S.histIdxByMgr[me] = h.rounds.length - h.rounds.findIndex((r) => r.n === rn);
+    renderBoard();
+    const el = document.getElementById("board-lb");
+    const pitchEl = el.querySelector(".pitch");
+    const names = [...(pitchEl?.querySelectorAll(".pp-name") || [])].map((n) => n.textContent.trim());
+    return { names, html: pitchEl?.innerHTML || "", benchText: el.textContent };
+  }, [round.n]);
+
+  const cameOnNames = await page.evaluate((ids) =>
+    ids.map((id) => shortName(S.playerById[id]?.name || "")), round.cameOn);
+
+  for (const n of cameOnNames)
+    expect(pitch.names, `"${n}" came on but is not on the pitch`).toContain(n);
+  expect(pitch.html, "the sub who came on carries no marker").toContain("▲");
+  expect(pitch.benchText, "the bench does not say anyone came on").toMatch(/came on/);
+
+  expectCleanSweep(await sweepAllViews(page));
+  await expectScreensAgree(page);
+});

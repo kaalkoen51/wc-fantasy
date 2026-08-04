@@ -59,7 +59,7 @@ const KO_ROUNDS = ["Round of 16", "Quarter-finals", "Semi-finals", "Final"];
 
 function seedLeague({ managers = 2, played = 3, quirk = null,
                       h2h = false, knockout = false, claims = 0,
-                      predraft = false } = {}) {
+                      predraft = false, benchSub = false } = {}) {
   const now = Date.now();
   const tables = {
     leagues: [{
@@ -102,6 +102,10 @@ function seedLeague({ managers = 2, played = 3, quirk = null,
 
   // Everyone who is picked, plus their clubs, so the fixtures mean something.
   const picked = draftedPicks.map((p) => POOL.find((x) => x.player_id === p.player_id));
+  // The starter who will miss every game, when benchSub is on.
+  const benchStarter = benchSub
+    ? draftedPicks.find((p) => p.manager_id === mgrIds[0] && !p.is_sub && p.position === "FWD")?.player_id
+    : null;
   const clubs = [...new Set(picked.map((p) => p.team))];
 
   /* Knockout mode names the rounds the way a cup does -- no matchweek number
@@ -142,7 +146,12 @@ function seedLeague({ managers = 2, played = 3, quirk = null,
     const m = String(f.round).match(/-\s*(\d+)\s*$/);
     const n = m ? Number(m[1]) : null;
     for (const club of [f.home, f.away])
-      for (const p of picked.filter((x) => x.team === club))
+      /* benchSub: a named starter simply never turns out, so the bench cover
+         in the same position is the one whose points count. That is the state
+         the round view has to make legible -- and without a scenario that
+         produces it, nothing here was ever drawn with a sub on the pitch. */
+      for (const club of [f.home, f.away])
+      for (const p of picked.filter((x) => x.team === club && !(benchSub && x.player_id === benchStarter)))
         tables.match_stats.push({
           league_id: LEAGUE, player_id: p.player_id, match_label: label,
           appeared: true, minutes: 90, goals: p.position === "FWD" ? 1 : 0,
@@ -165,7 +174,7 @@ function seedLeague({ managers = 2, played = 3, quirk = null,
       in_player_id: target.player_id, in_player_name: target.name,
     });
   }
-  return { tables, fixtures, mgrIds, picked, clubs, roundNames: [...new Set(fixtures.map((f) => f.round))] };
+  return { tables, fixtures, mgrIds, picked, clubs, benchStarter, roundNames: [...new Set(fixtures.map((f) => f.round))] };
 }
 
 async function openLeague(page, opts = {}) {
@@ -228,13 +237,18 @@ async function sweepAllViews(page) {
           note(`stats/${v}`, document.getElementById("board-stats"));
         }
         // Every round of the history pager, not just the newest.
+        /* Every round of the history pager, not just the newest. The pager
+           reads S.histIdxByMgr[managerId] -- an earlier version of this set
+           S.histIdx, which nothing reads, so it re-rendered the CURRENT view
+           N times and reported it as N rounds swept. */
         if (tab === "lb") {
-          const h = managerHistory(myManager().id);
+          const me = myManager().id;
+          const h = managerHistory(me);
           for (let i = 0; i <= h.rounds.length; i++) {
-            S.histIdx = i; renderBoard();
-            note(`lb/round-${i}`, document.getElementById("board-lb"));
+            S.histIdxByMgr[me] = i; renderBoard();
+            note(`lb/view-${i}`, document.getElementById("board-lb"));
           }
-          S.histIdx = 0;
+          S.histIdxByMgr[me] = 0; renderBoard();
         }
       }
     }

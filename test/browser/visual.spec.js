@@ -65,7 +65,10 @@ test.describe("visual", () => {
     await openLeague(page, { managers: 2, played: 3 });
     await page.evaluate(() => {
       showView("board"); setBoardTab("lb");
-      S.histIdx = 1; renderBoard();        // one round back
+      // The pager is keyed per manager; S.histIdx is read by nothing, so this
+      // baseline was quietly a second copy of the current view.
+      const me = myManager().id;
+      S.histIdxByMgr[me] = 1; renderBoard();        // one round back
     });
     await expect(page.locator("#board-lb")).toHaveScreenshot("round-view.png", SHOT);
   });

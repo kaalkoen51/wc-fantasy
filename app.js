@@ -5123,31 +5123,37 @@ function managerHistory(mgrId) {
      already transferred away. Two implementations of "whose line-up was this"
      is one too many; there is now one. */
   const flex = isFlexFormation();
-  const matchPoints = (roster, label) => {
+  /* Which players' points actually COUNTED in each round. The sub-activation
+     engines already decide this to score a round; it was simply thrown away
+     afterwards, so a bench player could finish a round with seven points and
+     the round view would still draw them on the bench with no hint they had
+     come on. Recording it costs nothing and is what the pitch reads below. */
+  const countedByRnd = {};
+  const matchPoints = (roster, label, rnd) => {
     const starters = roster.filter((e) => !e.is_sub && e.position !== "TEAM");
+    const counted = rnd >= 1 ? (countedByRnd[rnd] ||= new Set()) : null;
     const out = {};
     for (const entry of roster) {
       if (entry.position === "TEAM") continue;
       const rows = (statsByPlayer[entry.player_id] || []).filter((r) => r.match_label === label);
       if (!rows.length) continue;
       const scored = rows.reduce((s2, r) => s2 + calcPlayerPoints(r, entry.position), 0);
-      let pts = 0;
+      let pts = 0, did = false;
       if (flex) {
-        if (flexRoundCounting(roster, entryRound(entry, label), labelForRound, appearedIn)
-            .has(entry.player_id)) pts = scored;
+        did = flexRoundCounting(roster, entryRound(entry, label), labelForRound, appearedIn)
+          .has(entry.player_id);
       } else if (!entry.is_sub) {
-        pts = scored;
+        did = true;
       } else if (maxSubsCapped()) {
-        if (fixedRoundSubs(roster, entryRound(entry, label), labelForRound, appearedIn, maxSubsPerRound(), missedRound)
-            .has(entry.player_id)) pts = scored;
+        did = fixedRoundSubs(roster, entryRound(entry, label), labelForRound, appearedIn,
+          maxSubsPerRound(), missedRound).has(entry.player_id);
       } else {
         const r = entryRound(entry, label);
         const mates = starters.filter((st) => st.position === entry.position);
-        if (r >= 1 && mates.some((st) => {
-          return missedRound(st, r);
-        }))
-          pts = scored;
+        did = r >= 1 && mates.some((st) => missedRound(st, r));
       }
+      // Counting is not the same as scoring: a player who counts can score 0.
+      if (did) { pts = scored; counted?.add(entry.player_id); }
       out[entry.player_id] = (out[entry.player_id] || 0) + pts;
     }
     return out;
@@ -5194,7 +5200,7 @@ function managerHistory(mgrId) {
       capByRnd[rnd] = roster.find((e) => e.is_captain)?.player_id ?? mgr0?.captain_id ?? capByRnd[rnd];
       viceByRnd[rnd] = roster.find((e) => e.is_vice)?.player_id ?? mgr0?.vice_id ?? viceByRnd[rnd];
     }
-    const mp = matchPoints(roster, label);
+    const mp = matchPoints(roster, label, rnd);
     for (const pid in mp) {
       earnedByPlayer[pid] = (earnedByPlayer[pid] || 0) + mp[pid];
       if (rnd >= 1)
@@ -5230,7 +5236,7 @@ function managerHistory(mgrId) {
   const roundByPlayer = {};
   const playedRoundSet = new Set();
   for (const label of curRoundLabels) {
-    const mp = matchPoints(picks, label);
+    const mp = matchPoints(picks, label, -1);
     for (const pid in mp) roundByPlayer[pid] = (roundByPlayer[pid] || 0) + mp[pid];
     for (const pk of picks) if (appearedIn(pk.player_id, label)) playedRoundSet.add(pk.player_id);
   }
@@ -5287,7 +5293,18 @@ function managerHistory(mgrId) {
         roundItems.push({ entry: { player_id: pid, player_name: pl.name,
           position: pl.position, team: pl.team, slot: "—", is_sub: false }, pts: pts[pid] });
       }
+      /* Who came up off the bench, and which starters did not turn out. The
+         round view draws the squad that actually played rather than the one
+         that was named, which is the difference between "Kelleher: 7" sitting
+         on the bench and Kelleher on the pitch with a ▲ against him. */
+      const counted = countedByRnd[rnd] || new Set();
+      const cameOn = shown.filter((e) => e.is_sub && counted.has(e.player_id))
+        .map((e) => e.player_id);
+      const missed = shown
+        .filter((e) => !e.is_sub && e.position !== "TEAM" && missedRound(e, rnd))
+        .map((e) => e.player_id);
       return { n: rnd, dates: [...periodDates[rnd]].sort(), items: roundItems,
+        cameOn, missed,
         subtotal: roundItems.reduce((s, it) => s + (it.pts || 0), 0) };
     });
 
@@ -5671,7 +5688,14 @@ function lineupRowHtml(it, mgrId, former, opts = {}) {
    The list is still the only place where every badge and points column fits,
    so it is kept — it just isn't the first thing you meet any more. */
 function squadBoardHtml(items, mgrId, opts = {}) {
-  const { roundMode = false, curView = false, order = [] } = opts;
+  const { roundMode = false, curView = false, order = [],
+          cameOn = [], missed = [] } = opts;
+  /* A past round draws the squad that PLAYED, not the one that was named: a
+     bench player whose points counted goes onto the pitch with a ▲, and a
+     starter who never turned out is marked. Without this the only clue that a
+     sub had come up was a number on the bench that did not obviously belong
+     to anything. Empty for the live view, which has no result yet. */
+  const cameOnSet = new Set(cameOn), missedSet = new Set(missed);
   const mgr = S.managers.find((m) => m.id === mgrId);
   const isPlayer = (it) => it.entry.position && it.entry.position !== "TEAM"
     && it.entry.slot !== "WIN" && it.entry.slot !== "—";
@@ -5680,22 +5704,31 @@ function squadBoardHtml(items, mgrId, opts = {}) {
   const ptsOf = (it) => (roundMode ? it.roundPts : it.pts);
   const anyPts = play.some((it) => (ptsOf(it) || 0) > 0);
 
+  const onPitch = (it) => !it.entry.is_sub || cameOnSet.has(it.entry.player_id);
   const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
   for (const it of play) {
     const e = it.entry;
-    if (e.is_sub || !byPos[e.position]) continue;
+    if (!onPitch(it) || !byPos[e.position]) continue;
+    const up = cameOnSet.has(e.player_id), out = missedSet.has(e.player_id);
     byPos[e.position].push({
       id: e.player_id, player_id: e.player_id, name: e.player_name, team: e.team,
       opp: oppShort(e.team),
       note: anyPts ? (ptsOf(it) || 0) : undefined,
-      badge: !captainEnabled() ? "" : mgr?.captain_id === e.player_id ? "C"
-           : mgr?.vice_id === e.player_id ? "V" : "",
+      /* The sub badge wins over the captain armband: coming on is the rarer
+         fact and the one being asked about. A starter who did not turn out is
+         only dimmed -- the badge is gold, which reads as good news, and "did
+         not play" is not that. */
+      badge: up ? "▲" : (!captainEnabled() ? ""
+           : mgr?.captain_id === e.player_id ? "C"
+           : mgr?.vice_id === e.player_id ? "V" : ""),
+      dim: out,
+      title: up ? "Came on from the bench" : out ? "Did not play" : undefined,
     });
   }
   // Locked rounds are snapshotted in sub order already; the live view sorts by
   // the manager's saved bench_order so the pitch and the picker agree.
   const rank = new Map(order.map((id, i) => [id, i]));
-  const subs = play.filter((it) => it.entry.is_sub);
+  const subs = play.filter((it) => it.entry.is_sub && !cameOnSet.has(it.entry.player_id));
   if (order.length) subs.sort((a, b) =>
     (rank.has(a.entry.id) ? rank.get(a.entry.id) : 1e6)
     - (rank.has(b.entry.id) ? rank.get(b.entry.id) : 1e6));
@@ -5706,7 +5739,8 @@ function squadBoardHtml(items, mgrId, opts = {}) {
     ${subs.length ? `<div class="mt-2">
       <div class="flex items-baseline justify-between gap-2 mb-1">
         <span class="eyebrow">Bench · ${subs.length}</span>
-        <span class="text-[11px] text-slate-400">in the order they come on</span>
+        <span class="text-[11px] text-slate-400">${cameOnSet.size
+          ? `${cameOnSet.size} came on ▲` : "in the order they come on"}</span>
       </div>
       ${dugoutHtml(subs.map((it) => ({
         player_id: it.entry.player_id, name: it.entry.player_name,
@@ -5761,7 +5795,8 @@ function historyViewHtml(mgrId) {
             lineupRowHtml(it, mgrId, true, rowOpts)).join("")}</div>
         </details>` : "");
   } else {
-    body = squadBoardHtml(round.items, mgrId, {});
+    body = squadBoardHtml(round.items, mgrId,
+      { cameOn: round.cameOn || [], missed: round.missed || [] });
   }
 
   const roundSubtotal = h.eliminated ? 0
@@ -9119,7 +9154,7 @@ function pitchRowsHtml(byPos, opts = {}) {
            ><span class="rounded-full bg-wcred text-white text-sm font-bold w-5 h-5 inline-flex items-center justify-center leading-none shadow ring-2 ring-slate-900/60">−</span></button>` : "";
     return `<div class="relative flex justify-center">
       ${rm}
-      <button type="button" ${tap} class="pp ${e.dim ? "opacity-50" : ""} ${e.planned ? "pp-planned" : ""}">
+      <button type="button" ${tap}${e.title ? ` title="${esc(e.title)}"` : ""} class="pp ${e.dim ? "opacity-50" : ""} ${e.planned ? "pp-planned" : ""}">
         <span class="relative inline-flex">
           ${avatarHtml(e.player_id, e.team, av)}
           ${opts.crests && teamCrestHtml(e.team) ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${teamCrestHtml(e.team, "w-3.5 h-3.5")}</span>` : ""}
