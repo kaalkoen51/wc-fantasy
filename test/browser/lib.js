@@ -58,12 +58,14 @@ function squadFor(nth) {
 const KO_ROUNDS = ["Round of 16", "Quarter-finals", "Semi-finals", "Final"];
 
 function seedLeague({ managers = 2, played = 3, quirk = null,
-                      h2h = false, knockout = false, claims = 0 } = {}) {
+                      h2h = false, knockout = false, claims = 0,
+                      predraft = false } = {}) {
   const now = Date.now();
   const tables = {
     leagues: [{
       id: LEAGUE, name: "Scenario", invite_code: "SCEN", current_pick: 9999,
       num_managers: managers, sim: false, owner_id: OWNER,
+      ...(predraft ? { current_pick: 1, pick_duration_seconds: 60 } : {}),
       config: { autoWindows: true, fa_defer_to_close: true, captain: true,
                 ...(h2h ? { h2hEnabled: true } : {}) },
     }],
@@ -92,8 +94,14 @@ function seedLeague({ managers = 2, played = 3, quirk = null,
     tables.managers[m].vice_id = starters[starters.length - 2].player_id;
   }
 
+  /* Pre-draft: the managers are in, the board is empty, pick 1 is on the
+     clock. Nothing else in the seed changes -- the fixtures still exist so the
+     league has somewhere to go once the draft finishes. */
+  const draftedPicks = tables.picks;
+  if (predraft) tables.picks = [];
+
   // Everyone who is picked, plus their clubs, so the fixtures mean something.
-  const picked = tables.picks.map((p) => POOL.find((x) => x.player_id === p.player_id));
+  const picked = draftedPicks.map((p) => POOL.find((x) => x.player_id === p.player_id));
   const clubs = [...new Set(picked.map((p) => p.team))];
 
   /* Knockout mode names the rounds the way a cup does -- no matchweek number
@@ -127,6 +135,7 @@ function seedLeague({ managers = 2, played = 3, quirk = null,
   }
 
   for (const f of fixtures) {
+    if (predraft) break;          // nothing has been played yet
     if (f.status !== "FT") continue;
     const label = `${f.home} vs ${f.away} (${f.date})`;
     // Null for a knockout round, exactly as both pullers stamp it.

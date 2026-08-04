@@ -292,3 +292,119 @@ test("a champion pick pays out at the end of the season", async ({ page }) => {
   expectCleanSweep(await sweepAllViews(page));
   await expectScreensAgree(page);
 });
+
+test("a draft runs to completion and every squad comes out legal", async ({ page }) => {
+  /* The draft is the one part of the app that is pure sequence: snake order,
+     quotas, slot assignment, the clock. It is also the part nobody re-tests,
+     because doing it by hand means sitting through a whole draft. */
+  await openLeague(page, { managers: 2, played: 3, predraft: true });
+
+  const result = await page.evaluate(async () => {
+    const order = [];
+    let guard = 0;
+    while (S.league.current_pick <= totalPicks() && guard++ < 500) {
+      const info = pickInfo(S.league.current_pick);
+      order.push(info.manager.id);
+      await autoPick(info);              // the app's own on-the-clock path
+      await refetchAll();
+    }
+    const byMgr = {};
+    for (const m of S.managers) {
+      const picks = managerPicks(m.id);
+      byMgr[m.id] = {
+        size: picks.length,
+        dupes: picks.length - new Set(picks.map((p) => p.player_id)).size,
+        counts: picks.reduce((a, p) => (a[p.position] = (a[p.position] || 0) + 1, a), {}),
+      };
+    }
+    const ids = S.picks.map((p) => p.player_id);
+    return { order, byMgr, finished: S.league.current_pick > totalPicks(),
+             leagueDupes: ids.length - new Set(ids).size,
+             total: totalPicks(), each: picksPerManager() };
+  });
+
+  expect(result.finished, "the draft never completed").toBe(true);
+  expect(result.leagueDupes, "the same player was drafted by two managers").toBe(0);
+
+  /* Snake order: the manager picking first in round 1 picks LAST in round 2.
+     This is the rule people notice immediately when it is wrong, and it has
+     no other test. */
+  const each = result.each;
+  const round1 = result.order.slice(0, result.order.length / each);
+  const round2 = result.order.slice(round1.length, round1.length * 2);
+  expect(round2, "the draft did not snake back on the second round")
+    .toEqual([...round1].reverse());
+
+  for (const [id, sq] of Object.entries(result.byMgr)) {
+    expect(sq.dupes, `manager ${id} drafted the same player twice`).toBe(0);
+    expect(sq.size, `manager ${id} ended with ${sq.size} players, not ${each}`).toBe(each);
+    expect(sq.counts.GK, `manager ${id} drafted no goalkeeper`).toBeGreaterThan(0);
+  }
+
+  expectCleanSweep(await sweepAllViews(page));
+});
+
+test("a trade between two managers swaps the squads and leaves history alone", async ({ page }) => {
+  /* Two managers, one accepted trade. The swap itself is done by a Postgres
+     function that the stub MODELS rather than runs (see supabase-stub.js), so
+     what this proves is that the app proposes, pins history, refreshes and
+     renders correctly around it -- not that the real function is right. That
+     is schema.sql's business. */
+  await openLeague(page, { managers: 2, played: 3 });
+
+  /* Compare the ROSTERS of past rounds, not their subtotals. Every player of a
+     position scores identically in this seed, so swapping two midfielders
+     leaves the subtotal untouched -- the first version of this asserted on
+     subtotals and passed happily with the history pin removed. */
+  const before = await page.evaluate(() =>
+    managerHistory(myManager().id).rounds.map((r) =>
+      [r.n, r.subtotal, r.items.map((i) => i.entry.player_id).sort().join(",")]));
+
+  const moved = await page.evaluate(async () => {
+    window.confirm = () => true;                 // the accept dialog
+    const [me, them] = S.managers;
+    const mine = managerPicks(me.id).find((p) => !p.is_sub && p.position === "MID");
+    const theirs = managerPicks(them.id).find((p) => !p.is_sub && p.position === "MID");
+
+    S.league.trading_open = true;
+    S.league.config = { ...S.league.config, autoWindows: false };
+    await S.sb.from("leagues").update({ trading_open: true, config: S.league.config })
+      .eq("id", S.league.id);
+
+    const t = await S.sb.from("trades").insert({
+      league_id: S.league.id, proposer_manager_id: me.id,
+      target_manager_id: them.id, status: "proposed",
+    }).select("id");
+    const tradeId = t.data[0].id;
+    await S.sb.from("trade_items").insert({
+      trade_id: tradeId, offered_pick_id: mine.id, requested_pick_id: theirs.id,
+    });
+    await refetchAll();
+
+    const row = S.trades.find((x) => x.id === tradeId);
+    await acceptTrade({ ...row, trade_items: [
+      { offered_pick_id: mine.id, requested_pick_id: theirs.id }] });
+    await refetchAll();
+    return { mineWas: mine.player_id, theirsWas: theirs.player_id,
+             mineId: mine.id, theirsId: theirs.id };
+  });
+
+  const now = await page.evaluate(([mineId, theirsId]) => ({
+    mine: S.picks.find((p) => p.id === mineId)?.player_id,
+    theirs: S.picks.find((p) => p.id === theirsId)?.player_id,
+  }), [moved.mineId, moved.theirsId]);
+
+  expect(now.mine, "the trade did not bring the other manager's player in")
+    .toBe(moved.theirsWas);
+  expect(now.theirs, "the trade did not send my player the other way")
+    .toBe(moved.mineWas);
+
+  // ...and the rounds already played are untouched by any of it.
+  const after = await page.evaluate(() =>
+    managerHistory(myManager().id).rounds.map((r) =>
+      [r.n, r.subtotal, r.items.map((i) => i.entry.player_id).sort().join(",")]));
+  expect(after, "a trade rewrote a round that had already been played").toEqual(before);
+
+  expectCleanSweep(await sweepAllViews(page));
+  await expectScreensAgree(page);
+});

@@ -161,6 +161,35 @@
           updateUser: async () => ({ data: { user: USER }, error: null }),
           resetPasswordForEmail: async () => ({ data: {}, error: null }),
         },
+        /* accept_trade is a Postgres function, so this is a MODEL of it, not
+           the thing itself -- the one place in this file where the stub
+           reimplements server logic rather than storing rows. Kept to the
+           three rules the app actually depends on: the window must be open,
+           the trade must still be proposed, and the two picks swap their
+           player identity while keeping their own ids and managers.
+
+           Being explicit because the risk is real: a model written by the
+           same hand as the tests can be wrong in the same direction as the
+           code. What this proves is that the APP pins history, refreshes and
+           renders correctly around a trade. Whether the real function swaps
+           correctly is schema.sql's business, and test_sql.sh's. */
+        rpc: async (name, args) => {
+          if (name !== "accept_trade") return { data: null, error: null };
+          const trade = rowsOf("trades").find((t) => t.id === args.p_trade_id);
+          const league = rowsOf("leagues").find((l) => l.id === trade?.league_id);
+          if (!trade) return err("P0001", "trade is no longer open");
+          if (league?.trading_open !== true) return err("P0001", "the trading window is closed");
+          if (trade.status !== "proposed") return err("P0001", "trade is no longer open");
+          trade.status = "accepted";
+          for (const it of rowsOf("trade_items").filter((x) => x.trade_id === trade.id)) {
+            const a2 = rowsOf("picks").find((p) => p.id === it.offered_pick_id);
+            const b2 = rowsOf("picks").find((p) => p.id === it.requested_pick_id);
+            if (!a2 || !b2) return err("P0001", "trade references a missing pick");
+            const keep = ["player_id", "player_name", "position", "team"];
+            for (const k of keep) { const t = a2[k]; a2[k] = b2[k]; b2[k] = t; }
+          }
+          return { data: null, error: null };
+        },
         // Realtime is a no-op: this harness drives the app directly, so there
         // is no second client to hear from.
         channel: () => ({ on() { return this; }, subscribe() { return this; } }),
