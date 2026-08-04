@@ -46,3 +46,11 @@ jobs:
         run: npm run bundle
       - name: Logic tests
         run: node test_logic.js
+
+      # schema.sql and rls.sql against a real engine. The two worst regressions
+      # this repo has had were both invisible to the logic suite: a schema.sql
+      # re-run silently undoing the RLS lockdown, and `rounds` ending up with
+      # RLS on and no policy so settlement was refused in silence. Ubuntu
+      # runners ship Postgres, so this needs no service container.
+      - name: SQL tests (schema.sql + rls.sql on real Postgres)
+        run: bash test_sql.sh

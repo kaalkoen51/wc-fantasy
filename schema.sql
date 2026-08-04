@@ -599,7 +599,11 @@ end $$;
 create table if not exists rounds (
     id uuid primary key default gen_random_uuid(),
     league_id uuid references leagues(id) on delete cascade,
-    round_no int not null,
+    -- Nullable: a knockout round ("Round of 16") has no matchweek number, and
+    -- round_key below is what actually identifies a round. This was `not null`
+    -- until the SQL harness tried to insert one and Postgres refused -- which
+    -- defeated the whole point of Phase 1.5 while every unit test passed.
+    round_no int,
     status text not null default 'settling',
     opens_at timestamptz,
     locks_at timestamptz,
@@ -624,6 +628,14 @@ create table if not exists rounds (
    guarded by the old (league_id, round_no) unique, which is left in place for
    exactly that reason: nulls are distinct in Postgres so it no longer blocks
    knockout rows, while a numbered round still cannot be settled twice. */
+-- Existing databases were created with round_no NOT NULL, which silently made
+-- every knockout round unrecordable: advanceRound() writes a null round_no for
+-- them and the insert was refused. create table if not exists cannot fix a
+-- table that already exists, so drop it explicitly.
+do $$ begin
+    alter table rounds alter column round_no drop not null;
+exception when others then null; end $$;
+
 alter table rounds add column if not exists round_key text;
 create unique index if not exists rounds_one_per_key
     on rounds (league_id, round_key);

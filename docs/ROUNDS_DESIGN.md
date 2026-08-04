@@ -473,7 +473,29 @@ say so. Silence is the one outcome that cannot be debugged.
   `fa_claims` carry no window and are cleared when one reopens, so anything
   pending belongs to the newest closed window, never to a round being caught
   up on.
-- **The "browser suites" do not exist.** Phase 1's commit message claims
+- ~~The "browser suites" do not exist.~~ Partly answered: there is now a **SQL
+  harness** (`npm run test:sql`, wired into CI). It stands up a throwaway
+  Postgres, applies `schema.sql` → `rls.sql` → `schema.sql` **again**, and
+  asserts the lockdown survives — the exact regression that started this
+  document's Phase 1 section, now caught automatically. Sabotaging the guard
+  makes it report `LOCKDOWN UNDONE: 11 table(s) are back to "open access"` and
+  exit non-zero, so it is proven to bite rather than merely proven to pass.
+
+  It also asserts what the unit suite structurally cannot: that `rounds` has a
+  policy at all (RLS on with none is what made settlement fail in silence), and
+  that the settlement claim behaves — insert wins, duplicate loses, two
+  different knockout rounds are both recordable.
+
+  **It found a real bug on its first run.** `rounds.round_no` was `int not
+  null`, so a knockout round — whose number is null by definition — could not
+  be inserted at all. Phase 1.5 exists to make knockout rounds recordable, and
+  a NOT NULL constraint had been quietly defeating it while every one of the
+  704 unit tests passed. Fixed, with an `alter` for databases already created.
+
+  A **browser** harness is still absent; the note below was written about that
+  and stands.
+
+- **The original note on the missing browser suites.** Phase 1's commit message claims
   "eleven suites green" and the checklist above names "all browser harness
   suites", but the whole git history contains three test artifacts —
   `test_logic.js`, `test_daily_pull.py`, `backtest.py`. No harness, no

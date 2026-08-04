@@ -1,7 +1,7 @@
 {
   "name": "draftbaron",
   "private": true,
-  "description": "DraftBaron — draft league app for any sport. index.html is the app; styles.css is built from it.",
+  "description": "DraftBaron \u2014 draft league app for any sport. index.html is the app; styles.css is built from it.",
   "scripts": {
     "build:css": "tailwindcss -i src.css -o styles.css --minify",
     "watch:css": "tailwindcss -i src.css -o styles.css --watch",
@@ -9,9 +9,12 @@
     "vendor:supabase": "cp node_modules/@supabase/supabase-js/dist/umd/supabase.js vendor/supabase.js",
     "build": "npm run build:css && npm run vendor:supabase && npm run bundle",
     "bundle": "node build.js",
-    "build:dev": "npm run build:css && npm run vendor:supabase && BUILD_ENV=dev node build.js"
+    "build:dev": "npm run build:css && npm run vendor:supabase && BUILD_ENV=dev node build.js",
+    "test:sql": "bash test_sql.sh",
+    "test:all": "node test_logic.js && bash test_sql.sh"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@supabase/supabase-js": "2.110.9",
     "tailwindcss": "^3.4.19"
   }
