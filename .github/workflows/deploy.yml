@@ -1,0 +1,66 @@
+name: Deploy
+
+# "Pushed" and "live" should be the same event.
+#
+# Until now nothing in this repo deployed anything: build.yml assembles the
+# site and throws it away, public/ is gitignored, and wrangler.toml was only
+# ever invoked by hand. So master could be several commits ahead of what
+# draftbaron.com was serving with nothing anywhere saying so -- which is
+# exactly how a week gets spent testing a build that never shipped.
+#
+# Deploys ONLY from master, and only after the same checks build.yml runs, so a
+# red build can never reach production.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+# One deploy at a time; a newer push supersedes an older one still running.
+concurrency:
+  group: deploy-master
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci || npm install
+
+      # The same gates as build.yml. Deploying past a failing test is how a
+      # scoring bug reaches the people whose league it is.
+      - run: npm run build:css
+      - name: styles.css must match its sources
+        run: |
+          if ! git diff --quiet -- styles.css; then
+            echo "::error::styles.css is out of date. Run 'npm run build:css' and commit."
+            exit 1
+          fi
+      - run: node test_logic.js
+      - name: Assemble the deployable site
+        run: npm run bundle
+
+      # Fail with a readable message rather than a confusing wrangler error.
+      - name: Credentials must be present
+        run: |
+          if [ -z "${{ secrets.CLOUDFLARE_API_TOKEN }}" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN is not set. Add it in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          if [ -z "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" ]; then
+            echo "::error::CLOUDFLARE_ACCOUNT_ID is not set. Add it in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+      - name: Deploy to Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # wrangler.toml points [assets] at ./public, which `npm run bundle`
+          # has just produced. No `main` script: assets-only Worker.
+          command: deploy
