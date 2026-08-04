@@ -55,13 +55,17 @@ function squadFor(nth) {
 /* A league mid-season: `played` rounds with results behind us, one round
    still to come, automatic windows and waiver mode on. Every stat row carries
    the round, the round key and the fixture id, the way the pullers write them. */
-function seedLeague({ managers = 2, played = 3, quirk = null } = {}) {
+const KO_ROUNDS = ["Round of 16", "Quarter-finals", "Semi-finals", "Final"];
+
+function seedLeague({ managers = 2, played = 3, quirk = null,
+                      h2h = false, knockout = false, claims = 0 } = {}) {
   const now = Date.now();
   const tables = {
     leagues: [{
       id: LEAGUE, name: "Scenario", invite_code: "SCEN", current_pick: 9999,
       num_managers: managers, sim: false, owner_id: OWNER,
-      config: { autoWindows: true, fa_defer_to_close: true, captain: true },
+      config: { autoWindows: true, fa_defer_to_close: true, captain: true,
+                ...(h2h ? { h2hEnabled: true } : {}) },
     }],
     managers: [], picks: [], match_stats: [], lineup_snapshots: [],
     rounds: [], transactions: [], messages: [], fa_claims: [], team_stages: [],
@@ -92,6 +96,14 @@ function seedLeague({ managers = 2, played = 3, quirk = null } = {}) {
   const picked = tables.picks.map((p) => POOL.find((x) => x.player_id === p.player_id));
   const clubs = [...new Set(picked.map((p) => p.team))];
 
+  /* Knockout mode names the rounds the way a cup does -- no matchweek number
+     anywhere. That is the World Cup path, and it is the one that has never
+     been driven end to end: round_no is null for all of it, so everything
+     from Phase 1.5 onward has to key on the label instead. */
+  const roundName = (r) => knockout
+    ? KO_ROUNDS[Math.min(r - 1, KO_ROUNDS.length - 1)]
+    : `Regular Season - ${r}`;
+
   const fixtures = [];
   for (let r = 1; r <= played + 1; r++) {
     const at = now + (r - played - 0.5) * 7 * DAY;
@@ -101,7 +113,7 @@ function seedLeague({ managers = 2, played = 3, quirk = null } = {}) {
       if (quirk === "blank" && r === 2 && i === 0) continue;
       fixtures.push({ fixture_id: r * 1000 + i, home: clubs[i], away: clubs[i + 1],
         kickoff_utc: iso, date: iso.slice(0, 10),
-        round: `Regular Season - ${r}`, status: r <= played ? "FT" : "NS",
+        round: roundName(r), status: r <= played ? "FT" : "NS",
         home_score: r <= played ? (i % 3) : null,
         away_score: r <= played ? ((i + 1) % 2) : null });
     }
@@ -110,14 +122,16 @@ function seedLeague({ managers = 2, played = 3, quirk = null } = {}) {
       const at2 = new Date(at + 2 * DAY).toISOString();
       fixtures.push({ fixture_id: r * 1000 + 99, home: clubs[0], away: clubs[3],
         kickoff_utc: at2, date: at2.slice(0, 10),
-        round: `Regular Season - ${r}`, status: "FT", home_score: 1, away_score: 1 });
+        round: roundName(r), status: "FT", home_score: 1, away_score: 1 });
     }
   }
 
   for (const f of fixtures) {
     if (f.status !== "FT") continue;
     const label = `${f.home} vs ${f.away} (${f.date})`;
-    const n = Number(String(f.round).match(/(\d+)$/)[1]);
+    // Null for a knockout round, exactly as both pullers stamp it.
+    const m = String(f.round).match(/-\s*(\d+)\s*$/);
+    const n = m ? Number(m[1]) : null;
     for (const club of [f.home, f.away])
       for (const p of picked.filter((x) => x.team === club))
         tables.match_stats.push({
@@ -130,7 +144,19 @@ function seedLeague({ managers = 2, played = 3, quirk = null } = {}) {
           team: club, round: n, round_key: f.round, fixture_id: f.fixture_id,
         });
   }
-  return { tables, fixtures, mgrIds, picked, clubs };
+  // Queued waiver claims, as a manager leaves them before a window shuts.
+  for (let c = 0; c < claims; c++) {
+    const mine = tables.picks.filter((p) => p.manager_id === mgrIds[0] && p.is_sub);
+    const ownedIds = new Set(tables.picks.map((p) => p.player_id));
+    const target = POOL.find((p) => p.position === mine[c].position && !ownedIds.has(p.player_id));
+    tables.fa_claims.push({
+      id: `claim${c}`, league_id: LEAGUE, manager_id: mgrIds[0], rank: c,
+      status: "pending", pick_id: mine[c].id,
+      out_player_id: mine[c].player_id, out_player_name: mine[c].player_name,
+      in_player_id: target.player_id, in_player_name: target.name,
+    });
+  }
+  return { tables, fixtures, mgrIds, picked, clubs, roundNames: [...new Set(fixtures.map((f) => f.round))] };
 }
 
 async function openLeague(page, opts = {}) {

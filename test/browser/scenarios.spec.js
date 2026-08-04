@@ -107,3 +107,104 @@ test("the leaderboard and the history pager agree on every manager", async ({ pa
   for (const [id, board, history] of rows)
     expect(history, `manager ${id}: leaderboard ${board} vs history ${history}`).toBe(board);
 });
+
+test("waiver claims resolve when the window shuts, and the squad changes", async ({ page }) => {
+  /* The scenario this whole harness was built for: claims queued in an open
+     window, the window shuts, the round settles, and the players actually
+     move. It was diagnosed by hand over five rounds because every failure on
+     the way was silent. */
+  const seed = await openLeague(page, { managers: 2, played: 3, claims: 2 });
+
+  const before = await page.evaluate(() => ({
+    pending: S.faClaims.filter((c) => c.status === "pending").length,
+    squad: managerPicks(myManager().id).map((p) => p.player_id).sort(),
+  }));
+  expect(before.pending, "the scenario queued no claims").toBe(2);
+
+  const after = await page.evaluate(async () => {
+    await advanceRound();              // what a refetch triggers when a window has shut
+    await refetchAll();
+    return {
+      pending: S.faClaims.filter((c) => c.status === "pending").length,
+      squad: managerPicks(myManager().id).map((p) => p.player_id).sort(),
+      settled: (S.rounds || []).filter((r) => r.status === "settled").length,
+    };
+  });
+
+  expect(after.settled, "no round was recorded as settled").toBeGreaterThan(0);
+  expect(after.pending, "claims were left pending after the window shut").toBe(0);
+  expect(after.squad, "the squad did not change, so no claim was actually awarded")
+    .not.toEqual(before.squad);
+
+  expectCleanSweep(await sweepAllViews(page));
+});
+
+test("editing the line-up does not rescore the rounds already played", async ({ page }) => {
+  /* Bug row 4 of ROUNDS_DESIGN.md. An edit writes forward; the rounds behind
+     it keep the squad that played them, which is what pinHistory() exists to
+     guarantee when a manager has never touched their team before. */
+  await openLeague(page, { managers: 2, played: 3 });
+
+  const before = await page.evaluate(() =>
+    managerHistory(myManager().id).rounds.map((r) => [r.n, r.subtotal]));
+
+  await page.evaluate(async () => {
+    const me = myManager();
+    // Bench a starter and promote the sub who covers the same position.
+    const starter = managerPicks(me.id).find((p) => !p.is_sub && p.position === "MID");
+    const sub = managerPicks(me.id).find((p) => p.is_sub && p.position === "MID");
+    await pinHistory(me.id);
+    await S.sb.from("picks").update({ is_sub: true, slot: "SUB_MID" }).eq("id", starter.id);
+    await S.sb.from("picks").update({ is_sub: false, slot: "MID" }).eq("id", sub.id);
+    await refetchAll();
+  });
+
+  const after = await page.evaluate(() =>
+    managerHistory(myManager().id).rounds.map((r) => [r.n, r.subtotal]));
+
+  expect(after, "a line-up edit rewrote the score of a round already played")
+    .toEqual(before);
+  expectCleanSweep(await sweepAllViews(page));
+});
+
+test("a head-to-head league renders its fixtures and standings", async ({ page }) => {
+  // h2h adds a whole tab that only exists in that mode, so it is only ever
+  // exercised by a league configured for it.
+  await openLeague(page, { managers: 2, played: 3, h2h: true });
+  const has = await page.evaluate(() =>
+    Object.values(navGroups()).flat().includes("fixtures"));
+  expect(has, "a head-to-head league is not offering its fixtures tab").toBe(true);
+  expectCleanSweep(await sweepAllViews(page));
+});
+
+test("a knockout competition settles its rounds and renders everywhere", async ({ page }) => {
+  /* The World Cup path, which has never been driven end to end. Every round
+     here is a name with no matchweek number, so round_no is null throughout --
+     the case that Phase 1.5 exists for, and the one where `rounds.round_no int
+     not null` made settlement impossible until the SQL harness caught it. */
+  const seed = await openLeague(page, { managers: 2, played: 3, knockout: true });
+  expect(seed.roundNames.some((r) => /Regular Season/.test(r)),
+    "the knockout seed still produced numbered rounds").toBe(false);
+
+  /* Clear anything settled during setup. The app loads public/fixtures.json --
+     the real World Cup calendar, all of it now past -- before the scenario
+     replaces S.fixtures, so a round settles on its own and assertions about
+     "the recorded round" would be reading that one instead. Sabotaging the
+     round key went green until this line existed. */
+  const rows = await page.evaluate(async (names) => {
+    window.__db.tables.rounds = []; S.rounds = [];
+    await advanceRound();
+    await refetchAll();
+    return (S.rounds || [])
+      .map((r) => ({ key: r.round_key, no: r.round_no, status: r.status }))
+      // ...and only look at rounds from THIS competition's calendar.
+      .filter((r) => names.includes(r.key) || r.key == null);
+  }, seed.roundNames);
+
+  expect(rows.length, "a knockout round could not be recorded at all").toBeGreaterThan(0);
+  expect(rows[0].key, "the round was recorded without its label").toBeTruthy();
+  expect(seed.roundNames, "the recorded key is not one of this competition's rounds")
+    .toContain(rows[0].key);
+  expect(rows[0].no, "a knockout round should have no matchweek number").toBeNull();
+  expectCleanSweep(await sweepAllViews(page));
+});
