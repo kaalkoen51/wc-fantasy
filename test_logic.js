@@ -2799,6 +2799,27 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
     computeScores()[0].settledTotal, one.settledTotal);
   check("isRoundSettled ignores a round nobody recorded",
     isRoundSettled("Regular Season - 9", 9), false);
+
+  /* The key recorded on the stat ROW beats the fixture list, so a settled
+     round stays settled through a reschedule -- and a knockout round, whose
+     `round` int is null, can be settled at all. Both are the point of
+     stamping round_key on stats rather than only the number. */
+  S.stats = [
+    row({ player_id: "liv_1", match_label: "Liverpool vs Everton (2026-08-01)",
+          appeared: true, goals: 1, team: "Liverpool", round: null,
+          round_key: "Round of 16" }),
+    row({ player_id: "liv_1", match_label: "Liverpool vs Wolves (2026-08-08)",
+          appeared: true, goals: 1, team: "Liverpool", round: null,
+          round_key: "Quarter-finals" }),
+  ];
+  S.fixtures = [];                       // no fixture list at all
+  S.rounds = [{ round_key: "Round of 16", round_no: null, status: "settled" }];
+  const ko = computeScores()[0];
+  check("a knockout round settles off the row's own key",
+    ko.settledTotal > 0 && ko.settledTotal < ko.total, true);
+  check("...and the split still adds up with no fixtures in sight",
+    ko.settledTotal + ko.liveTotal, ko.total);
+  S.rounds = []; S.stats = []; S.fixtures = []; S.picks = [];
   S.rounds = []; S.fixtures = []; S.stats = []; S.picks = [];
 
   process.exit(fails ? 1 : 0);

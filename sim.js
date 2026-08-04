@@ -178,7 +178,7 @@ const simStage = () => {
 
 // Plausible-but-random match stats, weighted by position so forwards score and
 // keepers make saves — enough for scoring, recaps and the H2H log to look real.
-function simPlayerRow(p, team, label, clean, homeScore, awayScore, round) {
+function simPlayerRow(p, team, label, clean, homeScore, awayScore, round, roundKey) {
   const r = (n) => Math.floor(Math.random() * n);
   const pos = p.position;
   const minutes = Math.random() < 0.15 ? r(60) : 90;
@@ -190,7 +190,7 @@ function simPlayerRow(p, team, label, clean, homeScore, awayScore, round) {
   const def = pos === "DEF" ? 2 + r(6) : pos === "MID" ? 1 + r(4) : r(2);
   const yellow = Math.random() < 0.12 ? 1 : 0;
   return simStatRow(p, team, label, {
-    round,
+    round, round_key: roundKey ?? null,
     minutes, goals, assists, saves, defensive_actions: def, yellow_cards: yellow,
     red_cards: Math.random() < 0.02 ? 1 : 0,
     clean_sheet: clean && minutes >= 60 && pos !== "FWD",
@@ -284,7 +284,8 @@ function simRoundRows(fixtures, played) {
       // transfer shows up in the next week's results, as it would for real.
       const squad = S.players.filter((p) => p.team === team).slice(0, 14);
       for (const p of squad)
-        rows.push(simPlayerRow(p, team, label, clean, hs, as, Number(mwNo(f.round))));
+        rows.push(simPlayerRow(p, team, label, clean, hs, as,
+          Number(mwNo(f.round)), f.round == null ? null : String(f.round)));
     }
   }
   // Award the top-rated player in each match, like the real pull does.

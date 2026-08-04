@@ -4683,16 +4683,25 @@ function roundResolvers(statsByPlayer, teamMatches) {
      wrote them (ROUNDS_DESIGN.md, Phase 0). Built from statsByPlayer rather
      than read from statsDerived() so this stays a pure function of its inputs;
      memoized because statsDerived's output is identity-stable per S.stats. */
-  let recRound = _recRoundMemo.get(statsByPlayer);
-  if (!recRound) {
-    recRound = {};
+  let rec = _recRoundMemo.get(statsByPlayer);
+  if (!rec) {
+    rec = { no: {}, key: {} };
     for (const pid in statsByPlayer)
       for (const r of statsByPlayer[pid]) {
         const rr = Number(r.round);
-        if (rr >= 1 && !recRound[r.match_label]) recRound[r.match_label] = rr;
+        if (rr >= 1 && !rec.no[r.match_label]) rec.no[r.match_label] = rr;
+        // The round KEY recorded on the row. Present for every competition,
+        // where `round` above is null for the whole knockout stage.
+        if (r.round_key && !rec.key[r.match_label]) rec.key[r.match_label] = String(r.round_key);
       }
-    _recRoundMemo.set(statsByPlayer, recRound);
+    _recRoundMemo.set(statsByPlayer, rec);
   }
+  const recRound = rec.no;
+  /* Which round a match belongs to, as a KEY, preferring what the writer
+     recorded on the row over anything derived from today's fixture list. This
+     is what lets settled scoring be a pure read: the row says which round it
+     was, so no reschedule can move it and no fixture list is needed. */
+  const roundKeyOf = (label) => rec.key[label] || roundIndex().keyByLabel[label] || null;
   /* Preference order, everywhere a round is resolved:
        1. recorded on the row  — what the week WAS when the match was played;
                                  no later reschedule or transfer can move it
@@ -4774,15 +4783,16 @@ function roundResolvers(statsByPlayer, teamMatches) {
     const r = roundOf(entry.team, label);
     return r >= 0 ? r + 1 : roundByLabel(label);
   };
-  return { roundOf, appearedIn, roundByLabel, labelForRound, missedRound, entryRound };
+  return { roundOf, appearedIn, roundByLabel, labelForRound, missedRound, entryRound,
+           roundKeyOf };
 }
 
 function computeScores() {
   const { byPlayer: statsByPlayer, teamMatches } = statsDerived();
   // A starter's k-th match (same round as the sub's match), and whether the
   // starter actually featured in it.
-  const { roundOf, appearedIn, roundByLabel, labelForRound, missedRound, entryRound } =
-    roundResolvers(statsByPlayer, teamMatches);
+  const { roundOf, appearedIn, roundByLabel, labelForRound, missedRound, entryRound,
+          roundKeyOf } = roundResolvers(statsByPlayer, teamMatches);
 
   // Each match is scored against the roster locked before its kickoff.
   // Kickoff times come from fixtures.json; for matches we can't find
@@ -4837,7 +4847,7 @@ function computeScores() {
     for (const label of statLabels) {
       const d = labelDate(label);
       const rnd = roundByLabel(label);   // 1-based round (real matchweek)
-      const rKey = roundKeyOfLabel(label);
+      const rKey = roundKeyOf(label);   // recorded on the row first, fixtures second
       if (rnd >= 1 && rndKey[rnd] === undefined) rndKey[rnd] = rKey;
       const roster = rosterAtFor(m.id, matchTime(label), d, snapsByMgr[m.id] || [], rKey);
       const starters = roster.filter((e) => !e.is_sub && e.position !== "TEAM");
@@ -11501,6 +11511,11 @@ function buildFixtureStatRows(f, teamBlocks, keyField, fixName, pidOf, skipped) 
            is in hand. Cups get null -- their round labels are names, not
            numbers -- and readers fall back to inference (ROUNDS_DESIGN.md). */
         round: Number(mwNo(f.league?.round)) || null,
+        /* ...and the round's own label, which every competition has. `round`
+           above is that label parsed to an int, so it is null for the entire
+           knockout stage -- the same gap Phase 1.5 closed for `rounds` and
+           `lineup_snapshots`. Settled scoring keys on this. */
+        round_key: f.league?.round != null ? String(f.league.round) : null,
         goals: +g.total || 0, assists: +g.assists || 0,
         clean_sheet: minutes >= 60 && !(conceded[tb.team.id] || 0),
         yellow_cards: +cards.yellow || 0, red_cards: +cards.red || 0,

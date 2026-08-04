@@ -193,14 +193,28 @@ bonus keeps moving as the tournament advances, long after any matchweek is
 done. Points from a label with no resolvable round stay live too — they are
 never inside a settled round, so they can never be frozen.
 
-**2b — make `settledPoints` actually pure (next)**
+**2b — the round key on stat rows, shipped ✅ (the third writer)**
 
-The boundary exists; the settled side is still computed the same way. Next is
-reading it from the recorded round instead of recomputing it from stats and
-snapshots on every render: no `Date.now()`, no fixture list, cacheable. Only
-two `Date.now()` calls remain anywhere in the scoring path, both in the
-snapshot-fallback last resort (`rosterAtFor`, `snapIndexAt`) — which are on the
-deletion list below.
+2b turned out to be blocked the same way Phase 2 was: `settledPoints` is meant
+to need no fixture list, but a stat row only carried `round` — the label parsed
+to an int, null for every knockout round. The key existed on `rounds` and on
+`lineup_snapshots` after Phase 1.5; the third writer never got it.
+
+`match_stats.round_key` / `competition_stats.round_key` now carry the label
+verbatim, stamped by all three writers exactly as Phase 0 stamped the number:
+`buildFixtureStatRows`, `daily_pull.py` (with `round_key` in OPTIONAL_COLUMNS),
+and the test bench. `roundResolvers().roundKeyOf()` prefers what the row
+recorded over anything derived from today's fixtures, so a settled round
+survives a reschedule and a knockout round can be settled at all — the tests
+score one with `S.fixtures` empty.
+
+**2c — cache the settled side, then delete (next)**
+
+The settled half is now identifiable without the clock or the calendar, but it
+is still recomputed on every render. Caching it per round is what makes the
+"no `Date.now()`" claim structural rather than incidental. Only two
+`Date.now()` calls remain anywhere in scoring, both in the snapshot-fallback
+last resort (`rosterAtFor`, `snapIndexAt`) — both on the deletion list below.
 
 **2c — the deletions, once 2b is proven**
 
@@ -252,7 +266,7 @@ readable in one place.
 | ✅ | **The `schema.sql` re-run trap closed** — re-runs can never again undo the RLS lockdown |
 | ✅ | **Knockout fallback** — a window closing into an unnumbered round settles through the legacy path instead of being dropped |
 | ✅ | **Phase 1.5** — the round key is the label, so cups are recordable; line-up snapshots carry the round they were for |
-| ◐ | **Phase 2a** — the settled/live boundary, proven to move no number ✅; 2b (pure `settledPoints`) and 2c (the deletions) remain |
+| ◐ | **Phase 2a/2b** — the settled/live boundary ✅ and the round key on stat rows ✅; 2c (cache, then delete) remains |
 | ⬜ | **Phase 3** (optional) — retire label parsing |
 
 ### Database steps for Phase 1 — in order, the middle one is not optional

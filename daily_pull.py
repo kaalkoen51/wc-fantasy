@@ -285,6 +285,12 @@ def extract_player_rows(
     # Digits must follow the dash: "Round of 16" is a tie, not matchweek 16.
     round_match = re.search(r"-\s*(\d+)\s*$", str(fixture.get("league", {}).get("round") or ""))
     round_no = int(round_match.group(1)) if round_match else None
+    # ...and the label itself, which every competition has. round_no above is
+    # that label parsed to an int, so it is None for every knockout round --
+    # settled scoring keys on round_key instead. Same fix as ROUNDS_DESIGN.md
+    # Phase 1.5 made for the rounds table and the lineup snapshots.
+    raw_round = fixture.get("league", {}).get("round")
+    round_key = str(raw_round) if raw_round else None
     namefn = (lambda n: n) if use_api_ids else fix_team_name
     match_label = (
         f"{namefn(home['name'])} vs {namefn(away['name'])} "
@@ -335,6 +341,7 @@ def extract_player_rows(
             rows.append(
                 {
                     "round": round_no,
+                    "round_key": round_key,
                     "player_id": resolved_id,
                     "player_name": resolved_name,
                     "api_player_id": str(player.get("id")),
@@ -449,6 +456,7 @@ def _stat_columns(row: dict) -> dict:
         # cannot strand the row (the app resolves rounds per club).
         "team": row.get("team"),
         "round": row.get("round"),
+        "round_key": row.get("round_key"),
         "appeared": True,
         "goals": row["goals"],
         "assists": row["assists"],
@@ -491,7 +499,7 @@ def build_competition_payload(rows: list, competition_key: str) -> list:
 # whole write with PGRST204; we drop the offending column and retry so an
 # unapplied migration degrades gracefully (these are display-only — they
 # never affect scoring) instead of silently killing every pull.
-OPTIONAL_COLUMNS = ("home_score", "away_score", "defensive_actions", "minutes", "raw", "team", "round")
+OPTIONAL_COLUMNS = ("home_score", "away_score", "defensive_actions", "minutes", "raw", "team", "round", "round_key")
 
 MISSING_COLUMN_RE = re.compile(r"Could not find the '(\w+)' column")
 

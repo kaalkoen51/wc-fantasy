@@ -68,6 +68,12 @@ alter table match_stats add column if not exists team text;
 -- double gameweeks. Additive; legacy rows are null and fall back to inference.
 -- (docs/ROUNDS_DESIGN.md, Phase 0.)
 alter table match_stats add column if not exists round int;
+/* ...and the round's own label. `round` above is that label parsed to an int,
+   which is null for every knockout round, so it cannot key a cup's scoring.
+   Settled scoring (ROUNDS_DESIGN.md Phase 2) reads this and joins it to
+   rounds.round_key. Nullable: rows written before this migration keep working
+   through the same inference fallbacks they always did. */
+alter table match_stats add column if not exists round_key text;
 
 create table if not exists team_stages (
     id uuid primary key default gen_random_uuid(),
@@ -501,6 +507,12 @@ create table if not exists competition_stats (
 );
 alter table competition_stats add column if not exists team text;
 alter table competition_stats add column if not exists round int;
+/* ...and the round's own label. `round` above is that label parsed to an int,
+   which is null for every knockout round, so it cannot key a cup's scoring.
+   Settled scoring (ROUNDS_DESIGN.md Phase 2) reads this and joins it to
+   rounds.round_key. Nullable: rows written before this migration keep working
+   through the same inference fallbacks they always did. */
+alter table competition_stats add column if not exists round_key text;
 alter table competition_stats add column if not exists raw jsonb;
 create index if not exists competition_stats_key_idx on competition_stats (competition_key, id);
 alter table competition_stats enable row level security;
