@@ -1,0 +1,232 @@
+/* Shared rig for the scenario tests.
+ *
+ * The point of a scenario here is not one assertion. A bug in this app is
+ * typically correct on the screen you are looking at and wrong on another --
+ * the transfer that still appeared in round 4 and round 5 was right in the
+ * current line-up the whole time. So every scenario sets up a state and then
+ * OPENS EVERYTHING: every tab, every sub-tab, every round of the pager, and
+ * the overlays, asserting that nothing throws and every pane drew something.
+ *
+ * The database underneath is the in-memory stub, so this exercises the app,
+ * not Postgres. test_sql.sh covers the other side.
+ */
+const fs = require("fs");
+const path = require("path");
+const { expect } = require("@playwright/test");
+
+const STUB = fs.readFileSync(path.join(__dirname, "supabase-stub.js"), "utf8");
+const POOL = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "players.json"), "utf8"));
+
+const LEAGUE = "55555555-5555-4555-8555-555555555555";
+const OWNER = "00000000-0000-4000-8000-000000000001";
+const DAY = 86400000;
+
+/* A squad that can field a legal XI, with every player at a DIFFERENT club.
+   That matters more than it looks: the first version took players in pool
+   order, which is grouped by country, so a whole squad came from one or two
+   clubs -- and then a "blank week" that removes one fixture removed the only
+   fixture, and the scenario was testing a season with a missing round rather
+   than a blank one. The test data has to be as varied as a real league or the
+   scenario is not the scenario.
+
+   `nth` offsets which clubs each manager draws from, so two managers do not
+   compete for the same players. */
+function squadFor(nth) {
+  const byClub = {};
+  for (const p of POOL) (byClub[p.team] ||= []).push(p);
+  const clubs = Object.keys(byClub).sort();
+  const need = [["GK", 1], ["DEF", 4], ["MID", 4], ["FWD", 2],
+                ["GK", 1], ["DEF", 1], ["MID", 1], ["FWD", 1]];
+  const out = [];
+  let ci = nth;                       // walk clubs, one player each
+  for (const [pos, n] of need) {
+    for (let k = 0; k < n; k++) {
+      for (let tries = 0; tries < clubs.length; tries++) {
+        const club = clubs[(ci++ * 2 + nth) % clubs.length];
+        const cand = (byClub[club] || []).find((p) =>
+          p.position === pos && !out.includes(p));
+        if (cand) { out.push(cand); break; }
+      }
+    }
+  }
+  return { starters: out.slice(0, 11), bench: out.slice(11) };
+}
+
+/* A league mid-season: `played` rounds with results behind us, one round
+   still to come, automatic windows and waiver mode on. Every stat row carries
+   the round, the round key and the fixture id, the way the pullers write them. */
+function seedLeague({ managers = 2, played = 3, quirk = null } = {}) {
+  const now = Date.now();
+  const tables = {
+    leagues: [{
+      id: LEAGUE, name: "Scenario", invite_code: "SCEN", current_pick: 9999,
+      num_managers: managers, sim: false, owner_id: OWNER,
+      config: { autoWindows: true, fa_defer_to_close: true, captain: true },
+    }],
+    managers: [], picks: [], match_stats: [], lineup_snapshots: [],
+    rounds: [], transactions: [], messages: [], fa_claims: [], team_stages: [],
+  };
+
+  const mgrIds = [];
+  let pickNo = 1;
+  for (let m = 0; m < managers; m++) {
+    const id = `6666666${m}-6666-4666-8666-666666666666`;
+    mgrIds.push(id);
+    tables.managers.push({ id, league_id: LEAGUE, name: `Mgr${m + 1}`,
+      draft_position: m + 1, waiver_order: m,
+      user_id: m === 0 ? OWNER : `other-${m}` });
+    const { starters, bench } = squadFor(m);
+    for (const p of starters)
+      tables.picks.push({ id: `pk${pickNo}`, league_id: LEAGUE, manager_id: id,
+        player_id: p.player_id, player_name: p.name, position: p.position,
+        team: p.team, slot: p.position, is_sub: false, pick_number: pickNo++ });
+    for (const p of bench)
+      tables.picks.push({ id: `pk${pickNo}`, league_id: LEAGUE, manager_id: id,
+        player_id: p.player_id, player_name: p.name, position: p.position,
+        team: p.team, slot: "SUB_" + p.position, is_sub: true, pick_number: pickNo++ });
+    tables.managers[m].captain_id = starters[starters.length - 1].player_id;
+    tables.managers[m].vice_id = starters[starters.length - 2].player_id;
+  }
+
+  // Everyone who is picked, plus their clubs, so the fixtures mean something.
+  const picked = tables.picks.map((p) => POOL.find((x) => x.player_id === p.player_id));
+  const clubs = [...new Set(picked.map((p) => p.team))];
+
+  const fixtures = [];
+  for (let r = 1; r <= played + 1; r++) {
+    const at = now + (r - played - 0.5) * 7 * DAY;
+    const iso = new Date(at).toISOString();
+    for (let i = 0; i + 1 < clubs.length; i += 2) {
+      // A blank week: the first pair simply has no fixture in round 2.
+      if (quirk === "blank" && r === 2 && i === 0) continue;
+      fixtures.push({ fixture_id: r * 1000 + i, home: clubs[i], away: clubs[i + 1],
+        kickoff_utc: iso, date: iso.slice(0, 10),
+        round: `Regular Season - ${r}`, status: r <= played ? "FT" : "NS",
+        home_score: r <= played ? (i % 3) : null,
+        away_score: r <= played ? ((i + 1) % 2) : null });
+    }
+    // A double week: one club plays twice in round 3.
+    if (quirk === "double" && r === 3) {
+      const at2 = new Date(at + 2 * DAY).toISOString();
+      fixtures.push({ fixture_id: r * 1000 + 99, home: clubs[0], away: clubs[3],
+        kickoff_utc: at2, date: at2.slice(0, 10),
+        round: `Regular Season - ${r}`, status: "FT", home_score: 1, away_score: 1 });
+    }
+  }
+
+  for (const f of fixtures) {
+    if (f.status !== "FT") continue;
+    const label = `${f.home} vs ${f.away} (${f.date})`;
+    const n = Number(String(f.round).match(/(\d+)$/)[1]);
+    for (const club of [f.home, f.away])
+      for (const p of picked.filter((x) => x.team === club))
+        tables.match_stats.push({
+          league_id: LEAGUE, player_id: p.player_id, match_label: label,
+          appeared: true, minutes: 90, goals: p.position === "FWD" ? 1 : 0,
+          assists: p.position === "MID" ? 1 : 0,
+          clean_sheet: p.position !== "FWD" && (club === f.home ? f.away_score === 0 : f.home_score === 0),
+          yellow_cards: 0, red_cards: 0, saves: p.position === "GK" ? 3 : 0,
+          motm: false, penalty_saved: 0, penalty_missed: 0,
+          team: club, round: n, round_key: f.round, fixture_id: f.fixture_id,
+        });
+  }
+  return { tables, fixtures, mgrIds, picked, clubs };
+}
+
+async function openLeague(page, opts = {}) {
+  const seed = seedLeague(opts);
+  await page.route("**/vendor/supabase.js", (route) =>
+    route.fulfill({ contentType: "text/javascript", body: STUB }));
+  await page.goto("/index.html", { waitUntil: "networkidle" });
+  await page.evaluate(([tables, lid, mid]) => {
+    Object.assign(window.__db.tables, tables);
+    localStorage.setItem("wcf_session", JSON.stringify({ leagueId: lid, managerId: mid }));
+  }, [seed.tables, LEAGUE, seed.mgrIds[0]]);
+  await page.evaluate(async ([fx, email]) => {
+    S.authUser = { id: "00000000-0000-4000-8000-000000000001", email };
+    await loadPlayers();
+    await refetchAll();
+    S.fixtures = fx;                 // the app's fixture source, as loaded
+    route();
+  }, [seed.fixtures, "tester@example.com"]);
+  return seed;
+}
+
+/* Open every view the league offers and assert each one drew something and
+   threw nothing. This is the part that catches "right here, wrong there". */
+async function sweepAllViews(page) {
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(`uncaught: ${e.message}`));
+  page.on("console", (m) => {
+    if (m.type() === "error" && !/Failed to load resource/.test(m.text()))
+      errors.push(`console.error: ${m.text()}`);
+  });
+
+  const visited = await page.evaluate(async () => {
+    const seen = [];
+    const note = (name, el) => seen.push({
+      name, html: (el?.innerHTML || "").length, hidden: !!el?.classList?.contains("hidden") });
+
+    showView("board");
+    for (const [group, tabs] of Object.entries(navGroups())) {
+      for (const tab of tabs) {
+        setBoardTab(tab);
+        // Let anything the tab defers actually run.
+        await new Promise((r) => setTimeout(r, 30));
+        note(`${group}/${tab}`, document.getElementById("board-" + tab));
+
+        // Sub-panes that are their own screens.
+        if (tab === "trades") for (const t of (window.TRADE_TABS || []).map((x) => x.id || x)) {
+          try { S.tradeTab = t; renderTrades(); } catch (e) { throw new Error(`trades/${t}: ${e.message}`); }
+          await new Promise((r) => setTimeout(r, 10));
+          note(`trades/${t}`, document.getElementById("board-trades"));
+        }
+        if (tab === "stats") for (const v of ["leaderboard", "dream"]) {
+          S.statsView = v; renderStatsTab();
+          note(`stats/${v}`, document.getElementById("board-stats"));
+        }
+        // Every round of the history pager, not just the newest.
+        if (tab === "lb") {
+          const h = managerHistory(myManager().id);
+          for (let i = 0; i <= h.rounds.length; i++) {
+            S.histIdx = i; renderBoard();
+            note(`lb/round-${i}`, document.getElementById("board-lb"));
+          }
+          S.histIdx = 0;
+        }
+      }
+    }
+    return seen;
+  });
+
+  // Overlays, opened one at a time. Each is a screen a person can reach.
+  const overlayErrors = await page.evaluate(() => {
+    const out = [];
+    const me = myManager();
+    const pid = managerPicks(me.id)[0]?.player_id;
+    const tries = [
+      ["player detail", () => openPlayerDetail(pid)],
+      ["lineup editor", () => openLineup()],
+      ["scoring sheet", () => openScoringSheet()],
+      ["squad builder", () => openBuilder && openBuilder()],
+    ];
+    for (const [name, fn] of tries) {
+      try { fn(); } catch (e) { out.push(`${name}: ${e.message}`); }
+    }
+    return out;
+  });
+
+  return { errors, visited, overlayErrors };
+}
+
+// Assert the sweep was clean AND actually rendered, so a silent empty pane
+// cannot pass as "no errors".
+function expectCleanSweep(res) {
+  expect(res.errors, `errors while sweeping:\n${res.errors.join("\n")}`).toEqual([]);
+  expect(res.overlayErrors, `overlays threw:\n${res.overlayErrors.join("\n")}`).toEqual([]);
+  const empty = res.visited.filter((v) => v.html === 0);
+  expect(empty, `panes rendered nothing: ${JSON.stringify(empty)}`).toEqual([]);
+  expect(res.visited.length, "swept nothing at all").toBeGreaterThan(5);
+}
+
+module.exports = { openLeague, sweepAllViews, expectCleanSweep, seedLeague, LEAGUE, POOL, DAY };

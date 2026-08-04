@@ -53,6 +53,14 @@
 
   const err = (code, message) => ({ data: null, error: { code, message } });
 
+  /* Every row that leaves here is a COPY. A real client parses JSON off the
+     wire, so the app can never hold a reference to a database row -- and the
+     first version of this handed out the stored objects themselves, which
+     meant an UPDATE silently rewrote the app's own state too. That is not a
+     harmless shortcut: it hides exactly the bugs where the app forgets to
+     refetch, because the data appears to update on its own. */
+  const clone = (v) => (v == null ? v : JSON.parse(JSON.stringify(v)));
+
   function builder(table) {
     const filters = [];
     let mode = "select", payload = null, opts = {}, wantRows = false;
@@ -96,7 +104,7 @@
         if (range) out = out.slice(range[0], range[1] + 1);
       } else if (mode === "insert" || mode === "upsert") {
         const incoming = (Array.isArray(payload) ? payload : [payload]).map((r) => ({
-          id: uuid(), created_at: new Date().toISOString(), ...r,
+          id: uuid(), created_at: new Date().toISOString(), ...clone(r),
         }));
         out = [];
         for (const row of incoming) {
@@ -113,7 +121,7 @@
       } else if (mode === "update") {
         out = rows.filter(match);
         for (const r of out) {
-          const next = { ...r, ...payload };
+          const next = { ...r, ...clone(payload) };
           if (conflicts(table, next, r))
             return err("23505", `duplicate key value violates unique constraint on ${table}`);
           Object.assign(r, payload);
@@ -122,7 +130,7 @@
         out = rows.filter(match);
         db.tables[table] = rows.filter((r) => !out.includes(r));
       }
-      const data = wantRows ? (single ? (out[0] ?? null) : out) : null;
+      const data = wantRows ? clone(single ? (out[0] ?? null) : out) : null;
       if (single === "one" && !out.length) return err("PGRST116", "no rows returned");
       return { data, error: null };
     }

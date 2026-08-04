@@ -5157,6 +5157,13 @@ function managerHistory(mgrId) {
      edited their team. */
   const earnedByPlayer = {};
   const periodPts = {}, periodDates = {}, periodRoster = {};
+  /* Captain state, per round, exactly as computeScores tracks it. Without this
+     the pager's totals came out lower than the leaderboard's by the whole
+     captain bonus -- correct on one screen, wrong on the other, which is the
+     shape of bug this app produces most. Found by a scenario test that opens
+     both and compares them rather than checking either on its own. */
+  const capOn = captainEnabled();
+  const capByRnd = {}, viceByRnd = {}, playedByRnd = {}, ptsByRnd = {};
   for (const label of statLabels) {
     const t = matchTimeFor(label), d = labelDate(label);
     if (elimAt && t > elimAt) continue;        // stop crediting after elimination
@@ -5176,12 +5183,33 @@ function managerHistory(mgrId) {
       periodRoster[rnd] = roster;
       (periodDates[rnd] ||= new Set()).add(d);
     }
+    const mgr0 = S.managers.find((x) => x.id === mgrId);
+    if (capOn && rnd >= 1) {   // snapshot-locked captain, else today's pick
+      capByRnd[rnd] = roster.find((e) => e.is_captain)?.player_id ?? mgr0?.captain_id ?? capByRnd[rnd];
+      viceByRnd[rnd] = roster.find((e) => e.is_vice)?.player_id ?? mgr0?.vice_id ?? viceByRnd[rnd];
+    }
     const mp = matchPoints(roster, label);
     for (const pid in mp) {
       earnedByPlayer[pid] = (earnedByPlayer[pid] || 0) + mp[pid];
       if (rnd >= 1)
         (periodPts[rnd] ||= {})[pid] = ((periodPts[rnd] || {})[pid] || 0) + mp[pid];
+      if (capOn && rnd >= 1) {
+        if ((statsByPlayer[pid] || []).some((r) => r.match_label === label && r.appeared))
+          (playedByRnd[rnd] ||= new Set()).add(pid);
+        (ptsByRnd[rnd] ||= {})[pid] = ((ptsByRnd[rnd] || {})[pid] || 0) + mp[pid];
+      }
     }
+  }
+
+  // The captain (or the vice, if the captain did not play) doubles their round.
+  // Same rule and same order as computeScores, so the two cannot drift.
+  if (capOn) for (const rnd of Object.keys(ptsByRnd)) {
+    const cap = capByRnd[rnd], vice = viceByRnd[rnd];
+    const eff = (cap && playedByRnd[rnd]?.has(cap)) ? cap : vice;
+    const bonus = eff ? (ptsByRnd[rnd][eff] || 0) : 0;
+    if (!bonus) continue;
+    earnedByPlayer[eff] = (earnedByPlayer[eff] || 0) + bonus;
+    (periodPts[rnd] ||= {})[eff] = ((periodPts[rnd] || {})[eff] || 0) + bonus;
   }
 
   // Current view: live roster (credited-for-you) + TEAM/champion + former.
