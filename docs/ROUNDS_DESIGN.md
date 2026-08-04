@@ -1,6 +1,6 @@
 # Rounds: record at decision time, don't re-derive
 
-**Status:** Phases 0, 1 and 1.5 shipped. Phases 2–3 planned, each its own
+**Status:** Phases 0 through 3a shipped, 3b partly. Each phase is its own
 reviewed step. See [Progress log](#progress-log) at the bottom for where each
 phase stands and what the database still needs.
 
@@ -330,7 +330,33 @@ keeps the label path.
 Same pattern as Phase 0 and Phase 1.5, one field later — the writer knew the
 identity and did not store it.
 
-### Phase 3b — retire label parsing (next)
+### Phase 3b — resolve by identity, and backfill ✅ (partly)
+
+`match_label` is parsed in ~28 places, and they cannot all be rewritten while
+historical rows carry no id — for those rows the label really is the only key
+there is. So 3b is **centralise, then backfill**, not 28 separate edits.
+
+`matchIndex()` / `matchFixture()` are now the single place a match label
+becomes the fixture behind it: **by recorded id first, by label second.**
+`matchTimeFor()` goes through them (it used to be a linear scan rebuilding a
+label string for every fixture, on every call). Everything still parsing a
+label sits downstream, so retiring those sites later is one change rather than
+28.
+
+`backfillStatFixtureIds()` gives existing rows the id they were written
+without, resolving each label against the fixture list once and recording the
+answer — the same "freeze it before the inputs move again" move as
+`backfillSnapshotRounds()`.
+
+**The honest limit:** a row whose club has *already* been renamed matches no
+fixture, so there is nothing left to match on and nothing to recover. Only
+re-pulling fixes those — which is the precise fragility this phase is about,
+and the reason the id had to be stored at write time rather than reconstructed.
+
+**Still open:** the ~28 `labelDate` / `labelTeams` sites themselves. They are
+correct and now have one resolution point beneath them; retiring them is a
+mechanical pass worth doing once the backfill has run against real data and the
+null-id population is known.
 
 `match_label` ("Home vs Away (date)") is today's de-facto match key, parsed by
 regex in ~43 places. Identity becomes `(round_no, home, away)` or the API
@@ -375,7 +401,7 @@ readable in one place.
 | ◐ | **Phase 2** — 2a boundary ✅, 2b round key on stat rows ✅, 2c purity proven ✅; the cache and the deletions remain |
 | ✅ | **Phase 2.5** — round ORDER recorded from `/fixtures/rounds` rather than inferred from kickoff dates |
 | ✅ | **Phase 3a** — the API `fixture.id` stamped on stat rows and kept on fixtures, so both sides of the join carry the match's identity |
-| ⬜ | **Phase 3b** — migrate the ~31 label-parsing sites onto it; the label becomes an opaque display string |
+| ◐ | **Phase 3b** — resolution centralised on the id ✅ and existing rows backfilled ✅; the ~28 parse sites themselves remain |
 | ⬜ | **Phase 3** (optional) — retire label parsing |
 
 ### Database steps for Phase 1 — in order, the middle one is not optional
