@@ -5038,11 +5038,12 @@ function computeScoresUncached() {
        settled round, so they are never frozen. TEAM points below are live for
        a real reason rather than a technical one: a country's stage bonus keeps
        moving as the tournament advances, long after any matchweek is done. */
-    const playerTotal = total;
     let settledTotal = 0;
     for (const rnd of Object.keys(roundPts))
       if (isRoundSettled(rndKey[rnd], Number(rnd))) settledTotal += roundPts[rnd];
-    const liveTotal = playerTotal - settledTotal;
+    // liveTotal is computed AFTER the TEAM and champion points below, so that
+    // settled + live is the whole score. Taking it here excluded both, and
+    // the sum quietly stopped matching the total the moment either existed.
 
     const mPicks = managerPicks(m.id).sort((a, b) =>
       (SLOT_RANK[a.slot] ?? 9) - (SLOT_RANK[b.slot] ?? 9) || a.pick_number - b.pick_number);
@@ -5079,6 +5080,11 @@ function computeScoresUncached() {
     // a "player points only" view (total − teamPts).
     const teamPts = items.filter((it) => it.pick.slot === "TEAM" || it.pick.slot === "WIN")
       .reduce((s, it) => s + it.pts, 0);
+    /* Everything not inside a settled round is live, TEAM and champion points
+       included -- and they are live for a real reason rather than a technical
+       one: a stage bonus keeps moving as the tournament advances, and the
+       champion bonus is unknown until a winner is recorded. */
+    const liveTotal = total - settledTotal;
     return { manager: m, total, items, roundPts, teamPts, settledTotal, liveTotal };
   });
 }

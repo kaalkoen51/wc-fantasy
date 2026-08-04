@@ -320,6 +320,47 @@ async function expectScreensAgree(page) {
   return facts;
 }
 
+/* Geometry, not pixels. A broken layout does not throw and does not change any
+   text -- the Test tab rendered for weeks with a collapsed grid and an
+   "invisible" that showed, and every check we had passed. These are the faults
+   that are visible to a person and to nothing else, asserted without baseline
+   images so they cannot go stale or drift with a font. */
+async function expectLayoutSane(page) {
+  const faults = await page.evaluate(() => {
+    const bad = [];
+    const vw = document.documentElement.clientWidth;
+    showView("board");
+    for (const tabs of Object.values(navGroups())) for (const tab of tabs) {
+      setBoardTab(tab);
+      const pane = document.getElementById("board-" + tab);
+      if (!pane || pane.classList.contains("hidden")) continue;
+
+      for (const el of pane.querySelectorAll("*")) {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 && r.height === 0) continue;          // deliberately hidden
+        const cs = getComputedStyle(el);
+        if (cs.display === "none" || cs.visibility === "hidden") continue;
+
+        // Nothing may run off the side of the screen. The app is mobile-first
+        // and horizontal scroll is how a broken grid actually presents.
+        if (r.right > vw + 1)
+          bad.push(`${tab}: <${el.tagName.toLowerCase()}> overflows the viewport by ${
+            Math.round(r.right - vw)}px ("${(el.textContent || "").trim().slice(0, 30)}")`);
+
+        /* Text with no height is text nobody can read. Only checked on leaf
+           elements that actually contain words, since an empty wrapper legitimately
+           collapses. */
+        const leaf = !el.children.length && (el.textContent || "").trim().length > 0;
+        if (leaf && r.height === 0)
+          bad.push(`${tab}: text collapsed to zero height ("${
+            (el.textContent || "").trim().slice(0, 30)}")`);
+      }
+    }
+    return bad;
+  });
+  expect(faults, `layout faults:\n${faults.join("\n")}`).toEqual([]);
+}
+
 /* What the SCREEN says, not what the functions return. A render can drop a
    player while every underlying number stays right, and only reading the DOM
    catches that. */
@@ -334,4 +375,4 @@ async function expectLineupOnScreen(page, mgrId, names) {
 }
 
 module.exports = { openLeague, sweepAllViews, expectCleanSweep, expectScreensAgree,
-                   expectLineupOnScreen, seedLeague, LEAGUE, POOL, DAY };
+                   expectLineupOnScreen, expectLayoutSane, seedLeague, LEAGUE, POOL, DAY };

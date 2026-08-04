@@ -62,4 +62,9 @@ jobs:
       - name: Install Chromium for the browser harness
         run: npx playwright install --with-deps chromium
       - name: Browser tests
+        # Screenshot baselines are pixels, and pixels depend on the machine that
+        # drew them. If the visual specs fail on a font difference rather than a
+        # real change, regenerate with `npx playwright test --update-snapshots`
+        # and commit -- or delete them; the geometry checks carry most of the
+        # value and need no baseline at all.
         run: npx playwright test

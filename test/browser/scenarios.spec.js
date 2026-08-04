@@ -236,3 +236,59 @@ test("a knockout competition settles its rounds and renders everywhere", async (
   expectCleanSweep(await sweepAllViews(page));
   await expectScreensAgree(page);
 });
+
+test("a manager removed mid-season keeps a frozen score, and every screen copes", async ({ page }) => {
+  /* Removal is its own scoring path: player points stop at the moment of
+     removal and are banked, while a kept TEAM pick carries on earning as the
+     country advances. It is rare, so it is exactly the sort of state that
+     renders somewhere nobody looked. */
+  await openLeague(page, { managers: 2, played: 3 });
+
+  const before = await page.evaluate(() =>
+    computeScores().map((r) => [r.manager.id, r.total]));
+
+  const after = await page.evaluate(async ([victim]) => {
+    const row = computeScores().find((r) => r.manager.id === victim);
+    await S.sb.from("managers").update({
+      eliminated: true, frozen_points: row.total,
+      eliminated_at: new Date().toISOString(),
+    }).eq("id", victim);
+    await refetchAll();
+    return computeScores().map((r) => [r.manager.id, r.total, !!r.eliminated]);
+  }, [before[1][0]]);
+
+  const victimNow = after.find((r) => r[0] === before[1][0]);
+  expect(victimNow[2], "the removed manager is not marked eliminated").toBe(true);
+  expect(victimNow[1], "a removed manager's score should be frozen at removal")
+    .toBe(before[1][1]);
+  // ...and the manager still playing is untouched by any of it.
+  expect(after.find((r) => r[0] === before[0][0])[1]).toBe(before[0][1]);
+
+  expectCleanSweep(await sweepAllViews(page));
+});
+
+test("a champion pick pays out at the end of the season", async ({ page }) => {
+  /* The final-pick bonus only exists once a winner has been recorded, so it is
+     unreachable until the very end of a season -- and therefore never seen
+     until the one week it matters. */
+  await openLeague(page, { managers: 2, played: 3 });
+
+  const res = await page.evaluate(async () => {
+    const me = myManager();
+    const champion = S.picks[0].team;
+    await S.sb.from("managers").update({ final_pick: champion }).eq("id", me.id);
+    await refetchAll();
+    const withoutWinner = computeScores().find((r) => r.manager.id === me.id).total;
+
+    // Now the tournament resolves and that country wins it.
+    S.stages = [{ league_id: S.league.id, team: champion, stage: "winner" }];
+    bustScores();
+    const withWinner = computeScores().find((r) => r.manager.id === me.id).total;
+    return { withoutWinner, withWinner, bonus: finalPickBonus() };
+  });
+
+  expect(res.withWinner, "calling the champion paid nothing")
+    .toBe(res.withoutWinner + res.bonus);
+  expectCleanSweep(await sweepAllViews(page));
+  await expectScreensAgree(page);
+});
