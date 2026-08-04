@@ -35,7 +35,7 @@ const lsStub = {
 globalThis.appended = appended;
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid, pitchHtml, pitchFacingHtml, pitchRowsHtml, squadBoardHtml, historyViewHtml, benchInOrder, moveBench, orderedRoster, flipRows, wireLineupControls, markQueueMoved, matchdayCtaAct, matchdayCardHtml, renderLineup, renderHomeTab, openH2HPreview, openH2HFixture, lineupRowHtml, dugoutHtml, renderFixturesTab, h2hRoundFixtures, h2hTotalRounds, h2hFormOf, h2hStandingsHtml, seasonChartHtml, renderScoutList, renderStatsTab, renderPredraftShortlist, preDraftBrowsing, shortlistCoverage, coverageHint, scoringByPositionHtml, openScoringSheet, animateReorder, applyLocalOverrides, queueManagerWrite, wireStars, starHtml, draftFactCards, draftRulesHtml, lobbyRulesHtml, scoringHtml, applyVisibleOrder, makeReorderable, refetchAll, markConnection, enterLeagueWithFeedback, route, showView, dragActive, afterDrag, overrideStillWins, queueManagerWrite, applyLocalOverrides, keepLocalPick, autoPickStale, makePick, autoPick, tickTimer, mergeOptimisticPicks, pickKey, queueFieldWrite, OVERRIDE_TABLES, setPlanner, saveLineup, toggleKeeper, setFinalPick, txWindowStarts, txWhen, txShell, txAvatar, txMgrChip, tradeTxCard, swapTxCard, transactionsLogHtml, renderTrades, builderHtml, faClaimsSectionHtml, waiverOrderHtml, shortlistSectionHtml, plannerSectionHtml, plannerMoveHtml, squadChooserHtml, tradeSectionHtml, setClaimOrder, reorderClaim, tradeForShortlisted, submitTrade, TRADE_TABS, tradeTabBodyHtml, faClaimRowHtml, faClaimRowsHtml, renderClaimList, wireClaimControls, ROW_ATTRS, plannerMoveChoice, plannerSetChoiceOrder, plannerPickPool, renderPlannerPick, setWindowMode, toggleLineups, squadPitchHtml, squadShape, renderDreamTeam, dreamTeam, renderChat, chatThreads, interacting, markInteracting, scheduleDeferredFlush, INTERACT_MS, animateReorder, flipRows, flushDeferredRender, currentSeasonFor, seasonOptions, seasonLabel, backtestSeason, createCompKind, createPreviewSeason, loadScoringPreviewData, pullCreateHistory, renderCreateBalance, updateCreatePullStatus, renderCreateForm, pickReconciliation, reconcilePicksToPool, mapApiPlayer, loadCompetition, roundResolvers, roundIndex, mwNo, FINAL_STATUS, draftOrderMode, lobbyOrderManagers, shuffled, setDraftOrder, renderLobbyOrder, lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow, nextLockMs, lockAfterWindow, snapshotAt, snapshotForNextLock, rosterAtFor, setSession, getSession, repairStarters, lineupShape, repairLineupFor, faWindowKey, roundToSettle, closedWindowRound, closedWindowRounds, closedTradeWindows, roundsOwedSettlement, isRoundSettled, matchFixture, matchTimeFor, roundKeyLockedAt, roundKeyOfLabel, roundIndex, rosterAtFor, snapshotsByManager, advanceRound, maybeAdvanceRounds };"
+  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid, pitchHtml, pitchFacingHtml, pitchRowsHtml, squadBoardHtml, historyViewHtml, benchInOrder, moveBench, orderedRoster, flipRows, wireLineupControls, markQueueMoved, matchdayCtaAct, matchdayCardHtml, renderLineup, renderHomeTab, openH2HPreview, openH2HFixture, lineupRowHtml, dugoutHtml, renderFixturesTab, h2hRoundFixtures, h2hTotalRounds, h2hFormOf, h2hStandingsHtml, seasonChartHtml, renderScoutList, renderStatsTab, renderPredraftShortlist, preDraftBrowsing, shortlistCoverage, coverageHint, scoringByPositionHtml, openScoringSheet, animateReorder, applyLocalOverrides, queueManagerWrite, wireStars, starHtml, draftFactCards, draftRulesHtml, lobbyRulesHtml, scoringHtml, applyVisibleOrder, makeReorderable, refetchAll, markConnection, enterLeagueWithFeedback, route, showView, dragActive, afterDrag, overrideStillWins, queueManagerWrite, applyLocalOverrides, keepLocalPick, autoPickStale, makePick, autoPick, tickTimer, mergeOptimisticPicks, pickKey, queueFieldWrite, OVERRIDE_TABLES, setPlanner, saveLineup, toggleKeeper, setFinalPick, txWindowStarts, txWhen, txShell, txAvatar, txMgrChip, tradeTxCard, swapTxCard, transactionsLogHtml, renderTrades, builderHtml, faClaimsSectionHtml, waiverOrderHtml, shortlistSectionHtml, plannerSectionHtml, plannerMoveHtml, squadChooserHtml, tradeSectionHtml, setClaimOrder, reorderClaim, tradeForShortlisted, submitTrade, TRADE_TABS, tradeTabBodyHtml, faClaimRowHtml, faClaimRowsHtml, renderClaimList, wireClaimControls, ROW_ATTRS, plannerMoveChoice, plannerSetChoiceOrder, plannerPickPool, renderPlannerPick, setWindowMode, toggleLineups, squadPitchHtml, squadShape, renderDreamTeam, dreamTeam, renderChat, chatThreads, interacting, markInteracting, scheduleDeferredFlush, INTERACT_MS, animateReorder, flipRows, flushDeferredRender, currentSeasonFor, seasonOptions, seasonLabel, backtestSeason, createCompKind, createPreviewSeason, loadScoringPreviewData, pullCreateHistory, renderCreateBalance, updateCreatePullStatus, renderCreateForm, pickReconciliation, reconcilePicksToPool, mapApiPlayer, loadCompetition, roundResolvers, roundIndex, mwNo, FINAL_STATUS, draftOrderMode, lobbyOrderManagers, shuffled, setDraftOrder, renderLobbyOrder, lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow, nextLockMs, lockAfterWindow, snapshotAt, snapshotForNextLock, rosterAtFor, setSession, getSession, repairStarters, lineupShape, repairLineupFor, faWindowKey, roundToSettle, closedWindowRound, closedWindowRounds, closedTradeWindows, roundsOwedSettlement, isRoundSettled, matchFixture, matchTimeFor, computeScoresUncached, bustScores, roundKeyLockedAt, roundKeyOfLabel, roundIndex, rosterAtFor, snapshotsByManager, advanceRound, maybeAdvanceRounds };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -71,7 +71,7 @@ const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcT
         nextLockMs, lockAfterWindow, snapshotAt, snapshotForNextLock,
         txWindowStarts, rosterAtFor, setSession, getSession, faWindowKey, roundToSettle,
         closedWindowRound, closedWindowRounds, closedTradeWindows, roundsOwedSettlement, isRoundSettled,
-        matchFixture, matchTimeFor,
+        matchFixture, matchTimeFor, computeScoresUncached, bustScores,
         roundKeyLockedAt, roundKeyOfLabel,
         repairStarters, lineupShape, repairLineupFor } = api;
 let fails = 0;
@@ -3001,6 +3001,64 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
         round_key: "Regular Season - 5", roster: after }],
       "Regular Season - 3")[0].player_id, "sold");
   S.roundOrder = []; S.fixtures = []; S.stats = [];
+
+  /* ---- The scores memo must never disagree with the real thing ----
+     computeScores() is memoised because a full season measured 75ms a call
+     and almost all of it recomputes rounds that are settled and frozen. A
+     scoring cache that goes stale is the worst bug this app can have, so the
+     assertion is not "the cache is fast" but "the cache cannot lie". */
+  const totals = (rows) => rows.map((r) => [r.manager.id, r.total, r.settledTotal, r.liveTotal]);
+  S.league = { id: "L1", competition: { apiLeagueId: 39, season: 2026, name: "PL" } };
+  S.managers = [{ id: "m1", name: "M1", draft_position: 1 },
+                { id: "m2", name: "M2", draft_position: 2 }];
+  S.snapshots = []; S.config = null; S.stages = []; S.transactions = []; S.roundOrder = [];
+  S.playerById = { a1: { player_id: "a1", name: "A", position: "FWD", team: "A" } };
+  S.picks = [{ id: "p1", manager_id: "m1", player_id: "a1", player_name: "A",
+    position: "FWD", team: "A", slot: "FWD", is_sub: false, pick_number: 1 }];
+  S.fixtures = [
+    { home: "A", away: "B", kickoff_utc: "2026-08-01T14:00:00Z", date: "2026-08-01",
+      round: "Regular Season - 1", status: "FT" },
+    { home: "A", away: "C", kickoff_utc: "2026-08-08T14:00:00Z", date: "2026-08-08",
+      round: "Regular Season - 2", status: "FT" },
+  ];
+  S.stats = [
+    row({ player_id: "a1", match_label: "A vs B (2026-08-01)", appeared: true,
+          goals: 1, team: "A", round: 1, round_key: "Regular Season - 1" }),
+    row({ player_id: "a1", match_label: "A vs C (2026-08-08)", appeared: true,
+          goals: 2, team: "A", round: 2, round_key: "Regular Season - 2" }),
+  ];
+
+  S.rounds = [];
+  bustScores();
+  check("memo agrees with the real thing, nothing settled",
+    totals(computeScores()), totals(computeScoresUncached()));
+
+  // Same arrays, second call: this is the one that comes from the cache.
+  check("...and a repeat call gives the same answer, not a stale one",
+    totals(computeScores()), totals(computeScoresUncached()));
+
+  /* The dangerous case. S.rounds is REPLACED, so the key changes and the memo
+     must miss. If it ever hits here, settling a round would stop moving the
+     numbers -- silently, and only on the second render. */
+  S.rounds = [{ round_key: "Regular Season - 1", round_no: 1, status: "settled" }];
+  check("settling a round is seen immediately, not after the next refetch",
+    totals(computeScores()), totals(computeScoresUncached()));
+  check("...and settled is now non-zero, so that compared something real",
+    computeScores()[0].settledTotal > 0, true);
+
+  // A roster change replaces S.picks; same requirement.
+  S.picks = [...S.picks, { id: "p2", manager_id: "m2", player_id: "a1",
+    player_name: "A", position: "FWD", team: "A", slot: "FWD", is_sub: false, pick_number: 2 }];
+  check("a roster change is seen immediately",
+    totals(computeScores()), totals(computeScoresUncached()));
+
+  // ...and a row mutated IN PLACE, where identity cannot help and only an
+  // explicit bust can. This is what the backfills do.
+  S.rounds[0].status = "settling";
+  bustScores();
+  check("an in-place change is seen once the cache is cleared",
+    totals(computeScores()), totals(computeScoresUncached()));
+  S.rounds = []; S.fixtures = []; S.stats = []; S.picks = []; bustScores();
 
   process.exit(fails ? 1 : 0);
 })();

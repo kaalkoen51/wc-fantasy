@@ -634,7 +634,7 @@ async function refetchAll({ initial = false } = {}) {
     const rd = await S.sb.from("rounds").select("*").eq("league_id", id);
     S.rounds = rd.error ? [] : (rd.data || []);
   } catch { S.rounds = []; }
-  ptsCache = null;
+  bustScores();
   markConnection(true);
   route();
   // Fresh claims + fixtures + league row: the one moment we can judge whether
@@ -4887,7 +4887,31 @@ function roundResolvers(statsByPlayer, teamMatches) {
            roundKeyOf };
 }
 
+/* Scores are recomputed on every render, and on a full 38-round season that
+   measured 75ms a call -- with 37 of the 38 rounds settled, i.e. almost all of
+   it recomputing numbers that are frozen by definition (principle 3).
+
+   Memoised on the identity of everything it reads. refetchAll replaces those
+   arrays wholesale, so any new data is a new identity and a miss; the backfills
+   mutate rows in place, so they clear this explicitly. The minute bucket is the
+   same idiom autoWindowState() uses, and it matters for the same reason: the
+   LIVE half is time-dependent (a snapshot's last-resort fallback compares
+   against now), so a memo with no clock in its key could hold a stale answer
+   for as long as nobody refetched. */
+let scoresCache = null, scoresKey = null;
+const bustScores = () => { scoresCache = null; ptsCache = null; };
+
 function computeScores() {
+  const k = { st: S.stats, pk: S.picks, sn: S.snapshots, rd: S.rounds,
+              mg: S.managers, sg: S.stages, fx: S.fixtures,
+              b: Math.floor(Date.now() / 60000) };
+  if (scoresCache && scoresKey && Object.keys(k).every((f) => scoresKey[f] === k[f]))
+    return scoresCache;
+  scoresKey = k;
+  return (scoresCache = computeScoresUncached());
+}
+
+function computeScoresUncached() {
   const { byPlayer: statsByPlayer, teamMatches } = statsDerived();
   // A starter's k-th match (same round as the sub's match), and whether the
   // starter actually featured in it.
@@ -8815,6 +8839,7 @@ async function backfillStatFixtureIds() {
     // Column missing = migration not applied; stop rather than retry per label.
     if (error) return done;
     for (const r of S.stats) if (r.match_label === label) r.fixture_id = id;
+    bustScores();      // mutated in place: identity is unchanged
     done++;
   }
   return done;
@@ -8834,6 +8859,7 @@ async function backfillSnapshotRounds() {
     // Column missing = migration not applied; stop rather than retry per row.
     if (error) return done;
     sn.round_key = key;
+    bustScores();      // mutated in place: identity is unchanged
     done++;
   }
   return done;

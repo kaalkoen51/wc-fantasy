@@ -217,14 +217,24 @@ around each other, and when the clock is moved forward a year — with a
 non-vacuous check that the number is not simply zero. Those are the tests that
 break first if a later change quietly reintroduces a derivation.
 
-**The cache is deliberately not built yet.** Caching the settled half means
-restructuring `computeScores()` to iterate rounds rather than labels, and that
-function is the most delicate in the app — a bolt-on memo would be the wrong
-shape and the wrong risk. Worth noting *why* a blanket memo on `computeScores()`
-is not the shortcut it looks like: the live half genuinely depends on the clock
-and on stage bonuses that keep moving, so memoising the whole thing on input
-identity would freeze exactly the part that must not freeze. That is the
-argument for doing the by-round restructure properly, as its own reviewed step.
+**The cache, shipped ✅ — and smaller than planned.** The plan was to
+restructure `computeScores()` to iterate rounds so the settled half could be
+cached separately. Measuring first changed the answer: a full 38-round season
+with 12 managers takes **68ms per call**, and it is called on every render.
+A memo on the whole function, keyed on the identity of everything it reads,
+takes that to effectively zero — the same win, without touching the most
+delicate function in the app.
+
+The earlier objection to a blanket memo was real and is answered rather than
+ignored: the live half depends on the clock, so the key carries a **minute
+bucket**, the same idiom `autoWindowState()` already uses. Without it a memo
+could hold a stale answer for as long as nobody refetched.
+
+The tests do not assert that the cache is fast. They assert **it cannot lie**:
+cached and uncached results are compared across an unsettled league, a
+just-settled round, a roster change, and a row mutated in place — the last one
+being the case identity cannot catch, which is why the backfills clear it
+explicitly.
 
 **The backfill and the first deletion, shipped ✅**
 
