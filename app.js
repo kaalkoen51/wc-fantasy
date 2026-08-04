@@ -636,7 +636,7 @@ async function refetchAll({ initial = false } = {}) {
   route();
   // Fresh claims + fixtures + league row: the one moment we can judge whether
   // an auto-window league owes its managers a waiver run.
-  restampSnapshots().catch(() => {});
+  backfillSnapshotRounds().catch(() => {});
   maybeAdvanceRounds().catch(() => {});
   return true;
 }
@@ -4084,31 +4084,12 @@ function lockAfterWindow(fixtures, closeAtMs, opts) {
   return null;
 }
 
-/* Fixtures move. A snapshot already stamped for a lock that has since shifted
-   would apply to the wrong round, so any stamp still in the FUTURE gets
-   re-pointed at the current lock for its matchweek. Past stamps are left alone:
-   they describe rounds already played, and rewriting those would change
-   settled results. Returns the rows that need updating, so the caller can
-   write only what actually moved. */
-function restampPlan(snaps, fixtures, nowMs, opts) {
-  const out = [];
-  const locks = matchweeksOf(fixtures)
-    .map((w) => w.first - ((opts || {}).lineupLockBeforeH ?? 1) * 3600e3);
-  if (!locks.length) return out;
-  for (const s of snaps || []) {
-    const at = Date.parse(s.effective_from);
-    if (isNaN(at) || at <= nowMs) continue;          // already in force
-    // The lock this snapshot was aiming at is the nearest one to its stamp.
-    let best = null, bestGap = Infinity;
-    for (const l of locks) {
-      if (l <= nowMs) continue;                       // only future locks
-      const gap = Math.abs(l - at);
-      if (gap < bestGap) { bestGap = gap; best = l; }
-    }
-    if (best != null && best !== at) out.push({ id: s.id, effective_from: new Date(best).toISOString() });
-  }
-  return out;
-}
+/* restampPlan() lived here. It recovered which round a snapshot was for by
+   matching its timestamp to the nearest future lock (Math.abs and all) and
+   re-pointed it whenever fixtures moved — the re-derivation this document was
+   written about, running on every refresh. Snapshots carry their round now, so
+   there is nothing left to re-point. Its replacement is
+   backfillSnapshotRounds(). */
 
 /* ---------- the matchday card: "what do I do right now?" ----------
    The app knows the shape of a fantasy week — results land, the trade window
@@ -4529,14 +4510,22 @@ function snapshotsByManager() {
 // scores by, shared so the player detail can show per-match lineup status.
 function rosterAtFor(mgrId, t, d, snaps, roundKey) {
   snaps = snaps || snapshotsByManager()[mgrId] || [];
-  /* Phase 1.5: a snapshot that says which round it was FOR answers outright.
-     No timestamp arithmetic, so no reschedule can move which round it applies
-     to — the property restampSnapshots() currently has to maintain by hand.
-     Snapshots are oldest-first, so the last match is the newest line-up saved
-     for that round, which is the one that took effect. */
+  /* A snapshot that says which round it was FOR answers outright. No timestamp
+     arithmetic, so no reschedule can move which round it applies to.
+
+     Picked by when it was WRITTEN, not by effective_from. Those agreed while
+     restampSnapshots() kept every stamp pointing at the current lock; without
+     it, a lock that moves EARLIER leaves two rows for the round and the stale
+     one sorts first — so ordering by effective_from would hand back the
+     line-up the manager replaced. The last one saved is the one they meant. */
   if (roundKey) {
-    for (let i = snaps.length - 1; i >= 0; i--)
-      if (snaps[i].round_key === roundKey) return snaps[i].roster;
+    let best = null, bestAt = -Infinity;
+    for (const sn of snaps) {
+      if (sn.round_key !== roundKey) continue;
+      const at = Date.parse(sn.created_at || sn.effective_from || 0) || 0;
+      if (at >= bestAt) { bestAt = at; best = sn; }
+    }
+    if (best) return best.roster;
   }
   let chosen = null;
   for (const s of snaps) {
@@ -8671,11 +8660,26 @@ async function pinHistory(mgrId) {
   const now = Date.now();
   const snaps = snapshotsByManager()[mgrId] || [];
   if (snaps.some((sn) => Date.parse(sn.effective_from) <= now)) return false;   // covered
-  /* Deliberately NOT round-stamped. This is a mid-round safety net taken at
-     `now`, not a record of a round's line-up: matches earlier in the same round
-     were played against the LOCK snapshot, and keying this one to that round
-     would hand those matches the post-pin squad instead. It belongs on the
-     timestamp path, which is also where Phase 2 deletes it from. */
+  /* NOT on the deletion list after all, and the reason is worth keeping.
+
+     Phase 2 listed this beside restampSnapshots as compensating machinery to
+     remove once rounds were recorded. It is not the same kind of thing.
+     restamping RE-DERIVED a fact that was already knowable; this WRITES a fact
+     nobody else writes. snapshotForNextLock only fires when a manager changes
+     something, so a manager who drafts and never touches their line-up has no
+     snapshot for the round they just played — and scoring falls through to
+     their live picks, which the edit they are about to make would rewrite.
+     That is bug row 4 of ROUNDS_DESIGN.md, and this is what stops it.
+
+     Nor can the settlement ritual replace it: that usually runs LATE, so it
+     would record the squad they have now rather than the one that played. The
+     only moment the live roster is still provably the round's roster is the
+     instant before the change — which is exactly when this runs.
+
+     Deliberately not round-stamped, either. Taken mid-round at `now`, it is a
+     safety net rather than a record of a round's line-up; keying it to the
+     round in progress would hand matches played EARLIER that round the
+     post-pin squad. It belongs on the timestamp path. */
   return snapshotAt(mgrId, now);
 }
 
@@ -8688,19 +8692,37 @@ async function snapshotForNextLock(mgrId) {
   return snapshotAt(mgrId, at, roundKeyLockedAt(S.fixtures || [], at));
 }
 
-/* Re-point any snapshot whose lock has since moved. Runs on every refresh, so
-   it needs no schedule of its own; a rescheduled fixture is corrected the next
-   time anyone loads the league, and because the stamp is only data, correcting
-   it later still fixes scoring retroactively. */
-async function restampSnapshots() {
-  if (!S.sb || !autoWindowsEnabled()) return 0;
-  const plan = restampPlan(S.snapshots || [], S.fixtures || [], Date.now(), cfgOf().windows || {});
-  for (const p of plan) {
-    await S.sb.from("lineup_snapshots").update({ effective_from: p.effective_from }).eq("id", p.id);
-    const local = (S.snapshots || []).find((s) => s.id === p.id);
-    if (local) local.effective_from = p.effective_from;
+/* Give every snapshot the round it was FOR (ROUNDS_DESIGN.md Phase 2c).
+
+   This replaces restampSnapshots(), which kept re-pointing future stamps at
+   whatever the current lock happened to be — a compensating mechanism that
+   existed only because the round was never recorded. Runs on every refresh,
+   the same as its predecessor, so it needs no schedule; a snapshot written by
+   an older client is stamped the next time anyone opens the league.
+
+   What it stamps is exactly what the timestamp path resolves TODAY. That makes
+   the backfill behaviour-preserving at the moment it runs, and it is the honest
+   claim to make: the round is not being recovered from first principles, it is
+   being frozen before the fixture list can move again. A snapshot the calendar
+   cannot place (no fixtures at all) keeps a null key and the timestamp path,
+   which is what restampPlan did with it too — nothing. */
+async function backfillSnapshotRounds() {
+  if (!S.sb || !(S.fixtures || []).length) return 0;
+  let done = 0;
+  for (const sn of S.snapshots || []) {
+    if (sn.round_key) continue;
+    const at = Date.parse(sn.effective_from);
+    if (isNaN(at)) continue;
+    const key = roundKeyLockedAt(S.fixtures, at);
+    if (!key) continue;
+    const { error } = await S.sb.from("lineup_snapshots")
+      .update({ round_key: key }).eq("id", sn.id);
+    // Column missing = migration not applied; stop rather than retry per row.
+    if (error) return done;
+    sn.round_key = key;
+    done++;
   }
-  return plan.length;
+  return done;
 }
 
 /* Put one manager's XI back inside the rules, writing only what moved. Returns

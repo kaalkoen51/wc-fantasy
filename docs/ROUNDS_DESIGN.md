@@ -226,22 +226,53 @@ and on stage bonuses that keep moving, so memoising the whole thing on input
 identity would freeze exactly the part that must not freeze. That is the
 argument for doing the by-round restructure properly, as its own reviewed step.
 
-**The deletions cannot happen yet either, and the reason is worth recording.**
-`restampSnapshots()` is only redundant for snapshots that carry a `round_key`.
-Snapshots written before Phase 1.5 have none and still resolve through the
-timestamp path, so deleting the restamping would change their behaviour after a
-reschedule — which the invariants below forbid (an unapplied migration must
-degrade to prior behaviour, never to a different wrong answer). The honest
-options are a season of proof, or a backfill that gives legacy snapshots a key.
-Same reasoning holds `pinHistory()` and `fa_processed_until`.
+**The backfill and the first deletion, shipped ✅**
+
+`backfillSnapshotRounds()` stamps the round on any snapshot still lacking one,
+running on every refresh exactly as its predecessor did. What it stamps is what
+the timestamp path resolves *today* — so the backfill is behaviour-preserving
+at the moment it runs, and that is the honest claim: the round is not being
+recovered from first principles, it is being frozen before the fixture list can
+move again.
+
+`restampPlan()` / `restampSnapshots()` are **deleted**. They existed only
+because the round was never recorded, re-deriving it on every refresh by
+matching a timestamp to the nearest lock. There is nothing left to re-point.
+
+One bug fell out of removing them, worth recording because it was invisible
+while they ran: the keyed lookup picked the last matching snapshot by
+`effective_from`. That agreed with "most recently saved" only because
+restamping kept every stamp current. Without it, a lock that moves EARLIER
+leaves two rows for the round with the stale one sorting first — handing back
+the line-up the manager had replaced. It picks by `created_at` now.
+
+**`pinHistory()` is NOT deleted, and listing it here was a mistake.**
+
+It is not the same kind of thing as restamping. Restamping *re-derived* a fact
+that was already knowable; `pinHistory()` *writes* a fact nobody else writes.
+`snapshotForNextLock()` only fires when a manager changes something, so a
+manager who drafts and never touches their line-up has no snapshot for the
+round they just played — scoring falls through to their live picks, and the
+next edit rewrites it. That is bug row 4, and `pinHistory()` is what prevents
+it.
+
+The settlement ritual cannot replace it either: the ritual usually runs late,
+so it would record the squad the manager has *now* rather than the one that
+played. The only moment the live roster is provably still the round's roster is
+the instant before the change — which is when `pinHistory()` runs. It stays.
+
+**`fa_processed_until` also stays for now.** It is the fallback for databases
+without the `rounds` table; deleting it means dropping support for unmigrated
+databases, which is a product decision rather than a cleanup.
 
 **2c — the deletions, once 2b is proven**
 
-Delete `pinHistory()` (6 references), the forward-stamp restamping
-(`restampPlan`/`restampSnapshots`, 6), and the snapshot-fallback guards; then
-`fa_processed_until` (14). **Nothing is deleted before its replacement is
-proven** — the deletion list is the acceptance criterion of this phase, not a
-side effect.
+The restamping is gone. `pinHistory()` and `fa_processed_until` stay, for the
+reasons given above — the first because it turned out not to be compensating
+machinery at all, the second because it is the unmigrated-database fallback.
+**Nothing is deleted before its replacement is proven**, and one item on the
+list turned out to have no replacement, which is the discipline working rather
+than failing.
 
 ### Phase 2.5 — round ORDER is the last derived thing ✅
 
