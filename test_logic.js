@@ -2820,6 +2820,55 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
   check("...and the split still adds up with no fixtures in sight",
     ko.settledTotal + ko.liveTotal, ko.total);
   S.rounds = []; S.stats = []; S.fixtures = []; S.picks = [];
+
+  /* ---- Phase 2c: the settled side is PURE ----
+     The doc claims settled scoring uses no `Date.now()` and no fixture list.
+     That was a claim about how the code reads; these make it a property, and
+     they are what breaks first if a later change reintroduces a derivation. */
+  S.league = { id: "L1", competition: { apiLeagueId: 39, season: 2026, name: "PL" } };
+  S.managers = [{ id: "m1", name: "M1", draft_position: 1 }];
+  S.snapshots = []; S.config = null; S.stages = []; S.transactions = [];
+  S.playerById = { liv_1: { player_id: "liv_1", name: "Fwd", position: "FWD", team: "Liverpool" } };
+  S.picks = [{ id: "pk1", manager_id: "m1", player_id: "liv_1", player_name: "Fwd",
+    position: "FWD", team: "Liverpool", slot: "FWD", is_sub: false, pick_number: 1 }];
+  S.stats = [
+    row({ player_id: "liv_1", match_label: "Liverpool vs Everton (2026-08-01)",
+          appeared: true, goals: 1, team: "Liverpool", round: 1, round_key: "Regular Season - 1" }),
+    row({ player_id: "liv_1", match_label: "Liverpool vs Wolves (2026-08-08)",
+          appeared: true, goals: 2, team: "Liverpool", round: 2, round_key: "Regular Season - 2" }),
+  ];
+  S.rounds = [{ round_key: "Regular Season - 1", round_no: 1, status: "settled" }];
+
+  S.fixtures = [
+    { home: "Liverpool", away: "Everton", kickoff_utc: "2026-08-01T14:00:00Z",
+      date: "2026-08-01", round: "Regular Season - 1", status: "FT" },
+    { home: "Liverpool", away: "Wolves", kickoff_utc: "2026-08-08T14:00:00Z",
+      date: "2026-08-08", round: "Regular Season - 2", status: "FT" },
+  ];
+  const withFx = computeScores()[0].settledTotal;
+  S.fixtures = [];
+  check("settled points do not need the fixture list",
+    computeScores()[0].settledTotal, withFx);
+  check("...and are non-zero, so that is not a vacuous pass", withFx > 0, true);
+
+  /* Rescheduling every game -- the failure this whole design exists to stop --
+     must not move a settled round by a point. */
+  S.fixtures = [
+    { home: "Liverpool", away: "Everton", kickoff_utc: "2027-01-01T14:00:00Z",
+      date: "2027-01-01", round: "Regular Season - 2", status: "FT" },
+    { home: "Liverpool", away: "Wolves", kickoff_utc: "2026-05-01T14:00:00Z",
+      date: "2026-05-01", round: "Regular Season - 1", status: "FT" },
+  ];
+  check("a reschedule that swaps the rounds around cannot move settled points",
+    computeScores()[0].settledTotal, withFx);
+
+  // ...and neither can the clock.
+  S.fixtures = [];
+  const realNow = Date.now;
+  Date.now = () => realNow() + 365 * CAPD;
+  const shifted = computeScores()[0].settledTotal;
+  Date.now = realNow;
+  check("settled points do not move when the clock does", shifted, withFx);
   S.rounds = []; S.fixtures = []; S.stats = []; S.picks = [];
 
   process.exit(fails ? 1 : 0);

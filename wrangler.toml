@@ -13,6 +13,12 @@
 name = "draftbaron"
 compatibility_date = "2025-06-01"
 
+# Which Cloudflare account to deploy into. Not a secret -- it is in the
+# dashboard URL -- so it lives here rather than as a repo secret, leaving
+# CLOUDFLARE_API_TOKEN as the only credential anyone has to manage.
+# Fill this in from Cloudflare -> Workers & Pages -> Account ID.
+# account_id = "..."
+
 # One canonical origin: draftbaron.com and nothing else.
 #
 # Sessions and auth are per-origin, so every extra hostname the app answers on

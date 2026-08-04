@@ -208,13 +208,32 @@ recorded over anything derived from today's fixtures, so a settled round
 survives a reschedule and a knockout round can be settled at all — the tests
 score one with `S.fixtures` empty.
 
-**2c — cache the settled side, then delete (next)**
+**2c — purity proven ✅; the cache and the deletions remain**
 
-The settled half is now identifiable without the clock or the calendar, but it
-is still recomputed on every render. Caching it per round is what makes the
-"no `Date.now()`" claim structural rather than incidental. Only two
-`Date.now()` calls remain anywhere in scoring, both in the snapshot-fallback
-last resort (`rosterAtFor`, `snapIndexAt`) — both on the deletion list below.
+"No `Date.now()`, no fixture list" was a claim about how the code reads. It is
+now a property with assertions behind it: settled points are unchanged when the
+fixture list is emptied entirely, when a reschedule swaps two rounds' dates
+around each other, and when the clock is moved forward a year — with a
+non-vacuous check that the number is not simply zero. Those are the tests that
+break first if a later change quietly reintroduces a derivation.
+
+**The cache is deliberately not built yet.** Caching the settled half means
+restructuring `computeScores()` to iterate rounds rather than labels, and that
+function is the most delicate in the app — a bolt-on memo would be the wrong
+shape and the wrong risk. Worth noting *why* a blanket memo on `computeScores()`
+is not the shortcut it looks like: the live half genuinely depends on the clock
+and on stage bonuses that keep moving, so memoising the whole thing on input
+identity would freeze exactly the part that must not freeze. That is the
+argument for doing the by-round restructure properly, as its own reviewed step.
+
+**The deletions cannot happen yet either, and the reason is worth recording.**
+`restampSnapshots()` is only redundant for snapshots that carry a `round_key`.
+Snapshots written before Phase 1.5 have none and still resolve through the
+timestamp path, so deleting the restamping would change their behaviour after a
+reschedule — which the invariants below forbid (an unapplied migration must
+degrade to prior behaviour, never to a different wrong answer). The honest
+options are a season of proof, or a backfill that gives legacy snapshots a key.
+Same reasoning holds `pinHistory()` and `fa_processed_until`.
 
 **2c — the deletions, once 2b is proven**
 
@@ -223,6 +242,24 @@ Delete `pinHistory()` (6 references), the forward-stamp restamping
 `fa_processed_until` (14). **Nothing is deleted before its replacement is
 proven** — the deletion list is the acceptance criterion of this phase, not a
 side effect.
+
+### Phase 2.5 — round ORDER is the last derived thing
+
+The round *tag* is now recorded everywhere, because API-Football supplies it on
+every fixture: `league.round` is a string for all competitions ("Regular Season
+- 21", "Round of 16", "Final"). There is no numeric round for knockouts to go
+and fetch — the concept does not exist in the data model, which is exactly why
+parsing it to an int was the wrong move.
+
+What is still derived is the round SEQUENCE. `matchweeksOf()` orders rounds by
+earliest kickoff, i.e. from dates, which move. Reschedule a knockout tie earlier
+than a group game and the derived order flips — and window arithmetic between
+"consecutive" rounds, plus the settlement backlog order, follow it.
+
+API-Football has `/fixtures/rounds?league=&season=`, which returns the round
+names in canonical order. Recording that ordering is the same fix as everything
+else in this document, applied to the one field still inferred from data that
+keeps moving.
 
 ### Phase 3 (optional) — retire label parsing
 
@@ -266,7 +303,8 @@ readable in one place.
 | ✅ | **The `schema.sql` re-run trap closed** — re-runs can never again undo the RLS lockdown |
 | ✅ | **Knockout fallback** — a window closing into an unnumbered round settles through the legacy path instead of being dropped |
 | ✅ | **Phase 1.5** — the round key is the label, so cups are recordable; line-up snapshots carry the round they were for |
-| ◐ | **Phase 2a/2b** — the settled/live boundary ✅ and the round key on stat rows ✅; 2c (cache, then delete) remains |
+| ◐ | **Phase 2** — 2a boundary ✅, 2b round key on stat rows ✅, 2c purity proven ✅; the cache and the deletions remain |
+| ⬜ | **Phase 2.5** — record round ORDER from `/fixtures/rounds`, the last thing still derived from dates |
 | ⬜ | **Phase 3** (optional) — retire label parsing |
 
 ### Database steps for Phase 1 — in order, the middle one is not optional

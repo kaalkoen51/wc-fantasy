@@ -51,16 +51,12 @@ jobs:
             echo "::error::CLOUDFLARE_API_TOKEN is not set. Add it in Settings → Secrets and variables → Actions."
             exit 1
           fi
-          if [ -z "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" ]; then
-            echo "::error::CLOUDFLARE_ACCOUNT_ID is not set. Add it in Settings → Secrets and variables → Actions."
-            exit 1
-          fi
 
       - name: Deploy to Cloudflare
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # accountId comes from wrangler.toml — it is not a secret.
           # wrangler.toml points [assets] at ./public, which `npm run bundle`
           # has just produced. No `main` script: assets-only Worker.
           command: deploy
