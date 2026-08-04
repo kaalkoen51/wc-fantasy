@@ -640,6 +640,7 @@ async function refetchAll({ initial = false } = {}) {
   // Fresh claims + fixtures + league row: the one moment we can judge whether
   // an auto-window league owes its managers a waiver run.
   backfillSnapshotRounds().catch(() => {});
+  backfillStatFixtureIds().catch(() => {});
   maybeAdvanceRounds().catch(() => {});
   return true;
 }
@@ -4489,11 +4490,48 @@ const labelTeams = (l) => {
 // Kickoff epoch-ms for a match label, from fixtures.json, else end of day
 // (which reproduces the older per-date behaviour). No cache: fixtures are
 // static in the app but mutated between cases in the test harness.
-function matchTimeFor(label) {
-  for (const f of S.fixtures || []) {
+/* One place that turns "which match is this" into the fixture behind it
+   (ROUNDS_DESIGN.md Phase 3b).
+
+   The point is not speed, though this was a linear scan rebuilding a label
+   string for every fixture on every call. The point is that resolution now
+   happens ONCE, by the match's id where the rows carry one, with the label as
+   the fallback. The ~28 sites that still parse the label are all downstream of
+   this, so when historical rows have all been given an id there is a single
+   place to change rather than 28.
+
+   Memoised on the identity of both inputs; refetchAll replaces those arrays
+   wholesale, so one render pass builds it once. */
+let _matchIdx = null, _matchIdxFor = null;
+function matchIndex() {
+  const fx = S.fixtures || [], st = S.stats || [];
+  if (_matchIdx && _matchIdxFor && _matchIdxFor.fx === fx && _matchIdxFor.st === st) return _matchIdx;
+  const byId = {}, byLabel = {}, idByLabel = {};
+  for (const f of fx) {
     const d = String(f.kickoff_utc || "").slice(0, 10);
-    if (d && `${f.home} vs ${f.away} (${d})` === label) return Date.parse(f.kickoff_utc);
+    if (d) byLabel[`${f.home} vs ${f.away} (${d})`] = f;
+    if (f.fixture_id != null) byId[f.fixture_id] = f;
   }
+  // Which fixture a label belongs to according to the ROWS, which carry the
+  // id the puller stamped. This is the arm that survives a club rename or a
+  // corrected date -- neither of which changes the match.
+  for (const r of st)
+    if (r.fixture_id != null && idByLabel[r.match_label] === undefined)
+      idByLabel[r.match_label] = r.fixture_id;
+  _matchIdxFor = { fx, st };
+  return (_matchIdx = { byId, byLabel, idByLabel });
+}
+
+// The fixture behind a match label: by recorded id first, by label second.
+function matchFixture(label) {
+  const ix = matchIndex();
+  const id = ix.idByLabel[label];
+  return (id != null && ix.byId[id]) || ix.byLabel[label] || null;
+}
+
+function matchTimeFor(label) {
+  const f = matchFixture(label);
+  if (f) return Date.parse(f.kickoff_utc);
   return Date.parse(labelDate(label) + "T23:59:59Z");
 }
 
@@ -8709,6 +8747,43 @@ async function snapshotForNextLock(mgrId) {
    being frozen before the fixture list can move again. A snapshot the calendar
    cannot place (no fixtures at all) keeps a null key and the timestamp path,
    which is what restampPlan did with it too — nothing. */
+/* Give existing stat rows the fixture id they were written without
+   (ROUNDS_DESIGN.md Phase 3b).
+
+   Phase 3a stamps the id on new rows, but every row already in the database
+   has none -- so the ~28 label-parsing sites cannot retire, because for those
+   rows the label is still the only key there is. This closes that: it resolves
+   each row's label against the fixture list ONCE and records the answer, which
+   is the same "freeze today's answer before the inputs move again" move as
+   backfillSnapshotRounds().
+
+   Rows whose label matches no fixture keep a null id and the label path -- a
+   sandbox row, a hand-entered match, a club renamed since the row was written.
+   That last case is the honest limit of a backfill: the rename already broke
+   the label, so there is nothing left to match on and nothing to recover. Only
+   re-pulling fixes those, which is exactly the fragility Phase 3 is about. */
+async function backfillStatFixtureIds() {
+  if (!S.sb || !(S.fixtures || []).length || !(S.stats || []).length) return 0;
+  const sc = statsScope();
+  const ix = matchIndex();
+  const todo = new Map();                 // label -> fixture_id, deduped
+  for (const r of S.stats) {
+    if (r.fixture_id != null || todo.has(r.match_label)) continue;
+    const f = ix.byLabel[r.match_label];
+    if (f?.fixture_id != null) todo.set(r.match_label, f.fixture_id);
+  }
+  let done = 0;
+  for (const [label, id] of todo) {
+    const { error } = await S.sb.from(sc.table).update({ fixture_id: id })
+      .eq(sc.column, sc.value).eq("match_label", label).is("fixture_id", null);
+    // Column missing = migration not applied; stop rather than retry per label.
+    if (error) return done;
+    for (const r of S.stats) if (r.match_label === label) r.fixture_id = id;
+    done++;
+  }
+  return done;
+}
+
 async function backfillSnapshotRounds() {
   if (!S.sb || !(S.fixtures || []).length) return 0;
   let done = 0;
