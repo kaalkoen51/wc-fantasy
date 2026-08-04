@@ -4535,6 +4535,27 @@ function matchTimeFor(label) {
   return Date.parse(labelDate(label) + "T23:59:59Z");
 }
 
+/* Where a round sits in the season. Since Phase 2.5 matchweeksOf() orders by
+   the competition's own round order rather than by kickoff dates, so this is
+   the canonical sequence and not a guess from the calendar. Memoised on the
+   fixture identity, which refetchAll replaces wholesale. */
+let _rankFor = null, _rankMap = null;
+function roundRank(key) {
+  if (key == null) return -1;
+  const fx = S.fixtures || [];
+  if (_rankFor !== fx) {
+    _rankMap = new Map();
+    matchweeksOf(fx).forEach((w, i) => _rankMap.set(String(w.round), i));
+    _rankFor = fx;
+  }
+  const i = _rankMap.get(String(key));
+  if (i !== undefined) return i;
+  // A round the calendar has never heard of (hand-entered, or a fixture list
+  // that has moved on): fall back to its matchweek number if it has one.
+  const n = Number(mwNo(key));
+  return n >= 1 ? n : -1;
+}
+
 // Lineup snapshots grouped per manager, each list oldest-first.
 function snapshotsByManager() {
   const by = {};
@@ -4560,13 +4581,37 @@ function rosterAtFor(mgrId, t, d, snaps, roundKey) {
      one sorts first — so ordering by effective_from would hand back the
      line-up the manager replaced. The last one saved is the one they meant. */
   if (roundKey) {
-    let best = null, bestAt = -Infinity;
-    for (const sn of snaps) {
-      if (sn.round_key !== roundKey) continue;
-      const at = Date.parse(sn.created_at || sn.effective_from || 0) || 0;
-      if (at >= bestAt) { bestAt = at; best = sn; }
-    }
+    /* Not an exact match: the newest line-up saved for THIS round or any
+       EARLIER one. A line-up persists until the manager changes it, so a squad
+       set before round 4 is still the squad in round 5 — matching only the
+       round's own key sent every round without a snapshot of its own back to
+       the timestamp path, where a transfer stamped for a future lock is
+       invisible and the PRE-transfer squad wins. That is a round showing
+       players the manager had already sold.
+
+       Snapshots for a LATER round are excluded: those are plans, not records. */
+    const at = (sn) => Date.parse(sn.created_at || sn.effective_from || 0) || 0;
+    // The round's own line-up, newest first. Always wins, and is the only arm
+    // that can answer when the calendar cannot rank the round at all.
+    let best = null;
+    for (const sn of snaps)
+      if (sn.round_key === roundKey && (!best || at(sn) >= at(best))) best = sn;
     if (best) return best.roster;
+
+    // Otherwise the newest line-up from any EARLIER round.
+    const target = roundRank(roundKey);
+    if (target >= 0) {
+      let bestRank = -Infinity;
+      for (const sn of snaps) {
+        if (!sn.round_key) continue;
+        const r = roundRank(sn.round_key);
+        if (r < 0 || r > target) continue;
+        if (r > bestRank || (r === bestRank && at(sn) >= at(best || sn))) {
+          bestRank = r; best = sn;
+        }
+      }
+      if (best) return best.roster;
+    }
   }
   let chosen = null;
   for (const s of snaps) {
@@ -5036,25 +5081,17 @@ function managerHistory(mgrId) {
   const elimAt = mgr?.eliminated_at ? Date.parse(mgr.eliminated_at) : null;
 
   const { byPlayer: statsByPlayer, teamMatches } = statsDerived();
-  const { roundOf, appearedIn, roundByLabel, labelForRound, missedRound, entryRound } =
-    roundResolvers(statsByPlayer, teamMatches);
+  const { roundOf, appearedIn, roundByLabel, labelForRound, missedRound, entryRound,
+          roundKeyOf } = roundResolvers(statsByPlayer, teamMatches);
   const statLabels = [...new Set(S.stats.map((r) => r.match_label))].filter((l) => labelDate(l));
 
   const snaps = snapshotsByManager()[mgrId] || [];
-  const snapIndexAt = (t, d) => {
-    let idx = -1;
-    for (let i = 0; i < snaps.length; i++) {
-      if (Date.parse(snaps[i].effective_from) <= t) idx = i; else break;
-    }
-    if (idx === -1) for (let i = 0; i < snaps.length; i++) {
-      if (String(snaps[i].effective_from).slice(0, 10) <= d) idx = i; else break;
-    }
-    // Same rule as rosterAtFor: a snapshot still in the future is a plan, not a
-    // record, so it is never used to describe an earlier round.
-    if (idx === -1 && snaps.length && Date.parse(snaps[0].effective_from) <= Date.now())
-      idx = 0;
-    return idx;
-  };
+  /* snapIndexAt() lived here: a private copy of rosterAtFor()'s timestamp rules,
+     kept in step by hand. It never learned about round keys, so once scoring
+     started resolving by round the leaderboard and this pager could disagree
+     about which squad played a round — and did, showing players a manager had
+     already transferred away. Two implementations of "whose line-up was this"
+     is one too many; there is now one. */
   const flex = isFlexFormation();
   const matchPoints = (roster, label) => {
     const starters = roster.filter((e) => !e.is_sub && e.position !== "TEAM");
@@ -5099,8 +5136,7 @@ function managerHistory(mgrId) {
   for (const label of statLabels) {
     const t = matchTimeFor(label), d = labelDate(label);
     if (elimAt && t > elimAt) continue;        // stop crediting after elimination
-    const idx = snapIndexAt(t, d);
-    const roster = idx >= 0 ? snaps[idx].roster : managerPicks(mgrId);
+    const roster = rosterAtFor(mgrId, t, d, snaps, roundKeyOf(label));
     const rnd = roundByLabel(label);
     /* The LAST roster used in the round: a trade mid-week means more than one
        was in force, and the one you finished with is the one to show.

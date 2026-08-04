@@ -2953,5 +2953,54 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
     Date.parse("2026-01-01T23:59:59Z"));
   S.fixtures = []; S.stats = [];
 
+  /* ---- A transfer must not haunt the rounds that came after it ----
+     Reported from the bench: two players transferred after round 3 still
+     appeared in the round 4 and round 5 line-ups, while the current line-up
+     was right. Two causes, both here.
+
+     The line-up saved at the transfer is stamped for the round it takes
+     effect in (4). Round 5 has no snapshot of its own, and matching only on
+     the round's own key sent it back to the timestamp path -- where a stamp
+     for a lock still in the future is ignored and the PRE-transfer snapshot
+     wins. A line-up persists until it is changed, so round 5 must inherit
+     round 4's. */
+  S.roundOrder = ["Regular Season - 3", "Regular Season - 4", "Regular Season - 5"];
+  S.fixtures = [
+    { home: "A", away: "B", kickoff_utc: "2026-08-01T14:00:00Z", date: "2026-08-01",
+      round: "Regular Season - 3" },
+    { home: "A", away: "C", kickoff_utc: "2026-08-08T14:00:00Z", date: "2026-08-08",
+      round: "Regular Season - 4" },
+    { home: "A", away: "D", kickoff_utc: "2026-08-15T14:00:00Z", date: "2026-08-15",
+      round: "Regular Season - 5" },
+  ];
+  const before = [{ player_id: "sold", player_name: "Sold", position: "MID",
+    team: "A", is_sub: false, slot: "MID" }];
+  const after = [{ player_id: "bought", player_name: "Bought", position: "MID",
+    team: "A", is_sub: false, slot: "MID" }];
+  const tSnaps = [
+    { id: "s3", effective_from: "2026-07-31T13:00:00Z", created_at: "2026-07-31T13:00:00Z",
+      round_key: "Regular Season - 3", roster: before },
+    // Saved at the transfer, stamped for the round it takes effect in. Its
+    // effective_from is a lock that, on the calendar as it stands, has not
+    // arrived -- which is exactly what hid it from the timestamp path.
+    { id: "s4", effective_from: "2026-08-20T13:00:00Z", created_at: "2026-08-04T09:00:00Z",
+      round_key: "Regular Season - 4", roster: after },
+  ];
+  const who = (rk) => rosterAtFor("m9", Date.parse("2026-08-15T14:00:00Z"), "2026-08-15",
+    tSnaps, rk)[0].player_id;
+  check("round 3 keeps the player who was actually there",
+    who("Regular Season - 3"), "sold");
+  check("round 4 has the transfer, from its own snapshot",
+    who("Regular Season - 4"), "bought");
+  check("round 5 inherits round 4's line-up rather than reverting",
+    who("Regular Season - 5"), "bought");
+  // A snapshot for a LATER round is a plan, not a record of an earlier one.
+  check("a line-up saved for round 5 does not leak back into round 3",
+    rosterAtFor("m9", 0, "2026-08-01", [...tSnaps,
+      { id: "s5", effective_from: "2026-08-25T13:00:00Z", created_at: "2026-08-14T13:00:00Z",
+        round_key: "Regular Season - 5", roster: after }],
+      "Regular Season - 3")[0].player_id, "sold");
+  S.roundOrder = []; S.fixtures = []; S.stats = [];
+
   process.exit(fails ? 1 : 0);
 })();
