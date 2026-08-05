@@ -254,8 +254,13 @@
   .pp-opp { font-size: 10px; line-height: 1.1; color: #cbd5e1;
             text-shadow: 0 1px 2px rgba(0,0,0,.9); }
   .pp-name { max-width: 62px; font-size: 11px; line-height: 1.15; text-align: center;
-    background: rgba(2,6,23,.74); border-radius: 4px; padding: 1px 4px;
+    background: rgba(2,6,23,.74); border-radius: 4px; padding: 1px 3px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Long surnames step down rather than truncating. The ellipsis stays as a
+     backstop for the genuinely absurd, but at these sizes it should never
+     fire: see nameFit() in app.js for where the thresholds come from. */
+  .pp-name.name-fit-2, .sub-name.name-fit-2 { font-size: 9px; letter-spacing: -.01em; }
+  .pp-name.name-fit-3, .sub-name.name-fit-3 { font-size: 8px; letter-spacing: -.02em; }
   /* A player's tally rides on their shirt rather than sitting on a line of its
      own: it belongs to the face, and it costs the pitch no vertical space. */
   .pp-pts { position: absolute; bottom: -2px; right: -6px; min-width: 18px; height: 16px;

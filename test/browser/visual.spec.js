@@ -73,3 +73,38 @@ test.describe("visual", () => {
     await expect(page.locator("#board-lb")).toHaveScreenshot("round-view.png", SHOT);
   });
 });
+
+test("no player name is cut off on a pitch", async ({ page }) => {
+  /* Measured, not eyeballed. .pp-name was capped at 62px while "Roemeratoe"
+     needed 75 and "Magalhaes" 67, so both rendered with an ellipsis — on the
+     team pitch, the past-round view, both Dream XI screens, the squad planner
+     and the head-to-head card. shortName() has already reduced the name to a
+     single word, so there is nothing to wrap: the size has to come down. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const cut = await page.evaluate(() => {
+    const bad = [];
+    const scan = (where) => {
+      for (const el of document.querySelectorAll(".pp-name, .sub-name")) {
+        if (!el.offsetParent) continue;
+        if (el.scrollWidth > el.clientWidth + 1)
+          bad.push({ where, text: el.textContent.trim(),
+                     need: el.scrollWidth, got: el.clientWidth });
+      }
+    };
+    showView("board"); setBoardTab("home"); scan("team");
+    const me = myManager().id;
+    S.histIdxByMgr[me] = 1; setBoardTab("lb"); renderBoard(); scan("past round");
+    setBoardTab("stats"); S.statsView = "dream"; renderStatsTab(); scan("dream XI");
+    S.statsView = "nightmare"; renderStatsTab(); scan("nightmare XI");
+    const other = S.managers.find((m) => m.id !== me).id;
+    openH2HFixture(managerHistory(me).rounds.slice(-1)[0].n, me, other);
+    scan("head-to-head card");
+    return bad;
+  });
+
+  expect(cut, `names cut off:\n${cut.map((c) =>
+    `  ${c.where}: "${c.text}" needs ${c.need}px, has ${c.got}px`).join("\n")}`)
+    .toEqual([]);
+});

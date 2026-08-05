@@ -9212,6 +9212,19 @@ function shortName(name) {
   return parts.length > 1 ? parts[parts.length - 1] : (parts[0] || "");
 }
 
+/* A surname sized to fit its chip instead of being cut off.
+
+   shortName() has already reduced the name to its last word, so there is no
+   space left to wrap at — the only lever is the type size. The thresholds are
+   measured, not guessed: at 11px the 56px text area inside a pitch chip holds
+   about eight characters, which is why "Magalhaes" (9) and "Roemeratoe" (10)
+   were rendering as "Magalh…" and "Roemer…". A surname is the one thing on a
+   shirt that has to survive. */
+const nameFit = (n) => {
+  const len = String(n || "").length;
+  return len >= 12 ? " name-fit-3" : len >= 9 ? " name-fit-2" : "";
+};
+
 /* The XI laid out on a pitch. Shared by the lineup picker, the head-to-head
    preview and the post-round comparison, so it takes plain rows and leaves
    interaction to the caller via `tapAttr`.
@@ -9271,7 +9284,7 @@ function dugoutHtml(subs, opts = {}) {
         ${teamCrestHtml(e.team) ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${teamCrestHtml(e.team, "w-3 h-3")}</span>` : ""}
         ${e.note != null ? `<span class="pp-pts">${e.note}</span>` : ""}
       </span>
-      <span class="sub-name">${esc(shortName(e.name))}</span>
+      <span class="sub-name${nameFit(shortName(e.name))}">${esc(shortName(e.name))}</span>
       <span class="text-[9px] pos-${e.position} rounded px-1 leading-tight">${esc(e.position || "")}</span>
     </button>`;
   }).join("")}</div>`;
@@ -9305,7 +9318,7 @@ function pitchRowsHtml(byPos, opts = {}) {
           ${e.swapFor ? `<span class="absolute -bottom-1 -right-2 inline-flex items-center rounded-full bg-slate-900/95 ring-1 ring-wcgold/70 p-0.5"
              title="replacing">${avatarHtml(e.swapFor, "", "w-4 h-4")}</span>` : ""}
         </span>
-        <span class="pp-name">${esc(shortName(e.name))}</span>
+        <span class="pp-name${nameFit(shortName(e.name))}">${esc(shortName(e.name))}</span>
         ${e.opp ? `<span class="pp-opp">${esc(e.opp)}</span>` : ""}
       </button>
     </div>`;
