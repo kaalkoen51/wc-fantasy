@@ -1755,6 +1755,9 @@ function renderLobby() {
   $("lobby-managers").querySelectorAll("[data-editcrest]").forEach((b) =>
     b.onclick = openCrestPicker);
   $("lobby-admin").classList.toggle("hidden", !admin);
+  // The roster-size control moved into the Managers card, so it needs the same
+  // admin gate the block it left already had.
+  $("lobby-size").classList.toggle("hidden", !admin);
   $("lobby-wait").classList.toggle("hidden", admin);
   if (admin && document.activeElement !== $("lobby-num-input"))
     $("lobby-num-input").value = L.num_managers;
@@ -1948,6 +1951,7 @@ async function startDraft() {
 
 S.poolFilter = "ALL";
 S.poolSearch = "";
+S.poolShown = 40;    // how deep the draft pool list is currently drawn
 S.poolSort = "";            // draft pool: sort by a stat ("" = default order)
 S.bannerDayOffset = 0;      // matchday banner: 0 = default day, -1 = prev, etc.
 S.poolShortlistOnly = false;
@@ -2702,7 +2706,7 @@ let _poolSig = null;
 function renderPool(force) {
   // Cheap signature of everything the pool's contents depend on.
   const sig = [S.picks.length, S.league.current_pick, S.poolFilter, S.poolSearch,
-    S.poolSort, !!S.poolShortlistOnly, !!S.poolPlannerOnly,
+    S.poolSort, !!S.poolShortlistOnly, !!S.poolPlannerOnly, S.poolShown || 40,
     document.getElementById("pool-team")?.value || "",
     myShortlist().join(",")].join("|");
   if (!force && sig === _poolSig) return;
@@ -2725,12 +2729,12 @@ function renderPool(force) {
       S.poolPlannerOnly ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"
     }">🗺 Plan</button>`;
   $("pool-chips").querySelectorAll("[data-chip]").forEach((b) =>
-    b.onclick = () => { S.poolFilter = b.dataset.chip; renderPool(true); });
+    b.onclick = () => { S.poolFilter = b.dataset.chip; S.poolShown = 40; renderPool(true); });
   $("pool-chips").querySelector("[data-slfilter]").onclick = () => {
-    S.poolShortlistOnly = !S.poolShortlistOnly; renderPool(true);
+    S.poolShortlistOnly = !S.poolShortlistOnly; S.poolShown = 40; renderPool(true);
   };
   $("pool-chips").querySelector("[data-plfilter]").onclick = () => {
-    S.poolPlannerOnly = !S.poolPlannerOnly; renderPool(true);
+    S.poolPlannerOnly = !S.poolPlannerOnly; S.poolShown = 40; renderPool(true);
   };
 
   // Team dropdown, rebuilt each render (preserving the selection) so knocked-out
@@ -2775,7 +2779,11 @@ function renderPool(force) {
     entries = entries.slice().sort((a, b) =>
       valOf(b) - valOf(a) || a.name.localeCompare(b.name));
   }
-  const shown = entries.slice(0, 80);
+  /* Eighty rows is about 3800px of list, which is most of why the draft page
+     ran to 6298px on a phone — under a pick clock that is not a list anyone can
+     use. Forty is roughly a screen and a half; the rest is one tap away, and
+     the search box above is the fast path either way. */
+  const shown = entries.slice(0, S.poolShown || 40);
 
   $("pool-list").innerHTML = shown.map((e) => {
     const owner = ownerName[e.player_id];
@@ -2812,8 +2820,14 @@ function renderPool(force) {
     : S.poolPlannerOnly ? "No squad-planner players match — add some in Trades → Squad planner."
     : "No players match."}</li>`;
   if (entries.length > shown.length) {
+    const rest = entries.length - shown.length;
     $("pool-list").insertAdjacentHTML("beforeend",
-      `<li class="py-2 text-xs text-slate-400">${entries.length - shown.length} more — search or filter to narrow.</li>`);
+      `<li class="py-2"><button data-poolmore class="w-full rounded-lg bg-slate-800 border border-slate-700 py-2 text-xs font-semibold text-slate-300">Show ${
+        Math.min(40, rest)} more <span class="text-slate-500">· ${rest} left, or search to narrow</span></button></li>`);
+    $("pool-list").querySelector("[data-poolmore]").onclick = () => {
+      S.poolShown = (S.poolShown || 40) + 40;
+      renderPool(true);
+    };
   }
   $("pool-list").querySelectorAll(".pick-btn").forEach((btn) => btn.onclick = () => {
     const entry = entries.find((e) => e.player_id === btn.dataset.pick);
@@ -6674,7 +6688,13 @@ function renderHomeTab() {
                                            : "🔒 Lineup locked — opens with the trading window")}</button>`}
     <div id="hist-home-${me.id}" class="rounded-xl border border-slate-700 bg-slate-900 p-3"></div>
   </div>`;
+  /* The deadline leads. The identity card was first because it is the one thing
+     always true, but "true" is not the same as "urgent" — and behind the old
+     fixture banner it meant the warning that your XI is invalid started around
+     790px down a 844px screen. Identity moves under it: it is still the second
+     thing you see, and it is not the thing with a countdown on it. */
   box.innerHTML = `
+    ${matchdayCardHtml(me)}
     <div class="rounded-xl border bg-slate-900 p-3 flex items-center gap-3"
          style="border-color:${managerColor(me)}55">
       <button id="home-crest" class="relative shrink-0" title="Edit your crest and colour">
@@ -6691,7 +6711,6 @@ function renderHomeTab() {
         <div class="eyebrow">points</div>
       </div>
     </div>
-    ${matchdayCardHtml(me)}
     ${h2hFixtureCardHtml(me)}
     ${phaseCardsHtml(me)}
     ${squadHtml}
@@ -13054,7 +13073,7 @@ function wire() {
     toast(`League now needs ${n} managers.`);
   };
   $("lobby-join-go").onclick = () => joinFromLobby().catch((e) => toast(e.message));
-  $("pool-search").oninput = (e) => { S.poolSearch = e.target.value; renderPool(true); };
+  $("pool-search").oninput = (e) => { S.poolSearch = e.target.value; S.poolShown = 40; renderPool(true); };
   $("pool-team").onchange = () => renderPool(true);
   $("pool-sort").onchange = (e) => { S.poolSort = e.target.value; renderPool(true); };
   $("stats-search").oninput = (e) => { S.statsSearch = e.target.value; renderStatsTab(); };

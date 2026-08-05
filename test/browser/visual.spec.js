@@ -243,3 +243,25 @@ test("desktop uses the width, and only one pane at a time", async ({ page }) => 
     expect(shown, `on ${tab} these panes are all visible at once`).toHaveLength(1);
   }
 });
+
+test("the deadline is the first thing on the team page", async ({ page }) => {
+  /* It used to start around 790px down a 844px screen — behind the fixture
+     banner and the identity card — so "your starting XI isn't valid yet" was
+     below the fold on the tab the app opens on. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLeague(page, { managers: 4, played: 3 });
+  const r = await page.evaluate(() => {
+    showView("board"); setBoardTab("home");
+    const first = document.querySelector("#board-home > *");
+    const cta = document.getElementById("md-cta");
+    return { first: Math.round(first.getBoundingClientRect().top),
+             firstText: first.textContent.replace(/\s+/g, " ").trim().slice(0, 40),
+             cta: cta ? Math.round(cta.getBoundingClientRect().bottom) : null };
+  });
+  expect(r.first, `the page starts ${r.first}px down`).toBeLessThan(200);
+  // ...and it is the deadline card, not the identity card that used to lead.
+  expect(r.firstText, `the first card reads "${r.firstText}"`).toMatch(/window|lock|deadline|live|round/i);
+  // The action it carries is reachable without scrolling an 844px screen.
+  if (r.cta !== null)
+    expect(r.cta, `its button ends ${r.cta}px down`).toBeLessThan(844);
+});

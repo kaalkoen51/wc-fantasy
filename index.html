@@ -473,12 +473,15 @@
         <p id="account-newpw-msg" class="text-xs text-slate-400"></p>
       </div>
       <!-- Signed-in: identity + sign out + your leagues -->
+      <!-- Leagues first. "Signed in as tester@example.com" was the first line a
+           returning player read, and the least useful one on the page; the most
+           likely thing they came to do is open a league they are already in. -->
       <div id="account-in" class="hidden space-y-2">
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-sm min-w-0"><span class="text-slate-400">Signed in as</span> <span id="account-email-label" class="font-semibold truncate"></span></span>
+        <div id="account-leagues" class="space-y-1"></div>
+        <div class="flex items-center justify-between gap-2 border-t border-slate-800 pt-2">
+          <span class="min-w-0 truncate text-xs text-slate-400">Signed in as <span id="account-email-label" class="text-slate-300"></span></span>
           <button id="account-signout" class="shrink-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold">Sign out</button>
         </div>
-        <div id="account-leagues" class="space-y-1"></div>
       </div>
     </div>
     <div id="home-resume" class="hidden rounded-xl border border-wcgold/60 bg-wcred/10 p-4">
@@ -526,11 +529,16 @@
       <div class="text-sm font-semibold flex items-center gap-2">⚙️ Basics</div>
       <label class="block text-sm text-slate-400">League name
         <input id="create-name" placeholder="Braai Boys WC 2026" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></label>
-      <div class="grid grid-cols-2 gap-3">
+      <!-- items-end, and the caveat below the field rather than in the label:
+           "Seconds / pick (0 = no limit)" wrapped to two lines at 390px while
+           "Managers" stayed on one, so the two inputs sat at different heights
+           and the row visibly stepped down. -->
+      <div class="grid grid-cols-2 gap-3 items-end">
         <label class="block text-sm text-slate-400">Managers
           <input id="create-num" type="number" min="2" max="15" value="8" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></label>
-        <label class="block text-sm text-slate-400">Seconds / pick <span class="text-slate-400">(0 = no limit)</span>
-          <input id="create-dur" type="number" min="0" max="600" value="60" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"></label>
+        <label class="block text-sm text-slate-400">Seconds per pick
+          <input id="create-dur" type="number" min="0" max="600" value="60" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100">
+          <span class="mt-1 block text-xs text-slate-500">0 means no limit</span></label>
       </div>
     </div>
 
@@ -727,7 +735,11 @@
 
   <!-- Join league -->
   <section data-view="join" class="hidden space-y-4">
-    <h2 class="text-xl font-semibold">Join a league</h2>
+    <div>
+      <h2 class="text-xl font-semibold">Join a league</h2>
+      <p class="mt-1 text-sm text-slate-400">Ask whoever set the league up for its
+        six-character invite code — it is on their lobby screen.</p>
+    </div>
     <label class="block text-sm text-slate-400">Invite code
       <input id="join-code" placeholder="ABC123" autocapitalize="characters" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100 uppercase tracking-widest"></label>
     <button id="join-find" class="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg py-2.5 font-semibold">Find league</button>
@@ -770,6 +782,17 @@
         <span id="lobby-count" class="text-sm text-slate-400"></span>
       </div>
       <ul id="lobby-managers" class="space-y-1.5 text-sm"></ul>
+      <!-- Sits inside the card it acts on. Floating between two unrelated
+           buttons it read as three fragments at three baselines, outside the
+           card rhythm the rest of the lobby follows. -->
+      <div id="lobby-size" class="hidden mt-3 border-t border-slate-800 pt-3 space-y-1.5">
+        <div class="flex items-center gap-2 text-sm">
+          <label for="lobby-num-input" class="text-slate-400">Managers needed</label>
+          <input id="lobby-num-input" type="number" min="2" max="15" class="w-16 rounded bg-slate-800 border border-slate-700 px-2 py-1">
+          <button id="lobby-num-set" class="rounded bg-slate-800 border border-slate-700 px-3 py-1 text-sm font-semibold">Set</button>
+        </div>
+        <p class="text-xs text-slate-500">Lower it if someone drops out. Tap ✕ beside a name to remove them.</p>
+      </div>
     </div>
     <button id="lobby-browse" class="hidden w-full bg-slate-800 hover:bg-slate-700 border border-wcgold/50 text-wcgold rounded-xl py-2.5 font-semibold">⭐ Browse players &amp; build your shortlist</button>
     <div id="lobby-join" class="hidden rounded-xl border border-wcgold/60 bg-wcred/10 p-4 space-y-2">
@@ -780,12 +803,6 @@
     <!-- Admin block reads in the order you actually do things: make the lobby
          right, arrange the order, then start. The primary action stays last. -->
     <div id="lobby-admin" class="hidden space-y-2">
-      <div class="flex items-center gap-2 text-xs text-slate-400 justify-center">
-        <span>Managers needed:</span>
-        <input id="lobby-num-input" type="number" min="2" max="15" class="w-16 rounded bg-slate-800 border border-slate-700 px-2 py-1">
-        <button id="lobby-num-set" class="rounded bg-slate-800 border border-slate-700 px-3 py-1 font-semibold">Set</button>
-        <span class="text-slate-400">(if someone drops out). Tap ✕ by a name to kick.</span>
-      </div>
       <button id="lobby-addbots" class="w-full bg-slate-800 border border-slate-700 rounded-lg py-2 text-sm font-semibold">🤖 Fill empty slots with bots</button>
       <!-- Manual draft order: only rendered when the league is set to it. Same
            reorder affordances as the draft queue (hold to drag, ▲▼ to nudge). -->
