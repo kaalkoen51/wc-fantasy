@@ -788,3 +788,50 @@ test("the league table sorts, moves and keeps league position honest", async ({ 
   expect((await read()).every((r) => r.tag === null),
     "the sort chip is still showing when nothing is being sorted on").toBe(true);
 });
+
+test("finishing a draft lands you on your team, not the player list", async ({ page }) => {
+  /* The lobby's "Browse players" sets a flag that pins the board to the
+     Players tab, and nothing ever cleared it — so the moment the draft
+     finished, the app dropped you on a list of everyone in the competition
+     rather than on the squad you had just drafted. Reported from the app. */
+  await openLeague(page, { managers: 2, played: 0, predraft: true });
+
+  const browsing = await page.evaluate(() => {
+    /* current_pick is what says a draft has begun — null in the lobby, 1 once
+       it starts. The harness's "predraft" seed sets 1, which is already
+       mid-draft, so the lobby state has to be made here or the browse is never
+       pre-draft and the test runs against a state it cannot reach.
+       renderLobby also has to run: it is what wires the button. */
+    S.league.current_pick = null;
+    showView("lobby"); renderLobby();
+    document.getElementById("lobby-browse").click();   // the button a person taps
+    return { tab: S.boardTab, browsing: !!S._browsing };
+  });
+  // The setup has to actually be the pre-draft browse, or this proves nothing.
+  expect(browsing.browsing, "the browse flag was not set").toBe(true);
+  expect(browsing.tab, "browsing did not open the Players tab").toBe("stats");
+
+  const after = await page.evaluate(async () => {
+    // The draft runs and completes: every pick made, the board reached.
+    S.league.current_pick = totalPicks() + 1;
+    renderBoard();
+    /* The tab panes by name. Matching on an id prefix also catches
+       board-tolobby and board-scoring, which are buttons — so the list has to
+       be the panes setBoardTab actually toggles, not everything that happens
+       to be called board-something. */
+    const PANES = ["board-home", "board-lb", "board-fixtures", "board-bracket",
+                   "board-stats", "board-rosters", "board-trades", "board-chat"];
+    return { tab: S.boardTab, browsing: !!S._browsing,
+             shown: PANES.filter((id) => !document.getElementById(id)?.classList.contains("hidden")) };
+  });
+
+  expect(after.tab, "the draft finished on the Players tab").toBe("home");
+  expect(after.shown, "the Team pane is not the only one showing").toEqual(["board-home"]);
+  // The flag is cleared, so a later visit to Players is not yanked back.
+  expect(after.browsing, "the browse flag survived the draft").toBe(false);
+  const stays = await page.evaluate(() => {
+    setBoardTab("stats"); renderBoard();
+    return S.boardTab;
+  });
+  expect(stays, "the Players tab bounces back to Team after the draft").toBe("stats");
+});

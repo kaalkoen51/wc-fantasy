@@ -580,3 +580,26 @@ test("a selected tab looks the same wherever it is", async ({ page }) => {
       expect(b.bg, `${sel}: "${b.text}" uses the danger red for a tab`).not.toBe(DANGER);
   }
 });
+
+test("the team page opens on this round, with it first", async ({ page }) => {
+  /* The round in progress is what you open the app to look at; the season
+     total is what you check afterwards, and it is on the leaderboard anyway.
+     It defaulted to Total and put Total on the left. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLeague(page, { managers: 4, played: 3 });
+  const t = await page.evaluate(() => {
+    showView("board"); setBoardTab("home");
+    // Every manager's card carries this toggle and they all exist in the DOM,
+    // so it has to be scoped to the Team pane.
+    const bs = [...document.querySelectorAll("#board-home [data-scoremode]")];
+    return { order: bs.map((b) => b.dataset.scoremode),
+             labels: bs.map((b) => b.textContent.trim()),
+             on: bs.find((b) => b.className.includes("text-wcgold"))?.dataset.scoremode,
+             mode: S.homeScoreMode };
+  });
+  expect(t.order.length, "the score toggle did not render").toBe(2);
+  expect(t.order, "Total is still first").toEqual(["round", "total"]);
+  expect(t.labels, "the labels are not the ones expected").toEqual(["This round", "Total"]);
+  expect(t.mode, "the stored default is not this round").toBe("round");
+  expect(t.on, "the page did not open on this round").toBe("round");
+});

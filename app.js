@@ -5960,11 +5960,15 @@ function historyViewHtml(mgrId) {
     : fmtDateRange(round.dates);
   const subtotal = onCurrent ? (roundMode ? roundSubtotal : h.total) : round.subtotal;
   const olderOff = idx >= views - 1, newerOff = idx <= 0;
+  /* This round leads, and is the default. The round in progress is what you
+     open the app to look at; the season total is the thing you check
+     afterwards, and it is on the leaderboard anyway. Left-to-right follows
+     the same order: nearest first. */
   const toggle = hasRound ? `<div class="flex gap-1 rounded-lg bg-slate-800 p-0.5 text-xs">
-      <button data-scoremode="total" class="flex-1 rounded-md py-1 font-semibold ${
-        !roundMode ? "bg-slate-700 text-wcgold" : "text-slate-400"}">Total</button>
       <button data-scoremode="round" class="flex-1 rounded-md py-1 font-semibold ${
         roundMode ? "bg-slate-700 text-wcgold" : "text-slate-400"}">This round</button>
+      <button data-scoremode="total" class="flex-1 rounded-md py-1 font-semibold ${
+        !roundMode ? "bg-slate-700 text-wcgold" : "text-slate-400"}">Total</button>
     </div>` : "";
   return `<div class="space-y-2">
     <div class="flex items-center gap-1">
@@ -8112,6 +8116,11 @@ function renderBoard() {
   // Pre-draft browsing: default to Stats (the shortlistable player list).
   const preDraft = !S.league?.current_pick && S._browsing;
   if (preDraft && S.boardTab !== "stats") S.boardTab = "stats";
+  /* ...and once the draft has started, that browse is over. The flag was never
+     cleared, so the Players tab it had selected was still selected when the
+     draft finished and the app landed you there — on the one screen where the
+     first thing anyone wants is the squad they just drafted. */
+  if (!preDraft && S._browsing) { S._browsing = false; S.boardTab = "home"; }
   setBoardTab(S.boardTab || "home");
   renderBanner();
   // The fixture ticker costs ~200px at the top of the screen. It's context for
@@ -8325,7 +8334,7 @@ S.histIdxByMgr = {};   // manager id -> history pager index (0 = current)
 S.chartCompare = null; // Table season chart: manager id to compare against (H2H)
 S.tableView = "total"; // Table: "total" (official, incl. teams) or "player" (for fun)
 S.fixRound = null;     // Fixtures tab: round being viewed (null = the live one)
-S.homeScoreMode = "total"; // current-lineup view: "total" or "round" points
+S.homeScoreMode = "round"; // current-lineup view: "round" points or "total"
 S.formerOpen = {};     // manager id -> former-players section expanded?
 S.messages = [];       // chat messages (group + DMs) for this league
 S.chatThread = "league"; // active chat thread: "league" or a manager id (DM)
