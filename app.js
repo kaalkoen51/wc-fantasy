@@ -1958,6 +1958,8 @@ S.swapSort = "points";
 S.swapShortlistOnly = false;
 S.swapAnyPos = false;
 S.swapHideKO = false;
+S.h2hSort = "logPts";      // how the head-to-head log is ordered
+S.chartOpen = false;       // whether the season chart is expanded under it
 S.bracketRound = null;   // which knockout round the phone pager is showing
 S.poolSort = "";            // draft pool: sort by a stat ("" = default order)
 S.bannerDayOffset = 0;      // matchday banner: 0 = default day, -1 = prev, etc.
@@ -4364,10 +4366,14 @@ function h2hFixturesFor(mgrIds, maxRound, opts) {
 }
 
 // The current H2H log for all managers (the standings when H2H is enabled).
-function h2hStandings() {
+/* `upto` caps the table at a round, which is how the movement arrows are
+   worked out: build the table as it stood before the last round and compare
+   the two orders. Everything else passes nothing and gets the season to date. */
+function h2hStandings(upto) {
   const ids = S.managers.map((m) => m.id);
   const scores = h2hRoundScores();
-  const maxRound = Math.max(0, ...Object.values(scores).map((a) => a.length));
+  const played = Math.max(0, ...Object.values(scores).map((a) => a.length));
+  const maxRound = upto == null ? played : Math.max(0, Math.min(played, upto));
   const cfg = h2hConfig();
   /* Rumbles fill the LEFTOVER rounds at the end of a season, so they need to
      know how long the season is. Falling back to "rounds played so far" made
@@ -7898,6 +7904,41 @@ const FORM_STYLE = { W: "bg-emerald-500/25 text-emerald-300 border-emerald-500/4
   D: "bg-slate-600/30 text-slate-300 border-slate-500/40",
   L: "bg-red-500/20 text-red-300 border-red-500/40" };
 
+/* A manager's season as a single line, small enough to sit in a table row.
+
+   The overlaid chart is the wrong tool for "how do these four compare": every
+   line but yours rendered the same grey, so you could not tell one rival from
+   another. Small multiples fix that — one line each, in that manager's own
+   colour, read across the column rather than untangled from a knot. The big
+   chart stays for the one job it is good at, comparing two.
+
+   Drawn as a path in a viewBox so it scales with the row; no library, and no
+   axis, because a sparkline's job is shape rather than value. */
+function sparkHtml(pts, color, opts = {}) {
+  const w = opts.w || 52, h = opts.h || 20;
+  if (!pts || pts.length < 2)
+    return `<span class="inline-block" style="width:${w}px;height:${h}px"></span>`;
+  const max = Math.max(1, ...pts);
+  const x = (i) => (i / (pts.length - 1)) * (w - 2) + 1;
+  const y = (v) => h - 1 - (v / max) * (h - 2);
+  const d = pts.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" ");
+  const last = pts[pts.length - 1];
+  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true"
+    class="shrink-0 overflow-visible">
+    <path d="${d}" fill="none" stroke="${color}" stroke-width="1.6"
+      stroke-linejoin="round" stroke-linecap="round" opacity=".9"/>
+    <circle cx="${x(pts.length - 1).toFixed(1)}" cy="${y(last).toFixed(1)}" r="1.9" fill="${color}"/>
+  </svg>`;
+}
+
+/* How the log can be ordered. Log points is the league; the rest are questions
+   people actually ask of a table ("who scores most", "who has the best swing")
+   and every one of them is already a column in the row. */
+const H2H_SORTS = [
+  ["logPts", "League position"], ["W", "Wins"], ["L", "Losses"],
+  ["PF", "Points for"], ["PA", "Points against"], ["diff", "Points difference"],
+];
+
 function h2hStandingsHtml(me) {
   const { rows, order } = h2hStandings();
   const cfg = h2hConfig();
@@ -7905,31 +7946,77 @@ function h2hStandingsHtml(me) {
   const mgrOf = (id) => S.managers.find((m) => m.id === id);
   const anyPlayed = order.some((id) => rows[id].P > 0);
 
-  const body = order.map((id, i) => {
+  /* Rank movement, from the table as it stood BEFORE the last round. It was
+     already being computed for the points-tally table and never reached this
+     one — the head-to-head standings were written separately and the arrows
+     stayed behind. Ranked on log points here, which is what this table is. */
+  const prev = played >= 2 ? h2hStandings(played - 1).order : null;
+  const moveOf = (id) => {
+    if (!prev) return 0;
+    const was = prev.indexOf(id), now = order.indexOf(id);
+    return was < 0 || now < 0 ? 0 : was - now;
+  };
+  // Who scored most in the last round — the round's story, in a badge.
+  const scoresByMgr = h2hRoundScores();
+  const lastRoundOf = (id) => (scoresByMgr[id] || [])[played - 1];
+  const bestLast = played >= 1
+    ? Math.max(0, ...order.map((id) => lastRoundOf(id) ?? 0)) : 0;
+
+  const sortKey = H2H_SORTS.some(([k]) => k === S.h2hSort) ? S.h2hSort : "logPts";
+  const valOf = (id) => {
+    const r = rows[id];
+    return sortKey === "diff" ? r.PF - r.PA : r[sortKey];
+  };
+  /* Sorting reorders the ROWS, never the numbers in the rank badge. A table
+     sorted by wins still has to say who is top of the league, or the sort
+     quietly rewrites the standings. */
+  const shown = sortKey === "logPts" ? order
+    : order.slice().sort((a, b) => valOf(b) - valOf(a)
+        || order.indexOf(a) - order.indexOf(b));
+
+  const body = shown.map((id) => {
     const r = rows[id], m = mgrOf(id);
+    const i = order.indexOf(id);
     const form = anyPlayed ? h2hFormOf(id, played) : [];
+    const mv = moveOf(id);
+    const diff = r.PF - r.PA;
+    const series = (scoresByMgr[id] || []).reduce((acc, v) => {
+      acc.push((acc[acc.length - 1] || 0) + (v || 0)); return acc;
+    }, [0]);
+    const mvp = played >= 1 && bestLast > 0 && lastRoundOf(id) === bestLast;
+    /* One line per row, not one chart for everyone. Points difference replaces
+       the for:against pair: the pair took the most room and said the least,
+       and it is still in the detail below where a tiebreak belongs. */
     return `<details data-mgr="${esc(id)}" class="rounded-xl border ${
       id === me?.id ? "border-wcgold/40 bg-wcgold/5" : "border-slate-700 bg-slate-900"}">
-      <summary class="px-3 py-2.5 cursor-pointer select-none flex items-center gap-2">
-        <span class="w-5 shrink-0 text-slate-400 font-mono text-sm">${i + 1}</span>
-        <span class="shrink-0 inline-flex items-center justify-center rounded-md w-8 h-8 text-[15px]"
+      <summary class="px-3 py-2 cursor-pointer select-none flex items-center gap-2">
+        <span class="w-8 shrink-0 flex items-baseline gap-0.5">
+          <span class="font-mono text-sm ${i === 0 ? "text-wcgold" : "text-slate-400"}">${i + 1}</span>
+          ${mv ? `<span class="text-[9px] ${mv > 0 ? "text-live" : "text-danger"}"
+            title="${Math.abs(mv)} ${mv > 0 ? "up" : "down"} since last round">${mv > 0 ? "▲" : "▼"}${Math.abs(mv)}</span>` : ""}
+        </span>
+        <span class="shrink-0 inline-flex items-center justify-center rounded-md w-7 h-7 text-[13px]"
               style="background:${managerColor(m)}22;border:1px solid ${managerColor(m)}88">${managerMark(m)}</span>
         <span class="min-w-0 flex-1">
-          <span class="block font-semibold truncate text-sm">${esc(m?.name || "?")}${
-            id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}</span>
+          <span class="flex items-center gap-1 min-w-0">
+            <span class="min-w-0 truncate font-semibold text-sm">${esc(m?.name || "?")}</span>
+            ${id === me?.id ? '<span class="shrink-0 text-wcgold text-xs">(you)</span>' : ""}
+            ${mvp ? '<span class="shrink-0 text-[10px]" title="Top scorer last round">🔥</span>' : ""}
+          </span>
           <span class="flex items-center gap-1 mt-0.5">
             ${form.length
               ? form.map((x) => `<span class="inline-flex items-center justify-center w-4 h-4 rounded border text-[9px] font-bold ${FORM_STYLE[x]}">${x}</span>`).join("")
               : '<span class="text-xs text-slate-400">no results yet</span>'}
-            ${r.bonus ? `<span class="text-[11px] text-emerald-400 ml-1">+${r.bonus} bonus</span>` : ""}
+            ${r.bonus ? `<span class="text-[11px] text-emerald-400 ml-0.5">+${r.bonus}</span>` : ""}
           </span>
         </span>
-        <!-- Points for and against belong on the row: they are the tiebreak
-             and the story of a season, not a detail to expand for. -->
-        <span class="shrink-0 text-right leading-tight">
+        ${sparkHtml(series, managerColor(m))}
+        <span class="shrink-0 w-14 text-right leading-tight">
           <span class="block font-bold text-wcgold scoreboard leading-none">${r.logPts}</span>
-          <span class="block text-[10px] text-slate-400 mt-0.5">${r.W}-${r.D}-${r.L}</span>
-          <span class="block text-[10px] text-slate-500 font-mono">${r.PF}<span class="text-slate-600">:</span>${r.PA}</span>
+          <span class="block text-[10px] text-slate-400 mt-0.5 tabular-nums">${r.W}-${r.D}-${r.L}</span>
+          <span class="block text-[10px] font-mono tabular-nums ${
+            diff > 0 ? "text-live" : diff < 0 ? "text-danger" : "text-slate-500"}">${
+            diff > 0 ? "+" : ""}${diff}</span>
         </span>
       </summary>
       <div class="px-3 pb-3 space-y-2">
@@ -7948,15 +8035,27 @@ function h2hStandingsHtml(me) {
      section header it was about 200px up and to the right of the column it
      described, so by the third row you had forgotten which figure was which. */
   return `<div class="space-y-2">
-    <div class="flex items-baseline justify-between gap-2 px-1">
-      <span class="text-sm font-semibold">Head-to-head log</span>
-      <span class="text-[11px] text-slate-500">${played} round${played === 1 ? "" : "s"} played</span>
+    <!-- Title and control on one row, everything else on the next. With the
+         round count between them the heading wrapped to two lines at 390px. -->
+    <div class="flex items-center gap-2 px-1">
+      <span class="min-w-0 flex-1 truncate text-sm font-semibold">Head-to-head log</span>
+      <!-- The same control the Players tab, the planner and the free-agent
+           sheet use to reorder a list. Sorting the table by wins or by points
+           difference is a question people ask of a league; the columns were
+           already there and there was no way to ask it. -->
+      <select id="h2h-sort" class="shrink-0 w-32 rounded-lg bg-slate-900 border border-slate-700 px-2 py-1 text-xs">
+        ${H2H_SORTS.map(([k, lbl]) =>
+          `<option value="${k}" ${sortKey === k ? "selected" : ""}>${lbl}</option>`).join("")}
+      </select>
     </div>
+    <p class="px-1 -mt-1 text-[11px] text-slate-500">${played} round${played === 1 ? "" : "s"} played${
+      sortKey !== "logPts" ? ` · sorted by ${esc((H2H_SORTS.find(([k]) => k === sortKey) || [, ""])[1].toLowerCase())}, but the number on the left is still league position` : ""}</p>
     ${body ? `<div class="flex items-center gap-2 px-3 pb-1 border-b border-slate-800 text-[10px] uppercase tracking-wide text-slate-500">
-      <span class="w-5 shrink-0">#</span>
-      <span class="w-8 shrink-0"></span>
+      <span class="w-8 shrink-0">#</span>
+      <span class="w-7 shrink-0"></span>
       <span class="min-w-0 flex-1">manager · form</span>
-      <span class="shrink-0 text-right leading-tight">pts<br>w-d-l<br>for:against</span>
+      <span class="w-[52px] shrink-0 text-center">season</span>
+      <span class="w-14 shrink-0 text-right leading-tight">pts<br>w-d-l<br>diff</span>
     </div>` : ""}
     ${body || '<p class="rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm text-slate-400">No completed rounds yet.</p>'}
     <details class="rounded-xl border border-slate-800 bg-slate-900/40">
@@ -8079,9 +8178,21 @@ function renderBoard() {
   if (h2hEnabled()) {
     // The season chart only exists once two rounds have been scored; before
     // that its placeholder was the largest thing on the tab, saying nothing.
+    /* The table leads. This tab is called Table and it opened on a chart, so
+       the standings began about 1150px down a phone screen. The chart is now
+       under it, folded, for the one job it does well: comparing two managers. */
     const { maxR } = seasonSeries(scores);
-    $("board-lb").innerHTML = (maxR >= 2 ? chartHtml : "") + h2hStandingsHtml(me)
+    $("board-lb").innerHTML = h2hStandingsHtml(me)
+      + (maxR >= 2 ? `<details id="lb-chart" class="rounded-xl border border-slate-700 bg-slate-900" ${
+          S.chartOpen ? "open" : ""}>
+        <summary class="px-3 py-2 cursor-pointer select-none text-xs font-semibold text-slate-300">
+          Season progression <span class="text-slate-500">· compare two managers</span></summary>
+        <div class="px-3 pb-3">${chartHtml}</div></details>` : "")
       + '<button id="lb-awards" class="w-full rounded-xl border border-slate-700 bg-slate-900 py-2.5 text-sm font-semibold text-slate-300">🏆 Season awards</button>';
+    const sortSel = document.getElementById("h2h-sort");
+    if (sortSel) sortSel.onchange = () => { S.h2hSort = sortSel.value; renderBoard(); };
+    const chartBox = document.getElementById("lb-chart");
+    if (chartBox) chartBox.ontoggle = () => { S.chartOpen = chartBox.open; };
     const cc0 = document.getElementById("chart-compare");
     if (cc0) cc0.onchange = () => { S.chartCompare = cc0.value || null; renderBoard(); };
     const aw0 = document.getElementById("lb-awards");

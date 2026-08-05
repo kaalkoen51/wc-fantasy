@@ -709,3 +709,68 @@ test("the two ways of picking a player to bring in behave the same", async ({ pa
   });
   expect(starred.after, "rows carry no working shortlist star").not.toBe(starred.before);
 });
+
+test("the league table sorts, moves and keeps league position honest", async ({ page }) => {
+  /* The tab is called Table and it opened on a chart, with the standings about
+     1150px down. The chart itself was the wrong tool: four managers rendered as
+     four identical grey lines. And the rank movement the app already computes
+     never reached this table — the head-to-head standings were written
+     separately and left the arrows behind. */
+  await openLeague(page, { managers: 5, played: 4, h2h: true });
+  await page.evaluate(() => { showView("board"); setBoardTab("lb"); renderBoard(); });
+
+  const read = () => page.evaluate(() => {
+    const rows = [...document.querySelectorAll("#board-lb details[data-mgr]")];
+    return rows.map((d) => {
+      const t = d.querySelector("summary").textContent.replace(/\s+/g, " ").trim();
+      return { id: d.dataset.mgr, rank: Number(t.match(/^(\d+)/)?.[1]),
+               spark: !!d.querySelector("svg path") };
+    });
+  });
+
+  // The table comes before the chart, and the chart is folded away.
+  const layout = await page.evaluate(() => {
+    const first = document.querySelector("#board-lb details[data-mgr]");
+    const chart = document.getElementById("lb-chart");
+    return { tableTop: Math.round(first.getBoundingClientRect().top),
+             chartTop: chart ? Math.round(chart.getBoundingClientRect().top) : null,
+             chartOpen: chart ? chart.open : null };
+  });
+  expect(layout.tableTop, `the table starts ${layout.tableTop}px down`).toBeLessThan(360);
+  expect(layout.chartTop, "the chart is still above the table").toBeGreaterThan(layout.tableTop);
+  expect(layout.chartOpen, "the chart is not folded away").toBe(false);
+
+  const byRank = await read();
+  expect(byRank.length, "no standings rows").toBe(5);
+  expect(byRank.map((r) => r.rank), "the default order is not league order")
+    .toEqual([1, 2, 3, 4, 5]);
+  expect(byRank.every((r) => r.spark), "rows carry no sparkline").toBe(true);
+
+  /* Sort by LOSSES, deliberately. Points-for happens to rank the same way as
+     the league in this fixture, so sorting by it is a no-op and an assertion
+     on it passes with the sort removed entirely — which is what the first
+     version of this test did. Most losses first is the reverse of the league,
+     so it cannot coincide. */
+  const losses = await page.evaluate(() => {
+    const { rows } = h2hStandings();
+    S.h2hSort = "L"; renderBoard();
+    return Object.fromEntries(Object.entries(rows).map(([k, v]) => [k, v.L]));
+  });
+  expect(new Set(Object.values(losses)).size,
+    "every manager has the same losses, so any order would satisfy this")
+    .toBeGreaterThan(1);
+
+  const sorted = await read();
+  const seen = sorted.map((r) => losses[r.id]);
+  expect(seen, `rows are not in most-losses-first order: ${seen}`)
+    .toEqual([...seen].sort((a, b) => b - a));
+  expect(sorted.map((r) => r.id), "sorting by losses left the league order untouched")
+    .not.toEqual(byRank.map((r) => r.id));
+
+  // ...and it reordered the ROWS without renumbering the LEAGUE.
+  expect(sorted.map((r) => r.rank).sort((a, b) => a - b),
+    "sorting renumbered the league instead of reordering the rows")
+    .toEqual([1, 2, 3, 4, 5]);
+  expect(sorted.map((r) => r.rank), "the rank badges are in sorted order, so they are not league position")
+    .not.toEqual([1, 2, 3, 4, 5]);
+});
