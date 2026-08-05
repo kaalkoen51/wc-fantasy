@@ -171,6 +171,13 @@ let toastTimer;
 function toast(msg) {
   const t = $("toast");
   t.textContent = msg;
+  /* Clear of whatever owns the bottom edge. Pinned at bottom-4 the toast landed
+     squarely on the primary button — "Set your lineup", "Save lineup", "Cancel"
+     — so the message covered the control it was telling you about. */
+  const navOn = !$("bottom-nav")?.classList.contains("hidden");
+  const sheetOn = [...document.querySelectorAll("[id$='-sheet']")]
+    .some((s) => !s.classList.contains("hidden"));
+  t.classList.toggle("toast-lifted", navOn || sheetOn);
   t.classList.remove("hidden");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.add("hidden"), 3500);
@@ -938,8 +945,15 @@ function upNextHtml(team, size = "w-4 h-4") {
   const opp = f.home === team ? f.away : f.home;
   const when = new Date(f.kickoff_utc).toLocaleString([],
     { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  /* The opponent's code travels WITH the crest. The crest alone carried the
+     whole meaning, so a photo pack that has not loaded left a bare "next:"
+     followed by an empty circle — which reads as a failed lookup rather than
+     as a fixture. Text degrades; an image does not. */
+  const home = f.home === team;
+  const code = teamCodeFrom(opp, S.players.find((p) => p.team === opp)?.team_code);
   return `<span class="inline-flex items-center gap-1 shrink-0" title="${
-    f.home === team ? "vs" : "@"} ${esc(opp)} · ${esc(when)}">next:${avatarHtml("team:" + opp, opp, size)}</span>`;
+    home ? "vs" : "@"} ${esc(opp)} · ${esc(when)}">next: ${
+    avatarHtml("team:" + opp, opp, size)}<span>${home ? "v" : "@"} ${esc(code)}</span></span>`;
 }
 
 // photos.json (faces/crests) and injuries.json (availability hints) are
@@ -2641,7 +2655,18 @@ function tickTimer() {
     }
     return;
   }
-  const deadline = Date.parse(L.pick_started_at) + L.pick_duration_seconds * 1000;
+  /* A pick that has not been started yet has no deadline, and Date.parse(null)
+     is NaN. Math.max(0, NaN) is NaN too — so the clamp that looks like it
+     guards this did nothing, and the room's most public screen rendered
+     "NaN:NaN" in display type. Check the parse, not the arithmetic. */
+  const startedAt = Date.parse(L.pick_started_at);
+  if (!isFinite(startedAt)) {
+    clock.textContent = "--";
+    const m1 = $("draft-mini-clock"); if (m1) m1.textContent = "--";
+    clock.classList.remove("text-red-400"); clock.classList.add("text-wcgold");
+    return;
+  }
+  const deadline = startedAt + L.pick_duration_seconds * 1000;
   const remain = Math.ceil((deadline - Date.now()) / 1000);
   const shown = Math.max(0, remain);
   const face = Math.floor(shown / 60) + ":" + String(shown % 60).padStart(2, "0");
@@ -9448,7 +9473,13 @@ function renderLineup() {
   $("lineup-formation").textContent = `${counts.DEF}-${counts.MID}-${counts.FWD}`;
   $("lineup-formation").className = "text-3xl font-bold scoreboard tracking-tight "
     + (ok ? "text-wcgold" : "text-danger");
-  $("lineup-count").textContent = `${total}/${need} picked${counts.GK !== 1 ? " · needs a keeper" : ""}`;
+  /* Spelled out, because "11/9 picked" read as a broken fraction — eleven out
+     of nine — and never said what the nine counted. All three cases are real:
+     a league's starter quota can be under the squad you have named. */
+  const keeper = counts.GK !== 1 ? " · needs a keeper" : "";
+  $("lineup-count").textContent = (total === need ? `${total} picked`
+    : total > need ? `${total} picked · ${need} needed`
+    : `${total} of ${need} picked`) + keeper;
   $("lineup-count").className = "text-xs " + (ok ? "text-slate-400" : "text-danger");
   const prim = $("lineup-primary"), sec = $("lineup-secondary");
   if (editing) {

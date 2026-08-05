@@ -79,3 +79,35 @@ test("app.js defined its globals", async ({ page }) => {
   }));
   expect(present).toEqual({ state: "object", scoring: "function", settle: "function" });
 });
+
+test("the draft clock never renders NaN", async ({ page }) => {
+  /* Date.parse(null) is NaN, and Math.max(0, NaN) is NaN too — so the clamp
+     that looked like it guarded this did nothing, and a league whose pick had
+     not been started yet showed "NaN:NaN" in display type on the most public
+     screen in the app. */
+  await page.goto("/index.html", { waitUntil: "networkidle" });
+  const shown = await page.evaluate(() => {
+    S.league = { id: "L", current_pick: 1, pick_duration_seconds: 60,
+                 num_managers: 2, config: {} };
+    S.managers = [{ id: "m1", draft_position: 1, name: "A" },
+                  { id: "m2", draft_position: 2, name: "B" }];
+    S.picks = [];
+    const out = {};
+    for (const started of [null, undefined, "", "not-a-date"]) {
+      S.league.pick_started_at = started;
+      tickTimer();
+      out[String(started)] = document.getElementById("draft-clock").textContent;
+    }
+    // ...and a real timestamp still counts down, so the guard did not swallow
+    // the working case.
+    S.league.pick_started_at = new Date(Date.now() - 10000).toISOString();
+    tickTimer();
+    out.real = document.getElementById("draft-clock").textContent;
+    return out;
+  });
+  for (const [k, v] of Object.entries(shown)) {
+    if (k === "real") continue;
+    expect(v, `pick_started_at=${k} rendered "${v}"`).not.toMatch(/NaN/);
+  }
+  expect(shown.real, "a started pick no longer shows a countdown").toMatch(/^\d+:\d\d$/);
+});
