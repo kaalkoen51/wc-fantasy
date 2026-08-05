@@ -26,6 +26,15 @@ const { openLeague, expectLayoutSane } = require("./lib");
 // A fixed instant, so "3 hours until kickoff" is the same 3 hours every run.
 const FROZEN = new Date("2026-08-15T12:00:00Z");
 
+/* Screens, not whatever timer happened to fire. The app pops the draft-complete
+   and round-recap sheets on its own, and the first version of these baselines
+   captured the squad list from one of them sitting over the board — so the
+   picture under test was not the screen named in the test. */
+const settle = (page) => page.evaluate(() => {
+  S._recapChecked = true;
+  document.querySelectorAll("[id$='-sheet']").forEach((e) => e.classList.add("hidden"));
+});
+
 const SHOT = {
   maxDiffPixelRatio: 0.02,      // absorbs font hinting differences
   animations: "disabled",
@@ -52,12 +61,14 @@ test.describe("visual", () => {
   test("the team screen looks the way it did", async ({ page }) => {
     await openLeague(page, { managers: 2, played: 3 });
     await page.evaluate(() => { showView("board"); setBoardTab("home"); });
+    await settle(page);
     await expect(page.locator("#board-home")).toHaveScreenshot("team.png", SHOT);
   });
 
   test("the leaderboard looks the way it did", async ({ page }) => {
     await openLeague(page, { managers: 2, played: 3 });
     await page.evaluate(() => { showView("board"); setBoardTab("lb"); });
+    await settle(page);
     await expect(page.locator("#board-lb")).toHaveScreenshot("leaderboard.png", SHOT);
   });
 
@@ -70,6 +81,7 @@ test.describe("visual", () => {
       const me = myManager().id;
       S.histIdxByMgr[me] = 1; renderBoard();        // one round back
     });
+    await settle(page);
     await expect(page.locator("#board-lb")).toHaveScreenshot("round-view.png", SHOT);
   });
 });
@@ -107,4 +119,39 @@ test("no player name is cut off on a pitch", async ({ page }) => {
   expect(cut, `names cut off:\n${cut.map((c) =>
     `  ${c.where}: "${c.text}" needs ${c.need}px, has ${c.got}px`).join("\n")}`)
     .toEqual([]);
+});
+
+test("the matchday card starts collapsed and every tab's content is above the fold", async ({ page }) => {
+  /* Expanded, this card was 18 fixture rows — about 530px, 63% of a phone
+     viewport — and it rendered identically above Team, League, Players and
+     Activity. Every tab's own content began below the fold. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLeague(page, { managers: 4, played: 3, h2h: true });
+
+  const read = () => page.evaluate(() => {
+    const b = document.getElementById("board-banner");
+    const pane = [...document.querySelectorAll("[id^='board-']")]
+      .find((el) => el.id !== "board-banner" && !el.classList.contains("hidden"));
+    return { banner: Math.round(b.getBoundingClientRect().height),
+             paneTop: Math.round(pane.getBoundingClientRect().top),
+             open: b.querySelector("[data-bannertoggle]")?.getAttribute("aria-expanded") };
+  });
+
+  for (const tab of ["home", "lb", "fixtures", "stats", "trades"]) {
+    await page.evaluate((t) => { showView("board"); setBoardTab(t); }, tab);
+    const r = await read();
+    expect(r.open, `${tab}: the card is not collapsed by default`).toBe("false");
+    expect(r.banner, `${tab}: the collapsed card is ${r.banner}px tall`).toBeLessThan(64);
+    expect(r.paneTop, `${tab}: content starts ${r.paneTop}px down, below the fold`)
+      .toBeLessThan(300);
+  }
+
+  // Opening it gives everything back, and the choice survives a tab change.
+  await page.evaluate(() => document.querySelector("[data-bannertoggle]").click());
+  const opened = await read();
+  expect(opened.open, "tapping the card did not expand it").toBe("true");
+  expect(opened.banner, "expanded, the card shows no more than collapsed")
+    .toBeGreaterThan(200);
+  await page.evaluate(() => setBoardTab("lb"));
+  expect((await read()).open, "the expanded choice was not remembered").toBe("true");
 });

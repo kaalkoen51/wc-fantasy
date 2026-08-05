@@ -6970,6 +6970,13 @@ function renderBracket() {
 // cached so realtime refreshes don't restart the ticker animation; the
 // detail panel lives in its own div so opening it doesn't either.
 let bannerCache = null;
+/* Whether the matchday card is expanded. A per-browser preference, not league
+   state — it is about how much of your screen you want it to have. Defaults to
+   collapsed; anyone who opens it keeps it open. */
+const bannerOpen = () => localStorage.getItem("wcf_banner_open") === "1";
+const setBannerOpen = (on) =>
+  localStorage.setItem("wcf_banner_open", on ? "1" : "0");
+
 function renderBanner() {
   const box = $("board-banner");
   if (!box) return;
@@ -7051,17 +7058,41 @@ function renderBanner() {
       <div class="ticker text-xs text-slate-400">${half}${half}</div>
     </div>` : "";
 
-  const html = `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-1.5">
+  /* Collapsed by default, because expanded this card was costing every tab its
+     first screen. A World Cup matchday is 18 fixtures — about 530px, or 63% of
+     a 390x844 phone — and it rendered identically above Team, League, Players
+     and Activity, so every tab's own content began below the fold. One row
+     says the same thing; a tap gets the rest back, and the choice is
+     remembered. */
+  const live = games.filter((f) => !over(f) && Date.parse(f.kickoff_utc) < Date.now()).length;
+  const done = games.filter(over).length;
+  const next = games.find((f) => Date.parse(f.kickoff_utc) > Date.now());
+  const n = games.length;
+  const summary = live ? `${live} live now · ${n} ${n === 1 ? "match" : "matches"}`
+    : next ? `${n} ${n === 1 ? "match" : "matches"} · first kick-off ${
+        new Date(next.kickoff_utc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+    : done === n ? `${n} ${n === 1 ? "match" : "matches"} · all finished`
+    : `${n} ${n === 1 ? "match" : "matches"}`;
+
+  const html = bannerOpen()
+    ? `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-1.5">
     <div class="flex items-center gap-1">
       <button data-bannernav="-1" ${atStart ? "disabled" : ""} class="px-1.5 rounded text-sm ${
         atStart ? "text-slate-700" : "text-wcgold hover:bg-slate-800"}" title="Previous day">‹</button>
-      <div class="flex-1 text-center text-xs uppercase tracking-wide text-slate-400">${label} · SA time</div>
+      <button data-bannertoggle class="flex-1 text-center text-xs uppercase tracking-wide text-slate-400"
+        aria-expanded="true">${label} · SA time <span aria-hidden="true">▴</span></button>
       <button data-bannernav="1" ${atEnd ? "disabled" : ""} class="px-1.5 rounded text-sm ${
         atEnd ? "text-slate-700" : "text-wcgold hover:bg-slate-800"}" title="Next day">›</button>
     </div>
     ${rows}<div id="banner-detail"></div>${ticker}
     ${S.bannerDayOffset ? '<button data-bannerback class="w-full text-xs text-slate-400 underline pt-0.5">↩ back to today</button>' : ""}
-  </div>`;
+  </div>`
+    : `<button data-bannertoggle aria-expanded="false"
+    class="w-full flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-left">
+    <span class="shrink-0 text-xs uppercase tracking-wide text-slate-400">${esc(label)}</span>
+    <span class="min-w-0 flex-1 truncate text-sm ${live ? "text-live font-semibold" : "text-slate-300"}">${esc(summary)}</span>
+    <span class="shrink-0 text-xs text-slate-400" aria-hidden="true">▾</span>
+  </button><div id="banner-detail" class="hidden"></div>`;
   if (html !== bannerCache) {
     bannerCache = html;
     box.innerHTML = html;
@@ -7081,6 +7112,8 @@ function renderBanner() {
     });
     const back = box.querySelector("[data-bannerback]");
     if (back) back.onclick = () => { S.bannerDayOffset = 0; S.bannerGame = null; renderBanner(); };
+    const tog = box.querySelector("[data-bannertoggle]");
+    if (tog) tog.onclick = () => { setBannerOpen(!bannerOpen()); renderBanner(); };
   }
   renderBannerDetail();
 }
