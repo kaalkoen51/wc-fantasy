@@ -5,7 +5,18 @@
 // inline script is the whole point of the policy.
 document.addEventListener("error", (e) => {
   const t = e.target;
-  if (t && t.tagName === "IMG" && t.hasAttribute("data-avatar")) t.remove();
+  if (!t || t.tagName !== "IMG" || !t.hasAttribute("data-avatar")) return;
+  /* A crest that is carrying the club's identity on its own leaves a hole when
+     it is dropped — the Players list showed an owner mark, a gap, and some form
+     dots, with no club anywhere. Where the caller supplied a code, fall back to
+     it; everywhere else a missing avatar is decorative and still just goes. */
+  const code = t.dataset.crestCode;
+  if (!code) return t.remove();
+  const span = document.createElement("span");
+  span.className = "shrink-0 font-mono text-xs";
+  span.title = t.title || "";
+  span.textContent = code;
+  t.replaceWith(span);
 }, true);
 
 /* ---------- constants ---------- */
@@ -9218,10 +9229,13 @@ function renderStatsTab() {
           </span>
           <span class="flex items-center gap-1.5 text-xs text-slate-400">
             ${ownerChipHtml(p.player_id)}
-            <!-- The three-letter code, not the country name: with an owner mark,
-                 form dots and (in per-90) minutes on the same line, the full
-                 name was collapsing to "En…" / "Fr…", which says nothing. -->
-            <span class="shrink-0 font-mono" title="${esc(p.team)}">${esc(p.team_code || p.team)}</span>${
+            <!-- The crest, not a three-letter code. A club is a thing people
+                 recognise by its badge faster than by "BRE", and the row is too
+                 tight for the full name — it was collapsing to "En…" / "Fr…",
+                 which says nothing. The code stays as the fallback for a club
+                 with no crest, and the club's full name is on both as a title,
+                 so nothing is identified by picture alone. -->
+            ${teamCrestHtml(p.team, "w-4 h-4", p.team_code || p.team)}${
               per90 ? `<span class="shrink-0">${mins}′</span>` : ""}
             <span class="min-w-0 truncate">${dots}</span></span>
         </span>
@@ -9532,11 +9546,17 @@ function lineupValid(counts) {
 /* Club crest for a team. API competitions carry the id on every player; the
    legacy WC pool has it in photos.json. Empty string when unknown, so callers
    can drop it in without guarding. */
-function teamCrestHtml(team, size = "w-4 h-4") {
+/* `code` marks the crest as load-bearing: it is the only thing on the row
+   saying which club this is, so if the image fails the code takes its place
+   rather than the club disappearing. Omit it where a club name sits alongside
+   and the crest is decoration. */
+function teamCrestHtml(team, size = "w-4 h-4", code) {
   const id = S.photos?.teams?.[team] ?? teamLogoId(team);
-  if (!id) return "";
-  return `<img src="https://media.api-sports.io/football/teams/${id}.png" loading="lazy" data-avatar
-    class="${size} inline-block object-contain shrink-0 align-[-2px]" alt="" title="${esc(team)}">`;
+  if (!id) return code ? `<span class="shrink-0 font-mono text-xs" title="${esc(team)}">${esc(code)}</span>` : "";
+  return `<img src="https://media.api-sports.io/football/teams/${id}.png" loading="lazy" data-avatar${
+    code ? ` data-crest-code="${esc(code)}"` : ""}
+    class="${size} inline-block object-contain shrink-0 align-[-2px]" alt="${
+    code ? esc(team) : ""}" title="${esc(team)}">`;
 }
 
 // "Bruno Fernandes" → "Fernandes"; single-word names stay whole. Pitch chips

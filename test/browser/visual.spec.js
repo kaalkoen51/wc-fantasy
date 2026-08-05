@@ -422,3 +422,58 @@ test("the matchday ticker scrolls at a sane speed even if built while hidden", a
   expect(secs, `a ${Math.round(res.lap)}px lap scrolls in ${res.dur}, expected about ${Math.round(want)}s`)
     .toBeLessThan(want * 1.35);
 });
+
+/* A 1x1 transparent PNG, so the crest path can be exercised without a network. */
+const PIXEL = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  "base64");
+
+test("the club shows as a crest, and as its code when the crest cannot load", async ({ page }) => {
+  /* The Players list identified clubs by a three-letter code. A badge is what
+     people recognise a club by, so the crest replaces it — but the app deletes
+     avatar images that fail, which left the row with an owner mark, a gap and
+     some form dots and no club at all. The code is the fallback, not the
+     default. */
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  const seed = () => page.evaluate(() => {
+    /* teamLogoId memoises on the identity of S.players, so a new array is
+       needed — mutating in place leaves the old, empty map in force. */
+    S.players = S.players.map((p) => ({ ...p, team_logo: 50 + (p.team.charCodeAt(0) % 20) }));
+    S.playerById = Object.fromEntries(S.players.map((p) => [p.player_id, p]));
+    showView("board"); setBoardTab("stats"); S.statsView = "list"; renderStatsTab();
+  });
+  const rows = () => page.evaluate(() =>
+    [...document.querySelectorAll("#stats-list li")].slice(0, 5).map((li) => {
+      const img = li.querySelector("img[data-crest-code]");
+      // [title] distinguishes it from the rank number, which is also mono.
+      const code = li.querySelector("span.font-mono[title]");
+      return { crest: img?.getAttribute("alt") || null,
+               code: code ? code.textContent.trim() : null };
+    }));
+
+  // 1. The crest loads: a badge, labelled with the club for anyone not seeing it.
+  await page.route("https://media.api-sports.io/**", (r) =>
+    r.fulfill({ contentType: "image/png", body: PIXEL }));
+  await openLeague(page, { managers: 4, played: 3 });
+  await seed();
+  await page.waitForTimeout(400);
+  const ok = await rows();
+  expect(ok.length, "no player rows").toBe(5);
+  for (const r of ok) {
+    expect(r.crest, "the club is not shown as a crest").toBeTruthy();
+    expect(r.code, "the code is still there alongside the crest").toBeNull();
+  }
+
+  // 2. The crest 404s: the code takes its place rather than the club vanishing.
+  await page.unroute("https://media.api-sports.io/**");
+  await page.route("https://media.api-sports.io/**", (r) => r.abort());
+  await openLeague(page, { managers: 4, played: 3 });
+  await seed();
+  await page.waitForTimeout(600);
+  const broken = await rows();
+  for (const r of broken) {
+    expect(r.crest, "a broken crest is still being shown as an image").toBeNull();
+    expect(r.code, "a broken crest left the row with no club at all").toBeTruthy();
+  }
+});
