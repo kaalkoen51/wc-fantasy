@@ -6212,18 +6212,32 @@ function openH2HFixture(rnd, botId, topId) {
         s.bonus === 1 ? "point" : "points"}, which is not a player.</p>` : ""}
     </div>`;
 
+  /* A live score and a final one read identically, which during a matchday is a
+     real ambiguity: you cannot tell whether you have lost or are losing. */
+  const state = !mine.played ? "" : rnd < h2hCurrentRound() ? "Final"
+    : matchdayNow?.().stage === "live" ? "In progress" : "Latest";
   body.innerHTML = `
     <div class="text-center">
-      <div class="eyebrow">Round ${rnd}</div>
+      <div class="eyebrow">Round ${rnd}${state ? ` · ${state}` : ""}</div>
       ${mine.played
         ? `<div class="text-3xl font-bold scoreboard mt-0.5 ${lead}">${mine.total} – ${theirs.total}</div>`
         : '<div class="text-xs text-slate-400 mt-0.5">Not played yet</div>'}
     </div>
     <div class="space-y-1">
       ${bar(opp, theirs)}
-      ${pitchFacingHtml(theirs.byPos, mine.byPos, { small: true, tapAttr: "data-vsp", crests: true,
-        topColor: managerColor(opp), botColor: managerColor(me) })}
-      ${bar(me, mine)}
+      <!-- Twenty-two shirts on a 390px pitch cannot be legible at any type size,
+           so a phone gets the two XIs stacked and a wide screen keeps them
+           facing, which is the whole idea of the card. -->
+      <div class="hidden sm:block">
+        ${pitchFacingHtml(theirs.byPos, mine.byPos, { small: true, tapAttr: "data-vsp", crests: true,
+          topColor: managerColor(opp), botColor: managerColor(me) })}
+      </div>
+      <div class="sm:hidden space-y-1">
+        ${pitchHtml(theirs.byPos, { tapAttr: "data-vsp", crests: true })}
+        ${bar(me, mine)}
+        ${pitchHtml(mine.byPos, { tapAttr: "data-vsp", crests: true })}
+      </div>
+      <div class="hidden sm:block">${bar(me, mine)}</div>
     </div>
     <details class="rounded-xl border border-slate-700 bg-slate-900/60">
       <summary class="px-3 py-2 cursor-pointer select-none text-xs uppercase tracking-wide text-slate-400">Benches</summary>
@@ -6483,8 +6497,21 @@ function openAwards() {
           <span class="font-mono text-wcgold">${Math.round(a.value)}</span>
         </div>
         <div class="text-xs text-slate-400">${esc(a.manager)} · ${esc(a.note)}</div>
-      </div>`).join("")}</div>`
+      </div>`).join("")}</div>
+      <!-- The most shareable content in the app, and the only such screen that
+           had no way to share it. Text rather than a drawn image: the awards
+           are sentences, and sentences paste into a group chat. -->
+      <button id="awards-share" class="w-full rounded-lg border border-wcgold/60 text-wcgold py-2 text-sm font-semibold mt-2">📤 Share the awards</button>`
       : '<p class="text-sm text-slate-400 text-center py-3">Not enough rounds played yet.</p>'}`;
+  const ash = document.getElementById("awards-share");
+  if (ash) ash.onclick = async () => {
+    const text = [`${S.league?.name || "League"} — season awards`,
+      ...awards.map((a) => `${a.label}: ${a.manager} (${Math.round(a.value)}) — ${a.note}`),
+      "via DraftBaron"].join("\n");
+    if (navigator.share) { try { await navigator.share({ text }); return; } catch { /* cancelled */ } }
+    try { await navigator.clipboard.writeText(text); toast("Awards copied."); }
+    catch { toast("Could not copy — select and copy manually."); }
+  };
   $("recap-sheet").classList.remove("hidden");
   lockScroll(true);
 }
@@ -8222,9 +8249,25 @@ function playerBreakdown(pid, pos) {
       a.pts += evalRule(a.rule, raw, pos);
     }
   }
-  return acc.filter((a) => a.count || a.pts).map((a) => ({
-    label: STAT_LABEL[a.rule.stat] || a.rule.stat, count: a.count, pts: a.pts,
-  }));
+  const kept = acc.filter((a) => a.count || a.pts);
+  /* A league can carry two rules on one stat — "minutes" with and without a
+     threshold, say — and both rendered as the same words against different
+     numbers, which reads as duplication rather than as two rules. Where a
+     label repeats, say what separates them. */
+  const seen = {};
+  for (const a of kept) {
+    const l = STAT_LABEL[a.rule.stat] || a.rule.stat;
+    seen[l] = (seen[l] || 0) + 1;
+  }
+  return kept.map((a) => {
+    const base = STAT_LABEL[a.rule.stat] || a.rule.stat;
+    const qual = seen[base] > 1
+      ? [a.rule.minMinutes ? `≥${a.rule.minMinutes}′` : null,
+         a.rule.per && a.rule.per !== 1 ? `per ${a.rule.per}` : null,
+        ].filter(Boolean).join(" ") || a.rule.mode || ""
+      : "";
+    return { label: qual ? `${base} (${qual})` : base, count: a.count, pts: a.pts };
+  });
 }
 
 function statBits(r) {
@@ -9650,6 +9693,17 @@ function renderLineup() {
     : total > need ? `${total} picked · ${need} needed`
     : `${total} of ${need} picked`) + keeper;
   $("lineup-count").className = "text-xs " + (ok ? "text-slate-400" : "text-danger");
+  /* Says whether the XI is legal, here, where it can be fixed. The team tab
+     warns you it is not; the editor only ever showed the shape and left you to
+     work out whether that shape was allowed. */
+  const vmsg = $("lineup-valid");
+  // Says WHY, not the numbers — those are already on the line above it.
+  vmsg.textContent = ok ? "✓ This XI is legal"
+    : counts.GK !== 1 ? "Pick exactly one keeper"
+    : total > need ? "Too many starters — move some to the bench"
+    : total < need ? "Not enough starters yet"
+    : "That shape isn't allowed in this league";
+  vmsg.className = "text-xs font-semibold mb-2 " + (ok ? "text-live" : "text-danger");
   const prim = $("lineup-primary"), sec = $("lineup-secondary");
   if (editing) {
     sec.textContent = "Discard changes";

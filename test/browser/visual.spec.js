@@ -296,3 +296,37 @@ test("Activity is one row of navigation, not two", async ({ page }) => {
       .filter((b) => ["Deals", "Planner", "Watchlist", "History"].includes(b.textContent.trim())).length);
   expect(rows, "the Trades pane is still drawing its own tab row").toBe(0);
 });
+
+test("the head-to-head card is legible on a phone", async ({ page }) => {
+  /* Twenty-two shirts on one 390px pitch cannot be legible at any type size:
+     chips nearly touched and names truncated throughout. A phone gets the two
+     XIs stacked; a wide screen keeps them facing, which is the card's idea. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLeague(page, { managers: 4, played: 3, h2h: true });
+
+  const read = () => page.evaluate(() => {
+    const me = myManager().id;
+    const other = S.managers.find((m) => m.id !== me).id;
+    openH2HFixture(managerHistory(me).rounds.slice(-1)[0].n, me, other);
+    const body = document.getElementById("recap-body");
+    const vis = (el) => el.getBoundingClientRect().height > 0;
+    return {
+      facing: [...body.querySelectorAll(".pitch-vs")].filter(vis).length,
+      plain: [...body.querySelectorAll(".pitch:not(.pitch-vs)")].filter(vis).length,
+      cut: [...body.querySelectorAll(".pp-name")]
+        .filter((el) => vis(el) && el.scrollWidth > el.clientWidth + 1).length,
+      eyebrow: body.querySelector(".eyebrow")?.textContent.trim(),
+    };
+  });
+
+  const phone = await read();
+  expect(phone.facing, "the phone still draws one facing pitch").toBe(0);
+  expect(phone.plain, "the phone does not draw two separate XIs").toBe(2);
+  expect(phone.cut, "names are still being cut off on the match card").toBe(0);
+  // ...and the score says whether it is settled.
+  expect(phone.eyebrow, `the header reads "${phone.eyebrow}"`).toMatch(/Final|In progress|Latest/);
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const desk = await read();
+  expect(desk.facing, "the wide layout lost its facing pitch").toBe(1);
+});
