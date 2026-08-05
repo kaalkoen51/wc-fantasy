@@ -9372,7 +9372,42 @@ async function pinHistory(mgrId) {
   if (!(S.stats || []).length) return false;          // nothing played to protect
   const now = Date.now();
   const snaps = snapshotsByManager()[mgrId] || [];
-  if (snaps.some((sn) => Date.parse(sn.effective_from) <= now)) return false;   // covered
+  /* First, ROUND-STAMP every played round that has no line-up of its own.
+
+     The single `now` pin below is not enough on its own, and the gap is how a
+     transfer still ended up in rounds that were played weeks before it. It
+     protects those rounds only through rosterAtFor's last two arms — "the
+     newest snapshot dated before kickoff", then "the earliest snapshot we
+     have" — and neither is a record of the round. Both are inferences from
+     timestamps, so both move when the timestamps do: a snapshot written for a
+     lock that has since been rescheduled (or, in the sandbox, a calendar
+     regenerated under the rows it left behind) can land BEFORE a round it was
+     never in force for, and then that round scores against it. And once any
+     past-dated snapshot exists the pin declined to write at all, so a manager
+     several transfers into a season had one guess covering the whole history.
+
+     A round key does not move. At this instant — before the change lands —
+     the live roster is provably the roster that round finished with, so
+     stamping it with the round's own key turns the inference into a record,
+     and no later reschedule, regeneration or transfer can reach it again.
+
+     Only rounds that would otherwise fall through are stamped. A round with
+     its own snapshot, or covered by a stamped EARLIER round (a line-up
+     persists until it is changed), already has a real answer — overwriting
+     that with today's squad would be the very rewrite this exists to stop. */
+  const stampedRanks = snaps.map((sn) => roundRank(sn.round_key)).filter((r) => r >= 0);
+  const ownKeys = new Set(snaps.map((sn) => sn.round_key).filter(Boolean));
+  let stamped = false;
+  for (const [key, firstKick] of playedRoundStarts()) {
+    if (ownKeys.has(key)) continue;
+    const target = roundRank(key);
+    if (target >= 0 && stampedRanks.some((r) => r <= target)) continue;
+    /* Dated a second before the round's first kickoff, so the timestamp arm
+       agrees with the round key rather than contradicting it -- and so the
+       rows sort into the season's own order for anything reading the list. */
+    if (await snapshotAt(mgrId, firstKick - 1000, key)) stamped = true;
+  }
+  if (snaps.some((sn) => Date.parse(sn.effective_from) <= now)) return stamped;   // covered
   /* NOT on the deletion list after all, and the reason is worth keeping.
 
      Phase 2 listed this beside restampSnapshots as compensating machinery to
@@ -9393,7 +9428,23 @@ async function pinHistory(mgrId) {
      safety net rather than a record of a round's line-up; keying it to the
      round in progress would hand matches played EARLIER that round the
      post-pin squad. It belongs on the timestamp path. */
-  return snapshotAt(mgrId, now);
+  await snapshotAt(mgrId, now);
+  return true;
+}
+
+/* Every round we have results for, with its first kickoff. Rounds are keyed by
+   the competition's own label; a stat row whose label matches no fixture has no
+   round to key on and keeps the timestamp path, which is what it had before. */
+function playedRoundStarts() {
+  const out = new Map();
+  for (const label of new Set((S.stats || []).map((r) => r.match_label))) {
+    const key = roundKeyOfLabel(label);
+    if (!key) continue;
+    const t = matchTimeFor(label);
+    if (!isFinite(t)) continue;
+    if (!out.has(key) || t < out.get(key)) out.set(key, t);
+  }
+  return out;
 }
 
 // Stamp a manager's squad for the NEXT lock. Called from every path that
@@ -9507,7 +9558,19 @@ async function repairLineupFor(mgrId) {
 async function snapshotRosters() {
   // A manual lock is still a lock, so it names the round it is locking for.
   // Null in a league with no fixtures at all, which keeps the timestamp path.
-  const roundKey = roundKeyLockedAt(S.fixtures || [], Date.now());
+  let roundKey = roundKeyLockedAt(S.fixtures || [], Date.now());
+  /* ...unless that round has already kicked off. roundKeyLockedAt answers with
+     the next round to start, and with the LAST round once none is upcoming --
+     a season that has run out of calendar, or a fixture list that has not been
+     re-pulled. Stamping there would file today's squad as the line-up for a
+     matchweek already played, and the round arm believes the newest row for a
+     round: one lock ritual after a transfer and the new player is in a round
+     he was never picked for. Unstamped, this stays on the timestamp path,
+     where a snapshot dated after kickoff cannot claim the round either. */
+  if (roundKey) {
+    const w = matchweeksOf(S.fixtures || []).find((x) => x.round === roundKey);
+    if (w && w.first <= Date.now()) roundKey = null;
+  }
   const rows = activeManagers().map((m) => ({
     league_id: S.league.id,
     manager_id: m.id,
