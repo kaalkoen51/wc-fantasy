@@ -59,7 +59,8 @@ const KO_ROUNDS = ["Round of 16", "Quarter-finals", "Semi-finals", "Final"];
 
 function seedLeague({ managers = 2, played = 3, quirk = null,
                       h2h = false, knockout = false, claims = 0,
-                      predraft = false, benchSub = false } = {}) {
+                      predraft = false, benchSub = false,
+                      missingStarters = 0 } = {}) {
   const now = Date.now();
   const tables = {
     leagues: [{
@@ -106,6 +107,14 @@ function seedLeague({ managers = 2, played = 3, quirk = null,
   const benchStarter = benchSub
     ? draftedPicks.find((p) => p.manager_id === mgrIds[0] && !p.is_sub && p.position === "FWD")?.player_id
     : null;
+  /* missingStarters: a whole swathe of the named XI never turns out, which is
+     the ordinary state of a knockout round -- most of a squad's clubs are out
+     of the competition. A bench of four cannot cover eight of them, and the
+     round view has to stay a line-up you could field anyway. */
+  const absent = new Set([benchStarter].filter(Boolean));
+  for (const p of draftedPicks.filter((x) => x.manager_id === mgrIds[0] && !x.is_sub)
+                              .slice(0, missingStarters))
+    absent.add(p.player_id);
   const clubs = [...new Set(picked.map((p) => p.team))];
 
   /* Knockout mode names the rounds the way a cup does -- no matchweek number
@@ -150,17 +159,26 @@ function seedLeague({ managers = 2, played = 3, quirk = null,
        round view has to make legible -- and without a scenario that produces
        it, nothing here was ever drawn with a sub on the pitch. */
     for (const club of [f.home, f.away])
-      for (const p of picked.filter((x) =>
-        x.team === club && !(benchSub && x.player_id === benchStarter)))
+      for (const p of picked.filter((x) => x.team === club)) {
+        /* An absentee gets a row too, with appeared false — that is what a
+           puller writes when the club played and the player did not feature.
+           Writing NO row instead made the club itself invisible whenever the
+           absentee was the only pick there, and the app then could not tell a
+           no-show from a club with no fixture. The test was wrong, not the
+           code, and it looked like the code. */
+        const out = absent.has(p.player_id);
         tables.match_stats.push({
           league_id: LEAGUE, player_id: p.player_id, match_label: label,
-          appeared: true, minutes: 90, goals: p.position === "FWD" ? 1 : 0,
-          assists: p.position === "MID" ? 1 : 0,
-          clean_sheet: p.position !== "FWD" && (club === f.home ? f.away_score === 0 : f.home_score === 0),
-          yellow_cards: 0, red_cards: 0, saves: p.position === "GK" ? 3 : 0,
+          appeared: !out, minutes: out ? 0 : 90,
+          goals: !out && p.position === "FWD" ? 1 : 0,
+          assists: !out && p.position === "MID" ? 1 : 0,
+          clean_sheet: !out && p.position !== "FWD"
+            && (club === f.home ? f.away_score === 0 : f.home_score === 0),
+          yellow_cards: 0, red_cards: 0, saves: !out && p.position === "GK" ? 3 : 0,
           motm: false, penalty_saved: 0, penalty_missed: 0,
           team: club, round: n, round_key: f.round, fixture_id: f.fixture_id,
         });
+      }
   }
   // Queued waiver claims, as a manager leaves them before a window shuts.
   for (let c = 0; c < claims; c++) {
@@ -174,7 +192,7 @@ function seedLeague({ managers = 2, played = 3, quirk = null,
       in_player_id: target.player_id, in_player_name: target.name,
     });
   }
-  return { tables, fixtures, mgrIds, picked, clubs, benchStarter, roundNames: [...new Set(fixtures.map((f) => f.round))] };
+  return { tables, fixtures, mgrIds, picked, clubs, benchStarter, absent: [...absent], roundNames: [...new Set(fixtures.map((f) => f.round))] };
 }
 
 async function openLeague(page, opts = {}) {

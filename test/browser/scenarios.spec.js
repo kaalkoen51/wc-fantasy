@@ -438,13 +438,17 @@ test("a sub who came on is shown on the pitch, not left on the bench", async ({ 
     // most recent locked round, so a round's index counts back from the end.
     S.histIdxByMgr[me] = h.rounds.length - h.rounds.findIndex((r) => r.n === rn);
     renderBoard();
-    const el = document.getElementById("board-lb");
+    /* Scope to MY card. The Table tab draws a history pager per manager, each
+       with its own pitch and dugout, so the first .pitch on the page belongs
+       to whoever happens to be top of the table. */
+    const el = document.getElementById("hist-lb-" + me);
     const pitchEl = el.querySelector(".pitch");
     const names = [...(pitchEl?.querySelectorAll(".pp-name") || [])].map((n) => n.textContent.trim());
     const dug = el.querySelector(".dugout");
     const bench = [...(dug?.querySelectorAll(".sub-chip") || [])].map((c) => ({
       name: c.querySelector(".sub-name")?.textContent.trim(),
       mark: c.querySelector(".sub-no")?.textContent.trim(),
+      title: c.getAttribute("title") || "",
     }));
     return { names, html: pitchEl?.innerHTML || "", bench, benchText: el.textContent };
   }, [round.n]);
@@ -453,11 +457,15 @@ test("a sub who came on is shown on the pitch, not left on the bench", async ({ 
     xs.map((id) => shortName(S.playerById[id]?.name || "")), ids);
   const cameOnNames = await nameOf(round.cameOn);
   const [missedName] = await nameOf([seed.benchStarter]);
+  // The tooltip names them in full; the chips are shortened to fit.
+  const [cameOnFull] = await page.evaluate((xs) =>
+    xs.map((id) => S.playerById[id]?.name || ""), round.cameOn);
 
   for (const n of cameOnNames)
     expect(pitch.names, `"${n}" came on but is not on the pitch`).toContain(n);
   expect(pitch.html, "the sub who came on carries no marker").toContain("▲");
-  expect(pitch.benchText, "the bench does not say anyone came on").toMatch(/came on/);
+  expect(pitch.benchText, "the bench does not say a substitution happened")
+    .toMatch(/1 substitution/);
 
   /* The other half of the swap. A ▲ on its own says someone came up without
      ever saying who for -- so the starter who did not turn out has to come
@@ -470,8 +478,8 @@ test("a sub who came on is shown on the pitch, not left on the bench", async ({ 
     .toBeTruthy();
   expect(chip.mark, "the dropped starter is numbered like a sub, not marked")
     .toBe("▼");
-  expect(pitch.benchText, "the bench does not say anyone dropped out")
-    .toMatch(/did not play/);
+  expect(chip.title, "the bench chip does not say who replaced him")
+    .toBe(`Did not play — replaced by ${cameOnFull}`);
 
   expectCleanSweep(await sweepAllViews(page));
   await expectScreensAgree(page);
@@ -524,4 +532,54 @@ test("...and a knockout tie is named, not numbered", async ({ page }) => {
   }
 
   expectCleanSweep(await sweepAllViews(page));
+});
+
+test("a round nobody could be subbed into still draws a full XI", async ({ page }) => {
+  /* The state a real knockout round produces, and the one that broke: most of
+     a squad's clubs are out, so eight of the eleven named never turn out and a
+     bench of four cannot cover them. Treating every no-show as substituted
+     emptied the pitch -- two players on the field, fourteen on the bench,
+     "10 did not play". A line-up you could not field is not a record of one.
+
+     So a starter leaves the field only when somebody actually came ON for
+     them; the rest stay out there on nil. The pitch is always the shape that
+     was named. */
+  await openLeague(page, { managers: 2, played: 3, missingStarters: 8 });
+
+  const view = await page.evaluate(() => {
+    const me = myManager().id;
+    const h = managerHistory(me);
+    const r = h.rounds[h.rounds.length - 1];
+    S.histIdxByMgr[me] = 1;
+    showView("board"); setBoardTab("lb"); renderBoard();
+    // My card, not whoever is top of the table — see above.
+    const el = document.getElementById("hist-lb-" + me);
+    return {
+      named: managerPicks(me).filter((p) => !p.is_sub && p.position !== "TEAM").length,
+      missed: r.missed.length, cameOn: r.cameOn.length, swaps: r.swaps.length,
+      onPitch: el.querySelectorAll(".pitch .pp-name").length,
+      benchDown: [...el.querySelectorAll(".dugout .sub-no")]
+        .filter((n) => n.textContent.trim() === "▼").length,
+      // Still on the field, but visibly not part of the result.
+      dimmed: el.querySelectorAll(".pitch .pp.opacity-50").length,
+    };
+  });
+
+  expect(view.missed, "the scenario produced no absentees at all").toBeGreaterThan(4);
+  expect(view.missed, "every named starter would have to be replaced")
+    .toBeGreaterThan(view.cameOn);
+  expect(view.onPitch, "the pitch is not the eleven that were named")
+    .toBe(view.named);
+  /* Exactly as many came down as went up. This is the assertion that fails on
+     the old behaviour, where every absentee dropped to the bench. */
+  expect(view.benchDown, "the bench shows more replaced starters than substitutions")
+    .toBe(view.swaps);
+  /* The ones nobody could come on for are still out there, and they have to
+     LOOK it -- eight players drawn identically to the three who actually
+     played would be a line-up that lies about the round. */
+  expect(view.dimmed, "the starters who never played are drawn as if they had")
+    .toBe(view.missed - view.swaps);
+
+  expectCleanSweep(await sweepAllViews(page));
+  await expectScreensAgree(page);
 });

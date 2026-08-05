@@ -5318,8 +5318,33 @@ function managerHistory(mgrId) {
       const missed = shown
         .filter((e) => !e.is_sub && e.position !== "TEAM" && missedRound(e, rnd))
         .map((e) => e.player_id);
+      /* Which sub replaced which starter, paired one for one.
+
+         A starter leaves the field ONLY when somebody actually came on for
+         them. Marking every no-show as substituted emptied the pitch: in a
+         World Cup round most clubs are not playing at all, so ten of eleven
+         "missed" and the round drew two players and a bench of fourteen. A
+         line-up that cannot be fielded is not a record of what happened.
+
+         Same position first, because that is how the sub engines choose --
+         fixedRoundSubs only ever activates a like-for-like cover, and the
+         uncapped rule counts a sub only where a starter in THEIR position
+         missed. The any-position fallback exists for flex formations, where a
+         bench player really can cover a different role; in a fixed formation
+         there is nothing left for it to match. */
+      const posOf = new Map(shown.map((e) => [e.player_id, e.position]));
+      const spare = missed.slice();
+      const take = (pred) => {
+        const i = spare.findIndex(pred);
+        return i === -1 ? null : spare.splice(i, 1)[0];
+      };
+      const swaps = [];
+      for (const on of cameOn) {
+        const off = take((id) => posOf.get(id) === posOf.get(on)) ?? take(() => true);
+        if (off) swaps.push({ off, on });
+      }
       return { n: rnd, dates: [...periodDates[rnd]].sort(), items: roundItems,
-        cameOn, missed,
+        cameOn, missed, swaps,
         subtotal: roundItems.reduce((s, it) => s + (it.pts || 0), 0) };
     });
 
@@ -5704,13 +5729,23 @@ function lineupRowHtml(it, mgrId, former, opts = {}) {
    so it is kept — it just isn't the first thing you meet any more. */
 function squadBoardHtml(items, mgrId, opts = {}) {
   const { roundMode = false, curView = false, order = [],
-          cameOn = [], missed = [] } = opts;
+          cameOn = [], missed = [], swaps = [] } = opts;
   /* A past round draws the squad that PLAYED, not the one that was named: a
-     bench player whose points counted goes onto the pitch with a ▲, and a
-     starter who never turned out is marked. Without this the only clue that a
-     sub had come up was a number on the bench that did not obviously belong
-     to anything. Empty for the live view, which has no result yet. */
+     bench player who came on goes onto the pitch with a ▲ and the starter he
+     replaced comes down with a ▼, so the swap reads as a pair. Without this
+     the only clue that a sub had come up was a number on the bench that did
+     not obviously belong to anything.
+
+     But the pitch keeps its shape. Only a starter somebody actually came on
+     FOR leaves it; one nobody could cover for stays out there, dimmed, on
+     whatever they scored, which is nil. That is a line-up you could field,
+     and it is the honest picture: in a knockout round most of a squad's clubs
+     are not playing, and a bench of four cannot replace ten of them.
+
+     All empty for the live view, which has no result yet. */
   const cameOnSet = new Set(cameOn), missedSet = new Set(missed);
+  const offFor = new Map(swaps.map((s) => [s.on, s.off]));   // sub -> starter
+  const onFor = new Map(swaps.map((s) => [s.off, s.on]));    // starter -> sub
   const mgr = S.managers.find((m) => m.id === mgrId);
   const isPlayer = (it) => it.entry.position && it.entry.position !== "TEAM"
     && it.entry.slot !== "WIN" && it.entry.slot !== "—";
@@ -5719,37 +5754,43 @@ function squadBoardHtml(items, mgrId, opts = {}) {
   const ptsOf = (it) => (roundMode ? it.roundPts : it.pts);
   const anyPts = play.some((it) => (ptsOf(it) || 0) > 0);
 
-  const onPitch = (it) => cameOnSet.has(it.entry.player_id)
-    || (!it.entry.is_sub && !missedSet.has(it.entry.player_id));
+  const nameOf = (pid) => play.find((it) => it.entry.player_id === pid)?.entry.player_name || "";
+  const onPitch = (it) => offFor.has(it.entry.player_id)
+    || (!it.entry.is_sub && !onFor.has(it.entry.player_id));
   const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
   for (const it of play) {
     const e = it.entry;
     if (!onPitch(it) || !byPos[e.position]) continue;
-    const up = cameOnSet.has(e.player_id);
+    const up = offFor.has(e.player_id);
+    // A starter still out there who never turned out: nobody was available to
+    // come on for them, so they stay in the shape on nil rather than vanishing.
+    const out = !e.is_sub && missedSet.has(e.player_id);
     byPos[e.position].push({
       id: e.player_id, player_id: e.player_id, name: e.player_name, team: e.team,
       opp: oppShort(e.team),
       note: anyPts ? (ptsOf(it) || 0) : undefined,
+      dim: out,
       // The sub badge wins over the captain armband: coming on is the rarer
       // fact and the one being asked about.
       badge: up ? "▲" : (!captainEnabled() ? ""
            : mgr?.captain_id === e.player_id ? "C"
            : mgr?.vice_id === e.player_id ? "V" : ""),
-      title: up ? "Came on from the bench" : undefined,
+      title: up ? `Came on for ${nameOf(offFor.get(e.player_id))}`
+           : out ? "Did not play — no substitute available" : undefined,
     });
   }
   // Locked rounds are snapshotted in sub order already; the live view sorts by
   // the manager's saved bench_order so the pitch and the picker agree.
   const rank = new Map(order.map((id, i) => [id, i]));
-  const subs = play.filter((it) => it.entry.is_sub && !cameOnSet.has(it.entry.player_id));
+  const subs = play.filter((it) => it.entry.is_sub && !offFor.has(it.entry.player_id));
   if (order.length) subs.sort((a, b) =>
     (rank.has(a.entry.id) ? rank.get(a.entry.id) : 1e6)
     - (rank.has(b.entry.id) ? rank.get(b.entry.id) : 1e6));
-  /* A named starter who did not turn out comes DOWN here, after the bench, so
-     the swap reads as a pair: someone went up with a ▲, someone came down with
-     a ▼. Leaving them on the pitch dimmed said "a sub came on" without ever
-     saying who for. */
-  const dropped = play.filter((it) => !it.entry.is_sub && missedSet.has(it.entry.player_id));
+  /* The starter who was replaced comes DOWN here, after the bench, so the swap
+     reads as a pair: someone went up with a ▲, someone came down with a ▼.
+     Leaving them on the pitch said "a sub came on" without ever saying who
+     for — which was the whole complaint. */
+  const dropped = play.filter((it) => onFor.has(it.entry.player_id));
 
   const rowOpts = { roundMode, curView };
   return `
@@ -5757,8 +5798,8 @@ function squadBoardHtml(items, mgrId, opts = {}) {
     ${(subs.length || dropped.length) ? `<div class="mt-2">
       <div class="flex items-baseline justify-between gap-2 mb-1">
         <span class="eyebrow">Bench · ${subs.length + dropped.length}</span>
-        <span class="text-[11px] text-slate-400">${cameOnSet.size
-          ? `${cameOnSet.size} came on ▲ · ${dropped.length} did not play ▼`
+        <span class="text-[11px] text-slate-400">${swaps.length
+          ? `${swaps.length} substitution${swaps.length === 1 ? "" : "s"} ▲▼`
           : "in the order they come on"}</span>
       </div>
       ${dugoutHtml([
@@ -5766,12 +5807,19 @@ function squadBoardHtml(items, mgrId, opts = {}) {
           player_id: it.entry.player_id, name: it.entry.player_name,
           team: it.entry.team, position: it.entry.position,
           note: anyPts ? (ptsOf(it) || 0) : undefined,
+          /* A sub whose points counted without displacing anyone — only
+             possible with uncapped subs, where several bench players in a
+             position can all count against one no-show. Marked rather than
+             hidden: their points are in the round's total either way. */
+          ...(cameOnSet.has(it.entry.player_id)
+            ? { mark: "▲", title: "Points counted this round" } : {}),
         })),
         ...dropped.map((it) => ({
           player_id: it.entry.player_id, name: it.entry.player_name,
           team: it.entry.team, position: it.entry.position,
           note: anyPts ? (ptsOf(it) || 0) : undefined,
-          mark: "▼", dim: true, title: "Named to start, did not play",
+          mark: "▼", dim: true,
+          title: `Did not play — replaced by ${nameOf(onFor.get(it.entry.player_id))}`,
         })),
       ], { tapAttr: "data-hp" })}
     </div>` : ""}
@@ -5823,7 +5871,8 @@ function historyViewHtml(mgrId) {
         </details>` : "");
   } else {
     body = squadBoardHtml(round.items, mgrId,
-      { cameOn: round.cameOn || [], missed: round.missed || [] });
+      { cameOn: round.cameOn || [], missed: round.missed || [],
+        swaps: round.swaps || [] });
   }
 
   const roundSubtotal = h.eliminated ? 0
@@ -9160,9 +9209,10 @@ function dugoutHtml(subs, opts = {}) {
        a named starter who did not turn out and has been moved down here for a
        past round. The second is marked rather than numbered -- "3rd off the
        bench" is a lie about someone who was picked to start. */
+    const markCls = e.mark === "▲" ? " sub-no-up" : e.mark ? " sub-no-mark" : "";
     return `<button type="button" ${tap}${e.title ? ` title="${esc(e.title)}"` : ""}
       class="sub-chip ${e.dim ? "opacity-50" : ""}">
-      <span class="sub-no${e.mark ? " sub-no-mark" : ""}">${e.mark ? esc(e.mark) : i + 1}</span>
+      <span class="sub-no${markCls}">${e.mark ? esc(e.mark) : i + 1}</span>
       <span class="relative inline-flex">
         ${avatarHtml(e.player_id, e.team, "w-9 h-9")}
         ${teamCrestHtml(e.team) ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${teamCrestHtml(e.team, "w-3 h-3")}</span>` : ""}
