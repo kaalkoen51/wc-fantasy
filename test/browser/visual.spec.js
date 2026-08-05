@@ -202,3 +202,44 @@ test("the collapsed matchday summary is not itself truncated", async ({ page }) 
       .map((el) => ({ text: el.textContent.trim(), need: el.scrollWidth, got: el.clientWidth })));
   expect(cut, `collapsed summary truncated: ${JSON.stringify(cut)}`).toEqual([]);
 });
+
+test("desktop uses the width, and only one pane at a time", async ({ page }) => {
+  /* At 1280px the app was a centred 740px column with about 45% of the viewport
+     left empty, still wearing the phone's bottom bar. */
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openLeague(page, { managers: 4, played: 3, h2h: true });
+  await page.evaluate(() => { showView("board"); setBoardTab("home"); });
+
+  const geom = await page.evaluate(() => {
+    const nav = document.getElementById("bottom-nav").getBoundingClientRect();
+    const squad = document.querySelector("#board-home > .home-squad").getBoundingClientRect();
+    const ident = document.querySelector("#board-home > div").getBoundingClientRect();
+    return { navW: Math.round(nav.width), navH: Math.round(nav.height),
+             navLeft: Math.round(nav.left),
+             squadLeft: Math.round(squad.left), identLeft: Math.round(ident.left),
+             pageH: document.body.scrollHeight };
+  });
+  // A rail down the left, not a bar across the bottom.
+  expect(geom.navLeft, "the navigation is not against the left edge").toBe(0);
+  expect(geom.navW, "the navigation is still full width").toBeLessThan(300);
+  expect(geom.navH, "the navigation is not full height").toBeGreaterThan(700);
+  // Two columns: the squad sits left of everything it is read alongside.
+  expect(geom.squadLeft, "the squad is not in its own left column")
+    .toBeLessThan(geom.identLeft);
+  // And the whole team page fits a laptop screen.
+  expect(geom.pageH, `the team page is ${geom.pageH}px tall on a 900px screen`)
+    .toBeLessThan(1100);
+
+  /* Switching tabs must actually switch. These grid rules outrank .hidden, so
+     the pane that should be gone can stay on screen — which is exactly what
+     the first version of this did. */
+  for (const tab of ["lb", "rosters", "stats", "trades"]) {
+    await page.evaluate((t) => setBoardTab(t), tab);
+    const shown = await page.evaluate(() =>
+      [...document.querySelectorAll("[id^='board-']")]
+        .filter((el) => el.id !== "board-banner" && el.id !== "board-subtabs"
+                     && el.getBoundingClientRect().height > 0)
+        .map((el) => el.id));
+    expect(shown, `on ${tab} these panes are all visible at once`).toHaveLength(1);
+  }
+});

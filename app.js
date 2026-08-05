@@ -317,7 +317,11 @@ function showView(name) {
   if (exit) exit.classList.toggle("hidden",
     !["board", "lobby", "draft", "admin"].includes(name));
   const nav = $("bottom-nav");
-  if (nav) nav.classList.toggle("hidden", name !== "board" || preDraftBrowsing());
+  if (nav) {
+    const off = name !== "board" || preDraftBrowsing();
+    nav.classList.toggle("hidden", off);
+    document.body.classList.toggle("has-rail", !off);
+  }
   const gear = $("hdr-admin");
   if (gear) gear.classList.toggle("hidden",
     !(isAdmin() && ["board", "lobby", "draft"].includes(name)));
@@ -6663,12 +6667,13 @@ function renderHomeTab() {
      it is the only part that is ever urgent. The old order buried the crest
      below two calls to action and repeated the lineup button twice. */
   const lineupCtaShown = matchdayCtaAct() === "lineup";
-  const squadHtml = `
+  const squadHtml = `<div class="home-squad space-y-3">
     ${me.eliminated || lineupCtaShown ? "" : `<button id="home-lineup" class="w-full bg-slate-800 border ${lineupOpen() ? "border-wcgold/60 text-wcgold" : "border-slate-700 text-slate-400"} rounded-xl py-2.5 text-sm font-semibold">${
       lineupOpen() ? "Pick my team for the next games"
                    : (autoWindowsEnabled() ? "🔒 " + lineupLockMessage()
                                            : "🔒 Lineup locked — opens with the trading window")}</button>`}
-    <div id="hist-home-${me.id}" class="rounded-xl border border-slate-700 bg-slate-900 p-3"></div>`;
+    <div id="hist-home-${me.id}" class="rounded-xl border border-slate-700 bg-slate-900 p-3"></div>
+  </div>`;
   box.innerHTML = `
     <div class="rounded-xl border bg-slate-900 p-3 flex items-center gap-3"
          style="border-color:${managerColor(me)}55">

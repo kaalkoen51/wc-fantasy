@@ -319,6 +319,50 @@
 
   /* Keep the bottom bar clear of the iOS home indicator. */
   #bottom-nav { padding-bottom: env(safe-area-inset-bottom); }
+
+  /* ---- desktop: a left rail and a two-column body -----------------------
+     At 1280px the app was a centred 740px column with about 45% of the
+     viewport left as empty ground on either side, and it kept the phone's
+     bottom bar across the full width. Above 1024px the navigation becomes a
+     rail, the content gets the room back, and the team page splits: the pitch
+     on the left, everything you read about it on the right.
+
+     .has-rail is set by showView() rather than :has(), so the padding can
+     never be left behind on a screen that has no navigation. */
+  @media (min-width: 1024px) {
+    #bottom-nav { top: 0; bottom: 0; right: auto; width: 14rem; z-index: 10;
+      border-top: 0; border-right: 1px solid #1e293b;
+      padding-top: 4.25rem; padding-bottom: 0; overflow-y: auto; }
+    #bottom-nav > div { max-width: none; margin: 0; grid-template-columns: 1fr;
+      align-content: start; gap: 2px; padding: 8px; }
+    #bottom-nav .nav-btn { flex-direction: row; justify-content: flex-start;
+      gap: 10px; padding: 10px 12px; font-size: 14px; border-radius: 8px; }
+    #bottom-nav .nav-btn > span:first-child { font-size: 18px; }
+    #bottom-nav .nav-btn.text-wcgold { background: rgba(255,199,44,.10); }
+    #nav-dot { position: static; margin-left: auto; }
+    /* Only the content shifts. The header stays full-bleed so the wordmark sits
+       over the rail rather than leaving a dead corner beside it. */
+    body.has-rail main { margin-left: 14rem; max-width: 66rem; padding-bottom: 2rem; }
+    body.has-rail header .max-w-3xl { max-width: none; padding-left: 1.25rem; }
+
+    /* The team page, in two columns. Source order is untouched so the phone
+       still reads identity → deadline → opponent → squad; only the squad block
+       is lifted into a column of its own, where the pitch has room to breathe. */
+    /* row-gap 0 and min-content rows matter: the squad spans far more rows than
+       exist so it can run the full height of the column, and with a row gap
+       every unused row would still cost a gap — which is how the first version
+       of this produced a 2890px page for 720px of content. */
+    /* :not(.hidden) is load-bearing, not tidiness. `body.has-rail #board-home`
+       outranks Tailwind's `.hidden`, so without it these panes stayed on screen
+       after a tab change and the team page rendered with the squads list under
+       it. Specificity beat the thing that does the hiding. */
+    body.has-rail #board-home:not(.hidden) { display: grid; column-gap: 1rem; row-gap: 0;
+      align-items: start; grid-auto-rows: min-content;
+      grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
+    body.has-rail #board-home > * { grid-column: 2; margin-bottom: 1rem; }
+    body.has-rail #board-home > .home-squad { grid-column: 1; grid-row: 1 / span 99;
+      margin-bottom: 0; }
+  }
   /* A toast raised clear of the bottom navigation or an open sheet's footer,
      so it never covers the button it is reporting on. */
   #toast.toast-lifted { bottom: calc(5.5rem + env(safe-area-inset-bottom)); }
