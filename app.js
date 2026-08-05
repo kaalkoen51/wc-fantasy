@@ -1952,6 +1952,7 @@ async function startDraft() {
 S.poolFilter = "ALL";
 S.poolSearch = "";
 S.poolShown = 40;    // how deep the draft pool list is currently drawn
+S.bracketRound = null;   // which knockout round the phone pager is showing
 S.poolSort = "";            // draft pool: sort by a stat ("" = default order)
 S.bannerDayOffset = 0;      // matchday banner: 0 = default day, -1 = prev, etc.
 S.poolShortlistOnly = false;
@@ -2865,7 +2866,14 @@ function renderRosters(containerId, force) {
               style="background:${managerColor(m)}22;border:1px solid ${managerColor(m)}88">${managerMark(m)}</span>
         <span>${esc(m.name)}${
         m.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""
-      }${m.draft_position ? ` <span class="text-xs text-slate-400">· draft pos ${m.draft_position}</span>` : ""}</span></summary>
+      }${m.draft_position ? ` <span class="text-xs text-slate-400">· draft pos ${m.draft_position}</span>` : ""}</span>
+        <!-- Closed, these rows said only a name and a draft position. The two
+             numbers you would open a card to find now sit on the header, so the
+             tab reads as an overview before you expand anything. -->
+        <span class="ml-auto shrink-0 text-xs text-slate-400">${
+          (byMgr[m.id] || []).length} players</span>
+        <span class="shrink-0 w-12 text-right font-mono font-bold text-wcgold">${
+          computeScores().find((r) => r.manager.id === m.id)?.total ?? 0}</span></summary>
       ${containerId === "board-rosters" && m.id === me?.id
         ? `<div class="px-4 pb-2 flex gap-2">
              <button id="lineup-open" class="flex-1 bg-slate-800 border border-wcgold/60 text-wcgold rounded-lg py-2 text-sm font-semibold">Pick my team (starters &amp; subs)</button>
@@ -6973,15 +6981,38 @@ function renderBracket() {
       <div class="text-xs uppercase tracking-wide text-slate-400 font-semibold text-center mb-1 px-1">${rd.label}</div>
       <div class="kb-round">${body}</div></div>`;
   };
+  /* On a phone, one round at a time. A 32-team bracket cannot fit 390px, and
+     the sideways version fitted about two columns with country names clipped
+     in both — the instruction "scroll sideways" was doing work the layout
+     should. The pager is the same control the rest of the app uses. Wide
+     screens keep the bracket, because its shape is most of its meaning. */
+  const bi = Math.min(rounds.length - 1, Math.max(0, S.bracketRound ?? rounds.length - 1));
+  S.bracketRound = bi;
+  const one = rounds[bi];
   box.innerHTML = `
     <p class="text-xs text-slate-400">Winners flow left → right; the lines join the two ties that feed each
-      next-round match. Scores update live during games and after the daily fixtures sync. Scroll sideways.</p>
-    <div class="overflow-x-auto pb-2"><div class="kb">${
+      next-round match. Scores update live during games and after the daily fixtures sync.</p>
+    <div class="kb-phone lg:hidden space-y-2">
+      <div class="flex items-center gap-1">
+        <button data-kbnav="-1" ${bi <= 0 ? "disabled" : ""} class="px-2 py-1 rounded text-lg ${
+          bi <= 0 ? "text-slate-700" : "text-wcgold hover:bg-slate-800"}">‹</button>
+        <div class="flex-1 text-center text-sm font-semibold">${esc(one.label)}</div>
+        <button data-kbnav="1" ${bi >= rounds.length - 1 ? "disabled" : ""} class="px-2 py-1 rounded text-lg ${
+          bi >= rounds.length - 1 ? "text-slate-700" : "text-wcgold hover:bg-slate-800"}">›</button>
+      </div>
+      <div class="space-y-1.5">${one.matches.map((m) =>
+        `<div class="rounded-xl border border-slate-700 bg-slate-900 p-2">${bracketMatchHtml(m)}</div>`).join("")}</div>
+    </div>
+    <div class="hidden lg:block overflow-x-auto pb-2"><div class="kb">${
       rounds.map((rd, i) => col(rd, i === rounds.length - 1)).join("")}</div></div>
     ${third ? `<div class="rounded-xl border border-slate-800 bg-slate-900/50 p-2 mt-1">
       <div class="text-xs uppercase tracking-wide text-slate-400 font-semibold mb-1">Third place</div>
       ${bracketMatchHtml(third)}
     </div>` : ""}`;
+  box.querySelectorAll("[data-kbnav]").forEach((b) => b.onclick = () => {
+    S.bracketRound = bi + Number(b.dataset.kbnav);
+    renderBracket();
+  });
 }
 
 // Today's (or the next matchday's) fixtures with SA kickoff times, plus an
@@ -7735,6 +7766,29 @@ function renderFixturesTab() {
   };
 
   const state = rnd < played ? "final" : rnd === played ? "in progress" : "upcoming";
+  /* Last round, this round and next, rather than one behind a pager. In a
+     four-manager league the tab was two rows of content, all of it below the
+     fold, and "what's coming" took a tap. The pager stays for anything older.
+     Only the round being paged to gets the full cards; its neighbours are a
+     compact line each, so a ten-manager league does not become a long scroll. */
+  const near = [rnd - 1, rnd + 1].filter((r) => r >= 1 && r <= total);
+  const peek = (r) => {
+    const { fixtures: fs, placement: pl } = h2hRoundFixtures(r);
+    if (pl) return "";
+    const line = fs.map((f) => {
+      const a = nameOf(f.home_manager_id), b = nameOf(f.away_manager_id);
+      if (!a) return "";
+      if (!b) return `${esc(a.name)} (bye)`;
+      const sa = scores[a.id]?.[r - 1], sb = scores[b.id]?.[r - 1];
+      return sa != null && sb != null
+        ? `${esc(a.name)} ${sa}–${sb} ${esc(b.name)}`
+        : `${esc(a.name)} v ${esc(b.name)}`;
+    }).filter(Boolean).join(" · ");
+    return line ? `<button data-fixgo="${r}" class="w-full text-left rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-1.5">
+      <span class="text-[11px] uppercase tracking-wide text-slate-500">Round ${r}${
+        r < played ? " · final" : r === played ? " · in progress" : " · upcoming"}</span>
+      <span class="block truncate text-xs text-slate-400">${line}</span></button>` : "";
+  };
   box.innerHTML = `
     <div class="flex items-center gap-1">
       <button data-fixnav="-1" ${rnd <= 1 ? "disabled" : ""} class="px-2 py-1 rounded text-lg ${
@@ -7750,8 +7804,13 @@ function renderFixturesTab() {
       ? `<p class="rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm text-slate-400">⚔️ Rumble round — everyone is scored against the whole league by placement, so there are no pairings.</p>`
       : (fixtures.map(row).join("")
         || '<p class="rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm text-slate-400">No fixtures for this round.</p>')}
-    ${rumble && !placement ? '<p class="text-xs text-slate-400 text-center">⚔️ Rumble round — everyone plays everyone.</p>' : ""}`;
+    ${rumble && !placement ? '<p class="text-xs text-slate-400 text-center">⚔️ Rumble round — everyone plays everyone.</p>' : ""}
+    ${near.length ? `<div class="space-y-1.5 pt-1">${near.map(peek).join("")}</div>` : ""}`;
 
+  box.querySelectorAll("[data-fixgo]").forEach((b) => b.onclick = () => {
+    S.fixRound = Number(b.dataset.fixgo);
+    renderFixturesTab();
+  });
   box.querySelectorAll("[data-fixnav]").forEach((b) => b.onclick = () => {
     S.fixRound = rnd + Number(b.dataset.fixnav);
     renderFixturesTab();
@@ -7834,12 +7893,20 @@ function h2hStandingsHtml(me) {
     </details>`;
   }).join("");
 
+  /* The legend sits directly over the numbers it names, aligned to them. In the
+     section header it was about 200px up and to the right of the column it
+     described, so by the third row you had forgotten which figure was which. */
   return `<div class="space-y-2">
     <div class="flex items-baseline justify-between gap-2 px-1">
       <span class="text-sm font-semibold">Head-to-head log</span>
-      <span class="eyebrow">pts · W-D-L · for:against</span>
+      <span class="text-[11px] text-slate-500">${played} round${played === 1 ? "" : "s"} played</span>
     </div>
-    <div class="text-[11px] text-slate-500 px-1 -mt-1">${played} round${played === 1 ? "" : "s"} played</div>
+    ${body ? `<div class="flex items-center gap-2 px-3 pb-1 border-b border-slate-800 text-[10px] uppercase tracking-wide text-slate-500">
+      <span class="w-5 shrink-0">#</span>
+      <span class="w-8 shrink-0"></span>
+      <span class="min-w-0 flex-1">manager · form</span>
+      <span class="shrink-0 text-right leading-tight">pts<br>w-d-l<br>for:against</span>
+    </div>` : ""}
     ${body || '<p class="rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm text-slate-400">No completed rounds yet.</p>'}
     <details class="rounded-xl border border-slate-800 bg-slate-900/40">
       <summary class="px-3 py-2 cursor-pointer select-none text-xs uppercase tracking-wide text-slate-400">How the log is scored</summary>
@@ -8691,7 +8758,7 @@ function renderDreamTeam(round, per90, worst) {
     <p class="text-xs text-slate-400">${blurb} The name under each shirt is who owns them${
       flexN ? "; Ⓕ marks a flex slot" : ""}.</p>
     ${picked
-      ? pitchHtml(byPos, { tapAttr: "data-sp", crests: true })
+      ? `<div class="${worst ? "pitch-cold" : ""}">${pitchHtml(byPos, { tapAttr: "data-sp", crests: true })}</div>`
       : '<p class="rounded-xl border border-slate-700 bg-slate-900 p-4 text-sm text-slate-400">Not enough minutes logged yet — this fills in once matches are played.</p>'}`;
   $("stats-dream").querySelectorAll("[data-sp]").forEach((b) => b.onclick = () =>
     openPlayerDetail(b.dataset.sp));
@@ -8807,6 +8874,17 @@ function renderStatsTab() {
   if (!scouting && S.statsPer90) active.push(["per90", "per 90"]);
   if (!scouting && S.statsUnpicked) active.push(["unpicked", "unpicked only"]);
   if (!scouting && S.statsHideKO) active.push(["hideko", "hiding knocked-out"]);
+  /* The count on the folded summary, so "something is filtering this list" is
+     legible without opening it. Search is excluded: its box is always on
+     screen, so counting it would double-report the one filter you can see. */
+  const cnt = $("stats-morecount");
+  const folded = active.filter(([k]) => k !== "search").length;
+  cnt.classList.toggle("hidden", !folded);
+  cnt.textContent = folded;
+  /* Dream and Nightmare have no list to filter, only a scope, so the whole
+     block would otherwise sit above the sentence that says what you are
+     looking at. */
+  $("stats-more").classList.toggle("hidden", scouting);
   const fbar = $("stats-active");
   fbar.classList.toggle("hidden", !active.length);
   fbar.innerHTML = active.length ? `
@@ -8922,7 +9000,7 @@ function renderStatsTab() {
     return `<li class="flex items-center gap-1">
       ${starHtml(p.player_id)}
       <button data-sp="${esc(p.player_id)}" class="flex-1 min-w-0 flex items-center gap-2 py-2 text-left">
-        <span class="text-slate-400 font-mono w-6 shrink-0">${q ? "" : i + 1 + "."}</span>
+        <span class="text-slate-400 font-mono w-8 shrink-0 tabular-nums">${q ? "" : i + 1 + "."}</span>
         ${avatarHtml(p.player_id, p.team)}
         <span class="min-w-0 flex-1">
           <!-- The name yields, the status badge doesn't: a half-rendered "S…"
