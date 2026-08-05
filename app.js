@@ -6127,10 +6127,7 @@ function h2hFixtureCardHtml(me) {
       <span class="font-bold scoreboard ${lead}">${live ? `${a} – ${b}` : "vs"}</span>
       <span class="min-w-0 overflow-hidden flex justify-end">${managerTag(opp)}</span>
     </div>
-    ${live ? `<div class="mt-2 h-1.5 rounded-full bg-slate-800 overflow-hidden flex">
-      <span style="width:${(a / total) * 100}%;background:${managerColor(me)}"></span>
-      <span style="width:${(b / total) * 100}%;background:${managerColor(opp)}"></span>
-    </div>` : ""}
+    ${live ? scoreBarHtml(a, b, managerColor(me), managerColor(opp), { cls: "mt-2" }) : ""}
   </button>`;
 }
 
@@ -7813,10 +7810,7 @@ function renderFixturesTab() {
           live ? `${sa} – ${sb}` : "vs"}</span>
         <span class="min-w-0 overflow-hidden flex justify-end ${win(sb, sa)}">${managerTag(b)}</span>
       </div>
-      ${live ? `<div class="mt-1.5 h-1.5 rounded-full bg-slate-800 overflow-hidden flex">
-        <span style="width:${(sa / Math.max(1, sa + sb)) * 100}%;background:${managerColor(a)}"></span>
-        <span style="width:${(sb / Math.max(1, sa + sb)) * 100}%;background:${managerColor(b)}"></span>
-      </div>` : ""}
+      ${live ? scoreBarHtml(sa, sb, managerColor(a), managerColor(b)) : ""}
       <div class="mt-1 text-[11px] ${mine ? "text-wcgold" : "text-slate-400"}">${
         live ? "View line-ups & points →" : "View line-ups →"}</div>
     </button>`;
@@ -7915,6 +7909,32 @@ const H2H_SORTS = [
 const H2H_SORT_TAG = {
   W: "wins", L: "losses", PF: "for", PA: "against", diff: "diff",
 };
+
+/* The head-to-head score bar.
+
+   Two managers can pick the same colour — nothing stops them, and nothing
+   should — and when they do, the bar rendered as one unbroken block: 55–13
+   looked exactly like a single bar with no boundary, so the split it exists to
+   show was invisible. Reported from the app.
+
+   So the boundary is drawn, not implied by a colour change. A notch in the
+   card's own background separates the two segments whatever colours they wear,
+   and a hairline ring keeps the track's ends legible against the card. A
+   segment on zero still shows its notch, which reads correctly as "nothing
+   this side".
+
+   Both call sites share this, because they were the same markup twice and
+   would have drifted. */
+function scoreBarHtml(aVal, bVal, aColor, bColor, opts = {}) {
+  const total = Math.max(1, (aVal || 0) + (bVal || 0));
+  const pct = (v) => ((v || 0) / total) * 100;
+  return `<div class="${opts.cls || "mt-1.5"} h-1.5 rounded-full bg-slate-800 overflow-hidden flex
+    ring-1 ring-inset ring-white/10">
+    <span class="shrink-0" style="width:${pct(aVal)}%;background:${aColor};
+      border-right:2px solid rgb(15 23 42)"></span>
+    <span class="shrink-0" style="width:${pct(bVal)}%;background:${bColor}"></span>
+  </div>`;
+}
 
 function h2hStandingsHtml(me) {
   const { rows, order } = h2hStandings();

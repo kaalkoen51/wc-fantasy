@@ -330,3 +330,40 @@ test("the head-to-head card is legible on a phone", async ({ page }) => {
   const desk = await read();
   expect(desk.facing, "the wide layout lost its facing pitch").toBe(1);
 });
+
+test("the score bar shows its split even when both managers share a colour", async ({ page }) => {
+  /* Nothing stops two managers picking the same colour, and nothing should —
+     but the bar drew two segments with no boundary, so 55–13 rendered as one
+     unbroken block and the split it exists to show was invisible. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLeague(page, { managers: 4, played: 3, h2h: true });
+
+  const read = await page.evaluate(() => {
+    for (const m of S.managers) m.color = "#C8102E";   // the reported case
+    showView("board"); setBoardTab("fixtures"); renderBoard();
+    const bar = document.querySelector("#board-fixtures .rounded-full.flex");
+    if (!bar) return null;
+    const [a, b] = [...bar.children];
+    const ca = getComputedStyle(a), cb = getComputedStyle(b);
+    return {
+      fillsMatch: ca.backgroundColor === cb.backgroundColor,
+      dividerWidth: parseFloat(ca.borderRightWidth),
+      dividerColor: ca.borderRightColor,
+      fill: ca.backgroundColor,
+      widthA: parseFloat(a.getBoundingClientRect().width),
+      widthB: parseFloat(b.getBoundingClientRect().width),
+    };
+  });
+
+  expect(read, "no score bar rendered").not.toBeNull();
+  // The setup has to be the hard case, or this proves nothing.
+  expect(read.fillsMatch, "the two segments are different colours, so the test is easy")
+    .toBe(true);
+  expect(read.dividerWidth, "there is no divider between the two segments")
+    .toBeGreaterThan(1);
+  expect(read.dividerColor, "the divider is the same colour as the fill it separates")
+    .not.toBe(read.fill);
+  // Both sides still take their share of the track.
+  expect(read.widthA, "the left segment has no width").toBeGreaterThan(4);
+  expect(read.widthB, "the right segment has no width").toBeGreaterThan(4);
+});
