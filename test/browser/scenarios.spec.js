@@ -583,3 +583,50 @@ test("a round nobody could be subbed into still draws a full XI", async ({ page 
   expectCleanSweep(await sweepAllViews(page));
   await expectScreensAgree(page);
 });
+
+test("the head-to-head card reports the same match the standings do", async ({ page }) => {
+  /* One fixture, two screens, and they disagreed. The card added up the
+     STARTERS: a sub who came on scored for the log and not for the card, and
+     a team bonus counted for neither. It also drew the squad that was named,
+     so the substitution the round view now shows was invisible on the one
+     screen whose entire job is "what happened in this match".
+
+     benchSub makes a named starter miss, so there is a substitution to find. */
+  const seed = await openLeague(page,
+    { managers: 2, played: 3, h2h: true, benchSub: true });
+
+  const view = await page.evaluate(() => {
+    const me = myManager().id;
+    const other = S.managers.find((m) => m.id !== me).id;
+    const h = managerHistory(me);
+    const rnd = h.rounds[h.rounds.length - 1].n;
+    const round = h.rounds.find((r) => r.n === rnd);
+    openH2HFixture(rnd, me, other);
+    const body = document.getElementById("recap-body");
+    // The bottom half of the facing pitch is the manager the card was opened
+    // "for"; both halves are read, and the score line carries both numbers.
+    return {
+      rnd,
+      subtotal: round.subtotal,
+      swaps: round.swaps.length,
+      score: body.querySelector(".scoreboard")?.textContent.trim() || "",
+      pitchUp: body.querySelectorAll(".pitch .pp").length,
+      badges: body.innerHTML.split("▲").length - 1,
+      benchDown: [...body.querySelectorAll(".dugout .sub-no")]
+        .filter((n) => n.textContent.trim() === "▼").length,
+    };
+  });
+
+  expect(view.swaps, "the scenario produced no substitution to show")
+    .toBeGreaterThan(0);
+  /* The card's score for me is the round's own subtotal — the number the
+     standings, the leaderboard and the history pager all use. */
+  expect(view.score.split("–")[0].trim(), "the card scores the match differently from the log")
+    .toBe(String(view.subtotal));
+  expect(view.badges, "the substitute is not marked as having come on")
+    .toBeGreaterThanOrEqual(view.swaps);
+  expect(view.benchDown, "the replaced starter is not shown as replaced")
+    .toBe(view.swaps);
+
+  expectCleanSweep(await sweepAllViews(page));
+});

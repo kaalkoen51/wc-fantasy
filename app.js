@@ -6093,20 +6093,46 @@ function openH2HFixture(rnd, botId, topId) {
     const round = (managerHistory(m.id).rounds || []).find((r) => r.n === rnd);
     const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
     const bench = [];
-    let total = 0;
-    const add = (e, pts) => {
+    let total = 0, bonus = 0;
+    const add = (e, pts, extra) => {
       const chip = { id: e.player_id, player_id: e.player_id, name: e.player_name,
-        team: e.team, opp: oppShort(e.team), note: pts };
+        team: e.team, opp: oppShort(e.team), note: pts, ...extra };
       if (e.is_sub) bench.push({ ...chip, position: e.position, pts });
       else if (byPos[e.position]) byPos[e.position].push(chip);
     };
     if (round) {
+      /* The same substitutions the round view draws. This card used to show
+         the squad that was NAMED: a sub who came on stayed folded away in the
+         bench panel and the starter he replaced stood on the pitch, so the
+         one screen in the app whose whole job is "what happened in this
+         match" was the one that did not say. */
+      const offFor = new Map((round.swaps || []).map((s) => [s.on, s.off]));
+      const onFor = new Map((round.swaps || []).map((s) => [s.off, s.on]));
+      const missed = new Set(round.missed || []);
+      const nameOf = (pid) =>
+        round.items.find((it) => it.entry.player_id === pid)?.entry.player_name || "";
       for (const it of round.items) {
         const e = it.entry;
-        if (e.position === "TEAM") continue;
-        add(e, it.pts ?? 0);
-        if (!e.is_sub) total += it.pts || 0;
+        // A TEAM entry is a stage or champion bonus, not a player. It has no
+        // place on a pitch, but it IS part of the score — see below.
+        if (e.position === "TEAM") { bonus += it.pts || 0; continue; }
+        const up = offFor.has(e.player_id);        // came on
+        const down = onFor.has(e.player_id);       // was replaced
+        const out = !e.is_sub && missed.has(e.player_id);
+        // On the pitch as a substitute, or off it as the man he replaced.
+        const swapped = { ...e, is_sub: up ? false : down ? true : e.is_sub };
+        add(swapped, it.pts ?? 0, up ? { badge: "▲", title: `Came on for ${nameOf(offFor.get(e.player_id))}` }
+          : down ? { mark: "▼", dim: true, title: `Did not play — replaced by ${nameOf(onFor.get(e.player_id))}` }
+          : out ? { dim: true, title: "Did not play — no substitute available" } : undefined);
       }
+      /* The score is the round's own subtotal, which is what the standings and
+         the leaderboard use. Adding up the starters here instead meant a sub
+         who came on scored for the log and not for the card — the same match
+         reported two different results on two screens. */
+      total = round.subtotal;
+      // Real substitutes first, in the order they would have come on; the men
+      // they replaced after them, so the bench reads top-to-bottom as a story.
+      bench.sort((a, b) => (a.mark === "▼" ? 1 : 0) - (b.mark === "▼" ? 1 : 0));
     } else {
       // Live view: the bench is in the manager's own sub-priority order.
       for (const pk of orderedRoster(m)) {
@@ -6114,7 +6140,7 @@ function openH2HFixture(rnd, botId, topId) {
         add(pk, undefined);
       }
     }
-    return { byPos, bench, total, played: !!round };
+    return { byPos, bench, total, bonus, played: !!round };
   };
   const mine = sideFor(me), theirs = sideFor(opp);
   const lead = !mine.played ? "text-slate-200"
@@ -6131,6 +6157,8 @@ function openH2HFixture(rnd, botId, topId) {
       <div class="eyebrow mb-1 truncate">${esc(m.name)}</div>
       ${s.bench.length ? dugoutHtml(s.bench, { tapAttr: "data-vsp" })
         : '<p class="text-xs text-slate-400">No bench.</p>'}
+      ${s.bonus ? `<p class="text-xs text-slate-400 mt-1">Includes ${s.bonus} team bonus ${
+        s.bonus === 1 ? "point" : "points"}, which is not a player.</p>` : ""}
     </div>`;
 
   body.innerHTML = `
