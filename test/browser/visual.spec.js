@@ -477,3 +477,58 @@ test("the club shows as a crest, and as its code when the crest cannot load", as
     expect(r.code, "a broken crest left the row with no club at all").toBeTruthy();
   }
 });
+
+test("the club column stays aligned whether or not a player is owned", async ({ page }) => {
+  /* An absent owner chip collapsed its slot, so everything after it shifted
+     left — the club crests ran a ragged column, indented only on the rows that
+     happened to be owned. A free agent now gets a chip of its own, which fills
+     the slot and is worth reading in its own right. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route("https://media.api-sports.io/**", (r) =>
+    r.fulfill({ contentType: "image/png", body: PIXEL }));
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const setup = await page.evaluate(() => {
+    S.players = S.players.map((p) => ({ ...p, team_logo: 50 + (p.team.charCodeAt(0) % 20) }));
+    S.playerById = Object.fromEntries(S.players.map((p) => [p.player_id, p]));
+    /* Free agents need stats or the list has nothing unowned to show — it
+       filters to players who have played. Without this the whole comparison
+       runs on owned rows only and proves nothing. */
+    const owned = new Set(S.picks.map((p) => p.player_id));
+    const free = S.players.filter((p) => !owned.has(p.player_id)).slice(0, 6);
+    const label = S.stats[0]?.match_label;
+    S.stats = [...S.stats, ...free.map((p, i) => ({
+      league_id: S.league.id, player_id: p.player_id, match_label: label,
+      appeared: true, minutes: 90, goals: 3 - (i % 3), assists: 0,
+      clean_sheet: false, yellow_cards: 0, red_cards: 0, saves: 0, motm: false,
+      penalty_saved: 0, penalty_missed: 0, team: p.team,
+    }))];
+    bustScores();
+    showView("board"); setBoardTab("stats"); S.statsView = "list"; renderStatsTab();
+    return { freeIds: free.map((p) => p.player_id) };
+  });
+  expect(setup.freeIds.length, "no free agents to compare against").toBeGreaterThan(3);
+
+  await page.waitForTimeout(400);
+  const rows = await page.evaluate(() =>
+    [...document.querySelectorAll("#stats-list li")].map((li) => {
+      const crest = li.querySelector("img[data-crest-code], span.font-mono[title]");
+      /* Kind is decided by the OWNER chip alone, never by the presence of a
+         free-agent chip — otherwise removing that chip drops free rows from
+         the sample entirely and the test fails for the wrong reason instead
+         of reporting the ragged column it exists to catch. */
+      const owner = li.querySelector("span[title^='Owned by']");
+      return crest
+        ? { x: Math.round(crest.getBoundingClientRect().left),
+            kind: owner ? "owned" : "free" }
+        : null;
+    }).filter(Boolean));
+
+  const kinds = new Set(rows.map((r) => r.kind));
+  // Both kinds have to be on screen, or alignment between them proves nothing.
+  expect([...kinds].sort(), "the list shows only one kind of row")
+    .toEqual(["free", "owned"]);
+  const xs = [...new Set(rows.map((r) => r.x))];
+  expect(xs, `the club column is ragged: crests start at ${xs.join(", ")}px`)
+    .toHaveLength(1);
+});

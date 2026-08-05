@@ -8457,9 +8457,19 @@ const ownerManager = (pid) => {
    stopped shrinking, pushed the position chip off the row — and on a phone the
    team name is worth more than spelling the owner out. The full name is in the
    tooltip and on the player sheet. */
-function ownerChipHtml(pid) {
+/* Who owns this player, as a chip the width of a manager's mark.
+
+   `always` keeps the slot filled for a free agent instead of collapsing it. In
+   a list, an absent chip shifts everything after it — so the club crests ran a
+   ragged column, indented only on the rows that happened to be owned. A free
+   agent now gets a chip of its own saying so, which fills the slot AND is
+   worth reading: "nobody has this one" is the question that list is for. */
+function ownerChipHtml(pid, opts = {}) {
   const m = ownerManager(pid);
-  if (!m) return "";
+  if (!m) return opts.always
+    ? `<span class="shrink-0 inline-flex items-center justify-center rounded w-[18px] h-[18px] text-[9px] font-bold leading-none border border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+        title="Free agent — nobody owns this player">FA</span>`
+    : "";
   const c = managerColor(m);
   const mark = managerCrest(m) || (m.name || "?").trim().charAt(0).toUpperCase();
   return `<span class="shrink-0 inline-flex items-center justify-center rounded w-[18px] h-[18px] text-xs font-bold leading-none"
@@ -9228,7 +9238,7 @@ function renderStatsTab() {
             <span class="shrink-0 flex items-center gap-1">${availBadges(p.player_id)}</span>
           </span>
           <span class="flex items-center gap-1.5 text-xs text-slate-400">
-            ${ownerChipHtml(p.player_id)}
+            ${ownerChipHtml(p.player_id, { always: true })}
             <!-- The crest, not a three-letter code. A club is a thing people
                  recognise by its badge faster than by "BRE", and the row is too
                  tight for the full name — it was collapsing to "En…" / "Fr…",
