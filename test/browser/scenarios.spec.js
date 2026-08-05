@@ -254,6 +254,59 @@ test("a snapshot dated before the season cannot take over every round in it", as
   }
 });
 
+test("a transfer stays out of the past rounds even with no snapshots at all", async ({ page }) => {
+  /* The reported bug, reduced to the state it actually needs and nothing else.
+
+     Everything protecting the rounds already played was a snapshot of some
+     kind, so the whole scheme rested on one having been written -- and the
+     screen gives no sign when none was. A write that failed, a league older
+     than snapshots, a sandbox rebuilt underneath its own history: any of them
+     drops every past round through to the live picks, and one transfer then
+     shows up in all of them at once. Which of those happened is not something
+     the app can find out, so it should not need to.
+
+     This wipes the snapshots outright rather than picking a reason. What is
+     left is the transactions log -- written by the code that made each move --
+     and rewinding it is enough to answer on its own. */
+  await openLeague(page, { managers: 2, played: 3 });
+
+  const got = await page.evaluate(async () => {
+    const me = myManager();
+    const out = managerPicks(me.id).find((p) => !p.is_sub && p.position === "MID");
+    const owned = new Set(S.picks.map((p) => p.player_id));
+    const ownedClubs = new Set(S.picks.map((p) => p.team));
+    const inP = S.players.find((p) => p.position === "MID"
+      && !owned.has(p.player_id) && !ownedClubs.has(p.team));
+    if (!inP || inP.player_id === out.player_id)
+      throw new Error("could not pick a distinct incoming player for the transfer");
+    S.league.config = { ...S.league.config, fa_defer_to_close: false };
+    await doSwap(out, inP);
+    await refetchAll();
+
+    // Every snapshot gone, however it came to be gone.
+    window.__db.tables.lineup_snapshots = [];
+    await refetchAll();
+
+    return { snaps: (S.snapshots || []).length,
+             txs: (S.transactions || []).length,
+             rounds: managerHistory(me.id).rounds.map((r) =>
+               [r.n, r.items.map((i) => i.entry.player_id).sort().join(",")]),
+             inId: inP.player_id, outId: out.player_id };
+  });
+
+  // The state the test claims to be in, asserted rather than assumed.
+  expect(got.snaps, "the snapshots did not actually go away").toBe(0);
+  expect(got.txs, "the transfer left no transaction to rewind").toBeGreaterThan(0);
+  expect(got.rounds.length, "the seed played no rounds").toBe(3);
+
+  for (const [n, ids] of got.rounds) {
+    expect(ids.split(","), `round ${n} shows a player signed after it was played`)
+      .not.toContain(got.inId);
+    expect(ids.split(","), `round ${n} lost the player who actually played it`)
+      .toContain(got.outId);
+  }
+});
+
 test("a blank gameweek does not break any screen", async ({ page }) => {
   /* A club with no fixture in a round is the shape that broke round numbering
      before -- everything downstream keys off the round rather than a count of

@@ -4706,7 +4706,51 @@ function rosterAtFor(mgrId, t, d, snaps, roundKey) {
      here, or a past match would score against an XI that was never in force. */
   if (!chosen && snaps.length && Date.parse(snaps[0].effective_from) <= Date.now())
     chosen = snaps[0];
-  return chosen ? chosen.roster : managerPicks(mgrId);
+  return chosen ? chosen.roster : rosterRewound(mgrId, t);
+}
+
+/* The squad a manager held at epoch-ms t, rebuilt from the moves they have
+   made since. The fallback of last resort, and the one that used to hand back
+   today's picks outright -- which is what put a player transferred in this
+   week into rounds played a month ago, on every screen at once.
+
+   Reconstructing beats guessing here because it does not depend on a snapshot
+   having been written. Whatever the reason a round has no line-up recorded --
+   a write that failed, a league that predates snapshots, a sandbox rebuilt
+   underneath its own history -- the transactions log still says who came in,
+   who went out and when, because the code that made each move wrote it down.
+   Undo the ones dated after t and the roster walks backwards to where it was.
+
+   Manager-to-manager TRADES are not in that log; they live in `trades` with
+   their items, and reversing one needs the pick-to-player mapping as it stood
+   at the time, which is not recorded anywhere. Those still rely on the pin
+   acceptTrade takes. So this narrows the gap rather than closing it, and free
+   agency -- where the gap actually bit -- is the part it closes. */
+function rosterRewound(mgrId, t) {
+  const m = S.managers.find((x) => x.id === mgrId);
+  const roster = (m ? orderedRoster(m) : managerPicks(mgrId)).map((pk) => ({
+    player_id: pk.player_id, player_name: pk.player_name, position: pk.position,
+    team: pk.team, is_sub: pk.is_sub, slot: pk.slot,
+    ...(m?.captain_id === pk.player_id ? { is_captain: true } : {}),
+    ...(m?.vice_id === pk.player_id ? { is_vice: true } : {}),
+  }));
+  if (!isFinite(t)) return roster;
+  // Newest first: undoing them in reverse walks the squad back one move at a
+  // time, so two transfers through the same slot unwind to the right player.
+  const undo = (S.transactions || [])
+    .filter((x) => x.manager_id === mgrId && Date.parse(x.created_at) > t)
+    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  for (const tx of undo) {
+    if (!tx.in_player_id || !tx.out_player_id) continue;
+    const i = roster.findIndex((e) => e.player_id === tx.in_player_id);
+    if (i === -1) continue;
+    const was = S.playerById[tx.out_player_id];
+    roster[i] = { ...roster[i], player_id: tx.out_player_id,
+      player_name: tx.out_player_name || was?.name || tx.out_player_id,
+      position: was?.position || roster[i].position,
+      team: was?.team || roster[i].team };
+  }
+  return roster;
 }
 
 // "starter" / "sub" / "team" for a roster entry, or null.
@@ -9325,7 +9369,7 @@ function orderedRoster(m) {
 /* Write one manager's squad, stamped with the lock it takes effect at. Upserted
    on (league, manager, effective_from), so editing five times before the lock
    leaves one row — the last edit wins — instead of five. */
-async function snapshotAt(mgrId, atMs, roundKey) {
+async function snapshotAt(mgrId, atMs, roundKey, roster) {
   if (!S.sb || !S.league?.id || atMs == null) return false;
   const m = S.managers.find((x) => x.id === mgrId);
   if (!m) return false;
@@ -9333,7 +9377,7 @@ async function snapshotAt(mgrId, atMs, roundKey) {
     league_id: S.league.id, manager_id: mgrId,
     effective_from: new Date(atMs).toISOString(),
     ...(roundKey ? { round_key: roundKey } : {}),
-    roster: orderedRoster(m).map((pk) => ({
+    roster: (roster || orderedRoster(m)).map((pk) => ({
       player_id: pk.player_id, player_name: pk.player_name,
       position: pk.position, team: pk.team, is_sub: pk.is_sub, slot: pk.slot,
       ...(m.captain_id === pk.player_id ? { is_captain: true } : {}),
@@ -9404,8 +9448,14 @@ async function pinHistory(mgrId) {
     if (target >= 0 && stampedRanks.some((r) => r <= target)) continue;
     /* Dated a second before the round's first kickoff, so the timestamp arm
        agrees with the round key rather than contradicting it -- and so the
-       rows sort into the season's own order for anything reading the list. */
-    if (await snapshotAt(mgrId, firstKick - 1000, key)) stamped = true;
+       rows sort into the season's own order for anything reading the list.
+
+       The squad stamped is the one REWOUND to that kickoff, not the one held
+       today. On a league whose history is already wrong those are different,
+       and stamping today's would freeze the wrong answer permanently -- a fix
+       that makes the corruption durable is worse than the bug. */
+    if (await snapshotAt(mgrId, firstKick - 1000, key,
+                         rosterRewound(mgrId, firstKick - 1000))) stamped = true;
   }
   if (snaps.some((sn) => Date.parse(sn.effective_from) <= now)) return stamped;   // covered
   /* NOT on the deletion list after all, and the reason is worth keeping.
