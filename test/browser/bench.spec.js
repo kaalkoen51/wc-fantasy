@@ -133,3 +133,50 @@ test("rebuilding the calendar clears settlements keyed to the old one", async ({
   expect(survivors, "rebuilding the calendar left the previous settlements in place")
     .toEqual([]);
 });
+
+test("rebuilding the calendar does not replay the season under new dates", async ({ page }) => {
+  await openBench(page);
+
+  /* A match_label carries the kickoff date, and every calendar is generated
+     relative to now — so picking a second stage re-plays the same weeks under
+     labels nothing can reach. The rows from the first pass were left behind:
+     a player's card showed each match twice, "4 apps · 360'" for two games,
+     and the season's points doubled. Reported from the bench exactly that way.
+
+     The invariant is simply stated: every result belongs to a fixture in the
+     calendar you are looking at. */
+  await page.evaluate(() => { window.__db.tables.match_stats = []; });
+  await page.locator('[data-stage="lineup"]').click();
+  await expect
+    .poll(async () => page.evaluate(() => (window.__db.tables.match_stats || []).length),
+      { message: "the first calendar played no weeks at all", timeout: 10000 })
+    .toBeGreaterThan(0);
+
+  const first = await page.evaluate(() => window.__db.tables.match_stats.length);
+
+  /* Direct, not a click: the bench repaints on a timer and a second click
+     never becomes actionable. The first change above is what proves the
+     button is wired; past that it is the same code either way. */
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => simApply("transfers", 6, true));
+  await page.waitForTimeout(1500);
+
+  const after = await page.evaluate(() => {
+    const inCalendar = new Set((S.fixtures || []).map((f) =>
+      `${f.home} vs ${f.away} (${f.date || String(f.kickoff_utc).slice(0, 10)})`));
+    const rows = window.__db.tables.match_stats || [];
+    return {
+      total: rows.length,
+      orphans: [...new Set(rows.map((r) => r.match_label))].filter((l) => !inCalendar.has(l)),
+    };
+  });
+
+  expect(after.orphans,
+    "results from the discarded calendar are still in the league — the season is being replayed")
+    .toEqual([]);
+  /* And the rows did not simply pile up. Asserting only the orphan list would
+     also pass if the delete ran and the replay wrote a second copy under
+     labels that happen to be in the new calendar. */
+  expect(after.total, "the second calendar left roughly twice the results behind")
+    .toBeLessThan(first * 1.5);
+});

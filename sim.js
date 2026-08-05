@@ -141,8 +141,45 @@ async function simApply(stage, weeks, quirks) {
   // Awaited, not fired and forgotten: the refetch below re-reads `rounds`, and
   // reading them back before the delete lands would stand the ritual down again.
   await S.sb.from("rounds").delete().eq("league_id", S.league.id).then(() => {}, () => {});
+  /* And the RESULTS of that calendar, which is the same trap one table over.
+
+     A match_label carries the kickoff date, and every calendar is generated
+     relative to now — so the moment you pick a different stage, every row from
+     the previous pass is keyed to a match that no longer exists. Nothing
+     overwrites it (the upsert key includes the label), nothing can reach it,
+     and nothing was deleting it. They accumulated: three weeks played under
+     "transfers", three more under "lineup", and a player's card showed each
+     match twice with the season's points doubled.
+
+     Only the orphans go. A row that still belongs to a fixture in the new
+     calendar is a result of a match that is still in the season, and
+     simCatchUpPast below will leave it alone. Read from the database rather
+     than S.stats: this runs before the refetch, so the in-memory copy may not
+     be what is actually stored. */
+  const keep = new Set(fx.map(simLabel));
+  const { data: had } = await S.sb.from("match_stats")
+    .select("match_label").eq("league_id", S.league.id)
+    .then((r) => r, () => ({ data: [] }));
+  const orphans = [...new Set((had || []).map((r) => r.match_label))]
+    .filter((l) => !keep.has(l));
+  // In batches: the labels go into the query string, and a long-running bench
+  // league accumulates a calendar's worth of them every time the stage moves.
+  for (let i = 0; i < orphans.length; i += 50)
+    await S.sb.from("match_stats").delete().eq("league_id", S.league.id)
+      .in("match_label", orphans.slice(i, i + 50)).then(() => {}, () => {});
+  /* Line-up pins too. A snapshot is stamped with the round it was locked for,
+     and the new calendar reuses those round names against completely different
+     dates — so a pin from the discarded season would be handed straight back
+     as "the squad that played round 3". Invented history for a season that no
+     longer exists is worse than none: rosterAtFor then falls back to today's
+     picks, which is the honest answer for weeks being invented in bulk. */
+  await S.sb.from("lineup_snapshots").delete().eq("league_id", S.league.id)
+    .then(() => {}, () => {});
   const wk = [...new Set(fx.map((f) => f.round))].length;
-  simToast(`${fx.length} fixtures over ${wk} weeks · ${stage}${quirks ? " · blank + double" : ""}`);
+  // Say what was thrown away. A silent delete is how the last version of this
+  // problem went unnoticed for as long as it did.
+  simToast(`${fx.length} fixtures over ${wk} weeks · ${stage}${quirks ? " · blank + double" : ""}${
+    orphans.length ? ` · dropped ${orphans.length} match${orphans.length === 1 ? "" : "es"} from the old calendar` : ""}`);
   /* Play the weeks it just put BEHIND you, so the season the results describe
      is the season the calendar describes. Without this the stage is a claim
      about the fixture list alone, and Play week spends three clicks catching
