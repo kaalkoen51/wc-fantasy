@@ -265,3 +265,34 @@ test("the deadline is the first thing on the team page", async ({ page }) => {
   if (r.cta !== null)
     expect(r.cta, `its button ends ${r.cta}px down`).toBeLessThan(844);
 });
+
+test("Activity is one row of navigation, not two", async ({ page }) => {
+  /* It stacked a Trades/Chat pair on top of Deals/Planner/Watchlist/History
+     which, with the bottom bar, made three levels of navigation before any
+     content. Chat is a peer of Deals and History, not a parent of them. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLeague(page, { managers: 4, played: 3 });
+  await page.evaluate(() => { showView("board"); setBoardTab("trades"); renderBoard(); });
+
+  const tabs = await page.evaluate(() =>
+    [...document.querySelectorAll("#board-subtabs button")].map((b) => b.textContent.trim()));
+  expect(tabs, "the Activity strip is not one row of five").toEqual(
+    ["Deals", "Planner", "Watchlist", "History", "Chat"]);
+
+  // The strip has to actually switch, including to and back from Chat.
+  await page.evaluate(() =>
+    [...document.querySelectorAll("#board-subtabs button")].find((b) => b.textContent.trim() === "Chat").click());
+  expect(await page.evaluate(() => S.boardTab), "Chat did not open from the strip").toBe("chat");
+  await page.evaluate(() =>
+    [...document.querySelectorAll("#board-subtabs button")].find((b) => b.textContent.trim() === "Planner").click());
+  expect(await page.evaluate(() => [S.boardTab, S.tradeTab]),
+    "going back from Chat did not restore a trades sub-tab").toEqual(["trades", "planner"]);
+
+  /* And nothing else on the page draws a second tab row. The old one lived
+     inside the Trades pane, so removing it is the sort of change that leaves a
+     duplicate behind if a caller is missed. */
+  const rows = await page.evaluate(() =>
+    [...document.querySelectorAll("#board-trades button")]
+      .filter((b) => ["Deals", "Planner", "Watchlist", "History"].includes(b.textContent.trim())).length);
+  expect(rows, "the Trades pane is still drawing its own tab row").toBe(0);
+});

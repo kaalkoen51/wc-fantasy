@@ -325,6 +325,9 @@
 
   /* Keep the bottom bar clear of the iOS home indicator. */
   #bottom-nav { padding-bottom: env(safe-area-inset-bottom); }
+  /* Five items still share one row: the labels tighten rather than wrapping. */
+  #nav-row.nav-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  #nav-row.nav-5 .nav-btn { font-size: 11px; }
 
   /* ---- desktop: a left rail and a two-column body -----------------------
      At 1280px the app was a centred 740px column with about 45% of the
@@ -1009,7 +1012,7 @@
           demand. In-progress games are skipped; re-pull after the final whistle.</p>
         <div class="flex gap-2">
           <input id="adm-pull-date" type="date" class="flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
-          <button id="adm-pull-now" class="shrink-0 btn-primary rounded-lg px-4 py-2 text-sm font-semibold">Pull stats now</button>
+          <button id="adm-pull-now" class="shrink-0 bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-sm font-semibold">Pull stats now</button>
         </div>
         <pre id="adm-pull-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
       </div>
@@ -1240,7 +1243,10 @@
 <!-- Primary navigation. Four destinations; Admin lives in the header and only
      for the league owner. Shown on the board view only. -->
 <nav id="bottom-nav" class="hidden fixed bottom-0 inset-x-0 z-30 bg-slate-900/95 backdrop-blur border-t border-slate-800">
-  <div class="max-w-3xl mx-auto grid grid-cols-4">
+  <!-- grid-cols-4 wrapped the fifth item onto a second row for a product-owner
+       account, costing about 55px of every screen permanently. auto-fit keeps
+       whatever is showing on one row. -->
+  <div id="nav-row" class="max-w-3xl mx-auto grid grid-cols-4">
     <button data-nav="team"     class="nav-btn py-2.5 text-xs font-semibold flex flex-col items-center gap-0.5"><span class="text-lg leading-none">👕</span>Team</button>
     <button data-nav="league"   class="nav-btn py-2.5 text-xs font-semibold flex flex-col items-center gap-0.5"><span class="text-lg leading-none">🏆</span>League</button>
     <button data-nav="players"  class="nav-btn py-2.5 text-xs font-semibold flex flex-col items-center gap-0.5"><span class="text-lg leading-none">🔍</span>Players</button>

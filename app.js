@@ -7263,6 +7263,24 @@ function renderBoardNav(tab) {
   strip.classList.toggle("hidden", panes.length < 2);
   strip.classList.toggle("flex", panes.length >= 2);
   if (panes.length < 2) { strip.innerHTML = ""; return; }
+  /* Activity is one row, not two. It used to stack a Trades/Chat pair on top of
+     Deals/Planner/Watchlist/History, which with the bottom bar made three
+     levels of navigation before any content. Chat is a peer of Deals and
+     History, not a parent of them, so it joins them. */
+  if (active === "activity") {
+    const cur = tab === "chat" ? "chat" : (S.tradeTab || "deals");
+    const items = [...TRADE_TABS, ["chat", NAV_LABEL.chat]];
+    strip.innerHTML = items.map(([k, label]) =>
+      `<button data-atab="${k}" class="board-tab flex-1 min-w-0 truncate rounded-md py-1.5 text-xs font-semibold ${
+        k === cur ? "bg-slate-700 text-wcgold" : "text-slate-400"}">${esc(label)}</button>`).join("");
+    strip.querySelectorAll("[data-atab]").forEach((b) => b.onclick = () => {
+      const k = b.dataset.atab;
+      if (k === "chat") setBoardTab("chat");
+      else { S.tradeTab = k; setBoardTab("trades"); }
+      renderBoard();
+    });
+    return;
+  }
   strip.innerHTML = panes.map((p) =>
     `<button id="tab-${p}" data-tab="${p}" class="board-tab flex-1 rounded-md py-1.5 font-semibold ${
       p === tab ? "bg-slate-700 text-wcgold" : "text-slate-400"}">${NAV_LABEL[p]}</button>`).join("");
@@ -10511,7 +10529,17 @@ function builderHtml(me) {
               style="background:${managerColor(m)}26;border:1px solid ${managerColor(m)}99">${managerMark(m)}</span>
         <span class="min-w-0">
           <span class="block text-sm font-semibold truncate">${esc(m.name)}</span>
-          <span class="block text-xs text-slate-400">${managerPicks(m.id).filter((pk) => pk.slot !== "TEAM").length} players</span>
+          <!-- "15 players" is true of everyone and so says nothing. Their shape
+               and their best scorer are what make step 1 an informed choice. -->
+          <span class="block text-xs text-slate-400 truncate">${(() => {
+            const sq = managerPicks(m.id).filter((pk) => pk.slot !== "TEAM");
+            const by = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+            for (const pk of sq) if (by[pk.position] != null) by[pk.position]++;
+            const shape = ["GK", "DEF", "MID", "FWD"].map((g) => `${by[g]}${g}`).join(" · ");
+            const best = sq.map((pk) => ({ pk, v: playerPoints(pk.player_id, pk.position) }))
+              .sort((a, x) => x.v - a.v)[0];
+            return `${shape}${best?.v ? ` · best ${esc(shortName(best.pk.player_name))} ${best.v}p` : ""}`;
+          })()}</span>
         </span></button>`).join("")}
       <button id="trade-discard" class="w-full bg-slate-800 border border-slate-700 rounded-lg py-1.5 text-xs font-semibold">Cancel</button>
     </div>`;
@@ -10884,7 +10912,10 @@ function shortlistSectionHtml(me) {
         : `<div class="rounded-xl border border-slate-700 bg-slate-900 p-6 text-center space-y-2">
              <div class="text-3xl">★</div>
              <p class="text-sm text-slate-300">Nothing on your watchlist.</p>
-             <p class="text-xs text-slate-500">Tap ☆ next to any player on the Players tab to keep an eye on them.</p>
+             <p class="text-xs text-slate-500">Tap ☆ next to any player to keep an eye on them.</p>
+             <!-- One tap rather than a description of where to go. An empty
+                  state is the best place to teach the feature it is missing. -->
+             <button data-gotoplayers class="btn-quiet rounded-lg px-4 py-2 text-sm font-semibold">Browse players</button>
            </div>`}
   </div>`;
 }
@@ -11283,11 +11314,15 @@ function renderTrades() {
   const tab = S.tradeTab && TRADE_TABS.some(([k]) => k === S.tradeTab) ? S.tradeTab : "deals";
   S.tradeTab = tab;
 
-  const nav = `<div class="flex gap-1 rounded-lg bg-slate-900 border border-slate-700 p-1 text-sm">
-    ${TRADE_TABS.map(([k, label]) => `<button data-tradetab="${k}" class="flex-1 rounded-md py-1.5 text-xs font-semibold ${
-      k === tab ? "bg-slate-700 text-wcgold" : "text-slate-400"}">${label}${
-      counts[k] ? ` <span class="inline-flex items-center justify-center rounded-full bg-wcgold text-slate-900 w-4 h-4 text-[10px] align-middle">${counts[k]}</span>` : ""}</button>`).join("")}
-  </div>`;
+  /* No tab row here any more — renderBoardNav draws one row for the whole
+     Activity section. What is left is the count, which the shared row cannot
+     carry without knowing about trades: shown as a line so a pending deal is
+     still announced rather than lost with the strip it used to live on. */
+  const pend = Object.entries(counts).filter(([, v]) => v);
+  const nav = pend.length ? `<div class="flex flex-wrap gap-1.5 text-xs">
+    ${pend.map(([k, v]) => `<button data-tradetab="${k}" class="rounded-full border border-wcgold/50 bg-wcgold/10 text-wcgold px-2.5 py-1 font-semibold">${
+      v} waiting in ${esc((TRADE_TABS.find(([x]) => x === k) || [, k])[1])}</button>`).join("")}
+  </div>` : "";
 
   // The window state leads every tab: it decides what you can do at all.
   const when = autoWindowsEnabled() ? (open ? lineupLockMessage() : tradeWindowMessage()) : "";
@@ -11322,7 +11357,9 @@ function renderTrades() {
 
   box.innerHTML = `<div class="space-y-2">${nav}${banner}</div>` + `<div class="space-y-3 mt-3">${body}</div>`;
   box.querySelectorAll("[data-tradetab]").forEach((b) => b.onclick = () => {
-    S.tradeTab = b.dataset.tradetab; renderTrades();
+    S.tradeTab = b.dataset.tradetab;
+    renderTrades();
+    renderBoardNav(S.boardTab);   // the shared strip shows which tab is on
   });
   wireTrades(me);
 }
@@ -11363,6 +11400,8 @@ function wireTrades(me) {
   box.querySelectorAll("[data-wlpos]").forEach((b) => b.onclick = () => {
     S.wlPos = b.dataset.wlpos; renderTrades();
   });
+  const goPlayers = box.querySelector("[data-gotoplayers]");
+  if (goPlayers) goPlayers.onclick = () => { setBoardTab("stats"); renderBoard(); };
   const wlFree = box.querySelector("[data-wlfree]");
   if (wlFree) wlFree.onclick = () => { S.wlFree = !S.wlFree; renderTrades(); };
   const wl90 = box.querySelector("[data-wl90]");
@@ -12781,11 +12820,13 @@ function renderAdmin() {
     : (open ? "Trading is OPEN" : "Trading is closed");
   $("adm-trading-status").className =
     "text-sm font-semibold " + (open ? "text-wcgold" : "text-slate-400");
-  $("adm-trading-toggle").textContent = auto ? "Automatic — driven by fixtures"
-    : (open ? "Close trading" : "Open trading");
-  $("adm-trading-toggle").disabled = auto;
-  $("adm-trading-toggle").classList.toggle("opacity-50", auto);
-  $("adm-trading-toggle").classList.toggle("cursor-not-allowed", auto);
+  /* Under automatic windows this button did nothing and said so, which made
+     "Automatic" the third statement of the same fact in one card — the selected
+     toggle, the note beneath it, and then a dead button repeating both. Hidden
+     instead: a control you cannot use is not information. */
+  $("adm-trading-toggle").classList.toggle("hidden", auto);
+  $("adm-trading-toggle").textContent = open ? "Close trading" : "Open trading";
+  $("adm-trading-toggle").disabled = false;
   // Line-ups get their own deadline in manual mode; under automatic windows
   // the fixture calendar owns both and the row would only mislead.
   const lopen = lineupOpen();

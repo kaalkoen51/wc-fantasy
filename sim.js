@@ -527,6 +527,9 @@ function renderTestTab() {
   const box = document.getElementById("board-test");
   const navBtn = document.getElementById("nav-test");
   if (navBtn) navBtn.classList.toggle("hidden", !isAppOwner());
+  /* Five buttons in a four-column grid wrapped onto a second row, costing about
+     55px of every screen for the account that uses the app most. */
+  document.getElementById("nav-row")?.classList.toggle("nav-5", isAppOwner());
   if (!box || !isAppOwner()) return;
 
   const on = simLeague();
