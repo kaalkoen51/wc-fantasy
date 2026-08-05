@@ -723,8 +723,10 @@ test("the league table sorts, moves and keeps league position honest", async ({ 
     const rows = [...document.querySelectorAll("#board-lb details[data-mgr]")];
     return rows.map((d) => {
       const t = d.querySelector("summary").textContent.replace(/\s+/g, " ").trim();
+      const tag = d.querySelector("summary .text-wcgold.tabular-nums");
       return { id: d.dataset.mgr, rank: Number(t.match(/^(\d+)/)?.[1]),
-               spark: !!d.querySelector("svg path") };
+               spark: !!d.querySelector("svg path"),
+               tag: tag ? tag.textContent.trim() : null };
     });
   });
 
@@ -773,4 +775,16 @@ test("the league table sorts, moves and keeps league position honest", async ({ 
     .toEqual([1, 2, 3, 4, 5]);
   expect(sorted.map((r) => r.rank), "the rank badges are in sorted order, so they are not league position")
     .not.toEqual([1, 2, 3, 4, 5]);
+
+  /* The number being sorted on has to be ON the row. Ordering a table by
+     points-for and then not showing points-for asks you to take the order on
+     trust — reported from the app, about exactly that. */
+  for (const r of sorted)
+    expect(r.tag, `${r.id} shows no value for the stat it is sorted by`)
+      .toBe(`losses ${losses[r.id]}`);
+
+  // ...and it goes away again when the table is back in league order.
+  const back = await page.evaluate(() => { S.h2hSort = "logPts"; renderBoard(); });
+  expect((await read()).every((r) => r.tag === null),
+    "the sort chip is still showing when nothing is being sorted on").toBe(true);
 });

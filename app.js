@@ -7823,29 +7823,6 @@ function renderFixturesTab() {
   };
 
   const state = rnd < played ? "final" : rnd === played ? "in progress" : "upcoming";
-  /* Last round, this round and next, rather than one behind a pager. In a
-     four-manager league the tab was two rows of content, all of it below the
-     fold, and "what's coming" took a tap. The pager stays for anything older.
-     Only the round being paged to gets the full cards; its neighbours are a
-     compact line each, so a ten-manager league does not become a long scroll. */
-  const near = [rnd - 1, rnd + 1].filter((r) => r >= 1 && r <= total);
-  const peek = (r) => {
-    const { fixtures: fs, placement: pl } = h2hRoundFixtures(r);
-    if (pl) return "";
-    const line = fs.map((f) => {
-      const a = nameOf(f.home_manager_id), b = nameOf(f.away_manager_id);
-      if (!a) return "";
-      if (!b) return `${esc(a.name)} (bye)`;
-      const sa = scores[a.id]?.[r - 1], sb = scores[b.id]?.[r - 1];
-      return sa != null && sb != null
-        ? `${esc(a.name)} ${sa}–${sb} ${esc(b.name)}`
-        : `${esc(a.name)} v ${esc(b.name)}`;
-    }).filter(Boolean).join(" · ");
-    return line ? `<button data-fixgo="${r}" class="w-full text-left rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-1.5">
-      <span class="text-[11px] uppercase tracking-wide text-slate-500">Round ${r}${
-        r < played ? " · final" : r === played ? " · in progress" : " · upcoming"}</span>
-      <span class="block truncate text-xs text-slate-400">${line}</span></button>` : "";
-  };
   box.innerHTML = `
     <div class="flex items-center gap-1">
       <button data-fixnav="-1" ${rnd <= 1 ? "disabled" : ""} class="px-2 py-1 rounded text-lg ${
@@ -7861,13 +7838,8 @@ function renderFixturesTab() {
       ? `<p class="rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm text-slate-400">⚔️ Rumble round — everyone is scored against the whole league by placement, so there are no pairings.</p>`
       : (fixtures.map(row).join("")
         || '<p class="rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm text-slate-400">No fixtures for this round.</p>')}
-    ${rumble && !placement ? '<p class="text-xs text-slate-400 text-center">⚔️ Rumble round — everyone plays everyone.</p>' : ""}
-    ${near.length ? `<div class="space-y-1.5 pt-1">${near.map(peek).join("")}</div>` : ""}`;
+    ${rumble && !placement ? '<p class="text-xs text-slate-400 text-center">⚔️ Rumble round — everyone plays everyone.</p>' : ""}`;
 
-  box.querySelectorAll("[data-fixgo]").forEach((b) => b.onclick = () => {
-    S.fixRound = Number(b.dataset.fixgo);
-    renderFixturesTab();
-  });
   box.querySelectorAll("[data-fixnav]").forEach((b) => b.onclick = () => {
     S.fixRound = rnd + Number(b.dataset.fixnav);
     renderFixturesTab();
@@ -7938,6 +7910,11 @@ const H2H_SORTS = [
   ["logPts", "League position"], ["W", "Wins"], ["L", "Losses"],
   ["PF", "Points for"], ["PA", "Points against"], ["diff", "Points difference"],
 ];
+// Short enough to sit on a row as a label. Sorting by a stat you cannot then
+// see is a filter that keeps its reasoning to itself.
+const H2H_SORT_TAG = {
+  W: "wins", L: "losses", PF: "for", PA: "against", diff: "diff",
+};
 
 function h2hStandingsHtml(me) {
   const { rows, order } = h2hStandings();
@@ -8008,6 +7985,11 @@ function h2hStandingsHtml(me) {
               ? form.map((x) => `<span class="inline-flex items-center justify-center w-4 h-4 rounded border text-[9px] font-bold ${FORM_STYLE[x]}">${x}</span>`).join("")
               : '<span class="text-xs text-slate-400">no results yet</span>'}
             ${r.bonus ? `<span class="text-[11px] text-emerald-400 ml-0.5">+${r.bonus}</span>` : ""}
+            <!-- The number the table is currently ordered by, named. Sorting by
+                 points-for and then not showing points-for asks you to take the
+                 order on trust. -->
+            ${sortKey !== "logPts" ? `<span class="ml-0.5 shrink-0 rounded bg-wcgold/15 px-1.5 py-0.5 text-[10px] font-semibold text-wcgold tabular-nums">${
+              esc(H2H_SORT_TAG[sortKey] || sortKey)} ${valOf(id) > 0 && sortKey === "diff" ? "+" : ""}${valOf(id)}</span>` : ""}
           </span>
         </span>
         ${sparkHtml(series, managerColor(m))}
