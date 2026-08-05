@@ -2800,7 +2800,7 @@ function renderPool(force) {
         ${(() => { const v = entryPoints(e.player_id, e.position, e.team);
                    return v ? `<span class="text-xs font-mono text-slate-400">${v}</span>` : ""; })()}
         <span class="pos-${e.position} rounded px-1.5 py-0.5 text-xs font-semibold">${e.position}</span>
-        ${canPick ? `<button data-pick="${esc(e.player_id)}" class="pick-btn bg-wcred hover:bg-wcred-hov rounded-lg px-2.5 text-xs font-bold">Pick</button>` : ""}
+        ${canPick ? `<button data-pick="${esc(e.player_id)}" class="pick-btn btn-primary rounded-lg px-2.5 text-xs font-bold">Pick</button>` : ""}
       </div>
     </li>`;
   }).join("") || `<li class="py-4 text-sm text-slate-400">${
@@ -3342,7 +3342,7 @@ function renderDraftQueue(me, myTurn) {
       ${avatarHtml(r.pid, e.team, "w-6 h-6")}
       <span class="min-w-0 flex-1 truncate text-sm">${esc(e.name)}</span>
       <span class="shrink-0 text-xs pos-${e.position} rounded px-1.5 py-0.5">${e.position}</span>
-      ${myTurn ? `<button data-qpick="${esc(r.pid)}" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-2.5 text-xs font-bold">Pick</button>` : ""}
+      ${myTurn ? `<button data-qpick="${esc(r.pid)}" class="shrink-0 btn-primary rounded-lg px-2.5 text-xs font-bold">Pick</button>` : ""}
       ${movable > 1 ? `<span class="nudge-col shrink-0 leading-none">
         <button data-qup="${esc(r.pid)}" class="nudge text-slate-400 ${first ? "opacity-30" : ""}" ${first ? "disabled" : ""} aria-label="Move up">▲</button>
         <button data-qdn="${esc(r.pid)}" class="nudge text-slate-400 ${last ? "opacity-30" : ""}" ${last ? "disabled" : ""} aria-label="Move down">▼</button>
@@ -6235,7 +6235,7 @@ function matchdayCardHtml(me) {
     ? `<div class="mt-2 space-y-0.5">${p.todo.map((t) =>
         `<div class="text-[12px] text-amber-300">⚠ ${esc(t)}</div>`).join("")}</div>` : "";
   const cta = p.cta
-    ? `<button id="md-cta" data-act="${p.cta.act}" class="mt-3 w-full bg-wcred hover:bg-wcred-hov rounded-lg py-2.5 text-sm font-semibold">${esc(p.cta.label)}</button>`
+    ? `<button id="md-cta" data-act="${p.cta.act}" class="mt-3 w-full btn-primary rounded-lg py-2.5 text-sm font-semibold">${esc(p.cta.label)}</button>`
     : "";
   return `<div class="rounded-xl border border-wcgold/60 bg-wcred/10 p-4">
     <div class="flex items-center justify-between gap-2">${strip}</div>
@@ -7068,11 +7068,14 @@ function renderBanner() {
   const done = games.filter(over).length;
   const next = games.find((f) => Date.parse(f.kickoff_utc) > Date.now());
   const n = games.length;
-  const summary = live ? `${live} live now · ${n} ${n === 1 ? "match" : "matches"}`
-    : next ? `${n} ${n === 1 ? "match" : "matches"} · first kick-off ${
-        new Date(next.kickoff_utc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-    : done === n ? `${n} ${n === 1 ? "match" : "matches"} · all finished`
-    : `${n} ${n === 1 ? "match" : "matches"}`;
+  // Short enough to survive a 390px row beside the date. "first kick-off" and
+  // the time together did not, and the truncated half was the time.
+  const games_ = `${n} ${n === 1 ? "match" : "matches"}`;
+  const summary = live ? `${live} live now · ${games_}`
+    : next ? `${games_} · from ${new Date(next.kickoff_utc)
+        .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+    : done === n ? `${games_} · all finished`
+    : games_;
 
   const html = bannerOpen()
     ? `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-1.5">
@@ -9716,7 +9719,7 @@ function renderSwapList() {
           <span class="shrink-0 font-mono">${entryPoints(e.player_id, e.position, e.team)}p</span>
         </div>
       </div>
-      <button data-swapin="${esc(e.player_id)}" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-2 text-xs font-semibold">${faDeferToClose() ? "Claim" : "Swap in"}</button>
+      <button data-swapin="${esc(e.player_id)}" class="shrink-0 btn-quiet rounded-lg px-3 py-2 text-xs font-semibold">${faDeferToClose() ? "Claim" : "Swap in"}</button>
     </li>`).join("") || '<li class="py-4 text-sm text-slate-400">No free agents match.</li>';
   const ownedRows = owned.map(({ pk, owner }) => `
     <li class="flex items-center py-2 gap-2">
@@ -10487,7 +10490,7 @@ function builderHtml(me) {
     ${step}
     <div class="flex gap-2 pt-1">
       <button id="trade-discard" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg py-2 text-xs font-semibold">Discard</button>
-      <button id="trade-submit" class="flex-1 bg-wcred hover:bg-wcred-hov disabled:bg-slate-800 disabled:text-slate-500 rounded-lg py-2 text-xs font-semibold"${
+      <button id="trade-submit" class="flex-1 btn-primary disabled:bg-slate-800 disabled:text-slate-500 rounded-lg py-2 text-xs font-semibold"${
         done.length ? "" : " disabled"}>Send ${done.length ? `(${done.length})` : ""}</button>
     </div>
   </div>`;
@@ -10525,7 +10528,7 @@ function tradeSectionHtml(title, list, incoming) {
         <span class="flex justify-end min-w-0">${col2(gain, "text-live/70")}</span>
       </div>`).join("");
     const actions = t.status !== "proposed" ? "" : incoming
-      ? `${tradingOpen() ? `<button data-acc="${t.id}" class="flex-1 bg-wcred hover:bg-wcred-hov rounded-lg py-2 text-xs font-semibold">✓ Accept</button>` : ""}
+      ? `${tradingOpen() ? `<button data-acc="${t.id}" class="flex-1 btn-primary rounded-lg py-2 text-xs font-semibold">✓ Accept</button>` : ""}
          <button data-cnt="${t.id}" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg py-2 text-xs font-semibold">↩ Counter</button>
          <button data-rej="${t.id}" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg py-2 text-xs font-semibold text-slate-400">Reject</button>`
       : `<button data-can="${t.id}" class="w-full bg-slate-800 border border-slate-700 rounded-lg py-2 text-xs font-semibold text-slate-400">Withdraw offer</button>`;
@@ -10742,7 +10745,7 @@ function shortlistSectionHtml(me) {
           ${per90 ? `<span class="block text-[10px] text-slate-500">${mins}′</span>` : ""}
         </span>
       </button>
-      ${!mine && open ? `<button data-sltrade="${esc(p.player_id)}" class="shrink-0 rounded-lg bg-wcred hover:bg-wcred-hov px-2.5 py-1.5 text-xs font-semibold">${
+      ${!mine && open ? `<button data-sltrade="${esc(p.player_id)}" class="shrink-0 rounded-lg btn-primary px-2.5 py-1.5 text-xs font-semibold">${
         owned.has(p.player_id) ? "Offer" : (faDeferToClose() ? "Claim" : "Swap")}</button>` : ""}
     </li>`;
   }).join("");
@@ -10908,7 +10911,7 @@ function plannerMoveHtml(outPick, m, open) {
     const backup = choices[0] !== target;
     const verb = target.st.kind === "fa" ? (faDeferToClose() ? "Claim" : "Swap in") : "Offer for";
     exec = `<button data-plexec="${outPick.id}|${target.pid}" class="w-full ${
-      backup ? "bg-slate-800 border border-wcgold/60 text-wcgold" : "bg-wcred hover:bg-wcred-hov"
+      backup ? "bg-slate-800 border border-wcgold/60 text-wcgold" : "btn-primary"
     } rounded-lg py-2 text-xs font-semibold">${verb} ${esc(shortName(target.p.name))}${
       backup ? " (backup — 1st is gone)" : ""}</button>`;
   } else if (open) {
@@ -11061,7 +11064,7 @@ function renderPlannerPick() {
         ${byPoints ? "" : `<span class="block text-xs text-slate-400">${pts}p</span>`}
       </span>
       <button data-pltoggle="${esc(p.player_id)}" class="shrink-0 rounded-lg px-3 py-1 text-xs font-semibold ${
-        picked ? "bg-slate-800 border border-slate-600 text-slate-300" : "bg-wcred hover:bg-wcred-hov"}">${
+        picked ? "bg-slate-800 border border-slate-600 text-slate-300" : "btn-quiet"}">${
         picked ? "✓ Added" : "Add"}</button>
     </li>`;
   }).join("") || '<li class="py-4 text-sm text-slate-400">No players match these filters.</li>';
@@ -11195,7 +11198,7 @@ function renderTrades() {
           : "You can still reply to pending offers."}</span>
       </span>
       ${open && !S.builder && tab === "deals"
-        ? '<button id="trade-new" class="shrink-0 bg-wcred hover:bg-wcred-hov rounded-lg px-3 py-2 text-sm font-semibold">＋ New deal</button>' : ""}
+        ? '<button id="trade-new" class="shrink-0 btn-primary rounded-lg px-3 py-2 text-sm font-semibold">＋ New deal</button>' : ""}
     </div>
     ${when ? `<div class="mt-1.5 text-xs text-wcgold border-t border-white/10 pt-1.5">${esc(when)}</div>` : ""}
   </div>`;
@@ -12563,7 +12566,7 @@ function renderConfigEditor() {
     ${stageBonusFieldsHtml(eff, locked)}
     <p class="text-xs text-slate-400">A champion TEAM banks ${calcTeamPoints("winner")} in total.</p>
     ${locked ? "" : `<div class="flex gap-2 pt-1">
-      <button id="adm-config-save" class="flex-1 bg-wcred hover:bg-wcred-hov rounded-lg py-2 text-sm font-semibold">Save draft design</button>
+      <button id="adm-config-save" class="flex-1 btn-primary rounded-lg py-2 text-sm font-semibold">Save draft design</button>
       <button id="adm-config-reset" class="shrink-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm font-semibold">Reset to WC defaults</button>
     </div>`}`;
   const renderAdmBalance = () => {

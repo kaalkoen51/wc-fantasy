@@ -155,3 +155,50 @@ test("the matchday card starts collapsed and every tab's content is above the fo
   await page.evaluate(() => setBoardTab("lb"));
   expect((await read()).open, "the expanded choice was not remembered").toBe("true");
 });
+
+test("red means destructive, and nothing else does", async ({ page }) => {
+  /* Red was doing two jobs. "Create a league", "Set your lineup", "Claim" and
+     "Pull stats now" wore the same red as the controls that destroy things, so
+     a column of nine red "Claim" buttons read as a column of warnings and the
+     genuinely dangerous button on a screen had nothing to set it apart. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const RED = "rgb(200, 16, 46)";      // wcred
+  const GOLD = "rgb(255, 199, 44)";    // wcgold
+
+  const bg = (sel) => page.evaluate((s) => {
+    const el = document.querySelector(s);
+    if (!el) return null;
+    return getComputedStyle(el).backgroundColor;
+  }, sel);
+
+  // The main action on a screen is gold, and its label is dark on it.
+  expect(await bg("#lineup-primary"), "the lineup's primary action is not gold").toBe(GOLD);
+  expect(await page.evaluate(() =>
+    getComputedStyle(document.querySelector("#lineup-primary")).color),
+    "gold button with light text would be unreadable").toBe("rgb(11, 18, 32)");
+
+  // Starting a draft cannot be undone, so it stays red.
+  expect(await bg("#lobby-start"), "an irreversible action lost its warning colour").toBe(RED);
+
+  /* And no button anywhere carries both treatments — that is the state the
+     mechanical pass could have left behind and nobody would have noticed. */
+  const both = await page.evaluate(() =>
+    [...document.querySelectorAll(".btn-primary, .btn-quiet")]
+      .filter((b) => b.className.includes("bg-wcred"))
+      .map((b) => b.id || b.textContent.trim().slice(0, 30)));
+  expect(both, "buttons wearing two roles at once").toEqual([]);
+});
+
+test("the collapsed matchday summary is not itself truncated", async ({ page }) => {
+  // The first version read "18 matches · first kick-off 07:44…" — the half it
+  // cut was the time, which is the only number on the row.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLeague(page, { managers: 4, played: 3 });
+  const cut = await page.evaluate(() =>
+    [...document.querySelectorAll("#board-banner span")]
+      .filter((el) => !el.children.length && el.scrollWidth > el.clientWidth + 1)
+      .map((el) => ({ text: el.textContent.trim(), need: el.scrollWidth, got: el.clientWidth })));
+  expect(cut, `collapsed summary truncated: ${JSON.stringify(cut)}`).toEqual([]);
+});
