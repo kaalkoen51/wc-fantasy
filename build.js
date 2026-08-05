@@ -29,6 +29,39 @@ const REQUIRED = [
 ];
 const OPTIONAL = ["fixtures.json", "photos.json", "injuries.json"];
 
+/* styles.css is GENERATED from the classes used in index.html, app.js and
+   sim.js — so adding a utility class and running only this script copies a
+   stylesheet that does not contain it. The page then renders with the class
+   silently doing nothing, which is how a sort control lost its width and a
+   heading went back to wrapping, on a build whose local screenshots looked
+   fine because a <select> happens to size itself to its longest option.
+
+   CI catches it, but a check that only fires after a push is a slow way to
+   learn. This fails here instead, before anything is deployed. Skipped when
+   the CSS toolchain is absent, so a fresh clone without node_modules can
+   still assemble the site. */
+function assertCssFresh() {
+  const { execFileSync } = require("child_process");
+  const tw = path.join("node_modules", ".bin", "tailwindcss");
+  if (!fs.existsSync(tw) || !fs.existsSync("src.css")) return;
+  const before = fs.readFileSync("styles.css", "utf8");
+  const tmp = path.join(require("os").tmpdir(), `styles-check-${process.pid}.css`);
+  try {
+    execFileSync(tw, ["-i", "src.css", "-o", tmp, "--minify"], { stdio: "ignore" });
+    if (fs.readFileSync(tmp, "utf8") !== before) {
+      console.error("styles.css is out of date — run `npm run build:css` and commit it.");
+      console.error("(a class you used is not in the stylesheet, so it will do nothing)");
+      process.exit(1);
+    }
+  } catch (e) {
+    if (e && e.status === 1 && !e.stdout) throw e;   // our own exit, not a tool failure
+  } finally {
+    try { fs.unlinkSync(tmp); } catch { /* nothing to clean up */ }
+  }
+}
+
+assertCssFresh();
+
 fs.rmSync(OUT, { recursive: true, force: true });
 
 let copied = 0;
