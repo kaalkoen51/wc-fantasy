@@ -367,3 +367,58 @@ test("the score bar shows its split even when both managers share a colour", asy
   expect(read.widthA, "the left segment has no width").toBeGreaterThan(4);
   expect(read.widthB, "the right segment has no width").toBeGreaterThan(4);
 });
+
+test("the matchday ticker scrolls at a sane speed even if built while hidden", async ({ page }) => {
+  /* The speed comes from the ticker's own width, floored at a 14-second lap.
+     Measured while the element was not laid out, scrollWidth is 0 — so the
+     duration collapsed to that floor and a whole matchday's names sprinted
+     past. The banner render is cached on its HTML, so the wrong duration then
+     stuck until the markup changed, which is why a reload appeared to fix it.
+
+     renderBanner runs on a 60s interval regardless of which view is up, and
+     during boot it can run before the board is shown at all — so this builds
+     the ticker with the board hidden, exactly as it happens. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const res = await page.evaluate(async () => {
+    setBannerOpen(true);
+    // Build the ticker while nothing is laid out, the way boot does.
+    showView("home");
+    bannerCache = null;
+    renderBanner();
+    const hiddenLap = document.querySelector("#board-banner .ticker")?.scrollWidth ?? -1;
+    /* Let the frame callbacks run WHILE it is still hidden. Without this the
+       old code's requestAnimationFrame fired after the board appeared and
+       measured correctly by luck — the first version of this test passed with
+       the bug fully in place. */
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    await new Promise((r) => setTimeout(r, 60));
+    // Now the board appears, and the ticker finally has a width.
+    showView("board"); setBoardTab("home");
+    await new Promise((r) => setTimeout(r, 300));   // let the observer fire
+    const el = document.querySelector("#board-banner .ticker");
+    return {
+      hiddenLap,
+      lap: el ? el.scrollWidth / 2 : 0,
+      dur: el ? getComputedStyle(el).animationDuration : null,
+    };
+  });
+
+  // The setup has to actually be the broken case, or this proves nothing.
+  expect(res.hiddenLap, "the ticker was measurable while hidden, so this is not the bug")
+    .toBe(0);
+  expect(res.lap, "the ticker has no content to scroll").toBeGreaterThan(200);
+
+  /* ~42px a second, with a 14-second floor for short content. The floor is the
+     whole bug — measured at zero the duration collapsed to it — so the expected
+     value must be max(floor, width/speed) and NOT be capped at the floor, which
+     is what the first version of this assertion did: it accepted 14s for an
+     8700px lap and passed with the bug in place. */
+  const secs = parseFloat(res.dur);
+  const want = Math.max(14, res.lap / 42);
+  expect(secs, `a ${Math.round(res.lap)}px lap scrolls in ${res.dur}, expected about ${Math.round(want)}s`)
+    .toBeGreaterThan(want * 0.75);
+  expect(secs, `a ${Math.round(res.lap)}px lap scrolls in ${res.dur}, expected about ${Math.round(want)}s`)
+    .toBeLessThan(want * 1.35);
+});

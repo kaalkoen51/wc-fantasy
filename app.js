@@ -7068,6 +7068,36 @@ const bannerOpen = () => localStorage.getItem("wcf_banner_open") === "1";
 const setBannerOpen = (on) =>
   localStorage.setItem("wcf_banner_open", on ? "1" : "0");
 
+/* Set the ticker's scroll speed from its own width — once it HAS a width.
+
+   The speed is ~42px/s, floored at 14 seconds for a lap. That floor is what
+   made this a bug rather than a wobble: measured while the element was not
+   laid out, scrollWidth is 0, so the duration collapsed to the 14s minimum and
+   a whole matchday's names sprinted past. And because the banner render is
+   cached on its HTML string, the wrong duration then stuck until the markup
+   changed — which is why it looked right again only after a reload.
+
+   Measuring at the wrong moment is easy here: renderBanner runs on a 60-second
+   interval regardless of which view is showing, and during boot it can run
+   before the board is displayed at all. Rather than guess when it is safe,
+   measure, and if the answer is nonsense wait for a resize and try again. One
+   observer, re-targeted per render, so repeated renders cannot pile them up. */
+let _tickerRO = null;
+function tuneTicker(el) {
+  const apply = () => {
+    // Two identical halves scroll -50%, so one lap is half the content.
+    const lap = el.scrollWidth / 2;
+    if (lap < 50) return false;            // hidden, or not laid out yet
+    el.style.setProperty("--ticker-dur", Math.max(14, Math.round(lap / 42)) + "s");
+    return true;
+  };
+  _tickerRO?.disconnect();
+  if (apply()) return;
+  if (typeof ResizeObserver !== "function") return;   // keeps the 40s CSS default
+  _tickerRO = new ResizeObserver(() => { if (apply()) _tickerRO.disconnect(); });
+  _tickerRO.observe(el);
+}
+
 function renderBanner() {
   const box = $("board-banner");
   if (!box) return;
@@ -7191,10 +7221,7 @@ function renderBanner() {
     bannerCache = html;
     box.innerHTML = html;
     const t = box.querySelector(".ticker");
-    if (t) requestAnimationFrame(() => {     // ~42px/s, never under 14s
-      t.style.setProperty("--ticker-dur",
-        Math.max(14, Math.round(t.scrollWidth / 2 / 42)) + "s");
-    });
+    if (t) tuneTicker(t);
     box.querySelectorAll("[data-ftgame]").forEach((el) => el.onclick = () => {
       S.bannerGame = S.bannerGame === el.dataset.ftgame ? null : el.dataset.ftgame;
       renderBannerDetail();
