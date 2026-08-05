@@ -1952,6 +1952,12 @@ async function startDraft() {
 S.poolFilter = "ALL";
 S.poolSearch = "";
 S.poolShown = 40;    // how deep the draft pool list is currently drawn
+// Free-agent picker state, mirroring the squad planner's so the two screens
+// behave the same way.
+S.swapSort = "points";
+S.swapShortlistOnly = false;
+S.swapAnyPos = false;
+S.swapHideKO = false;
 S.bracketRound = null;   // which knockout round the phone pager is showing
 S.poolSort = "";            // draft pool: sort by a stat ("" = default order)
 S.bannerDayOffset = 0;      // matchday banner: 0 = default day, -1 = prev, etc.
@@ -9829,14 +9835,18 @@ function openSwap(pick) {
       ? "⏳ Claims are not instant — yours queues and resolves when the window closes, in waiver order."
       : "Applies immediately, first come first served."}</p>`;
   $("swap-search").value = "";
-  if (!$("swap-team").options.length) {
-    $("swap-team").innerHTML = '<option value="">All teams</option>' +
-      S.teams.map((t) => `<option>${esc(t)}</option>`).join("");
-  }
-  $("swap-team").value = "";
-  // Default to the pick's own position -- the common case -- but "All" is one
-  // tap away, which is the whole point of it being a filter now.
-  $("swap-pos").value = slotGroup(pick.slot) || "";
+  S.swapSort = "points";
+  S.swapAnyPos = false;      // the pick's own position is the common case
+  S.swapHideKO = false;
+  /* Open on your shortlist when you have starred a free agent in this position
+     — the planner already does this, and it is the difference between landing
+     on the players you were watching and landing on an alphabet of 0p squad
+     names. Falls back to everyone when the shortlist has nothing to offer. */
+  const group0 = slotGroup(pick.slot);
+  const sl = new Set(myShortlist());
+  const ownedNow = pickedIdSet();
+  S.swapShortlistOnly = S.players.some((p) =>
+    p.position === group0 && sl.has(p.player_id) && !ownedNow.has(p.player_id));
   renderSwapList();
   $("swap-sheet").classList.remove("hidden");
 }
@@ -9857,68 +9867,86 @@ function renderSwapList() {
   const pick = S.swapPick;
   if (!pick) return;
   const me = myManager();
-  /* The list used to be hard-locked to the pick's own position, with no way to
-     look at any other -- so a forward could only ever be swapped or traded for
-     another forward. That contradicts the rule the rest of the app follows
-     (see pairValid: any position for any position; the squad quota bites when
-     you next pick an XI). It is now a FILTER, defaulting to the pick's own
-     position because that is the common case, with "All" one tap away. */
   const group = slotGroup(pick.slot);
-  const posF = $("swap-pos").value;
-  const teamF = $("swap-team").value;
-  const q = $("swap-search").value.trim().toLowerCase();
-  const match = (name, team) => (!teamF || team === teamF)
-    && (!q || name.toLowerCase().includes(q) || team.toLowerCase().includes(q));
+  const waiver = faDeferToClose();
 
-  const free = (posF ? availableForGroup(posF) : availableForAnyGroup())
-    .filter((e) => match(e.name, e.team) && !isEliminated(e.team)).slice(0, 60);
-  // Players already on other rosters: tapping one jumps straight into a trade
-  // proposal with their owner.
-  const owned = S.picks
-    .filter((pk) => (!posF || pk.position === posF) && pk.slot !== "TEAM"
-      && pk.manager_id !== me?.id && match(pk.player_name, pk.team))
-    .map((pk) => ({ pk, owner: S.managers.find((m) => m.id === pk.manager_id) }))
-    .slice(0, 40);
+  /* The same controls the squad planner uses, in the same order, doing the same
+     thing. Two screens answered one question — who do I bring in — and only one
+     of them let you sort or filter to your shortlist. */
+  const chipCls = (on) => `rounded-full px-3 py-1 border ${
+    on ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"}`;
+  const anyPos = !!S.swapAnyPos;
+  $("swap-slfilter").className = chipCls(S.swapShortlistOnly);
+  $("swap-slfilter").textContent = "★ shortlist";
+  $("swap-pos").className = chipCls(!anyPos);
+  $("swap-pos").textContent = anyPos ? "⇄ any position" : `⇄ ${group} only`;
+  $("swap-hideko").className = chipCls(S.swapHideKO);
+  $("swap-hideko").textContent = "🚫 Hide KO";
+  $("swap-hideko").classList.toggle("hidden", !isCupCompetition());
+  $("swap-sort").innerHTML = STAT_SORTS.map(([k, lbl]) =>
+    `<option value="${k}" ${S.swapSort === k ? "selected" : ""}>${lbl}</option>`).join("");
 
-  const freeRows = free.map((e) => `
-    <li class="flex items-center py-2 gap-2">
-      ${avatarHtml(e.player_id, e.team)}
-      <div class="min-w-0 flex-1 leading-tight">
-        <div class="flex items-center gap-1 min-w-0">
-          <span class="truncate text-sm">${esc(e.name)}</span>
-          <span class="shrink-0 flex items-center gap-1">${availBadges(e.player_id)}</span>
-        </div>
-        <div class="flex items-center gap-1 text-xs text-slate-400 min-w-0">
-          ${teamCrestHtml(e.team, "w-3.5 h-3.5")}<span class="truncate">${esc(e.team)}</span>
-          <span class="shrink-0 font-mono">${entryPoints(e.player_id, e.position, e.team)}p</span>
-        </div>
-      </div>
-      <button data-swapin="${esc(e.player_id)}" class="shrink-0 btn-quiet rounded-lg px-3 py-2 text-xs font-semibold">${faDeferToClose() ? "Claim" : "Swap in"}</button>
-    </li>`).join("") || '<li class="py-4 text-sm text-slate-400">No free agents match.</li>';
-  const ownedRows = owned.map(({ pk, owner }) => `
-    <li class="flex items-center py-2 gap-2">
-      ${avatarHtml(pk.player_id, pk.team)}
-      <div class="min-w-0 flex-1 leading-tight">
-        <div class="flex items-center gap-1 min-w-0">
-          <span class="truncate text-sm">${esc(pk.player_name)}</span>
-          <span class="shrink-0 flex items-center gap-1">${availBadges(pk.player_id)}</span>
-        </div>
-        <div class="flex items-center gap-1 text-xs text-slate-400 min-w-0">
-          <span class="shrink-0 inline-flex items-center justify-center rounded w-4 h-4 text-[10px]"
-                style="background:${managerColor(owner)}26;border:1px solid ${managerColor(owner)}88">${managerMark(owner)}</span>
-          <span class="truncate">${esc(owner?.name ?? "?")}</span>
-          <span class="shrink-0 font-mono">${entryPoints(pk.player_id, pk.position, pk.team)}p</span>
-        </div>
-      </div>
-      <button data-tradefor="${pk.id}" class="shrink-0 bg-slate-800 border border-wcgold/60 text-wcgold rounded-lg px-3 py-2 text-xs font-semibold">Offer</button>
-    </li>`).join("");
+  const sortKey = S.swapSort || "points";
+  const byPoints = sortKey === "points";
+  const valOf = (p) => byPoints ? playerPoints(p.player_id, p.position)
+    : playerStatTotal(p.player_id, sortKey);
+
+  /* One pool, sorted once, then split. Sorting each section separately would
+     rank the same player differently depending on who owns them. */
+  const pool = pickPool(anyPos ? null : group, {
+    shortlistOnly: S.swapShortlistOnly, q: $("swap-search").value,
+    sortKey, hideKO: S.swapHideKO, limit: 120,
+  });
+  const ownedIds = pickedIdSet();
+  const free = pool.filter(({ p }) => !ownedIds.has(p.player_id) && !isEliminated(p.team));
+  const owned = pool.filter(({ p }) => ownedIds.has(p.player_id))
+    .map(({ p }) => ({ p, pk: S.picks.find((x) => x.player_id === p.player_id) }))
+    .filter(({ pk }) => pk && pk.slot !== "TEAM" && pk.manager_id !== me?.id);
+
+  const row = (p, action) => {
+    const val = valOf(p), pts = playerPoints(p.player_id, p.position);
+    const next = upNextHtml(p.team, "w-3.5 h-3.5");
+    return `<li class="flex items-center py-2 gap-1.5">
+      ${starHtml(p.player_id)}
+      <button data-swopen="${esc(p.player_id)}" class="min-w-0 flex-1 flex items-center gap-1.5 text-left">
+        ${avatarHtml(p.player_id, p.team, "w-6 h-6")}
+        <span class="min-w-0 flex-1">
+          <span class="block truncate text-sm">${esc(p.name)} ${availBadges(p.player_id)}</span>
+          <span class="flex items-center gap-1 truncate text-xs text-slate-400">${
+            esc(p.team)}${next ? ` · ${next}` : ""}</span>
+        </span>
+      </button>
+      <span class="shrink-0 w-10 text-right">
+        <span class="block font-mono font-bold ${val > 0 ? "text-wcgold" : "text-slate-400"}">${val}</span>
+        ${byPoints ? "" : `<span class="block text-xs text-slate-400">${pts}p</span>`}
+      </span>
+      ${action}
+    </li>`;
+  };
+
+  const freeRows = free.map(({ p }) => row(p,
+    `<button data-swapin="${esc(p.player_id)}" class="shrink-0 btn-quiet rounded-lg px-3 py-1 text-xs font-semibold">${
+      waiver ? "Claim" : "Swap in"}</button>`)).join("")
+    || `<li class="py-4 text-sm text-slate-400">${S.swapShortlistOnly
+      ? "None of your shortlist is a free agent right now — turn ★ shortlist off to see everyone."
+      : "No free agents match these filters."}</li>`;
+
+  const ownedRows = owned.map(({ p, pk }) => {
+    const owner = S.managers.find((m) => m.id === pk.manager_id);
+    return row(p, `<button data-tradefor="${pk.id}" title="Propose a trade with ${esc(owner?.name || "")}"
+      class="shrink-0 bg-slate-800 border border-slate-600 text-slate-300 rounded-lg px-3 py-1 text-xs font-semibold">Offer</button>`);
+  }).join("");
+
   $("swap-list").innerHTML = freeRows + (ownedRows
-    ? `<li class="pt-3 pb-1 text-xs uppercase tracking-wide text-slate-400">On other rosters — tap Trade to propose a swap</li>${ownedRows}`
+    ? `<li class="pt-3 pb-1 text-xs uppercase tracking-wide text-slate-400">On another squad — Offer starts a trade</li>${ownedRows}`
     : "");
+  $("swap-list").querySelectorAll("[data-swopen]").forEach((b) => b.onclick = () =>
+    openPlayerDetail(b.dataset.swopen));
   $("swap-list").querySelectorAll("[data-swapin]").forEach((b) => b.onclick = () => {
-    const entry = free.find((e) => e.player_id === b.dataset.swapin);
-    if (!entry) return;
-    const msg = faDeferToClose()
+    const hit = free.find(({ p }) => p.player_id === b.dataset.swapin);
+    if (!hit) return;
+    const entry = hit.p;
+    const msg = waiver
       ? `Queue a waiver claim — ${entry.name} for ${pick.player_name}? Resolves at window close, in waiver order.`
       : `Swap ${pick.player_name} out for ${entry.name}?`;
     if (confirm(msg)) swapOrClaim(pick, entry).catch((er) => toast(er.message));
@@ -9929,7 +9957,9 @@ function renderSwapList() {
     closeSwap();
     openBuilder(theirs.manager_id, null, [{ mine: pick.id, theirs: theirs.id }]);
   });
+  wireStars($("swap-list"), renderSwapList);
 }
+
 
 async function doSwap(pick, entry) {
   /* Belt and braces. swapOrClaim() is the router that sends a waiver league's
@@ -11142,9 +11172,21 @@ function plannerExec(outPickId, pid) {
 // nation / search and ranked by the chosen stat (points by default). Players
 // already chosen for this move are NOT dropped — they stay so the picker can
 // highlight them. Pure (DOM-free) so it's unit-tested.
-function plannerPickPool(group, { shortlistOnly, q, sortKey, unpicked, hideKO } = {}) {
+/* One pool builder for every "choose a player to bring in" screen.
+
+   There were two, and they disagreed about what a useful list looks like. The
+   squad planner sorted by any stat, could filter to your shortlist, and opened
+   on it. The free-agent sheet had neither, so it listed whoever came first —
+   a wall of 0p squad players in club order, with no way to reorder them. Same
+   job, same question, so: same list.
+
+   `freeOnly` is the one thing that differs. A free-agent claim can only take a
+   player nobody owns; a planner choice may name someone on another roster,
+   because a plan is allowed to be a trade you have not proposed yet. */
+function pickPool(group, { shortlistOnly, q, sortKey, unpicked, hideKO,
+                           freeOnly, limit = 80 } = {}) {
   const myIds = new Set(managerPicks(myManager()?.id).map((pk) => pk.player_id));
-  const owned = unpicked ? pickedIdSet() : null;
+  const owned = (unpicked || freeOnly) ? pickedIdSet() : null;
   const sl = new Set(myShortlist());
   const key = sortKey || "points";
   const byPoints = key === "points";
@@ -11156,12 +11198,15 @@ function plannerPickPool(group, { shortlistOnly, q, sortKey, unpicked, hideKO } 
     .filter((p) => (!group || p.position === group) && !myIds.has(p.player_id)
       && (!shortlistOnly || sl.has(p.player_id))
       && (!hideKO || !isEliminated(p.team))
-      && (!unpicked || !owned.has(p.player_id))
+      && ((!unpicked && !freeOnly) || !owned.has(p.player_id))
       && (!t || p.name.toLowerCase().includes(t) || p.team.toLowerCase().includes(t)))
     .map((p) => ({ p, val: valOf(p), pts: playerPoints(p.player_id, p.position) }))
     .sort((a, b) => b.val - a.val || b.pts - a.pts || a.p.name.localeCompare(b.p.name))
-    .slice(0, 80);
+    .slice(0, limit);
 }
+
+// Kept as the planner's own name for its call sites and its unit tests.
+const plannerPickPool = (group, opts) => pickPool(group, opts);
 
 function openPlannerPick(outPickId) {
   const outPick = S.picks.find((pk) => pk.id === outPickId);
@@ -13325,8 +13370,10 @@ function wire() {
   $("recap-sheet").onclick = (e) => { if (e.target.id === "recap-sheet") closeRecap(); };
   $("chart-sheet").onclick = (e) => { if (e.target.id === "chart-sheet") closeChartSheet(); };  // tap backdrop
   $("swap-search").oninput = renderSwapList;
-  $("swap-team").onchange = renderSwapList;
-  $("swap-pos").onchange = renderSwapList;
+  $("swap-sort").onchange = (e) => { S.swapSort = e.target.value; renderSwapList(); };
+  $("swap-slfilter").onclick = () => { S.swapShortlistOnly = !S.swapShortlistOnly; renderSwapList(); };
+  $("swap-pos").onclick = () => { S.swapAnyPos = !S.swapAnyPos; renderSwapList(); };
+  $("swap-hideko").onclick = () => { S.swapHideKO = !S.swapHideKO; renderSwapList(); };
   $("lineup-secondary").onclick = () => {
     if (S.lineupEdit) return discardLineupEdit();          // back to viewing
     $("lineup-sheet").classList.add("hidden"); lockScroll(false);

@@ -1226,14 +1226,18 @@
 <div id="swap-sheet" class="hidden fixed inset-0 z-40 bg-black/60">
   <div class="absolute bottom-0 inset-x-0 max-h-[75vh] bg-slate-900 border-t border-slate-700 rounded-t-2xl p-4 flex flex-col">
     <div id="swap-title" class="font-semibold mb-2"></div>
+    <!-- The same controls, in the same order, as the squad planner's picker.
+         These were two different screens for one job: choose a player to bring
+         in. This one had no shortlist filter and no sort at all, so it listed
+         whoever happened to come first — a wall of 0p squad players. -->
     <div class="flex gap-2 mb-2">
-      <input id="swap-search" placeholder="Search free agents…" class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
-      <select id="swap-pos" class="w-24 shrink-0 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm">
-        <option value="">All</option>
-        <option value="GK">GK</option><option value="DEF">DEF</option>
-        <option value="MID">MID</option><option value="FWD">FWD</option>
-      </select>
-      <select id="swap-team" class="w-28 shrink-0 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm"></select>
+      <input id="swap-search" placeholder="Search players or clubs…" class="min-w-0 flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+      <select id="swap-sort" class="w-28 shrink-0 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-xs"></select>
+    </div>
+    <div class="flex items-center gap-1.5 mb-2 flex-wrap text-xs">
+      <button id="swap-slfilter" class="rounded-full px-3 py-1 border"></button>
+      <button id="swap-pos" class="rounded-full px-3 py-1 border"></button>
+      <button id="swap-hideko" class="rounded-full px-3 py-1 border"></button>
     </div>
     <div class="relative flex-1 min-h-0 flex flex-col">
       <ul id="swap-list" class="overflow-y-auto divide-y divide-slate-800 flex-1 min-h-0"></ul>
@@ -1309,14 +1313,16 @@
 <div id="planner-sheet" class="hidden fixed inset-0 z-40 bg-black/60">
   <div class="absolute bottom-0 inset-x-0 max-h-[80vh] bg-slate-900 border-t border-slate-700 rounded-t-2xl p-4 flex flex-col">
     <div id="planner-title" class="font-semibold mb-2 text-sm"></div>
-    <input id="planner-search" placeholder="Search players…" class="mb-2 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+    <div class="flex gap-2 mb-2">
+      <input id="planner-search" placeholder="Search players or clubs…" class="min-w-0 flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+      <select id="planner-sort" class="w-28 shrink-0 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-xs"></select>
+    </div>
     <div class="flex items-center gap-1.5 mb-2 flex-wrap text-xs">
       <button id="planner-slfilter" class="rounded-full px-3 py-1 border"></button>
       <!-- Trades cross positions now, so the position filter has to be one. -->
       <button id="planner-pos" class="rounded-full px-3 py-1 border"></button>
       <button id="planner-unpicked" class="rounded-full px-3 py-1 border"></button>
       <button id="planner-hideko" class="rounded-full px-3 py-1 border"></button>
-      <select id="planner-sort" class="ml-auto rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-xs"></select>
     </div>
     <ul id="planner-list" class="overflow-y-auto overscroll-contain divide-y divide-slate-800 flex-1 min-h-0"></ul>
     <button id="planner-done" class="mt-3 w-full bg-slate-800 border border-slate-700 rounded-lg py-2 text-sm font-semibold">Done</button>

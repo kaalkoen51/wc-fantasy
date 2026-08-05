@@ -630,3 +630,82 @@ test("the head-to-head card reports the same match the standings do", async ({ p
 
   expectCleanSweep(await sweepAllViews(page));
 });
+
+test("the two ways of picking a player to bring in behave the same", async ({ page }) => {
+  /* There were two screens answering one question — who do I bring in — and
+     they disagreed about what a useful list is. The squad planner sorted by any
+     stat, filtered to your shortlist and opened on it; the free-agent sheet had
+     neither, so it listed whoever came first: a wall of 0p squad players in
+     club order with no way to reorder them. Reported from the app. */
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const setup = await page.evaluate(() => {
+    const me = myManager();
+    const owned = new Set(S.picks.map((p) => p.player_id));
+    const free = S.players.filter((p) => p.position === "MID" && !owned.has(p.player_id));
+    me.shortlist = free.slice(0, 3).map((p) => p.player_id);
+    /* Give the free agents DIFFERENT scores. Without this every one of them is
+       on zero, any order counts as sorted, and the ordering assertion below
+       passes with the sort removed — which is exactly what happened the first
+       time this was written. */
+    const label = S.stats[0]?.match_label;
+    const extra = free.slice(0, 8).map((p, i) => ({
+      league_id: S.league.id, player_id: p.player_id, match_label: label,
+      appeared: true, minutes: 90, goals: i % 4, assists: 0, clean_sheet: false,
+      yellow_cards: 0, red_cards: 0, saves: 0, motm: false,
+      penalty_saved: 0, penalty_missed: 0, team: p.team,
+    }));
+    S.stats = [...S.stats, ...extra];     // new array identity busts the memo
+    bustScores();
+    return { starred: me.shortlist, freeMids: free.length,
+             spread: new Set(free.slice(0, 8)
+               .map((p) => playerPoints(p.player_id, p.position))).size };
+  });
+  expect(setup.freeMids, "no free midfielders to choose between").toBeGreaterThan(5);
+  expect(setup.spread, "the free agents all score the same, so order proves nothing")
+    .toBeGreaterThan(1);
+
+  const controls = (prefix) => page.evaluate((pre) => {
+    const ids = ["search", "sort", "slfilter", "pos"];
+    return ids.map((k) => !!document.getElementById(`${pre}-${k}`));
+  }, prefix);
+
+  // Both offer the same controls.
+  expect(await controls("swap"), "the free-agent sheet is missing controls")
+    .toEqual([true, true, true, true]);
+  expect(await controls("planner"), "the planner is missing controls")
+    .toEqual([true, true, true, true]);
+
+  const open = await page.evaluate(() => {
+    showView("board"); setBoardTab("home");
+    openSwap(managerPicks(myManager().id).find((p) => !p.is_sub && p.position === "MID"));
+    const rows = [...document.querySelectorAll("#swap-list [data-swapin]")];
+    return { onShortlist: S.swapShortlistOnly, rows: rows.length,
+             sortValue: document.getElementById("swap-sort").value };
+  });
+  /* It opens on your shortlist when you have starred a free agent in this
+     position — the difference between landing on the players you were watching
+     and landing on an alphabet of nobodies. */
+  expect(open.onShortlist, "the sheet did not open on the shortlist").toBe(true);
+  expect(open.rows, "the shortlist filter showed nothing").toBe(3);
+  expect(open.sortValue, "the sheet did not default to sorting by points").toBe("points");
+
+  // Turning the filter off widens it, and the list comes back sorted.
+  const all = await page.evaluate(() => {
+    document.getElementById("swap-slfilter").click();
+    const val = (li) => Number(li.querySelector(".font-mono")?.textContent || 0);
+    const items = [...document.querySelectorAll("#swap-list li")].filter((li) => li.querySelector("[data-swapin]"));
+    return { n: items.length, vals: items.map(val) };
+  });
+  expect(all.n, "turning off the shortlist filter did not widen the list").toBeGreaterThan(3);
+  const sorted = [...all.vals].sort((a, b) => b - a);
+  expect(all.vals, "the free-agent list is not sorted by the chosen stat").toEqual(sorted);
+
+  // And a star can be set from here, like everywhere else that lists players.
+  const starred = await page.evaluate(() => {
+    const before = myShortlist().length;
+    document.querySelector("#swap-list [data-star]")?.click();
+    return { before, after: myShortlist().length };
+  });
+  expect(starred.after, "rows carry no working shortlist star").not.toBe(starred.before);
+});
