@@ -167,14 +167,20 @@ async function simApply(stage, weeks, quirks) {
   for (let i = 0; i < orphans.length; i += 50)
     await S.sb.from("match_stats").delete().eq("league_id", S.league.id)
       .in("match_label", orphans.slice(i, i + 50)).then(() => {}, () => {});
-  /* Line-up pins too. A snapshot is stamped with the round it was locked for,
-     and the new calendar reuses those round names against completely different
-     dates — so a pin from the discarded season would be handed straight back
-     as "the squad that played round 3". Invented history for a season that no
-     longer exists is worse than none: rosterAtFor then falls back to today's
-     picks, which is the honest answer for weeks being invented in bulk. */
-  await S.sb.from("lineup_snapshots").delete().eq("league_id", S.league.id)
-    .then(() => {}, () => {});
+  /* The line-up snapshots STAY, and the reasoning that briefly deleted them
+     here was wrong in a way worth recording.
+
+     It ran "results belong to the old calendar, so the pins must too". They do
+     not. A snapshot says which players a manager held at a moment in time —
+     a fact about the manager, not about the fixture list. Moving the calendar
+     changes when the matches are; it does not change who was in the squad.
+
+     And deleting them is not neutral, because pinHistory's snapshot is the
+     ONLY thing standing between a played round and rosterAtFor's live-roster
+     fallback. Wiping it meant the next transfer rewrote every round already
+     played — a player signed after round 3 appeared in round 1 — which is
+     precisely the bug pinning exists to prevent, reintroduced by the cleanup
+     that was supposed to make the bench tidier. */
   const wk = [...new Set(fx.map((f) => f.round))].length;
   // Say what was thrown away. A silent delete is how the last version of this
   // problem went unnoticed for as long as it did.

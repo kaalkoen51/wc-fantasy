@@ -180,3 +180,82 @@ test("rebuilding the calendar does not replay the season under new dates", async
   expect(after.total, "the second calendar left roughly twice the results behind")
     .toBeLessThan(first * 1.5);
 });
+
+test("a transfer in the bench does not rewrite the rounds already played", async ({ page }) => {
+  /* Reported from the bench, and it was self-inflicted: the orphaned-results
+     cleanup added alongside this file also deleted the line-up snapshots,
+     reasoning that they belonged to the discarded calendar too.
+
+     They do not. A snapshot says which players a manager HELD at a moment in
+     time — a fact about the manager, not the fixture list. And pinHistory's
+     snapshot is the only thing standing between a played round and
+     rosterAtFor's live-roster fallback, so wiping it meant the next transfer
+     rewrote every round already played: a player signed after round 3 turned
+     up in round 1.
+
+     The sequence matters, and it is the one a person actually performs — play
+     some weeks, make a transfer, then move the calendar again. The pin is
+     written by the transfer and has to survive the stage change. */
+  await openBench(page);
+  await page.evaluate(() => { window.__db.tables.rounds = []; S.rounds = []; });
+
+  // A squad, drafted the way the bench's own board would leave it.
+  await page.evaluate(async () => {
+    const mid = myManager().id;
+    const need = [["GK", 1], ["DEF", 4], ["MID", 4], ["FWD", 2],
+                  ["GK", 1], ["DEF", 1], ["MID", 1], ["FWD", 1]];
+    const rows = []; const used = new Set(); let n = 1;
+    for (const [pos, k] of need) for (let i = 0; i < k; i++) {
+      const p = S.players.find((x) => x.position === pos && !used.has(x.player_id));
+      used.add(p.player_id);
+      const sub = n > 11;
+      rows.push({ league_id: S.league.id, manager_id: mid, player_id: p.player_id,
+        player_name: p.name, position: p.position, team: p.team,
+        slot: sub ? "SUB_" + p.position : p.position, is_sub: sub, pick_number: n++ });
+    }
+    await S.sb.from("picks").insert(rows);
+    await refetchAll();
+  });
+
+  // Trading has to be OPEN for the swap below, which is what this stage means.
+  await page.evaluate(() => simApply("transfers", 6, false));
+  await page.waitForTimeout(2500);
+
+  const before = await page.evaluate(() =>
+    managerHistory(myManager().id).rounds.map((r) =>
+      [r.n, r.items.map((i) => i.entry.player_id).sort().join(",")]));
+  expect(before.length, "the calendar played no rounds, so there is no history to protect")
+    .toBeGreaterThan(0);
+
+  const moved = await page.evaluate(async () => {
+    const me = myManager();
+    const out = managerPicks(me.id).find((p) => !p.is_sub && p.position === "MID");
+    const owned = new Set(S.picks.map((p) => p.player_id));
+    const inP = S.players.find((p) => p.position === "MID" && !owned.has(p.player_id));
+    S.league.config = { ...S.league.config, fa_defer_to_close: false };
+    await doSwap(out, inP);
+    await refetchAll();
+    return { inId: inP.player_id,
+             squad: managerPicks(me.id).map((p) => p.player_id) };
+  });
+  // Assert the setup, rather than trusting it: a swap the window refused would
+  // leave every assertion below comparing the squad to itself.
+  expect(moved.squad, "the transfer did not actually go through")
+    .toContain(moved.inId);
+
+  // Now move the calendar again, which is where the pin was being destroyed.
+  await page.waitForTimeout(1200);
+  await page.evaluate(() => simApply("lineup", 6, false));
+  await page.waitForTimeout(2500);
+
+  const after = await page.evaluate(() =>
+    managerHistory(myManager().id).rounds.map((r) =>
+      [r.n, r.items.map((i) => i.entry.player_id).sort().join(",")]));
+
+  for (const [n, ids] of after) {
+    expect(ids, `round ${n} was rewritten with a player signed after it`)
+      .not.toContain(moved.inId);
+    const was = before.find((b) => b[0] === n);
+    if (was) expect(ids, `round ${n} changed after a later transfer`).toBe(was[1]);
+  }
+});
