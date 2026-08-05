@@ -1971,6 +1971,10 @@ S.swapAnyPos = false;
 S.swapHideKO = false;
 S.h2hSort = "logPts";      // how the head-to-head log is ordered
 S.chartOpen = false;       // whether the season chart is expanded under it
+/* Season chart: "rank" (movement up and down the log) or "points" (cumulative
+   fantasy points). Rank is the default wherever a head-to-head log exists,
+   because that is the question a league table is asking. */
+S.chartMode = "rank";
 S.bracketRound = null;   // which knockout round the phone pager is showing
 S.poolSort = "";            // draft pool: sort by a stat ("" = default order)
 S.bannerDayOffset = 0;      // matchday banner: 0 = default day, -1 = prev, etc.
@@ -7730,23 +7734,70 @@ function roundMVPs(scores) {
 // is picked, they're sky — the two emphasized, everyone else dimmed, with a
 // round-by-round head-to-head under it. Colours pass CVD + contrast; the two
 // bright lines carry direct end-labels so identity is never colour-alone.
+// 1 → "1st". Used on the rank chart, where a bare number reads as a score.
+const ordinal = (n) => {
+  const t = n % 100, o = ["th", "st", "nd", "rd"][t > 10 && t < 14 ? 0 : Math.min(n % 10, 4)] || "th";
+  return `${n}${o}`;
+};
+
+/* Where each manager stood in the LEAGUE after every round.
+
+   The points chart answers "who is scoring"; in a head-to-head league that is
+   not the same question as "who is winning", because the log is won on results
+   rather than on fantasy points. Rebuilding the table at each round is what
+   the movement arrows already do — this just does it for every round instead
+   of the last one. Rank 1 is drawn at the top, which means the axis runs the
+   other way to the points chart. */
+function h2hRankSeries() {
+  const played = h2hCurrentRound();
+  if (played < 1) return { maxR: 0, series: [] };
+  const byId = {};
+  for (const m of S.managers) byId[m.id] = { id: m.id, name: m.name, pts: [] };
+  for (let r = 1; r <= played; r++) {
+    const { order } = h2hStandings(r);
+    order.forEach((id, idx) => { if (byId[id]) byId[id].pts.push(idx + 1); });
+  }
+  /* The points chart starts every line at 0 for round 0; a rank chart has no
+     round 0 to stand at, so each line starts at its own first standing. */
+  const series = Object.values(byId).filter((x) => x.pts.length === played);
+  for (const x of series) x.pts.unshift(x.pts[0]);
+  return { maxR: played, series };
+}
+
 function seasonChartHtml(scores, meId) {
-  const { maxR, series } = seasonSeries(scores);
+  /* Two questions, one chart. "Who is scoring" is cumulative points; "who is
+     winning" is league position, and in a head-to-head league those are not
+     the same — the log is won on results. So rank leads where a log exists,
+     and points remain a tap away. */
+  const rankable = h2hEnabled() && h2hCurrentRound() >= 1;
+  const mode = rankable ? (S.chartMode === "points" ? "points" : "rank") : "points";
+  const src = mode === "rank" ? h2hRankSeries() : seasonSeries(scores);
+  const { maxR, series } = src;
   if (maxR < 2 || series.length < 2)
     return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 text-xs text-slate-400 text-center">
       The season chart appears once a couple of rounds have been scored.</div>`;
   const cmp = S.chartCompare && series.some((s) => s.id === S.chartCompare) ? S.chartCompare : null;
   const meS = series.find((s) => s.id === meId) || null;
   const cmpS = cmp ? series.find((s) => s.id === cmp) : null;
-  const maxY = Math.max(1, ...series.map((s) => s.pts[maxR])) * 1.08;
   const W = 640, H = 240, L = 34, Rp = 62, T = 14, Bt = 24;
   const pw = W - L - Rp, ph = H - T - Bt;
   const X = (r) => (L + (maxR ? r / maxR * pw : 0)).toFixed(1);
-  const Y = (v) => (T + (1 - v / maxY) * ph).toFixed(1);
-  let svg = [0, 0.25, 0.5, 0.75, 1].map((f) => {
-    const v = maxY * f, yy = Y(v);
+  /* Rank runs the other way: 1st belongs at the TOP, and the scale is whole
+     places rather than a fraction of a maximum. */
+  const places = series.length;
+  const maxY = mode === "rank" ? places
+    : Math.max(1, ...series.map((s) => s.pts[maxR])) * 1.08;
+  const Y = mode === "rank"
+    ? (v) => (T + ((v - 1) / Math.max(1, places - 1)) * ph).toFixed(1)
+    : (v) => (T + (1 - v / maxY) * ph).toFixed(1);
+  let svg = (mode === "rank"
+      ? Array.from({ length: places }, (_, k) => k + 1)
+      : [0, 0.25, 0.5, 0.75, 1].map((f) => maxY * f)
+    ).map((v) => {
+    const yy = Y(v);
     return `<line x1="${L}" y1="${yy}" x2="${L + pw}" y2="${yy}" stroke="#1e293b" stroke-width="1"/>`
-      + `<text x="${L - 4}" y="${(+yy + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#64748b">${Math.round(v)}</text>`;
+      + `<text x="${L - 4}" y="${(+yy + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#64748b">${
+        mode === "rank" ? v : Math.round(v)}</text>`;
   }).join("");
   const step = maxR > 8 ? 2 : 1;
   for (let r = step; r <= maxR; r += step)
@@ -7757,16 +7808,18 @@ function seasonChartHtml(scores, meId) {
   const hasEmph = !!(meS || cmpS);
   const dimOp = !hasEmph ? 0.5 : (cmp ? 0.12 : 0.32);
   for (const s of series) if (s.id !== meId && s.id !== cmp) svg += poly(s, "#64748b", 1.2, dimOp);
+  const unit = mode === "rank" ? "" : " pts";
+  const say = (v) => mode === "rank" ? ordinal(v) : `${v}${unit}`;
   const emph = (s, color) => poly(s, color, 2.6, 1)
     + s.pts.map((v, r) => `<circle cx="${X(r)}" cy="${Y(v)}" r="2.6" fill="${color}"><title>${
-        esc(s.name)} · after round ${r}: ${v} pts</title></circle>`).join("")
+        esc(s.name)} · after round ${r}: ${say(v)}</title></circle>`).join("")
     + `<text x="${(+X(maxR) + 4).toFixed(1)}" y="${(+Y(s.pts[maxR]) + 3).toFixed(1)}" font-size="10" fill="${
         color}" font-weight="700">${esc(s.name.slice(0, 9))}</text>`;
   if (cmpS) svg += emph(cmpS, "#38bdf8");
   if (meS) svg += emph(meS, "#eab308");
 
   const others = series.filter((s) => s.id !== meId);
-  const selector = `<select id="chart-compare" class="rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-xs max-w-[45%]">
+  const selector = `<select id="chart-compare" class="min-w-0 flex-1 rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-xs">
     <option value="">Compare to…</option>
     ${others.map((s) => `<option value="${esc(s.id)}" ${cmp === s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("")}
   </select>`;
@@ -7785,8 +7838,14 @@ function seasonChartHtml(scores, meId) {
     }
   }
   return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2">
-    <div class="flex items-center justify-between gap-2">
-      <span class="text-sm font-semibold">Season progression <span class="text-xs text-slate-400 font-normal">· points by round</span></span>
+    <div class="flex items-center gap-2">
+      <!-- No title here: the fold above it already says "Season progression",
+           and three controls plus a heading on a 390px row left the heading
+           reading "Se…". -->
+      ${rankable ? `<select id="chart-mode" class="min-w-0 flex-1 rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-xs">
+        <option value="rank" ${mode === "rank" ? "selected" : ""}>League position</option>
+        <option value="points" ${mode === "points" ? "selected" : ""}>Points for</option>
+      </select>` : ""}
       ${selector}
     </div>
     <svg viewBox="0 0 ${W} ${H}" width="100%" style="height:auto" preserveAspectRatio="xMidYMid meet">${svg}</svg>
@@ -7912,33 +7971,6 @@ const FORM_STYLE = { W: "bg-emerald-500/25 text-emerald-300 border-emerald-500/4
   D: "bg-slate-600/30 text-slate-300 border-slate-500/40",
   L: "bg-red-500/20 text-red-300 border-red-500/40" };
 
-/* A manager's season as a single line, small enough to sit in a table row.
-
-   The overlaid chart is the wrong tool for "how do these four compare": every
-   line but yours rendered the same grey, so you could not tell one rival from
-   another. Small multiples fix that — one line each, in that manager's own
-   colour, read across the column rather than untangled from a knot. The big
-   chart stays for the one job it is good at, comparing two.
-
-   Drawn as a path in a viewBox so it scales with the row; no library, and no
-   axis, because a sparkline's job is shape rather than value. */
-function sparkHtml(pts, color, opts = {}) {
-  const w = opts.w || 52, h = opts.h || 20;
-  if (!pts || pts.length < 2)
-    return `<span class="inline-block" style="width:${w}px;height:${h}px"></span>`;
-  const max = Math.max(1, ...pts);
-  const x = (i) => (i / (pts.length - 1)) * (w - 2) + 1;
-  const y = (v) => h - 1 - (v / max) * (h - 2);
-  const d = pts.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" ");
-  const last = pts[pts.length - 1];
-  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true"
-    class="shrink-0 overflow-visible">
-    <path d="${d}" fill="none" stroke="${color}" stroke-width="1.6"
-      stroke-linejoin="round" stroke-linecap="round" opacity=".9"/>
-    <circle cx="${x(pts.length - 1).toFixed(1)}" cy="${y(last).toFixed(1)}" r="1.9" fill="${color}"/>
-  </svg>`;
-}
-
 /* How the log can be ordered. Log points is the league; the rest are questions
    people actually ask of a table ("who scores most", "who has the best swing")
    and every one of them is already a column in the row. */
@@ -8019,9 +8051,6 @@ function h2hStandingsHtml(me) {
     const form = anyPlayed ? h2hFormOf(id, played) : [];
     const mv = moveOf(id);
     const diff = r.PF - r.PA;
-    const series = (scoresByMgr[id] || []).reduce((acc, v) => {
-      acc.push((acc[acc.length - 1] || 0) + (v || 0)); return acc;
-    }, [0]);
     const mvp = played >= 1 && bestLast > 0 && lastRoundOf(id) === bestLast;
     /* One line per row, not one chart for everyone. Points difference replaces
        the for:against pair: the pair took the most room and said the least,
@@ -8054,7 +8083,6 @@ function h2hStandingsHtml(me) {
               esc(H2H_SORT_TAG[sortKey] || sortKey)} ${valOf(id) > 0 && sortKey === "diff" ? "+" : ""}${valOf(id)}</span>` : ""}
           </span>
         </span>
-        ${sparkHtml(series, managerColor(m))}
         <span class="shrink-0 w-14 text-right leading-tight">
           <span class="block font-bold text-wcgold scoreboard leading-none">${r.logPts}</span>
           <span class="block text-[10px] text-slate-400 mt-0.5 tabular-nums">${r.W}-${r.D}-${r.L}</span>
@@ -8098,7 +8126,6 @@ function h2hStandingsHtml(me) {
       <span class="w-8 shrink-0">#</span>
       <span class="w-7 shrink-0"></span>
       <span class="min-w-0 flex-1">manager · form</span>
-      <span class="w-[52px] shrink-0 text-center">season</span>
       <span class="w-14 shrink-0 text-right leading-tight">pts<br>w-d-l<br>diff</span>
     </div>` : ""}
     ${body || '<p class="rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm text-slate-400">No completed rounds yet.</p>'}
@@ -8244,6 +8271,8 @@ function renderBoard() {
     if (chartBox) chartBox.ontoggle = () => { S.chartOpen = chartBox.open; };
     const cc0 = document.getElementById("chart-compare");
     if (cc0) cc0.onchange = () => { S.chartCompare = cc0.value || null; renderBoard(); };
+    const cm0 = document.getElementById("chart-mode");
+    if (cm0) cm0.onchange = () => { S.chartMode = cm0.value; renderBoard(); };
     const aw0 = document.getElementById("lb-awards");
     if (aw0) aw0.onclick = openAwards;
     for (const m of S.managers)

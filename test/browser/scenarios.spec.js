@@ -725,7 +725,6 @@ test("the league table sorts, moves and keeps league position honest", async ({ 
       const t = d.querySelector("summary").textContent.replace(/\s+/g, " ").trim();
       const tag = d.querySelector("summary .text-wcgold.tabular-nums");
       return { id: d.dataset.mgr, rank: Number(t.match(/^(\d+)/)?.[1]),
-               spark: !!d.querySelector("svg path"),
                tag: tag ? tag.textContent.trim() : null };
     });
   });
@@ -746,7 +745,6 @@ test("the league table sorts, moves and keeps league position honest", async ({ 
   expect(byRank.length, "no standings rows").toBe(5);
   expect(byRank.map((r) => r.rank), "the default order is not league order")
     .toEqual([1, 2, 3, 4, 5]);
-  expect(byRank.every((r) => r.spark), "rows carry no sparkline").toBe(true);
 
   /* Sort by LOSSES, deliberately. Points-for happens to rank the same way as
      the league in this fixture, so sorting by it is a no-op and an assertion
@@ -834,4 +832,63 @@ test("finishing a draft lands you on your team, not the player list", async ({ p
     return S.boardTab;
   });
   expect(stays, "the Players tab bounces back to Team after the draft").toBe("stats");
+});
+
+test("the season chart shows league position by default, and points on request", async ({ page }) => {
+  /* "Who is scoring" and "who is winning" are different questions in a
+     head-to-head league — the log is won on results, not on fantasy points.
+     The chart only ever answered the first. */
+  await openLeague(page, { managers: 5, played: 4, h2h: true });
+
+  const read = () => page.evaluate(() => {
+    S.chartOpen = true;
+    showView("board"); setBoardTab("lb"); renderBoard();
+    /* The head-to-head table folds its chart into #lb-chart; the points-tally
+       table renders it inline. Look for both, or the third case below reads as
+       "no chart" rather than "no mode selector". */
+    const svg = document.querySelector("#lb-chart svg") || document.querySelector("#board-lb svg");
+    if (!svg) return null;
+    // Axis labels with their y positions, so "which way is up" is measurable.
+    const ticks = [...svg.querySelectorAll("text")]
+      .filter((t) => t.getAttribute("text-anchor") === "end")
+      .map((t) => ({ label: t.textContent.trim(), y: parseFloat(t.getAttribute("y")) }))
+      .sort((a, b) => a.y - b.y);
+    return {
+      mode: document.getElementById("chart-mode")?.value,
+      ticks,
+      lines: svg.querySelectorAll("polyline").length,
+      // Every point's tooltip, to check what the numbers claim to be.
+      tips: [...svg.querySelectorAll("title")].map((t) => t.textContent),
+    };
+  });
+
+  // 1. A head-to-head league opens on league position...
+  const rank = await read();
+  expect(rank, "the chart did not render").not.toBeNull();
+  expect(rank.mode, "the chart did not default to league position").toBe("rank");
+  expect(rank.lines, "not every manager has a line").toBe(5);
+  /* ...drawn the right way up: 1st at the top. The labels run 1..5 down the
+     page, which is the opposite of a points axis and the whole reason this
+     needed its own scale. */
+  expect(rank.ticks.map((t) => t.label), "the rank axis is not 1st-at-top")
+    .toEqual(["1", "2", "3", "4", "5"]);
+  expect(rank.tips.some((t) => /\b(1st|2nd|3rd|4th|5th)\b/.test(t)),
+    "rank points are labelled as scores, not placings").toBe(true);
+
+  // 2. ...and points are one selection away.
+  const pts = await page.evaluate(() => { S.chartMode = "points"; renderBoard(); });
+  const points = await read();
+  expect(points.mode, "switching to points did not take").toBe("points");
+  expect(points.tips.some((t) => /pts$/.test(t)),
+    "the points chart is not labelling points").toBe(true);
+  // A points axis climbs, so its labels descend down the page.
+  const nums = points.ticks.map((t) => Number(t.label));
+  expect(nums, `the points axis is not descending: ${nums}`)
+    .toEqual([...nums].sort((a, b) => b - a));
+
+  // 3. A league with no head-to-head log has nothing to rank, so no selector.
+  await openLeague(page, { managers: 5, played: 4 });
+  const plain = await read();
+  expect(plain.mode, "a points-tally league is offering a league-position chart")
+    .toBeUndefined();
 });
