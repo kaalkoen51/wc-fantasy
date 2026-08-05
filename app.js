@@ -8210,9 +8210,9 @@ function renderBoard() {
   const toggleHtml = `
     <div class="flex gap-1 rounded-lg bg-slate-900 border border-slate-700 p-1 text-sm">
       <button data-tableview="total" class="flex-1 rounded-md py-1.5 font-semibold ${
-        !playerView ? "bg-wcred text-white" : "text-slate-400"}">🏆 Total <span class="text-xs font-normal opacity-80">official</span></button>
+        !playerView ? "bg-slate-700 text-wcgold" : "text-slate-400"}">🏆 Total <span class="text-xs font-normal opacity-80">official</span></button>
       <button data-tableview="player" class="flex-1 rounded-md py-1.5 font-semibold ${
-        playerView ? "bg-wcred text-white" : "text-slate-400"}">⚽ Player pts <span class="text-xs font-normal opacity-80">for fun</span></button>
+        playerView ? "bg-slate-700 text-wcgold" : "text-slate-400"}">⚽ Player pts <span class="text-xs font-normal opacity-80">for fun</span></button>
     </div>
     ${playerView ? `<p class="text-xs text-amber-300/90 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-1.5">⚽ Player-points-only — just for fun. The official standings are 🏆 <b>Total</b> (national-team stage bonuses included).</p>` : ""}`;
   if (h2hEnabled()) {
@@ -9075,7 +9075,7 @@ function renderStatsTab() {
   $("stats-view").querySelectorAll("[data-statsview]").forEach((b) => {
     const on = b.dataset.statsview === S.statsView;
     b.className = "flex-1 rounded-md py-1.5 font-semibold " +
-      (on ? "bg-wcred text-white" : "text-slate-400");
+      (on ? "bg-slate-700 text-wcgold" : "text-slate-400");
     b.onclick = () => { S.statsView = b.dataset.statsview; renderStatsTab(); };
   });
   // Leaderboard-only controls are hidden in Dream XI mode (round/per-90 shared).
@@ -13052,7 +13052,7 @@ function renderAdmin() {
   $("admin-panel").querySelectorAll("[data-winmode]").forEach((b) => {
     const on = (b.dataset.winmode === "auto") === autoWin;
     b.className = "flex-1 rounded-md py-1.5 font-semibold "
-      + (on ? "bg-wcred text-white" : "text-slate-400");
+      + (on ? "bg-slate-700 text-wcgold" : "text-slate-400");
     b.onclick = () => setWindowMode(b.dataset.winmode === "auto");
   });
   const wnote = $("adm-winmode-note");

@@ -532,3 +532,51 @@ test("the club column stays aligned whether or not a player is owned", async ({ 
   expect(xs, `the club column is ragged: crests start at ${xs.join(", ")}px`)
     .toHaveLength(1);
 });
+
+test("a selected tab looks the same wherever it is", async ({ page }) => {
+  /* Red had crept back into three toggles — the Players view switcher, the
+     leaderboard's Total/Player-points pair and the admin window mode — while
+     every other selector in the app marks its choice with slate and gold. Red
+     is reserved for destructive actions, so a selected tab wearing it is both
+     inconsistent and a false alarm. */
+  const SELECTED_BG = "rgb(51, 65, 85)";     // slate-700
+  const SELECTED_FG = "rgb(255, 199, 44)";   // wcgold
+  const DANGER = "rgb(200, 16, 46)";         // wcred
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const groups = [
+    ["[data-tab]", () => { showView("board"); setBoardTab("lb"); renderBoard(); }],
+    ["[data-atab]", () => { setBoardTab("trades"); renderBoard(); }],
+    ["[data-tableview]", () => { setBoardTab("lb"); renderBoard(); }],
+    ["[data-statsview]", () => { setBoardTab("stats"); renderStatsTab(); }],
+    ["[data-winmode]", () => { showView("admin"); renderAdmin(); }],
+  ];
+
+  for (const [sel, open] of groups) {
+    await page.evaluate(open);
+    await page.waitForTimeout(120);
+    const seen = await page.evaluate((s) =>
+      [...document.querySelectorAll(s)]
+        .filter((b) => b.getBoundingClientRect().height > 0)
+        .map((b) => {
+          const c = getComputedStyle(b);
+          return { text: b.textContent.trim().slice(0, 18),
+                   bg: c.backgroundColor, fg: c.color };
+        }), sel);
+
+    expect(seen.length, `${sel}: no buttons rendered, so this group is untested`)
+      .toBeGreaterThan(1);
+    // Exactly one is chosen, and it wears the shared selected style.
+    const on = seen.filter((b) => b.bg !== "rgba(0, 0, 0, 0)");
+    expect(on.length, `${sel}: expected one selected button, saw ${on.length}`).toBe(1);
+    expect(on[0].bg, `${sel}: "${on[0].text}" is selected in ${on[0].bg}, not the shared slate`)
+      .toBe(SELECTED_BG);
+    expect(on[0].fg, `${sel}: "${on[0].text}" selected text is ${on[0].fg}, not gold`)
+      .toBe(SELECTED_FG);
+    // ...and nothing in the group is wearing the destructive colour.
+    for (const b of seen)
+      expect(b.bg, `${sel}: "${b.text}" uses the danger red for a tab`).not.toBe(DANGER);
+  }
+});
