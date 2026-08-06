@@ -4709,18 +4709,43 @@ function rosterAtFor(mgrId, t, d, snaps, roundKey, why) {
       else break;
     }
   }
-  /* Last resort: the match predates every snapshot, so the earliest one is the
-     closest record of what they had. A FUTURE-dated snapshot is not a record
-     though -- it is a line-up for a round still to come -- so it is never used
-     here, or a past match would score against an XI that was never in force. */
-  if (!chosen && snaps.length && Date.parse(snaps[0].effective_from) <= Date.now()) {
-    chosen = snaps[0]; arm = "the earliest snapshot there is (a guess)";
-  }
+  /* "The match predates every snapshot, so the earliest one is the closest
+     record of what they had" used to sit here, and it is deleted rather than
+     reordered. It was never a record of anything: it hands a round the squad
+     from some OTHER moment, chosen only for being the oldest row available.
+     The diagnostic caught it holding a whole season -- three played rounds all
+     answering "the earliest snapshot there is (a guess)", borrowing a line-up
+     stamped for a round that had not been played yet, because it was the one
+     row that existed. It outranked the reconstruction below, so a manager with
+     their transfer sitting in the moves log still saw it in rounds played
+     before they made it.
+
+     A guess that beats a record is worse than no guess. Falling through costs
+     nothing: rosterRewound() anchors on the squad as it stands and undoes the
+     moves made since, which is the same question answered from what was
+     written down at the time. */
   if (chosen) { via(arm, chosen); return chosen.roster; }
-  via((S.transactions || []).some((x) => x.manager_id === mgrId)
-    ? "rebuilt from the moves log (no snapshot)"
-    : "today's squad — nothing recorded this round", null);
-  return rosterRewound(mgrId, t);
+  /* No snapshot predates this match, so none of them is a record OF it -- but
+     the earliest one still bounds it from ABOVE. If nothing was logged between
+     the match and that snapshot, the squad was the same at both, and the
+     snapshot is the nearest thing to a record there is. So it becomes the
+     ANCHOR and the log is folded back from it, instead of being handed over
+     whole as "the closest thing we have".
+
+     Handing it over whole is what the diagnostic caught: a league with one
+     snapshot, written after a transfer and stamped for the round still to
+     come, was answering for all three rounds behind it -- the transfer sat in
+     the log unused. Anchoring keeps what the snapshot genuinely knows (the
+     squad at ITS moment, including changes nobody logged) and still undoes
+     the moves that are recorded. Both facts get used instead of one. */
+  const first = snaps[0], firstAt = first ? Date.parse(first.effective_from) : NaN;
+  const anchor = isFinite(firstAt) && firstAt <= Date.now()
+    ? { roster: first.roster, at: firstAt } : null;
+  via(anchor ? "the earliest snapshot, with later moves undone"
+    : (S.transactions || []).some((x) => x.manager_id === mgrId)
+      ? "rebuilt from the moves log"
+      : "today's squad — nothing recorded, nothing to undo", anchor ? first : null);
+  return rosterRewound(mgrId, t, anchor);
 }
 
 /* The squad a manager held at epoch-ms t, rebuilt from the moves they have
@@ -4740,19 +4765,24 @@ function rosterAtFor(mgrId, t, d, snaps, roundKey, why) {
    at the time, which is not recorded anywhere. Those still rely on the pin
    acceptTrade takes. So this narrows the gap rather than closing it, and free
    agency -- where the gap actually bit -- is the part it closes. */
-function rosterRewound(mgrId, t) {
+function rosterRewound(mgrId, t, from) {
   const m = S.managers.find((x) => x.id === mgrId);
-  const roster = (m ? orderedRoster(m) : managerPicks(mgrId)).map((pk) => ({
-    player_id: pk.player_id, player_name: pk.player_name, position: pk.position,
-    team: pk.team, is_sub: pk.is_sub, slot: pk.slot,
-    ...(m?.captain_id === pk.player_id ? { is_captain: true } : {}),
-    ...(m?.vice_id === pk.player_id ? { is_vice: true } : {}),
-  }));
+  const roster = (from ? from.roster : m ? orderedRoster(m) : managerPicks(mgrId))
+    .map((pk) => ({
+      player_id: pk.player_id, player_name: pk.player_name, position: pk.position,
+      team: pk.team, is_sub: pk.is_sub, slot: pk.slot,
+      ...(pk.is_captain || (!from && m?.captain_id === pk.player_id) ? { is_captain: true } : {}),
+      ...(pk.is_vice || (!from && m?.vice_id === pk.player_id) ? { is_vice: true } : {}),
+    }));
   if (!isFinite(t)) return roster;
+  /* Only the moves between t and the anchor. Undoing one made AFTER the anchor
+     was written would reverse a change the anchor never contained. */
+  const upto = from ? from.at : Date.now();
   // Newest first: undoing them in reverse walks the squad back one move at a
   // time, so two transfers through the same slot unwind to the right player.
   const undo = (S.transactions || [])
-    .filter((x) => x.manager_id === mgrId && Date.parse(x.created_at) > t)
+    .filter((x) => x.manager_id === mgrId
+      && Date.parse(x.created_at) > t && Date.parse(x.created_at) <= upto)
     .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
   for (const tx of undo) {
     if (!tx.in_player_id || !tx.out_player_id) continue;

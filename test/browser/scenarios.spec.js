@@ -335,7 +335,7 @@ test("the diagnostic says which rounds are recorded and which are inferred", asy
   expect(got.before, "the readout did not report the rounds as inferred")
     .toContain("3 of 3 rounds inferred");
   expect(got.before, "an unrecorded round was not attributed to the live squad")
-    .toMatch(/nothing recorded this round|moves log/);
+    .toMatch(/nothing recorded|moves log/);
 
   // Once the transfer pins them, every round has a record of its own.
   expect(got.after, "the readout still calls the rounds inferred after they were stamped")
@@ -343,6 +343,73 @@ test("the diagnostic says which rounds are recorded and which are inferred", asy
   // Matched without the apostrophe: esc() writes it as an entity.
   expect(got.after, "a stamped round was not attributed to its own line-up")
     .toMatch(/own line-up/);
+});
+
+test("one snapshot stamped for the round ahead cannot answer for the rounds behind", async ({ page }) => {
+  /* The reported state, read off the diagnostic rather than guessed at: ONE
+     snapshot for the whole league, dated after the transfer and stamped for
+     MW4 -- the round not yet played -- and one move in the log. All three
+     played rounds were answering "the earliest snapshot there is (a guess)",
+     borrowing MW4's squad because it was the only row that existed. That arm
+     outranked the reconstruction, so the transfer in the log went unused and
+     showed up in every round behind it.
+
+     Seeded to match: the round-key stamps pinHistory now writes are cleared
+     afterwards, because the league that had the fault made its transfer before
+     they existed and no squad change has happened since to write them. */
+  await openLeague(page, { managers: 2, played: 3 });
+
+  const got = await page.evaluate(async () => {
+    const me = myManager();
+    const out = managerPicks(me.id).find((p) => !p.is_sub && p.position === "MID");
+    const owned = new Set(S.picks.map((p) => p.player_id));
+    const ownedClubs = new Set(S.picks.map((p) => p.team));
+    const inP = S.players.find((p) => p.position === "MID"
+      && !owned.has(p.player_id) && !ownedClubs.has(p.team));
+    if (!inP || inP.player_id === out.player_id)
+      throw new Error("could not pick a distinct incoming player for the transfer");
+    S.league.config = { ...S.league.config, fa_defer_to_close: false };
+    await doSwap(out, inP);
+    await refetchAll();
+
+    // Exactly the state on the screenshot: one row, stamped for the round
+    // ahead, holding the squad as it is AFTER the transfer.
+    const ahead = S.fixtures.find((f) => f.status !== "FT");
+    window.__db.tables.lineup_snapshots = [{
+      id: "only-one", league_id: S.league.id, manager_id: me.id,
+      effective_from: new Date().toISOString(), created_at: new Date().toISOString(),
+      round_key: ahead.round,
+      roster: managerPicks(me.id).map((pk) => ({
+        player_id: pk.player_id, player_name: pk.player_name, position: pk.position,
+        team: pk.team, is_sub: pk.is_sub, slot: pk.slot })),
+    }];
+    await refetchAll();
+
+    const strip = (h) => h.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    return { snaps: (S.snapshots || []).filter((s) => s.manager_id === me.id).length,
+             txs: (S.transactions || []).filter((x) => x.manager_id === me.id).length,
+             readout: strip(simHistorySource()),
+             rounds: managerHistory(me.id).rounds.map((r) =>
+               [r.n, r.items.map((i) => i.entry.player_id).sort().join(",")]),
+             inId: inP.player_id, outId: out.player_id };
+  });
+
+  // The state this claims to be in, asserted rather than assumed.
+  expect(got.snaps, "the seeded state should have exactly one snapshot").toBe(1);
+  expect(got.txs, "the transfer left no move in the log to rebuild from").toBe(1);
+  expect(got.rounds.length, "the seed played no rounds").toBe(3);
+
+  for (const [n, ids] of got.rounds) {
+    expect(ids.split(","), `round ${n} shows a player signed after it was played`)
+      .not.toContain(got.inId);
+    expect(ids.split(","), `round ${n} lost the player who actually played it`)
+      .toContain(got.outId);
+  }
+  // ...and the readout names the log as the source rather than a guess.
+  expect(got.readout, "the readout still credits a guess for the played rounds")
+    .not.toMatch(/a guess/);
+  expect(got.readout, "the readout does not say the later moves were undone")
+    .toContain("with later moves undone");
 });
 
 test("a blank gameweek does not break any screen", async ({ page }) => {
