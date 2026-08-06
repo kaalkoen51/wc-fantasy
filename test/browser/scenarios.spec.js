@@ -100,6 +100,251 @@ test("a transfer shows on the new squad and never on the rounds before it", asyn
   await expectScreensAgree(page);
 });
 
+test("every played round keeps a record of its own, not an inference", async ({ page }) => {
+  /* The rounds already played used to be protected only by rosterAtFor's last
+     two arms -- "the newest snapshot dated before kickoff", then "the earliest
+     snapshot there is". Neither is a record of a round: both are inferences
+     from timestamps, so both move when the timestamps do, and once ANY
+     past-dated snapshot existed the pin stopped writing at all, leaving a
+     manager several transfers into a season with one guess covering the lot.
+
+     pinHistory now stamps each played round with the round's OWN key before a
+     change lands, which is a fact rather than an inference. This asserts the
+     property directly: after a transfer, every played round must resolve to a
+     snapshot carrying that round's key. */
+  await openLeague(page, { managers: 2, played: 3 });
+
+  const got = await page.evaluate(async () => {
+    const me = myManager();
+    const out = managerPicks(me.id).find((p) => !p.is_sub && p.position === "MID");
+    const owned = new Set(S.picks.map((p) => p.player_id));
+    const ownedClubs = new Set(S.picks.map((p) => p.team));
+    const inP = S.players.find((p) => p.position === "MID"
+      && !owned.has(p.player_id) && !ownedClubs.has(p.team));
+    if (!inP || inP.player_id === out.player_id)
+      throw new Error("could not pick a distinct incoming player for the transfer");
+    S.league.config = { ...S.league.config, fa_defer_to_close: false };
+    await doSwap(out, inP);
+    await refetchAll();
+    const keys = new Set((S.snapshots || [])
+      .filter((s) => s.manager_id === me.id).map((s) => s.round_key));
+    return { keys: [...keys], played: [...playedRoundStarts().keys()] };
+  });
+
+  expect(got.played.length, "the seed played no rounds").toBe(3);
+  for (const key of got.played)
+    expect(got.keys, `round "${key}" has no line-up of its own, only a guess`)
+      .toContain(key);
+});
+
+test("a lock ritual at the end of the calendar cannot rewrite the last round", async ({ page }) => {
+  /* Reported from the bench as "I just transferred in Grimes and now he is in
+     my older rounds".
+
+     roundKeyLockedAt() answers with the round about to start -- and, when none
+     is upcoming, with the LAST round in the list. A World Cup app sits in that
+     state every time the group stage finishes before the knockout fixtures are
+     published, and so does any season whose calendar has run out. The lineup
+     lock and the settlement ritual both stamp with it, so one refresh after a
+     transfer filed today's squad as the line-up for a matchweek already
+     played, and the round arm believes the newest row for a round. */
+  await openLeague(page, { managers: 2, played: 3 });
+
+  const got = await page.evaluate(async () => {
+    // Nothing beyond the rounds already played.
+    const trim = () => { S.fixtures = S.fixtures.filter((f) => f.status === "FT"); };
+    trim();
+    const me = myManager();
+    const before = managerHistory(me.id).rounds.map((r) =>
+      [r.n, r.items.map((i) => i.entry.player_id).sort().join(",")]);
+
+    const out = managerPicks(me.id).find((p) => !p.is_sub && p.position === "MID");
+    const owned = new Set(S.picks.map((p) => p.player_id));
+    const ownedClubs = new Set(S.picks.map((p) => p.team));
+    const inP = S.players.find((p) => p.position === "MID"
+      && !owned.has(p.player_id) && !ownedClubs.has(p.team));
+    if (!inP || inP.player_id === out.player_id)
+      throw new Error("could not pick a distinct incoming player for the transfer");
+    S.league.trading_open = true;
+    S.league.config = { ...S.league.config, fa_defer_to_close: false, autoWindows: false };
+    await doSwap(out, inP);
+    await refetchAll(); trim();
+
+    await snapshotRosters();            // the lock ritual, run after the change
+    await refetchAll(); trim();
+
+    const after = managerHistory(me.id).rounds.map((r) =>
+      [r.n, r.items.map((i) => i.entry.player_id).sort().join(",")]);
+    return { before, after, inId: inP.player_id, outId: out.player_id,
+             lockKey: roundKeyLockedAt(S.fixtures, Date.now()) };
+  });
+
+  // The state the bug needs: the "next" lock is a round that has been played.
+  expect(got.lockKey, "the calendar still has a round ahead, so nothing was tested")
+    .toBe("Regular Season - 3");
+  expect(got.before.length, "the seed played no rounds").toBe(3);
+
+  for (const [n, ids] of got.after) {
+    expect(ids.split(","), `round ${n} was rewritten with a player signed afterwards`)
+      .not.toContain(got.inId);
+    expect(ids.split(","), `round ${n} lost the player who actually played it`)
+      .toContain(got.outId);
+  }
+  expect(got.after, "a lock after the transfer moved a round already played")
+    .toEqual(got.before);
+});
+
+test("a snapshot dated before the season cannot take over every round in it", async ({ page }) => {
+  /* This is the reported shape exactly: one transfer, and the new player is in
+     ALL the older rounds at once.
+
+     A snapshot dated before round 1 wins rosterAtFor's timestamp arm for every
+     played round in one go -- and rows like that really do appear. The sandbox
+     regenerates its calendar underneath the snapshots the last one left behind,
+     which is all it takes for a stamp written for a future lock to end up
+     sitting before the season; an older client's unstamped rows do the same.
+     Nothing stops such a row holding the squad from AFTER the transfer.
+
+     The rounds survive it only by having records of their own to answer with,
+     which is what pinHistory stamps before the change lands. Timestamps decide
+     nothing once a round is keyed. */
+  await openLeague(page, { managers: 2, played: 3 });
+
+  const got = await page.evaluate(async () => {
+    const me = myManager();
+    const out = managerPicks(me.id).find((p) => !p.is_sub && p.position === "MID");
+    const owned = new Set(S.picks.map((p) => p.player_id));
+    const ownedClubs = new Set(S.picks.map((p) => p.team));
+    const inP = S.players.find((p) => p.position === "MID"
+      && !owned.has(p.player_id) && !ownedClubs.has(p.team));
+    if (!inP || inP.player_id === out.player_id)
+      throw new Error("could not pick a distinct incoming player for the transfer");
+    S.league.config = { ...S.league.config, fa_defer_to_close: false };
+    await doSwap(out, inP);
+    await refetchAll();
+
+    /* The stray row: today's squad, dated an hour before the season started,
+       carrying no round of its own. Written straight to the table so it
+       arrives exactly as an old client's would -- with a created_at of now. */
+    const first = Math.min(...S.fixtures.filter((f) => f.status === "FT")
+      .map((f) => Date.parse(f.kickoff_utc)));
+    await S.sb.from("lineup_snapshots").insert({
+      /* With an id, because the backfill updates BY id -- a row without one is
+         a row the backfill cannot reach, and the first version of this test
+         seeded exactly that and proved nothing. */
+      id: "stray-snapshot", league_id: S.league.id, manager_id: me.id,
+      effective_from: new Date(first - 3600e3).toISOString(),
+      created_at: new Date().toISOString(),
+      roster: managerPicks(me.id).map((pk) => ({
+        player_id: pk.player_id, player_name: pk.player_name, position: pk.position,
+        team: pk.team, is_sub: pk.is_sub, slot: pk.slot })),
+    });
+    await refetchAll();                 // runs the backfill
+
+    return { rounds: managerHistory(me.id).rounds.map((r) =>
+               [r.n, r.items.map((i) => i.entry.player_id).sort().join(",")]),
+             inId: inP.player_id, outId: out.player_id };
+  });
+
+  for (const [n, ids] of got.rounds) {
+    expect(ids.split(","), `round ${n} was rewritten with a player signed afterwards`)
+      .not.toContain(got.inId);
+    expect(ids.split(","), `round ${n} lost the player who actually played it`)
+      .toContain(got.outId);
+  }
+});
+
+test("a transfer stays out of the past rounds even with no snapshots at all", async ({ page }) => {
+  /* The reported bug, reduced to the state it actually needs and nothing else.
+
+     Everything protecting the rounds already played was a snapshot of some
+     kind, so the whole scheme rested on one having been written -- and the
+     screen gives no sign when none was. A write that failed, a league older
+     than snapshots, a sandbox rebuilt underneath its own history: any of them
+     drops every past round through to the live picks, and one transfer then
+     shows up in all of them at once. Which of those happened is not something
+     the app can find out, so it should not need to.
+
+     This wipes the snapshots outright rather than picking a reason. What is
+     left is the transactions log -- written by the code that made each move --
+     and rewinding it is enough to answer on its own. */
+  await openLeague(page, { managers: 2, played: 3 });
+
+  const got = await page.evaluate(async () => {
+    const me = myManager();
+    const out = managerPicks(me.id).find((p) => !p.is_sub && p.position === "MID");
+    const owned = new Set(S.picks.map((p) => p.player_id));
+    const ownedClubs = new Set(S.picks.map((p) => p.team));
+    const inP = S.players.find((p) => p.position === "MID"
+      && !owned.has(p.player_id) && !ownedClubs.has(p.team));
+    if (!inP || inP.player_id === out.player_id)
+      throw new Error("could not pick a distinct incoming player for the transfer");
+    S.league.config = { ...S.league.config, fa_defer_to_close: false };
+    await doSwap(out, inP);
+    await refetchAll();
+
+    // Every snapshot gone, however it came to be gone.
+    window.__db.tables.lineup_snapshots = [];
+    await refetchAll();
+
+    return { snaps: (S.snapshots || []).length,
+             txs: (S.transactions || []).length,
+             rounds: managerHistory(me.id).rounds.map((r) =>
+               [r.n, r.items.map((i) => i.entry.player_id).sort().join(",")]),
+             inId: inP.player_id, outId: out.player_id };
+  });
+
+  // The state the test claims to be in, asserted rather than assumed.
+  expect(got.snaps, "the snapshots did not actually go away").toBe(0);
+  expect(got.txs, "the transfer left no transaction to rewind").toBeGreaterThan(0);
+  expect(got.rounds.length, "the seed played no rounds").toBe(3);
+
+  for (const [n, ids] of got.rounds) {
+    expect(ids.split(","), `round ${n} shows a player signed after it was played`)
+      .not.toContain(got.inId);
+    expect(ids.split(","), `round ${n} lost the player who actually played it`)
+      .toContain(got.outId);
+  }
+});
+
+test("the diagnostic says which rounds are recorded and which are inferred", async ({ page }) => {
+  /* The readout has to be able to say BOTH things, or it is a decoration. So
+     this drives one league through both states: no snapshots at all, where
+     every round is an inference, and then a transfer, which stamps each played
+     round with a record of its own. A readout hardcoded either way fails one
+     half or the other. */
+  await openLeague(page, { managers: 2, played: 3 });
+
+  const got = await page.evaluate(async () => {
+    const strip = (h) => h.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    const before = strip(simHistorySource());
+
+    const me = myManager();
+    const out = managerPicks(me.id).find((p) => !p.is_sub && p.position === "MID");
+    const owned = new Set(S.picks.map((p) => p.player_id));
+    const ownedClubs = new Set(S.picks.map((p) => p.team));
+    const inP = S.players.find((p) => p.position === "MID"
+      && !owned.has(p.player_id) && !ownedClubs.has(p.team));
+    S.league.config = { ...S.league.config, fa_defer_to_close: false };
+    await doSwap(out, inP);
+    await refetchAll();
+    return { before, after: strip(simHistorySource()) };
+  });
+
+  // With nothing recorded, every round is an inference and it says so.
+  expect(got.before, "the readout did not report the rounds as inferred")
+    .toContain("3 of 3 rounds inferred");
+  expect(got.before, "an unrecorded round was not attributed to the live squad")
+    .toMatch(/nothing recorded this round|moves log/);
+
+  // Once the transfer pins them, every round has a record of its own.
+  expect(got.after, "the readout still calls the rounds inferred after they were stamped")
+    .toContain("0 of 3 rounds inferred");
+  // Matched without the apostrophe: esc() writes it as an entity.
+  expect(got.after, "a stamped round was not attributed to its own line-up")
+    .toMatch(/own line-up/);
+});
+
 test("a blank gameweek does not break any screen", async ({ page }) => {
   /* A club with no fixture in a round is the shape that broke round numbering
      before -- everything downstream keys off the round rather than a count of
