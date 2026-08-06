@@ -307,6 +307,44 @@ test("a transfer stays out of the past rounds even with no snapshots at all", as
   }
 });
 
+test("the diagnostic says which rounds are recorded and which are inferred", async ({ page }) => {
+  /* The readout has to be able to say BOTH things, or it is a decoration. So
+     this drives one league through both states: no snapshots at all, where
+     every round is an inference, and then a transfer, which stamps each played
+     round with a record of its own. A readout hardcoded either way fails one
+     half or the other. */
+  await openLeague(page, { managers: 2, played: 3 });
+
+  const got = await page.evaluate(async () => {
+    const strip = (h) => h.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    const before = strip(simHistorySource());
+
+    const me = myManager();
+    const out = managerPicks(me.id).find((p) => !p.is_sub && p.position === "MID");
+    const owned = new Set(S.picks.map((p) => p.player_id));
+    const ownedClubs = new Set(S.picks.map((p) => p.team));
+    const inP = S.players.find((p) => p.position === "MID"
+      && !owned.has(p.player_id) && !ownedClubs.has(p.team));
+    S.league.config = { ...S.league.config, fa_defer_to_close: false };
+    await doSwap(out, inP);
+    await refetchAll();
+    return { before, after: strip(simHistorySource()) };
+  });
+
+  // With nothing recorded, every round is an inference and it says so.
+  expect(got.before, "the readout did not report the rounds as inferred")
+    .toContain("3 of 3 rounds inferred");
+  expect(got.before, "an unrecorded round was not attributed to the live squad")
+    .toMatch(/nothing recorded this round|moves log/);
+
+  // Once the transfer pins them, every round has a record of its own.
+  expect(got.after, "the readout still calls the rounds inferred after they were stamped")
+    .toContain("0 of 3 rounds inferred");
+  // Matched without the apostrophe: esc() writes it as an entity.
+  expect(got.after, "a stamped round was not attributed to its own line-up")
+    .toMatch(/own line-up/);
+});
+
 test("a blank gameweek does not break any screen", async ({ page }) => {
   /* A club with no fixture in a round is the shape that broke round numbering
      before -- everything downstream keys off the round rather than a count of

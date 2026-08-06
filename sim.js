@@ -523,6 +523,69 @@ const simCard = (title, help, body) => `
 const simOpts = (list, sel) => list.map((t) =>
   `<option value="${esc(t)}"${t === sel ? " selected" : ""}>${esc(t)}</option>`).join("");
 
+/* Where each played round's line-up actually comes from.
+ *
+ * Read-only, and it changes nothing. It exists because three fixes for "a
+ * player I transferred in is showing in rounds played before I signed him"
+ * were built on reproductions in the test bench and a theory about which
+ * snapshot had gone wrong -- without ever establishing what was true in the
+ * league that had the fault. This says so directly: for every round with
+ * results, which rule answered, and which row it answered with.
+ *
+ * The arm is reported BY rosterAtFor as it decides, not worked out again
+ * here. A second copy of those rules is the bug this app keeps producing.
+ */
+function simHistorySource() {
+  const me = typeof myManager === "function" ? myManager() : null;
+  if (!me) return "";
+  const snaps = (S.snapshots || []).filter((s) => s.manager_id === me.id);
+  const txs = (S.transactions || []).filter((x) => x.manager_id === me.id);
+  const labels = [...new Set((S.stats || []).map((r) => r.match_label))]
+    .filter((l) => labelDate(l));
+  // One entry per round, using the round's earliest match -- the same label
+  // the scoring pass resolves first.
+  const byRound = new Map();
+  for (const label of labels) {
+    const key = roundKeyOfLabel(label);
+    if (!key) continue;
+    const t = matchTimeFor(label);
+    if (!isFinite(t)) continue;
+    if (!byRound.has(key) || t < byRound.get(key).t) byRound.set(key, { t, label });
+  }
+  const order = [...byRound.entries()].sort((a, b) => a[1].t - b[1].t);
+
+  const RECORD = ["the round's own line-up", "a line-up set in an earlier round"];
+  const rows = order.map(([key, { t, label }]) => {
+    const why = {};
+    rosterAtFor(me.id, t, labelDate(label), null, key, why);
+    const solid = RECORD.includes(why.arm);
+    const eff = why.snap?.effective_from;
+    return `<div class="flex items-start gap-2 py-1 border-t border-slate-800 text-xs">
+      <span class="w-20 shrink-0 font-semibold ${solid ? "text-emerald-400" : "text-amber-400"}">${esc(roundLabelShort(key) || key)}</span>
+      <span class="flex-1 min-w-0">
+        <span class="${solid ? "text-slate-300" : "text-amber-300"}">${esc(why.arm || "—")}</span>
+        ${eff ? `<span class="block text-slate-500 truncate">${esc(String(eff).slice(0, 16).replace("T", " "))}${
+          why.snap.round_key ? ` · stamped ${esc(roundLabelShort(why.snap.round_key) || why.snap.round_key)}` : " · no round stamp"}</span>` : ""}
+      </span>
+    </div>`;
+  }).join("");
+
+  const guessed = order.filter(([key, { t, label }]) => {
+    const why = {};
+    rosterAtFor(me.id, t, labelDate(label), null, key, why);
+    return !RECORD.includes(why.arm);
+  }).length;
+
+  return simCard("🔎 Where each round's line-up comes from",
+    "Green means the round has a record of its own and nothing can move it. Amber means it is being inferred — from a timestamp, from the oldest row there is, or from your squad as it stands right now, which is what puts a new signing into old rounds.",
+    `<div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
+       <span><b class="text-slate-200">${snaps.length}</b> snapshot${snaps.length === 1 ? "" : "s"} for you</span>
+       <span><b class="text-slate-200">${txs.length}</b> logged move${txs.length === 1 ? "" : "s"}</span>
+       <span><b class="${guessed ? "text-amber-400" : "text-emerald-400"}">${guessed}</b> of ${order.length} round${order.length === 1 ? "" : "s"} inferred</span>
+     </div>
+     ${order.length ? rows : '<p class="text-xs text-slate-500">No rounds with results yet.</p>'}`);
+}
+
 function renderTestTab() {
   const box = document.getElementById("board-test");
   const navBtn = document.getElementById("nav-test");
@@ -623,6 +686,8 @@ function renderTestTab() {
          <button id="sim-xfer" class="rounded-lg bg-slate-800 border border-slate-700 py-2 text-xs font-semibold">Transfer</button>
          <button id="sim-clear" class="rounded-lg bg-slate-800 border border-wcred/60 text-wcred py-2 text-xs font-semibold">Clear results</button>
        </div>`)}
+
+    ${simHistorySource()}
 
     <p id="sim-log" class="text-xs text-slate-400 min-h-[1.5em] px-1"></p>`;
 

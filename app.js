@@ -4648,8 +4648,15 @@ function snapshotsByManager() {
 // counts when none predates kickoff), falling back to the baseline
 // snapshot then current picks. This is the exact rule the leaderboard
 // scores by, shared so the player detail can show per-match lineup status.
-function rosterAtFor(mgrId, t, d, snaps, roundKey) {
+function rosterAtFor(mgrId, t, d, snaps, roundKey, why) {
   snaps = snaps || snapshotsByManager()[mgrId] || [];
+  /* `why` is an optional out-parameter the diagnostic fills in: which arm
+     answered, and with which row. It is written here rather than worked out
+     afterwards because a second implementation of these rules is precisely
+     what went wrong before -- managerHistory used to keep its own copy of the
+     timestamp arithmetic, and the two drifted. A reader that explains itself
+     cannot disagree with itself. */
+  const via = (arm, sn) => { if (why) { why.arm = arm; why.snap = sn || null; } };
   /* A snapshot that says which round it was FOR answers outright. No timestamp
      arithmetic, so no reschedule can move which round it applies to.
 
@@ -4674,7 +4681,7 @@ function rosterAtFor(mgrId, t, d, snaps, roundKey) {
     let best = null;
     for (const sn of snaps)
       if (sn.round_key === roundKey && (!best || at(sn) >= at(best))) best = sn;
-    if (best) return best.roster;
+    if (best) { via("the round's own line-up", best); return best.roster; }
 
     // Otherwise the newest line-up from any EARLIER round.
     const target = roundRank(roundKey);
@@ -4688,25 +4695,32 @@ function rosterAtFor(mgrId, t, d, snaps, roundKey) {
           bestRank = r; best = sn;
         }
       }
-      if (best) return best.roster;
+      if (best) { via("a line-up set in an earlier round", best); return best.roster; }
     }
   }
-  let chosen = null;
+  let chosen = null, arm = null;
   for (const s of snaps) {
-    if (Date.parse(s.effective_from) <= t) chosen = s; else break;
+    if (Date.parse(s.effective_from) <= t) { chosen = s; arm = "the newest lock before kick-off"; }
+    else break;
   }
   if (!chosen) {
     for (const s of snaps) {
-      if (String(s.effective_from).slice(0, 10) <= d) chosen = s; else break;
+      if (String(s.effective_from).slice(0, 10) <= d) { chosen = s; arm = "a lock dated the same day"; }
+      else break;
     }
   }
   /* Last resort: the match predates every snapshot, so the earliest one is the
      closest record of what they had. A FUTURE-dated snapshot is not a record
      though -- it is a line-up for a round still to come -- so it is never used
      here, or a past match would score against an XI that was never in force. */
-  if (!chosen && snaps.length && Date.parse(snaps[0].effective_from) <= Date.now())
-    chosen = snaps[0];
-  return chosen ? chosen.roster : rosterRewound(mgrId, t);
+  if (!chosen && snaps.length && Date.parse(snaps[0].effective_from) <= Date.now()) {
+    chosen = snaps[0]; arm = "the earliest snapshot there is (a guess)";
+  }
+  if (chosen) { via(arm, chosen); return chosen.roster; }
+  via((S.transactions || []).some((x) => x.manager_id === mgrId)
+    ? "rebuilt from the moves log (no snapshot)"
+    : "today's squad — nothing recorded this round", null);
+  return rosterRewound(mgrId, t);
 }
 
 /* The squad a manager held at epoch-ms t, rebuilt from the moves they have
