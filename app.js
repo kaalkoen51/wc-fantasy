@@ -9442,7 +9442,10 @@ async function snapshotAt(mgrId, atMs, roundKey, roster) {
   // to a plain insert so an unapplied migration degrades to the old behaviour
   // (duplicate rows) rather than losing the snapshot entirely.
   if (error) await S.sb.from("lineup_snapshots").insert(row).then(() => {}, () => {});
-  return true;
+  /* The row itself, not just success: a caller writing several in a row has to
+     be able to put each one into S.snapshots before resolving the next, or it
+     resolves every one of them against the state before any were written. */
+  return row;
 }
 
 /* Freeze what has already been played, before a change can rewrite it.
@@ -9460,47 +9463,15 @@ async function pinHistory(mgrId) {
   if (!(S.stats || []).length) return false;          // nothing played to protect
   const now = Date.now();
   const snaps = snapshotsByManager()[mgrId] || [];
-  /* First, ROUND-STAMP every played round that has no line-up of its own.
-
-     The single `now` pin below is not enough on its own, and the gap is how a
-     transfer still ended up in rounds that were played weeks before it. It
-     protects those rounds only through rosterAtFor's last two arms — "the
-     newest snapshot dated before kickoff", then "the earliest snapshot we
-     have" — and neither is a record of the round. Both are inferences from
-     timestamps, so both move when the timestamps do: a snapshot written for a
-     lock that has since been rescheduled (or, in the sandbox, a calendar
-     regenerated under the rows it left behind) can land BEFORE a round it was
-     never in force for, and then that round scores against it. And once any
-     past-dated snapshot exists the pin declined to write at all, so a manager
-     several transfers into a season had one guess covering the whole history.
-
-     A round key does not move. At this instant — before the change lands —
-     the live roster is provably the roster that round finished with, so
-     stamping it with the round's own key turns the inference into a record,
-     and no later reschedule, regeneration or transfer can reach it again.
-
-     Only rounds that would otherwise fall through are stamped. A round with
-     its own snapshot, or covered by a stamped EARLIER round (a line-up
-     persists until it is changed), already has a real answer — overwriting
-     that with today's squad would be the very rewrite this exists to stop. */
-  const stampedRanks = snaps.map((sn) => roundRank(sn.round_key)).filter((r) => r >= 0);
-  const ownKeys = new Set(snaps.map((sn) => sn.round_key).filter(Boolean));
-  let stamped = false;
-  for (const [key, firstKick] of playedRoundStarts()) {
-    if (ownKeys.has(key)) continue;
-    const target = roundRank(key);
-    if (target >= 0 && stampedRanks.some((r) => r <= target)) continue;
-    /* Dated a second before the round's first kickoff, so the timestamp arm
-       agrees with the round key rather than contradicting it -- and so the
-       rows sort into the season's own order for anything reading the list.
-
-       The squad stamped is the one REWOUND to that kickoff, not the one held
-       today. On a league whose history is already wrong those are different,
-       and stamping today's would freeze the wrong answer permanently -- a fix
-       that makes the corruption durable is worse than the bug. */
-    if (await snapshotAt(mgrId, firstKick - 1000, key,
-                         rosterRewound(mgrId, firstKick - 1000))) stamped = true;
-  }
+  /* Record every played round that has no line-up of its own, BEFORE the
+     change lands -- the same writing settlement does, for one manager and a
+     round early. Settlement only owes a round once its trade window has shut,
+     so between a round being played and being settled there is a window in
+     which nothing has recorded it yet and a transfer would rewrite it. This
+     closes that window; it is the same call because it is the same job, and
+     two implementations of it drifting apart is the bug this app keeps
+     producing. Rounds already recorded are left alone by the writer. */
+  const stamped = await recordRoundLineups([mgrId]) > 0;
   if (snaps.some((sn) => Date.parse(sn.effective_from) <= now)) return stamped;   // covered
   /* NOT on the deletion list after all, and the reason is worth keeping.
 
@@ -10659,26 +10630,31 @@ let advanceStalled = null;
  * it stops being an answer that changes every time the fixture list moves or
  * another snapshot lands, and becomes one that cannot.
  */
-async function recordRoundLineups(roundKey) {
-  if (!S.sb || !S.league?.id || !roundKey) return 0;
-  const upto = roundRank(roundKey);
-  // Every played round at or before the one settling, oldest first, so each is
-  // recorded against the rounds already recorded rather than against the last.
+async function recordRoundLineups(mgrIds, uptoKey) {
+  if (!S.sb || !S.league?.id || !mgrIds.length) return 0;
+  const cap = uptoKey ? roundRank(uptoKey) : -1;
+  // Oldest round first, so each is resolved against the ones already written
+  // rather than all of them against the state before any were.
   const due = [...playedRoundStarts().entries()]
-    .filter(([key]) => upto < 0 || roundRank(key) <= upto)
+    .filter(([key]) => !uptoKey || cap < 0 || roundRank(key) <= cap)
     .sort((a, b) => a[1] - b[1]);
   let wrote = 0;
   for (const [key, first] of due) {
     if (!isFinite(first)) continue;
-    const by = snapshotsByManager();
     const d = new Date(first).toISOString().slice(0, 10);
-    for (const m of activeManagers()) {
-      if ((by[m.id] || []).some((sn) => sn.round_key === key)) continue;
-      const roster = rosterAtFor(m.id, first, d, by[m.id] || [], key);
+    for (const mgrId of mgrIds) {
+      const snaps = snapshotsByManager()[mgrId] || [];
+      if (snaps.some((sn) => sn.round_key === key)) continue;   // already recorded
+      const roster = rosterAtFor(mgrId, first, d, snaps, key);
       if (!roster.length) continue;           // nothing to record yet
       /* A second before the first kick-off, so the timestamp path and the
          round key agree rather than contradicting each other. */
-      if (await snapshotAt(m.id, first - 1000, key, roster)) wrote++;
+      const row = await snapshotAt(mgrId, first - 1000, key, roster);
+      if (!row) continue;
+      // Into the in-memory list too, or the next round resolves without it.
+      (S.snapshots ||= []).push({ ...row, created_at: new Date().toISOString() });
+      bustScores();
+      wrote++;
     }
   }
   return wrote;
@@ -10740,7 +10716,7 @@ async function settleRound(due, resolveClaims) {
      late-safe (waiver awards stamp at the lock that follows their window;
      repair only writes picks that actually move), so a retaken half-run
      finishes cleanly rather than double-applying. */
-  await recordRoundLineups(due.roundKey).catch(() => {});
+  await recordRoundLineups(activeManagers().map((m) => m.id), due.roundKey).catch(() => {});
   if (resolveClaims && faDeferToClose()
       && (S.faClaims || []).some((c) => c.status === "pending"))
     await processFaClaims();
