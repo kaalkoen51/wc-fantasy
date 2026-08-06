@@ -322,6 +322,12 @@ test("the diagnostic says which rounds are recorded and which are inferred", asy
 
   const got = await page.evaluate(async () => {
     const strip = (h) => h.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    /* Cleared so the readout has something to report as inferred: the refetch
+       hook records the played rounds on load, which is what the passive-manager
+       scenarios are about. This one is about the readout telling both states
+       apart, so it has to be able to produce both. */
+    window.__db.tables.lineup_snapshots = [];
+    S.snapshots = []; bustScores();
     const before = strip(simHistorySource());
 
     const me = myManager();
@@ -432,10 +438,22 @@ test("settling a round writes down what every squad was, so nothing has to guess
   const got = await page.evaluate(async () => {
     const strip = (h) => h.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
     const me = myManager();
+    /* Cleared first. The refetch hook records the played rounds on load now --
+       correct, and covered by the passive-manager scenarios -- so without this
+       the "before" state would already be recorded and the assertion below
+       would pass without settlement having done anything. */
+    window.__db.tables.lineup_snapshots = [];
+    S.snapshots = []; bustScores();
+    // ...and the settlement claims with them, or the ritual stands down having
+    // already settled this round on load and writes nothing.
+    window.__db.tables.rounds = [];
+    S.rounds = [];
     const before = strip(simHistorySource());
 
     await advanceRound();                     // the settlement ritual
-    await refetchAll();
+    /* Not refetchAll: it would re-read the table we just cleared in memory and
+       re-run the hook, so the assertion could not tell settlement's writing
+       from the hook's. What settlement wrote is already in S.snapshots. */
     const settled = strip(simHistorySource());
     const rounds = managerHistory(me.id).rounds.map((r) =>
       [r.n, r.items.map((i) => i.entry.player_id).sort().join(",")]);
@@ -480,6 +498,48 @@ test("settling a round writes down what every squad was, so nothing has to guess
   expect(got.after, "a transfer moved a round that had already been settled")
     .toEqual(got.rounds);
 });
+
+for (const auto of [true, false]) {
+  test(`a passive manager's rounds are recorded on ${auto ? "automatic" : "manual"} windows`, async ({ page }) => {
+    /* The mode question, asked of the manager who exposes it: one who drafts a
+       squad and then touches nothing. Every writer except settlement is
+       triggered by somebody DOING something -- a transfer, an edit, an admin
+       pressing lock -- so a passive manager is the case where a missing writer
+       shows up, and the case the whole saga turned out to be about.
+
+       Manual is the half that was missing: settlement refuses to run on manual
+       windows, and the manual lock stamps the round AHEAD, which is what a
+       lock is for. So nothing wrote the rounds behind it down. */
+    await openLeague(page, { managers: 2, played: 3 });
+
+    const got = await page.evaluate(async (auto) => {
+      const strip = (h) => h.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+      S.league.config = { ...S.league.config, autoWindows: auto };
+      await S.sb.from("leagues").update({ config: S.league.config }).eq("id", S.league.id);
+      // Wipe and refetch, so this measures what a fresh client writes in this
+      // mode rather than anything an earlier one happened to leave behind.
+      window.__db.tables.lineup_snapshots = [];
+      await refetchAll();
+      /* Awaited here because refetchAll FIRES the hook without waiting for it
+         -- background work in the app, a race in a test. This awaits the same
+         function the refetch fires rather than sleeping and hoping. */
+      await maybeAdvanceRounds();
+      const me = myManager();
+      return { readout: strip(simHistorySource()),
+               keys: [...new Set((S.snapshots || []).filter((s) => s.manager_id === me.id)
+                 .map((s) => s.round_key))].filter(Boolean).sort(),
+               txs: (S.transactions || []).length };
+    }, auto);
+
+    // Nobody did anything -- that is the point.
+    expect(got.txs, "the scenario is only meaningful if the manager was passive").toBe(0);
+    expect(got.readout, `on ${auto ? "auto" : "manual"} windows a played round is still being guessed at`)
+      .toContain("0 of 3 rounds inferred");
+    expect(got.keys, "a played round has no line-up recorded for it")
+      .toEqual(expect.arrayContaining(
+        ["Regular Season - 1", "Regular Season - 2", "Regular Season - 3"]));
+  });
+}
 
 test("a blank gameweek does not break any screen", async ({ page }) => {
   /* A club with no fixture in a round is the shape that broke round numbering

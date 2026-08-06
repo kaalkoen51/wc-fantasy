@@ -10807,6 +10807,21 @@ async function advanceRound() {
    line-ups but not the ritual's league-wide repair — a bounded difference that
    now only affects databases behind on migrations. */
 async function maybeAdvanceRounds() {
+  /* Record the played rounds whatever the mode.
+     Settlement is the writer on auto, and it refuses to run on manual -- so a
+     manual league had nothing writing a round down at all. Its own lock stamps
+     the round AHEAD (that is what a lock is for), and the pin only fires for a
+     manager who changes something, so a league whose admin locks by hand and
+     whose managers leave their teams alone kept every round an inference. The
+     inference is sound now, but it is still recomputed from a fixture list
+     that can move, and the whole point was to stop depending on that.
+
+     Idempotent and self-limiting: a round already recorded is skipped, so this
+     costs one pass on the first load that sees new results and a list scan
+     after that. Unclaimed, unlike settlement -- two clients racing write the
+     same rows to the same upsert key, which lands as one row, and there is no
+     league-wide state to corrupt because each row is one manager's own. */
+  await recordRoundLineups(activeManagers().map((m) => m.id)).catch(() => {});
   const r = await advanceRound().catch(() => false);
   if (r === "no-table" || r === "no-round") return maybeProcessAutoWaivers();
   return r;
