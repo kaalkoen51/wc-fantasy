@@ -10625,6 +10625,65 @@ let advanceStalled = null;
    is false for the older rounds of a backlog — fa_claims carry no window and
    are cleared when a window reopens, so anything pending belongs to the NEWEST
    closed window, not to a round being caught up on. */
+/* Write down what every squad WAS for a round, as part of settling it.
+ *
+ * This is the fact the app spent its whole history inferring. Nothing recorded
+ * a round's line-up unless a manager happened to edit something -- snapshots
+ * were written on CHANGE, never on the round -- so a manager who drafted and
+ * left their team alone had no record of any round they played, and every
+ * screen fell back to arithmetic over timestamps to guess one. Every bug in
+ * that saga was a guess going wrong, and the diagnostic found the end state:
+ * one snapshot for a whole league, answering for three rounds it was never
+ * about.
+ *
+ * Settlement is the right writer. It runs exactly once per round, claimed
+ * through the `rounds` table so two clients cannot both do it, and it is the
+ * only moment in the app that is ABOUT a round rather than about a manager.
+ *
+ * It runs late, though -- whoever opens the app first after the window shuts,
+ * which can be days and a transfer later. So the squad recorded is the one
+ * rosterAtFor resolves for that round, which anchors on the nearest record and
+ * folds the moves log back to kick-off. Late stops mattering: the answer is
+ * reconstructed from what was written down at the time rather than read off
+ * whatever the squad happens to be when someone finally opens the app.
+ *
+ * Idempotent by construction: a round a manager already has a line-up for is
+ * left alone, so a retaken half-run writes nothing twice and a real record
+ * always outranks a reconstruction.
+ *
+ * Every EARLIER unrecorded round is written in the same pass, not just the one
+ * settling. Settlement only ever owes the newest closed round, so recording
+ * that alone would fix the season from here and leave everything behind it
+ * being guessed at forever -- which is the state the diagnostic found. What
+ * gets written for those is the reconstruction, and freezing it is the point:
+ * it stops being an answer that changes every time the fixture list moves or
+ * another snapshot lands, and becomes one that cannot.
+ */
+async function recordRoundLineups(roundKey) {
+  if (!S.sb || !S.league?.id || !roundKey) return 0;
+  const upto = roundRank(roundKey);
+  // Every played round at or before the one settling, oldest first, so each is
+  // recorded against the rounds already recorded rather than against the last.
+  const due = [...playedRoundStarts().entries()]
+    .filter(([key]) => upto < 0 || roundRank(key) <= upto)
+    .sort((a, b) => a[1] - b[1]);
+  let wrote = 0;
+  for (const [key, first] of due) {
+    if (!isFinite(first)) continue;
+    const by = snapshotsByManager();
+    const d = new Date(first).toISOString().slice(0, 10);
+    for (const m of activeManagers()) {
+      if ((by[m.id] || []).some((sn) => sn.round_key === key)) continue;
+      const roster = rosterAtFor(m.id, first, d, by[m.id] || [], key);
+      if (!roster.length) continue;           // nothing to record yet
+      /* A second before the first kick-off, so the timestamp path and the
+         round key agree rather than contradicting each other. */
+      if (await snapshotAt(m.id, first - 1000, key, roster)) wrote++;
+    }
+  }
+  return wrote;
+}
+
 async function settleRound(due, resolveClaims) {
   const stop = (why) => { advanceStalled = why; return false; };
   const w = due.win;
@@ -10681,6 +10740,7 @@ async function settleRound(due, resolveClaims) {
      late-safe (waiver awards stamp at the lock that follows their window;
      repair only writes picks that actually move), so a retaken half-run
      finishes cleanly rather than double-applying. */
+  await recordRoundLineups(due.roundKey).catch(() => {});
   if (resolveClaims && faDeferToClose()
       && (S.faClaims || []).some((c) => c.status === "pending"))
     await processFaClaims();

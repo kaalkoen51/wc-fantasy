@@ -283,9 +283,14 @@ test("a transfer stays out of the past rounds even with no snapshots at all", as
     await doSwap(out, inP);
     await refetchAll();
 
-    // Every snapshot gone, however it came to be gone.
+    /* Every snapshot gone, however it came to be gone -- and cleared in memory
+       rather than by refetching, because a refetch now runs settlement, which
+       records the rounds again. That is the right behaviour and it is covered
+       elsewhere; what this scenario is about is the reader with nothing to
+       read, so it has to be able to hold that state still. */
     window.__db.tables.lineup_snapshots = [];
-    await refetchAll();
+    S.snapshots = [];
+    bustScores();
 
     return { snaps: (S.snapshots || []).length,
              txs: (S.transactions || []).length,
@@ -410,6 +415,70 @@ test("one snapshot stamped for the round ahead cannot answer for the rounds behi
     .not.toMatch(/a guess/);
   expect(got.readout, "the readout does not say the later moves were undone")
     .toContain("with later moves undone");
+});
+
+test("settling a round writes down what every squad was, so nothing has to guess later", async ({ page }) => {
+  /* The fact this app spent its whole history inferring, finally written by
+     someone. Snapshots were only ever written when a manager CHANGED
+     something, so a round nobody touched had no record and every screen fell
+     back to timestamp arithmetic to guess one. Settlement runs exactly once
+     per round and is the only moment that is about a ROUND rather than about
+     a manager, so it is where the round gets recorded.
+
+     Both halves matter: that settling produces a real record, and that the
+     record then holds against a transfer made afterwards. */
+  await openLeague(page, { managers: 2, played: 3 });
+
+  const got = await page.evaluate(async () => {
+    const strip = (h) => h.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    const me = myManager();
+    const before = strip(simHistorySource());
+
+    await advanceRound();                     // the settlement ritual
+    await refetchAll();
+    const settled = strip(simHistorySource());
+    const rounds = managerHistory(me.id).rounds.map((r) =>
+      [r.n, r.items.map((i) => i.entry.player_id).sort().join(",")]);
+
+    // ...and now a transfer, which must not reach any of them.
+    const out = managerPicks(me.id).find((p) => !p.is_sub && p.position === "MID");
+    const owned = new Set(S.picks.map((p) => p.player_id));
+    const ownedClubs = new Set(S.picks.map((p) => p.team));
+    const inP = S.players.find((p) => p.position === "MID"
+      && !owned.has(p.player_id) && !ownedClubs.has(p.team));
+    if (!inP || inP.player_id === out.player_id)
+      throw new Error("could not pick a distinct incoming player for the transfer");
+    S.league.config = { ...S.league.config, fa_defer_to_close: false };
+    await doSwap(out, inP);
+    await refetchAll();
+
+    return { before, settled, rounds,
+             after: managerHistory(me.id).rounds.map((r) =>
+               [r.n, r.items.map((i) => i.entry.player_id).sort().join(",")]),
+             inId: inP.player_id, outId: out.player_id,
+             keys: [...new Set((S.snapshots || []).filter((s) => s.manager_id === me.id)
+               .map((s) => s.round_key))].filter(Boolean).sort() };
+  });
+
+  // The state before, asserted so "0 inferred" cannot pass by having started there.
+  expect(got.before, "the rounds were already recorded before settlement ran")
+    .toContain("3 of 3 rounds inferred");
+  // Settling records them.
+  expect(got.settled, "settling the rounds did not record their line-ups")
+    .toContain("0 of 3 rounds inferred");
+  expect(got.keys, "settlement did not stamp every played round")
+    .toEqual(expect.arrayContaining(
+      ["Regular Season - 1", "Regular Season - 2", "Regular Season - 3"]));
+
+  // And the record holds against a transfer made afterwards.
+  for (const [n, ids] of got.after) {
+    expect(ids.split(","), `round ${n} shows a player signed after it was played`)
+      .not.toContain(got.inId);
+    expect(ids.split(","), `round ${n} lost the player who actually played it`)
+      .toContain(got.outId);
+  }
+  expect(got.after, "a transfer moved a round that had already been settled")
+    .toEqual(got.rounds);
 });
 
 test("a blank gameweek does not break any screen", async ({ page }) => {
