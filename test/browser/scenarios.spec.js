@@ -541,6 +541,110 @@ for (const auto of [true, false]) {
   });
 }
 
+test("the theme switches, sticks, and dark is what you get by default", async ({ page }) => {
+  /* Dark stays the default and carries NO attribute, so the :root tokens are
+     it. That is what keeps this whole feature additive: an existing player
+     sees exactly what they saw, and the three pixel baselines never move. */
+  await openLeague(page, { managers: 2, played: 3 });
+
+  const read = () => page.evaluate(() => ({
+    attr: document.documentElement.dataset.theme ?? null,
+    saved: localStorage.getItem("wcf_theme"),
+    ground: getComputedStyle(document.body).backgroundColor,
+    current: currentTheme(),
+  }));
+
+  const before = await read();
+  expect(before.attr, "the default theme should carry no attribute").toBeNull();
+  expect(before.current, "the default is not dark").toBe("dark");
+
+  await page.evaluate(() => setTheme("sticker"));
+  const after = await read();
+  expect(after.attr, "picking a theme did not stamp the root").toBe("sticker");
+  expect(after.saved, "the choice was not remembered for next load").toBe("sticker");
+  expect(after.ground, "the page ground did not actually change").not.toBe(before.ground);
+
+  // ...and back, without leaving a stamp behind.
+  await page.evaluate(() => setTheme("dark"));
+  const back = await read();
+  expect(back.attr, "going back to dark left an attribute behind").toBeNull();
+  expect(back.ground, "going back to dark did not restore the ground").toBe(before.ground);
+
+  // A junk value cannot strand you in a broken theme.
+  await page.evaluate(() => setTheme("nonsense"));
+  expect((await read()).current, "an unknown theme was accepted").toBe("dark");
+});
+
+test("every screen holds together in the sticker theme", async ({ page }) => {
+  /* The tokens re-skin 1,330 call sites at once, so the failure mode is not a
+     wrong colour -- it is one element that painted its own background and kept
+     inheriting its text colour, and is now invisible. That is what put ink
+     names on an ink plate when this theme was first switched on. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLeague(page, { managers: 4, played: 3 });
+  await page.evaluate(() => setTheme("sticker"));
+
+  const unreadable = await page.evaluate(() => {
+    const parse = (c) => {
+      const n = (String(c).match(/[\d.]+/g) || []).map(Number);
+      return { r: n[0] || 0, g: n[1] || 0, b: n[2] || 0, a: n.length > 3 ? n[3] : 1 };
+    };
+    const lum = (p) => [p.r, p.g, p.b].map((v) => { const x = v / 255;
+        return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); })
+      .reduce((a2, v, i) => a2 + v * [0.2126, 0.7152, 0.0722][i], 0);
+    /* A translucent background is not a colour until it is composited over
+       whatever is behind it. Comparing text to a raw rgba() -- which the first
+       version of this did -- scores "gold on a 20% gold wash" as 1:1 and
+       reports half the app as unreadable. Walk up for the first opaque
+       ancestor, then paint the translucent layers back down onto it. */
+    const effectiveBg = (el) => {
+      const stack = [];
+      for (let n = el; n; n = n.parentElement) {
+        const c = parse(getComputedStyle(n).backgroundColor);
+        if (c.a === 0) continue;
+        stack.push(c);
+        if (c.a === 1) break;
+      }
+      let out = stack.pop() || { r: 255, g: 255, b: 255, a: 1 };
+      while (stack.length) {
+        const top = stack.pop();
+        out = { a: 1,
+          r: top.r * top.a + out.r * (1 - top.a),
+          g: top.g * top.a + out.g * (1 - top.a),
+          b: top.b * top.a + out.b * (1 - top.a) };
+      }
+      return out;
+    };
+    const bad = [];
+    showView("board");
+    for (const tabs of Object.values(navGroups())) for (const tab of tabs) {
+      setBoardTab(tab);
+      const pane = document.getElementById("board-" + tab);
+      if (!pane || pane.classList.contains("hidden")) continue;
+      for (const el of pane.querySelectorAll("*")) {
+        const txt = (el.textContent || "").trim();
+        if (!txt || el.children.length) continue;              // leaves with words only
+        const cs = getComputedStyle(el);
+        if (cs.visibility === "hidden" || cs.display === "none") continue;
+        if (!el.getBoundingClientRect().height) continue;
+        // Only elements painting their OWN plate; inherited grounds are the
+        // page's job and are covered by the theme's own contrast.
+        if (parse(cs.backgroundColor).a === 0) continue;
+        const bg = effectiveBg(el);
+        const [a2, b2] = [lum(parse(cs.color)), lum(bg)].sort((p, q) => q - p);
+        const ratio = (a2 + 0.05) / (b2 + 0.05);
+        if (ratio < 2.2)
+          bad.push(`${tab}: "${txt.slice(0, 24)}" ${cs.color} on ${cs.backgroundColor}`
+            + ` (effective rgb(${[bg.r, bg.g, bg.b].map(Math.round)}) — ${ratio.toFixed(2)}:1)`);
+      }
+    }
+    return [...new Set(bad)];
+  });
+
+  expect(unreadable, "text painted on its own background is unreadable in sticker")
+    .toEqual([]);
+});
+
 test("a blank gameweek does not break any screen", async ({ page }) => {
   /* A club with no fixture in a round is the shape that broke round numbering
      before -- everything downstream keys off the round rather than a count of

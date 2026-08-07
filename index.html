@@ -13,6 +13,9 @@
      Served from our own origin so a third-party CDN outage can't take the app
      down, and so a new upstream release can't land in users' browsers
      unannounced — upgrades are a deliberate, reviewable commit. -->
+<!-- Before the body is parsed, so a non-default theme never flashes the
+     default first. Must be a file, not inline: see the CSP note in theme.js. -->
+<script src="theme.js"></script>
 <script src="vendor/supabase.js"></script>
 </head>
 <body class="bg-wcnavy text-slate-100 min-h-screen">

@@ -45,6 +45,22 @@ module.exports = {
           700: c("--c-slate-700"), 800: c("--c-slate-800"), 900: c("--c-slate-900"),
           950: c("--c-slate-950"),
         },
+        /* The stock palettes carry the app's STATE colours -- text-red-400 for
+           a loss, text-emerald-400 for a gain, text-amber-300 for a warning --
+           across 91 sites that a theme could not reach, because they resolve
+           to Tailwind's own hexes and never touched a variable. On a dark
+           ground they were fine and invisible as a problem. On cream, amber-300
+           text is not there at all. Only the shades actually used are listed;
+           extend deep-merges, so the rest of each scale is untouched. */
+        amber: { 300: c("--c-amber-300"), 400: c("--c-amber-400"), 500: c("--c-amber-500"),
+                 600: c("--c-amber-600"), 700: c("--c-amber-700"), 950: c("--c-amber-950") },
+        emerald: { 300: c("--c-emerald-300"), 400: c("--c-emerald-400"), 500: c("--c-emerald-500"),
+                   600: c("--c-emerald-600"), 800: c("--c-emerald-800") },
+        red: { 300: c("--c-red-300"), 400: c("--c-red-400"), 500: c("--c-red-500") },
+        rose: { 400: c("--c-rose-400") },
+        sky: { 300: c("--c-sky-300"), 400: c("--c-sky-400") },
+        orange: { 300: c("--c-orange-300"), 500: c("--c-orange-500") },
+        purple: { 500: c("--c-purple-500") },
         wcred: { DEFAULT: c("--c-wcred"), hov: c("--c-wcred-hov") },
         wcgold: c("--c-wcgold"),
         wcgreen: c("--c-wcgreen"),

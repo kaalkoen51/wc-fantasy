@@ -1755,7 +1755,7 @@ function renderLobby() {
   $("lobby-managers").innerHTML = S.managers.map((m) =>
     `<li class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-3 py-2">
       <span class="shrink-0 inline-flex items-center justify-center rounded-md w-6 h-6 text-[13px]"
-            style="background:${managerColor(m)}22;border:1px solid ${managerColor(m)}88">${managerMark(m)}</span>
+            style="background:${managerColor(m)}22;border:1px solid ${managerColor(m)}88;color:rgb(var(--mgr-mark-fg))">${managerMark(m)}</span>
       <span class="flex-1 min-w-0 truncate">${esc(m.name)}${
         m.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}${
         m.is_bot ? ' <span class="text-slate-400 text-xs">🤖 bot</span>' : ""}</span>` +
@@ -1906,7 +1906,7 @@ function renderLobbyOrder() {
     <li data-dorow="${esc(m.id)}" class="flex items-center gap-1.5 py-1 rounded">
       <span class="w-4 shrink-0 text-xs text-slate-400 font-mono">${n + 1}</span>
       <span class="shrink-0 inline-flex items-center justify-center rounded-md w-6 h-6 text-[13px]"
-            style="background:${managerColor(m)}22;border:1px solid ${managerColor(m)}88">${managerMark(m)}</span>
+            style="background:${managerColor(m)}22;border:1px solid ${managerColor(m)}88;color:rgb(var(--mgr-mark-fg))">${managerMark(m)}</span>
       <span class="min-w-0 flex-1 truncate text-sm">${esc(m.name)}${
         m.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}${
         m.is_bot ? ' <span class="text-slate-400 text-xs">🤖</span>' : ""}</span>
@@ -2889,7 +2889,7 @@ function renderRosters(containerId, force) {
              ${open.has(m.id) || (!open.size && m.id === me?.id) ? "open" : ""}>
       <summary class="px-4 py-3 font-semibold cursor-pointer select-none flex items-center gap-2">
         <span class="shrink-0 inline-flex items-center justify-center rounded-md w-6 h-6 text-[13px]"
-              style="background:${managerColor(m)}22;border:1px solid ${managerColor(m)}88">${managerMark(m)}</span>
+              style="background:${managerColor(m)}22;border:1px solid ${managerColor(m)}88;color:rgb(var(--mgr-mark-fg))">${managerMark(m)}</span>
         <span>${esc(m.name)}${
         m.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""
       }${m.draft_position ? ` <span class="text-xs text-slate-400">· draft pos ${m.draft_position}</span>` : ""}</span>
@@ -3523,7 +3523,7 @@ function renderDraft() {
       </span>
       <span class="shrink-0 text-xs pos-${pk.position} rounded px-1.5 py-0.5">${pk.position}</span>
       <span class="shrink-0 inline-flex items-center justify-center rounded w-[18px] h-[18px] text-xs font-bold leading-none"
-            style="background:${managerColor(m)}33;border:1px solid ${managerColor(m)}99"
+            style="background:${managerColor(m)}33;border:1px solid ${managerColor(m)}99;color:rgb(var(--mgr-mark-fg))"
             title="${esc(m?.name ?? "?")}">${managerMark(m)}</span>
     </li>`;
   }).join("") || '<li class="text-slate-400">No picks yet — the board is wide open.</li>';
@@ -6061,9 +6061,9 @@ function historyViewHtml(mgrId) {
      the same order: nearest first. */
   const toggle = hasRound ? `<div class="flex gap-1 rounded-lg bg-slate-800 p-0.5 text-xs">
       <button data-scoremode="round" class="flex-1 rounded-md py-1 font-semibold ${
-        roundMode ? "bg-slate-700 text-wcgold" : "text-slate-400"}">This round</button>
+        roundMode ? "is-selected" : "text-slate-400"}">This round</button>
       <button data-scoremode="total" class="flex-1 rounded-md py-1 font-semibold ${
-        !roundMode ? "bg-slate-700 text-wcgold" : "text-slate-400"}">Total</button>
+        !roundMode ? "is-selected" : "text-slate-400"}">Total</button>
     </div>` : "";
   return `<div class="space-y-2">
     <div class="flex items-center gap-1">
@@ -6425,7 +6425,7 @@ function renderCrestPicker() {
       <div class="eyebrow">Your identity</div>
       <div class="mt-2 inline-flex items-center gap-2">
         <span class="inline-flex items-center justify-center rounded-lg w-11 h-11 text-2xl"
-              style="background:${managerColor(me)}22;border:1px solid ${managerColor(me)}88">${managerCrest(me) || "&nbsp;"}</span>
+              style="background:${managerColor(me)}22;border:1px solid ${managerColor(me)}88;color:rgb(var(--mgr-mark-fg))">${managerCrest(me) || "&nbsp;"}</span>
         <span class="text-xl font-bold">${esc(me.name)}</span>
       </div>
     </div>
@@ -6449,7 +6449,23 @@ function renderCrestPicker() {
       </div>
       <button data-color="" class="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-800 py-1.5 text-xs text-slate-400">Use my default colour</button>
     </div>
+    <div>
+      <div class="eyebrow mb-1.5">Theme <span class="font-normal normal-case tracking-normal text-slate-500">· this device</span></div>
+      <div class="grid grid-cols-2 gap-1.5">
+        ${THEMES.map((t) => `<button data-theme-pick="${t.id}" class="rounded-lg border px-3 py-2 text-left ${
+          currentTheme() === t.id ? "border-wcgold bg-wcgold/10" : "border-slate-700 bg-slate-800"}">
+          <span class="block text-sm font-semibold">${esc(t.name)}</span>
+          <span class="block text-xs text-slate-400">${esc(t.blurb)}</span>
+        </button>`).join("")}
+      </div>
+    </div>
     <p id="crest-note" class="text-xs text-slate-400 text-center min-h-[1em]"></p>`;
+
+  body.querySelectorAll("[data-theme-pick]").forEach((b2) => b2.onclick = () => {
+    setTheme(b2.dataset.themePick);
+    renderCrestPicker();               // repaint the sheet in the new theme
+    renderBoard();
+  });
 
   const apply = (patch) => {
     Object.assign(me, patch);            // optimistic: the sheet repaints at once
@@ -6469,6 +6485,27 @@ function renderCrestPicker() {
     b.onclick = () => apply({ crest: b.dataset.crest || null }));
   body.querySelectorAll("[data-color]").forEach((b) =>
     b.onclick = () => apply({ color: b.dataset.color || null }));
+}
+
+/* ---------- theme ----------
+   "dark" carries no attribute: the :root tokens ARE dark, so the default costs
+   nothing and cannot be broken by a missing preference. theme.js sets this
+   again from <head> on the next load, before anything paints. */
+const THEMES = [
+  { id: "dark", name: "Classic", blurb: "Floodlit night. The original." },
+  { id: "sticker", name: "Sticker album", blurb: "Cream paper, foil and Panini red." },
+];
+const currentTheme = () => document.documentElement.dataset.theme || "dark";
+
+function setTheme(id) {
+  if (!THEMES.some((t) => t.id === id)) return;
+  if (id === "dark") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = id;
+  /* Per device, not per manager. A theme is how this screen should look, not
+     something about you that other people's clients should honour -- and
+     keeping it out of the database means no migration, no RLS rule, and no way
+     for a failed write to leave you looking at a theme you did not pick. */
+  try { localStorage.setItem("wcf_theme", id); } catch (e) { /* private mode */ }
 }
 
 function openCrestPicker() {
@@ -6853,8 +6890,8 @@ function renderHomeTab() {
          style="border-color:${managerColor(me)}55">
       <button id="home-crest" class="relative shrink-0" title="Edit your crest and colour">
         <span class="inline-flex items-center justify-center rounded-xl w-12 h-12 text-2xl"
-              style="background:${managerColor(me)}26;border:1px solid ${managerColor(me)}99">${managerMark(me)}</span>
-        <span class="absolute -bottom-1 -right-1 rounded-full bg-slate-800 border border-slate-600 text-[10px] w-4 h-4 inline-flex items-center justify-center leading-none">✎</span>
+              style="background:${managerColor(me)}26;border:1px solid ${managerColor(me)}99;color:rgb(var(--mgr-mark-fg))">${managerMark(me)}</span>
+        <span class="absolute -bottom-1 -right-1 rounded-full bg-slate-800 border border-slate-600 text-slate-100 text-[10px] w-4 h-4 inline-flex items-center justify-center leading-none">✎</span>
       </button>
       <div class="min-w-0 flex-1">
         <div class="text-lg font-bold truncate leading-tight">${esc(me.name)}</div>
@@ -7445,7 +7482,7 @@ function renderBoardNav(tab) {
     const items = [...TRADE_TABS, ["chat", NAV_LABEL.chat]];
     strip.innerHTML = items.map(([k, label]) =>
       `<button data-atab="${k}" class="board-tab flex-1 min-w-0 truncate rounded-md py-1.5 text-xs font-semibold ${
-        k === cur ? "bg-slate-700 text-wcgold" : "text-slate-400"}">${esc(label)}</button>`).join("");
+        k === cur ? "is-selected" : "text-slate-400"}">${esc(label)}</button>`).join("");
     strip.querySelectorAll("[data-atab]").forEach((b) => b.onclick = () => {
       const k = b.dataset.atab;
       if (k === "chat") setBoardTab("chat");
@@ -7456,7 +7493,7 @@ function renderBoardNav(tab) {
   }
   strip.innerHTML = panes.map((p) =>
     `<button id="tab-${p}" data-tab="${p}" class="board-tab flex-1 rounded-md py-1.5 font-semibold ${
-      p === tab ? "bg-slate-700 text-wcgold" : "text-slate-400"}">${NAV_LABEL[p]}</button>`).join("");
+      p === tab ? "is-selected" : "text-slate-400"}">${NAV_LABEL[p]}</button>`).join("");
   strip.querySelectorAll("[data-tab]").forEach((b) =>
     b.onclick = () => { setBoardTab(b.dataset.tab); renderBoard(); });
 }
@@ -8155,7 +8192,7 @@ function h2hStandingsHtml(me) {
             title="${Math.abs(mv)} ${mv > 0 ? "up" : "down"} since last round">${mv > 0 ? "▲" : "▼"}${Math.abs(mv)}</span>` : ""}
         </span>
         <span class="shrink-0 inline-flex items-center justify-center rounded-md w-7 h-7 text-[13px]"
-              style="background:${managerColor(m)}22;border:1px solid ${managerColor(m)}88">${managerMark(m)}</span>
+              style="background:${managerColor(m)}22;border:1px solid ${managerColor(m)}88;color:rgb(var(--mgr-mark-fg))">${managerMark(m)}</span>
         <span class="min-w-0 flex-1">
           <span class="flex items-center gap-1 min-w-0">
             <span class="min-w-0 truncate font-semibold text-sm">${esc(m?.name || "?")}</span>
@@ -8337,9 +8374,9 @@ function renderBoard() {
   const toggleHtml = `
     <div class="flex gap-1 rounded-lg bg-slate-900 border border-slate-700 p-1 text-sm">
       <button data-tableview="total" class="flex-1 rounded-md py-1.5 font-semibold ${
-        !playerView ? "bg-slate-700 text-wcgold" : "text-slate-400"}">🏆 Total <span class="text-xs font-normal opacity-80">official</span></button>
+        !playerView ? "is-selected" : "text-slate-400"}">🏆 Total <span class="text-xs font-normal opacity-80">official</span></button>
       <button data-tableview="player" class="flex-1 rounded-md py-1.5 font-semibold ${
-        playerView ? "bg-slate-700 text-wcgold" : "text-slate-400"}">⚽ Player pts <span class="text-xs font-normal opacity-80">for fun</span></button>
+        playerView ? "is-selected" : "text-slate-400"}">⚽ Player pts <span class="text-xs font-normal opacity-80">for fun</span></button>
     </div>
     ${playerView ? `<p class="text-xs text-amber-300/90 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-1.5">⚽ Player-points-only — just for fun. The official standings are 🏆 <b>Total</b> (national-team stage bonuses included).</p>` : ""}`;
   if (h2hEnabled()) {
@@ -8394,7 +8431,7 @@ function renderBoard() {
         <span class="text-slate-400 font-mono w-6">${i + 1}.</span>
         ${showMove ? `<span class="w-3 text-center text-xs shrink-0">${icon}</span>` : ""}
         <span class="shrink-0 inline-flex items-center justify-center rounded-md w-7 h-7 text-[14px]"
-              style="background:${managerColor(s.manager)}22;border:1px solid ${managerColor(s.manager)}88">${managerMark(s.manager)}</span>
+              style="background:${managerColor(s.manager)}22;border:1px solid ${managerColor(s.manager)}88;color:rgb(var(--mgr-mark-fg))">${managerMark(s.manager)}</span>
         <span class="flex-1 min-w-0">
           <span class="block font-semibold truncate">${esc(s.manager.name)}${
             s.manager.id === me?.id ? ' <span class="text-wcgold text-xs">(you)</span>' : ""}</span>
@@ -8602,7 +8639,7 @@ function ownerChipHtml(pid, opts = {}) {
   const c = managerColor(m);
   const mark = managerCrest(m) || (m.name || "?").trim().charAt(0).toUpperCase();
   return `<span class="shrink-0 inline-flex items-center justify-center rounded w-[18px] h-[18px] text-xs font-bold leading-none"
-    style="background:${c}33;border:1px solid ${c}99;color:#e2e8f0"
+    style="background:${c}33;border:1px solid ${c}99;color:rgb(var(--mgr-mark-fg))"
     title="Owned by ${esc(m.name)}">${mark}</span>`;
 }
 
@@ -9204,7 +9241,7 @@ function renderStatsTab() {
   $("stats-view").querySelectorAll("[data-statsview]").forEach((b) => {
     const on = b.dataset.statsview === S.statsView;
     b.className = "flex-1 rounded-md py-1.5 font-semibold " +
-      (on ? "bg-slate-700 text-wcgold" : "text-slate-400");
+      (on ? "is-selected" : "text-slate-400");
     b.onclick = () => { S.statsView = b.dataset.statsview; renderStatsTab(); };
   });
   // Leaderboard-only controls are hidden in Dream XI mode (round/per-90 shared).
@@ -13301,7 +13338,7 @@ function renderAdmin() {
   $("admin-panel").querySelectorAll("[data-winmode]").forEach((b) => {
     const on = (b.dataset.winmode === "auto") === autoWin;
     b.className = "flex-1 rounded-md py-1.5 font-semibold "
-      + (on ? "bg-slate-700 text-wcgold" : "text-slate-400");
+      + (on ? "is-selected" : "text-slate-400");
     b.onclick = () => setWindowMode(b.dataset.winmode === "auto");
   });
   const wnote = $("adm-winmode-note");

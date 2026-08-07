@@ -626,7 +626,9 @@ test("the team page opens on this round, with it first", async ({ page }) => {
     const bs = [...document.querySelectorAll("#board-home [data-scoremode]")];
     return { order: bs.map((b) => b.dataset.scoremode),
              labels: bs.map((b) => b.textContent.trim()),
-             on: bs.find((b) => b.className.includes("text-wcgold"))?.dataset.scoremode,
+             // .is-selected is the state; "text-wcgold" was the styling that
+             // happened to carry it, and Stage 1 missed this one.
+             on: bs.find((b) => b.classList.contains("is-selected"))?.dataset.scoremode,
              mode: S.homeScoreMode };
   });
   expect(t.order.length, "the score toggle did not render").toBe(2);
