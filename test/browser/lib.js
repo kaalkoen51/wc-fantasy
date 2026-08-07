@@ -379,6 +379,17 @@ async function expectLayoutSane(page) {
       for (const el of pane.querySelectorAll("*")) {
         const r = el.getBoundingClientRect();
         if (r.width === 0 && r.height === 0) continue;          // deliberately hidden
+        /* Decoration is allowed off-canvas; content is not. A playful design
+           bleeds things past the edge on purpose -- a sticker sitting proud of
+           its card, a flourish cropped by the frame -- and that is not the
+           broken grid this is looking for.
+
+           Added BEFORE any such design exists, deliberately. Agreeing the
+           exemption while there is nothing to exempt keeps it a rule; agreeing
+           it later, with a red test and a design to ship, would just be
+           choosing the design over the check. Marking an element [data-decor]
+           is a claim that losing it costs the reader nothing. */
+        if (el.closest("[data-decor]")) continue;
         const cs = getComputedStyle(el);
         if (cs.display === "none" || cs.visibility === "hidden") continue;
 
