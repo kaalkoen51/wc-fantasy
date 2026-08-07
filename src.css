@@ -2,3 +2,392 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ===========================================================================
+   The app's hand-written CSS, moved here VERBATIM from the <style> block that
+   used to sit in index.html.
+
+   Why it moved: every characterful surface in the app lives in these rules --
+   the pitch, the player chips, the buttons, the focus ring, every keyframe --
+   and none of it could be themed while it sat inline, because inline styles
+   load AFTER styles.css and split the source of truth in two.
+
+   Why it is unlayered, and why that matters more than it looks: wrapping this
+   in @layer components would move it BEFORE the utilities, and a utility like
+   `disabled:bg-slate-800` on #lineup-primary would start beating
+   .btn-primary:disabled. That is a behaviour change wearing a refactor's
+   clothes. Unlayered and appended, the cascade position is exactly what it was
+   inline: base, components, utilities, then this. Tailwind does not purge raw
+   CSS outside @layer, so every rule survives regardless of content scanning.
+   =========================================================================== */
+  /* Matchday banner ticker: two identical halves scroll -50% for a
+     seamless loop; duration is set per-content from JS. */
+  .ticker-wrap { overflow: hidden; }
+  .ticker { display: inline-flex; white-space: nowrap; will-change: transform;
+            animation: ticker-scroll var(--ticker-dur, 40s) linear infinite; }
+  @keyframes ticker-scroll { from { transform: translateX(0); }
+                             to   { transform: translateX(-50%); } }
+  @media (prefers-reduced-motion: reduce) {
+    .ticker { animation: none; }
+    .ticker-wrap { overflow-x: auto; }
+  }
+  .pos-GK  { background:#7c3aed33; color:#c4b5fd; }
+  .pos-DEF { background:#0ea5e933; color:#7dd3fc; }
+  .pos-MID { background:#22c55e33; color:#86efac; }
+  .pos-FWD { background:#f9731633; color:#fdba74; }
+  .pos-TEAM{ background:#eab30833; color:#fde047; }
+  /* Knockout bracket tree: columns per round; each pair wrapper's right border
+     is the connector joining the two feeder matches into their next-round tie. */
+  .kb { display: inline-flex; align-items: stretch; }
+  .kb-col { display: flex; flex-direction: column; }
+  .kb-round { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: space-around; }
+  .kb-pair { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: space-around; position: relative; }
+  .kb-col:not(.kb-last) .kb-pair { margin-right: 18px; border-right: 2px solid #475569; }
+  .kb-col:not(.kb-last) .kb-pair::after { content: ""; position: absolute; right: -18px; top: 50%;
+                                          width: 18px; height: 2px; background: #475569; }
+  .kb-card { margin: 5px 0; }
+  /* Small icon controls still need a finger-sized hit area, so pad the target
+     without changing how big the glyph looks. */
+  /* ---- House style: floodlit scoreboard --------------------------------
+     The app is a stadium at night, so the numbers that matter read like a
+     scoreboard and everything else stays quiet around them. */
+
+  /* Hero numerals: tight, tabular, faintly lit. */
+  .scoreboard { font-variant-numeric: tabular-nums; letter-spacing: -.02em;
+                text-shadow: 0 0 20px rgba(255, 199, 44, .3); }
+
+  /* Uppercase micro-labels — the vernacular of a printed team sheet. */
+  .eyebrow { text-transform: uppercase; letter-spacing: .12em;
+             font-size: 11px; font-weight: 700; color: #94a3b8; }
+
+  /* Controls acknowledge a tap instead of just changing colour. */
+  button { transition: transform .12s ease, background-color .15s ease,
+                       border-color .15s ease, color .15s ease; }
+  button:active:not(:disabled) { transform: scale(.985); }
+
+  /* Rows respond on pointer devices only, so touch doesn't get a stuck state. */
+  @media (hover: hover) { .row-hover:hover { background-color: rgb(30 41 59 / .55); } }
+
+  /* A deadline inside the final hour should feel like one. */
+  @keyframes deadline-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .5 } }
+  .urgent { animation: deadline-pulse 1.7s ease-in-out infinite; }
+
+  /* Keyboard users shouldn't have to guess where they are. */
+  :focus-visible { outline: 2px solid #FFC72C; outline-offset: 2px; border-radius: 5px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .urgent { animation: none }
+    button { transition: none }
+    button:active:not(:disabled) { transform: none }
+  }
+
+  /* A pick landing should register without stealing the screen: it fades in
+     under the header, holds briefly, and fades out. Never interactive. */
+  @keyframes pick-flash {
+    0%   { opacity: 0; transform: translate(-50%, -10px) scale(.96) }
+    6%   { opacity: 1; transform: translate(-50%, 0) scale(1) }
+    90%  { opacity: 1; transform: translate(-50%, 0) scale(1) }
+    100% { opacity: 0; transform: translate(-50%, -6px) scale(.99) }
+  }
+  /* Your turn, in the always-visible bar: gold rule top and bottom, gold
+     lettering, and a slow breathe so it reads as live rather than decorative.
+     Someone else's turn stays deliberately quiet by contrast. */
+  #draft-mini.mini-yours { background: rgba(255,199,44,.10); }
+  #draft-mini.mini-yours #draft-mini-who { color: #FFC72C; font-weight: 800; }
+  @keyframes mini-breathe {
+    0%, 100% { box-shadow: inset 0 3px 0 #FFC72C, inset 0 -3px 0 #FFC72C; }
+    50%      { box-shadow: inset 0 3px 0 rgba(255,199,44,.45), inset 0 -3px 0 rgba(255,199,44,.45); }
+  }
+  #draft-mini.mini-yours { animation: mini-breathe 1.9s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) {
+    #draft-mini.mini-yours { animation: none;
+      box-shadow: inset 0 3px 0 #FFC72C, inset 0 -3px 0 #FFC72C; }
+  }
+
+  /* Sits clear of the sticky clock bar (which occupies the band right under the
+     header) rather than on top of it, and above everything else. */
+  .pick-flash { position: fixed; top: calc(var(--hdr-h, 3.5rem) + 3.25rem);
+                left: 50%; z-index: 70; pointer-events: none;
+                animation: pick-flash 3.5s ease forwards; }
+
+  /* The newest row in a list briefly warms, so you can see what just changed. */
+  @keyframes row-land { from { background-color: rgba(255,199,44,.22) } to { background-color: transparent } }
+  .just-landed { animation: row-land 1.8s ease-out; }
+
+  /* The row you just reordered, so the change is visible rather than inferred. */
+  @keyframes queue-move { 0% { background-color: rgba(255,199,44,.28); transform: translateX(-4px) }
+                          100% { background-color: transparent; transform: none } }
+  .queue-moved { animation: queue-move .45s ease-out; }
+  @keyframes spin { to { transform: rotate(360deg) } }
+  .spinner { width: 34px; height: 34px; border-radius: 50%;
+    border: 3px solid rgba(148,163,184,.25); border-top-color: #ffc72c;
+    animation: spin .8s linear infinite; }
+  /* A stalled connection is worth naming: the header dot turns amber and
+     pulses rather than the app just going quiet. */
+  @keyframes conn-pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+  #conn-dot.stale { animation: conn-pulse 1.2s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation-duration: 2s }
+    #conn-dot.stale { animation: none }
+  }
+
+  /* Hold-to-drag reordering (see makeReorderable). The held row lifts off the
+     list and the rest slide out of its way; the page is frozen for the
+     duration, because a drag and a scroll are the same finger travelling the
+     same direction. */
+  .drag-lock { overflow: hidden; touch-action: none; }
+  .drag-active { user-select: none; -webkit-user-select: none; }
+  .drag-active .drag-shift { transition: transform .18s cubic-bezier(.2,.8,.3,1); }
+  .drag-lift {
+    position: relative; z-index: 30; cursor: grabbing;
+    box-shadow: 0 10px 24px rgba(0,0,0,.55);
+    outline: 1px solid rgba(255,199,44,.75);
+    /* Clearly lighter than any row surface, so the held row reads as picked up
+       and nothing inside it (avatars, chips) merges with its own background. */
+    border-radius: 8px; background-color: #33415e;
+    transition: box-shadow .15s ease, background-color .15s ease;
+  }
+  /* Everything that isn't being held recedes, so it's obvious what you've got.
+     Targeted at the rows themselves: dimming a wrapper would dim the lifted
+     row along with it, since opacity multiplies down the tree. */
+  .drag-active [data-slrow], .drag-active [data-qrow], .drag-active [data-brow] {
+    opacity: .6; transition: opacity .15s ease;
+  }
+  .drag-active .drag-lift { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) {
+    .drag-active .drag-shift, .drag-lift { transition: none }
+  }
+
+  /* Colour only — for rows whose movement is already being animated by FLIP. */
+  @keyframes row-flash { 0% { background-color: rgba(255,199,44,.28) }
+                         100% { background-color: rgba(30,41,59,.6) } }
+  .row-flash { animation: row-flash .45s ease-out; }
+
+  /* A value that just moved. */
+  @keyframes value-bump { 0% { transform: scale(1) } 35% { transform: scale(1.14) } 100% { transform: scale(1) } }
+  .bumped { animation: value-bump .5s ease-out; display: inline-block; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pick-flash { animation: none; opacity: 1 }
+    .just-landed, .bumped, .queue-moved, .row-flash { animation: none }
+  }
+
+  /* Mobile-first: every control gets a finger-sized hit area. Filter chips,
+     thread pills and the banner arrows were all landing at 26–30px. */
+  @media (max-width: 640px) {
+    button, select, input[type="number"], input[type="text"], input[type="email"],
+    input[type="password"], input:not([type]) { min-height: 38px; }
+    /* Icon-only controls (‹ › ☆ ＋) are tall enough but far too narrow to hit. */
+    button { min-width: 38px; }
+  }
+
+  /* The viewport deliberately allows zoom, which means double-tap-to-zoom is
+     live — and a browser waits to see whether a second tap is coming before
+     acting on the first. Tap a control repeatedly (the reorder arrows, a star,
+     +/−) and every other tap gets eaten by that wait, which reads as "it only
+     works about every third time". Opting the CONTROLS out of double-tap zoom
+     fixes it while leaving pinch-zoom on the page untouched. */
+  button, select, [role="button"], .tap, summary, label { touch-action: manipulation; }
+
+  /* Stacked reorder arrows: one column instead of two, so a row keeps its width
+     for the name. They opt out of the 38px floor above — but the COLUMN still
+     has to be finger-sized, which the first version got wrong. It fixed each
+     button at 22px inside a stretched wrapper, leaving dead space above and
+     below that swallowed taps, and made the column only 28px wide. Each half
+     now fills its share of the full row height, and the column is 36px, so
+     every pixel of it is live. */
+  /* min-height so the pair is finger-sized even in the draft queue's compact
+     rows; align-self overrides the row's items-center so it fills the height. */
+  .nudge-col { align-self: stretch; width: 2.25rem; min-height: 2.75rem;
+               display: flex; flex-direction: column; }
+  .nudge {
+    min-height: 0;
+    min-width: 0;
+    flex: 1 1 0;
+    width: 100%;
+    padding: 0;
+    font-size: 0.75rem;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    /* No double-tap-zoom hesitation between rapid taps. */
+    touch-action: manipulation;
+  }
+
+  /* The clock and whose-pick-it-is must stay on screen while you scroll the
+     player list. The offset is the real header height, measured at runtime —
+     a hardcoded guess left it tucked behind the header on some devices. */
+  .draft-sticky { position: sticky; top: var(--hdr-h, 3.5rem); }
+
+  /* ---- The pitch ------------------------------------------------------
+     Used by the lineup picker, the head-to-head preview and the post-round
+     comparison. Mown stripes and markings are drawn in CSS so there's no
+     image to load and it recolours with the theme. */
+  .pitch { position: relative; border-radius: 14px; overflow: hidden; min-height: 240px;
+    background:
+      repeating-linear-gradient(0deg, rgba(255,255,255,.04) 0 7.5%, transparent 7.5% 15%),
+      linear-gradient(180deg, #14512f 0%, #0c3a22 55%, #0a2f1c 100%);
+    border: 1px solid rgba(255,255,255,.14); }
+  .pitch::before { content: ""; position: absolute; inset: 6px;
+    border: 2px solid rgba(255,255,255,.16); border-radius: 8px; pointer-events: none; }
+  .pitch::after { content: ""; position: absolute; left: 50%; top: 50%; width: 24%;
+    aspect-ratio: 1; transform: translate(-50%,-50%);
+    border: 2px solid rgba(255,255,255,.16); border-radius: 50%; pointer-events: none; }
+  .pitch-half { position: absolute; left: 6px; right: 6px; top: 50%;
+    border-top: 2px solid rgba(255,255,255,.16); pointer-events: none; }
+  .pitch-box { position: absolute; left: 22%; right: 22%; height: 13%;
+    border: 2px solid rgba(255,255,255,.16); pointer-events: none; }
+  .pitch-box.b { bottom: 6px; border-bottom: none; }
+  .pitch-box.t { top: 6px; border-top: none; }
+  /* column-reverse so the keeper sits at the bottom and attackers at the top. */
+  /* Height follows the rows rather than a fixed aspect ratio: with a fixed
+     ratio a narrow (half-width) pitch clipped its own keeper row. */
+  .pitch-rows { position: relative; display: flex; flex-direction: column-reverse;
+    justify-content: space-around; padding: 14px 4px; gap: 10px; }
+  /* Head-to-head: two squads stacked on one pitch. The top half runs
+     keeper-first so that side is attacking downwards, which puts the two
+     attacks either side of the halfway line — the layout you'd see on TV. */
+  .pitch-vs { display: flex; flex-direction: column; }
+  /* Two squads means twice the rows, so this pitch breathes less than a single
+     one — otherwise the fixture doesn't fit on a phone without scrolling. */
+  .pitch-vs .pitch-rows { flex: 1 1 0; padding: 8px 4px; gap: 5px; }
+  .pitch-rows-down { flex-direction: column; }
+  .pitch-row { display: flex; justify-content: space-evenly; align-items: flex-start; gap: 2px; }
+  .pp { display: flex; flex-direction: column; align-items: center; gap: 2px;
+        width: 62px; min-width: 0; background: none; border: 0; padding: 0; }
+  .pp-opp { font-size: 10px; line-height: 1.1; color: #cbd5e1;
+            text-shadow: 0 1px 2px rgba(0,0,0,.9); }
+  .pp-name { max-width: 62px; font-size: 11px; line-height: 1.15; text-align: center;
+    background: rgba(2,6,23,.74); border-radius: 4px; padding: 1px 3px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Long surnames step down rather than truncating. The ellipsis stays as a
+     backstop for the genuinely absurd, but at these sizes it should never
+     fire: see nameFit() in app.js for where the thresholds come from. */
+  .pp-name.name-fit-2, .sub-name.name-fit-2 { font-size: 9px; letter-spacing: -.01em; }
+  .pp-name.name-fit-3, .sub-name.name-fit-3 { font-size: 8px; letter-spacing: -.02em; }
+  /* A player's tally rides on their shirt rather than sitting on a line of its
+     own: it belongs to the face, and it costs the pitch no vertical space. */
+  .pp-pts { position: absolute; bottom: -2px; right: -6px; min-width: 18px; height: 16px;
+    padding: 0 3px; border-radius: 8px; display: inline-flex; align-items: center;
+    justify-content: center; font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums;
+    background: #0b1220; color: #ffc72c; border: 1px solid rgba(255,199,44,.55);
+    box-shadow: 0 1px 3px rgba(0,0,0,.6); }
+
+  /* The Nightmare XI, on a colder pitch. Both XIs were drawn identically, so a
+     screenshot of one could be mistaken for the other — and these are screens
+     made to be shared. Desaturated rather than dimmed: dimming would read as
+     disabled, and there is nothing wrong with these players' data. */
+  .pitch-cold .pitch { filter: saturate(.35) hue-rotate(-12deg); }
+
+  /* A shirt holding a planned replacement rather than the player who is
+     actually there — the plan, drawn as the team it would produce. */
+  /* Was the utility class `opacity-50`, which two tests selected on to find a
+     starter who did not turn out. A restyle of how "did not play" looks would
+     have silently emptied that selector, so the STATE has a name of its own
+     now and the styling hangs off it. */
+  .pp-dim { opacity: .5; }
+  .pp-planned .pp-name { background: rgba(255,199,44,.22); outline: 1px solid rgba(255,199,44,.5); }
+
+  /* The bench, drawn as a bench: a row of smaller faces under the pitch in the
+     order they'd come on. */
+  .dugout { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
+    padding: 8px 8px 6px; border-radius: 12px; border: 1px solid rgba(255,255,255,.08);
+    background: linear-gradient(180deg, rgba(30,41,59,.85), rgba(15,23,42,.85)); }
+  .dugout::-webkit-scrollbar { display: none; }
+  .sub-chip { position: relative; flex: 0 0 auto; width: 58px; display: flex;
+    flex-direction: column; align-items: center; gap: 2px;
+    background: none; border: 0; padding: 0; min-height: 0; min-width: 0; }
+  .sub-chip .sub-no { position: absolute; top: -2px; left: 2px; z-index: 1;
+    width: 15px; height: 15px; border-radius: 50%; font-size: 9px; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: #0b1220; color: #94a3b8; border: 1px solid rgba(148,163,184,.45); }
+  /* A starter who never played sits on the bench too, but the corner badge has
+     to say WHY -- an order number would read as "third choice sub", which is a
+     lie about someone the manager picked to start. */
+  .sub-chip .sub-no-mark { color: #fca5a5; border-color: rgba(248,113,113,.55);
+    font-size: 8px; }
+  .sub-chip .sub-no-up { color: #86efac; border-color: rgba(134,239,172,.55);
+    font-size: 8px; }
+  .sub-name { max-width: 58px; font-size: 10px; line-height: 1.15; text-align: center;
+    color: #cbd5e1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ---- what a button means, said in colour ----------------------------
+     Red was doing two jobs. "Create league", "Set your lineup", "Claim" and
+     "Pull stats now" wore the same red as the controls that destroy things,
+     so a column of nine red "Claim" buttons read as a column of warnings and
+     the one genuinely dangerous button on a screen had nothing to distinguish
+     it. Three roles, three treatments:
+
+       .btn-primary  the main action on a screen        gold
+       .btn-danger   destructive or irreversible        red   (bg-wcred, as before)
+       .btn-quiet    a constructive action in a list    outline
+
+     Gold on the dark ground carries dark text, which is a far higher contrast
+     pairing than white on red was. */
+  .btn-primary { background: #FFC72C; color: #0B1220; }
+  .btn-primary:hover:not(:disabled) { background: #FFD65C; }
+  .btn-primary:disabled { background: #1E293B; color: #94A3B8; }
+  .btn-quiet { background: transparent; color: #FFC72C;
+    border: 1px solid rgba(255,199,44,.5); }
+  .btn-quiet:hover:not(:disabled) { background: rgba(255,199,44,.14); }
+  .btn-quiet:disabled { color: #64748B; border-color: #334155; }
+
+  /* Keep the bottom bar clear of the iOS home indicator. */
+  #bottom-nav { padding-bottom: env(safe-area-inset-bottom); }
+  /* Five items still share one row: the labels tighten rather than wrapping. */
+  #nav-row.nav-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  #nav-row.nav-5 .nav-btn { font-size: 11px; }
+
+  /* ---- desktop: a left rail and a two-column body -----------------------
+     At 1280px the app was a centred 740px column with about 45% of the
+     viewport left as empty ground on either side, and it kept the phone's
+     bottom bar across the full width. Above 1024px the navigation becomes a
+     rail, the content gets the room back, and the team page splits: the pitch
+     on the left, everything you read about it on the right.
+
+     .has-rail is set by showView() rather than :has(), so the padding can
+     never be left behind on a screen that has no navigation. */
+  @media (min-width: 1024px) {
+    #bottom-nav { top: 0; bottom: 0; right: auto; width: 14rem; z-index: 10;
+      border-top: 0; border-right: 1px solid #1e293b;
+      padding-top: 4.25rem; padding-bottom: 0; overflow-y: auto; }
+    #bottom-nav > div { max-width: none; margin: 0; grid-template-columns: 1fr;
+      align-content: start; gap: 2px; padding: 8px; }
+    #bottom-nav .nav-btn { flex-direction: row; justify-content: flex-start;
+      gap: 10px; padding: 10px 12px; font-size: 14px; border-radius: 8px; }
+    #bottom-nav .nav-btn > span:first-child { font-size: 18px; }
+    #bottom-nav .nav-btn.text-wcgold { background: rgba(255,199,44,.10); }
+    #nav-dot { position: static; margin-left: auto; }
+    /* Only the content shifts. The header stays full-bleed so the wordmark sits
+       over the rail rather than leaving a dead corner beside it. */
+    body.has-rail main { margin-left: 14rem; max-width: 66rem; padding-bottom: 2rem; }
+    body.has-rail header .max-w-3xl { max-width: none; padding-left: 1.25rem; }
+
+    /* The team page, in two columns. Source order is untouched so the phone
+       still reads identity → deadline → opponent → squad; only the squad block
+       is lifted into a column of its own, where the pitch has room to breathe. */
+    /* row-gap 0 and min-content rows matter: the squad spans far more rows than
+       exist so it can run the full height of the column, and with a row gap
+       every unused row would still cost a gap — which is how the first version
+       of this produced a 2890px page for 720px of content. */
+    /* :not(.hidden) is load-bearing, not tidiness. `body.has-rail #board-home`
+       outranks Tailwind's `.hidden`, so without it these panes stayed on screen
+       after a tab change and the team page rendered with the squads list under
+       it. Specificity beat the thing that does the hiding. */
+    body.has-rail #board-home:not(.hidden) { display: grid; column-gap: 1rem; row-gap: 0;
+      align-items: start; grid-auto-rows: min-content;
+      grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
+    body.has-rail #board-home > * { grid-column: 2; margin-bottom: 1rem; }
+    body.has-rail #board-home > .home-squad { grid-column: 1; grid-row: 1 / span 99;
+      margin-bottom: 0; }
+  }
+  /* A toast raised clear of the bottom navigation or an open sheet's footer,
+     so it never covers the button it is reporting on. */
+  #toast.toast-lifted { bottom: calc(5.5rem + env(safe-area-inset-bottom)); }
+  .tap { min-width: 40px; min-height: 40px; display: inline-flex;
+         align-items: center; justify-content: center; }
+  /* Collapsible create-league sections: hide the native marker, rotate caret. */
+  .create-sec > summary::-webkit-details-marker { display: none; }
+  .create-sec .sec-caret { transition: transform .15s; }
+  .create-sec[open] .sec-caret { transform: rotate(180deg); }
