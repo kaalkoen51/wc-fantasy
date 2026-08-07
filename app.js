@@ -7923,19 +7923,19 @@ function seasonChartHtml(scores, meId) {
       : [0, 0.25, 0.5, 0.75, 1].map((f) => maxY * f)
     ).map((v) => {
     const yy = Y(v);
-    return `<line x1="${L}" y1="${yy}" x2="${L + pw}" y2="${yy}" stroke="#1e293b" stroke-width="1"/>`
-      + `<text x="${L - 4}" y="${(+yy + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#64748b">${
+    return `<line x1="${L}" y1="${yy}" x2="${L + pw}" y2="${yy}" stroke="rgb(var(--c-slate-800))" stroke-width="1"/>`
+      + `<text x="${L - 4}" y="${(+yy + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="rgb(var(--c-slate-500))">${
         mode === "rank" ? v : Math.round(v)}</text>`;
   }).join("");
   const step = maxR > 8 ? 2 : 1;
   for (let r = step; r <= maxR; r += step)
-    svg += `<text x="${X(r)}" y="${H - 8}" text-anchor="middle" font-size="9" fill="#64748b">${r}</text>`;
+    svg += `<text x="${X(r)}" y="${H - 8}" text-anchor="middle" font-size="9" fill="rgb(var(--c-slate-500))">${r}</text>`;
   const poly = (s, stroke, w, op) =>
     `<polyline fill="none" stroke="${stroke}" stroke-width="${w}" opacity="${op}" stroke-linejoin="round"
        stroke-linecap="round" points="${s.pts.map((v, r) => `${X(r)},${Y(v)}`).join(" ")}"/>`;
   const hasEmph = !!(meS || cmpS);
   const dimOp = !hasEmph ? 0.5 : (cmp ? 0.12 : 0.32);
-  for (const s of series) if (s.id !== meId && s.id !== cmp) svg += poly(s, "#64748b", 1.2, dimOp);
+  for (const s of series) if (s.id !== meId && s.id !== cmp) svg += poly(s, "rgb(var(--c-slate-500))", 1.2, dimOp);
   const unit = mode === "rank" ? "" : " pts";
   const say = (v) => mode === "rank" ? ordinal(v) : `${v}${unit}`;
   const emph = (s, color) => poly(s, color, 2.6, 1)
@@ -7943,8 +7943,8 @@ function seasonChartHtml(scores, meId) {
         esc(s.name)} · after round ${r}: ${say(v)}</title></circle>`).join("")
     + `<text x="${(+X(maxR) + 4).toFixed(1)}" y="${(+Y(s.pts[maxR]) + 3).toFixed(1)}" font-size="10" fill="${
         color}" font-weight="700">${esc(s.name.slice(0, 9))}</text>`;
-  if (cmpS) svg += emph(cmpS, "#38bdf8");
-  if (meS) svg += emph(meS, "#eab308");
+  if (cmpS) svg += emph(cmpS, "rgb(var(--c-sky-400))");
+  if (meS) svg += emph(meS, "rgb(var(--chart-you))");
 
   const others = series.filter((s) => s.id !== meId);
   const selector = `<select id="chart-compare" class="min-w-0 flex-1 rounded-lg bg-slate-800 border border-slate-700 px-2 py-1 text-xs">
@@ -13094,7 +13094,11 @@ function ridgelineSvg(players, perPos, opts) {
   const rowsAll = ["GK", "DEF", "MID", "FWD"].filter((p) => perPos[p].n > 0);
   if (!rowsAll.length) return "";
   const hist = pointsHistogram(players, big ? 30 : 14);   // finer bins when enlarged → sharper tails
-  const COL = { GK: "#3987e5", DEF: "#d95926", MID: "#199e70", FWD: "#c98500" };  // validated dark categorical
+  /* Validated categorical set. Held in JS because the chart writes them into
+     SVG attributes, and read from the tokens so a theme can restate them --
+     these were picked against a dark ground. */
+  const COL = { GK: "rgb(var(--cat-gk))", DEF: "rgb(var(--cat-def))",
+                MID: "rgb(var(--cat-mid))", FWD: "rgb(var(--cat-fwd))" };
   const W = big ? 660 : 320, L = big ? 46 : 34, R = big ? 16 : 8, TOP = big ? 10 : 4;
   const ROW = big ? 78 : 30, AX = big ? 24 : 15;
   const fMain = big ? 13 : 9, fTick = big ? 11 : 8, dot = big ? 4.5 : 3, sw = big ? 2 : 1.5;
@@ -13111,8 +13115,8 @@ function ridgelineSvg(players, perPos, opts) {
   const nTicks = big ? 6 : 2;
   for (let t = 0; t <= nTicks; t++) {
     const val = hist.min + (span) * t / nTicks, x = xOf(val).toFixed(1);
-    p.push(`<line x1="${x}" y1="${TOP}" x2="${x}" y2="${plotBottom}" stroke="#334155" stroke-width="1" stroke-opacity="0.3"/>`);
-    p.push(`<text x="${x}" y="${H - 4}" fill="#64748b" font-size="${fTick}" text-anchor="middle">${Math.round(val)}</text>`);
+    p.push(`<line x1="${x}" y1="${TOP}" x2="${x}" y2="${plotBottom}" stroke="rgb(var(--c-slate-700))" stroke-width="1" stroke-opacity="0.3"/>`);
+    p.push(`<text x="${x}" y="${H - 4}" fill="rgb(var(--c-slate-500))" font-size="${fTick}" text-anchor="middle">${Math.round(val)}</text>`);
   }
   rowsAll.forEach((pos, r) => {
     const counts = hist.series[pos], maxC = Math.max(1, ...counts);
@@ -13121,19 +13125,19 @@ function ridgelineSvg(players, perPos, opts) {
     let d = `M ${xOf(binC(0)).toFixed(1)} ${baseY.toFixed(1)}`;
     counts.forEach((c, i) => { d += ` L ${xOf(binC(i)).toFixed(1)} ${yOf(c).toFixed(1)}`; });
     d += ` L ${xOf(binC(counts.length - 1)).toFixed(1)} ${baseY.toFixed(1)} Z`;
-    p.push(`<line x1="${x0}" y1="${baseY.toFixed(1)}" x2="${x1}" y2="${baseY.toFixed(1)}" stroke="#334155" stroke-width="1" stroke-opacity="0.4"/>`);
+    p.push(`<line x1="${x0}" y1="${baseY.toFixed(1)}" x2="${x1}" y2="${baseY.toFixed(1)}" stroke="rgb(var(--c-slate-700))" stroke-width="1" stroke-opacity="0.4"/>`);
     p.push(`<path d="${d}" fill="${col}" fill-opacity="0.3" stroke="${col}" stroke-width="${sw}" stroke-linejoin="round"/>`);
     const mx = xOf(perPos[pos].mean).toFixed(1);   // average marker
     p.push(`<line x1="${mx}" y1="${(baseY - amp).toFixed(1)}" x2="${mx}" y2="${baseY.toFixed(1)}" stroke="${col}" stroke-width="1" stroke-dasharray="${big ? "3 2" : "2 2"}"/>`);
     const cy = (TOP + r * ROW + ROW / 2).toFixed(1);
     p.push(`<circle cx="${big ? 9 : 7}" cy="${cy}" r="${dot}" fill="${col}"/>`);
-    p.push(`<text x="${big ? 17 : 13}" y="${(+cy + 3).toFixed(1)}" fill="#cbd5e1" font-size="${fMain}" font-weight="600">${pos}</text>`);
+    p.push(`<text x="${big ? 17 : 13}" y="${(+cy + 3).toFixed(1)}" fill="rgb(var(--c-slate-300))" font-size="${fMain}" font-weight="600">${pos}</text>`);
     // Enlarged: mark & label the low/high extremes so the tails are readable.
     if (big) {
       for (const [key, anchor] of [["min", "start"], ["max", "end"]]) {
         const val = ext[pos][key], x = xOf(val), off = key === "min" ? -3 : 3;
         p.push(`<circle cx="${x.toFixed(1)}" cy="${baseY.toFixed(1)}" r="2.5" fill="${col}"/>`);
-        p.push(`<text x="${(x + off).toFixed(1)}" y="${(baseY - 5).toFixed(1)}" fill="#94a3b8" font-size="10" text-anchor="${anchor}">${Math.round(val)}</text>`);
+        p.push(`<text x="${(x + off).toFixed(1)}" y="${(baseY - 5).toFixed(1)}" fill="rgb(var(--c-slate-400))" font-size="10" text-anchor="${anchor}">${Math.round(val)}</text>`);
       }
     }
   });

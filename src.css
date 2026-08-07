@@ -97,6 +97,10 @@
      inherit the body colour (and one site hard-coded #e2e8f0), which is only
      safe while the body is light. */
   --mgr-mark-fg: 226 232 240;
+  /* Chart inks. The two inline SVG charts wrote these as attributes, so no
+     theme could reach them; these are their existing values exactly. */
+  --chart-you: 234 179 8;
+  --cat-gk: 57 135 229; --cat-def: 217 89 38; --cat-mid: 25 158 112; --cat-fwd: 201 133 0;
   --chip-opp-fg: #cbd5e1;
   --pts-bg: #0b1220;
   --pts-fg: #ffc72c;
@@ -240,6 +244,9 @@ html[data-theme="sticker"] {
   --chip-name-bg: rgba(26,26,46,.78);
   --chip-name-fg: #FBF6EC;
   --mgr-mark-fg: 26 26 46;
+  /* Chart inks, darkened so a thin 1px line reads on paper. */
+  --chart-you: 138 109 20;
+  --cat-gk: 30 88 160; --cat-def: 158 58 20; --cat-mid: 16 106 74; --cat-fwd: 140 92 0;
   --chip-opp-fg: rgba(251,246,236,.85);
   --pts-bg: #1A1A2E;
   --pts-fg: #C9A227;
