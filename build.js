@@ -27,7 +27,13 @@ const REQUIRED = [
   "vendor/supabase.js",
   "players.json",
 ];
-const OPTIONAL = ["fixtures.json", "photos.json", "injuries.json"];
+/* sticker.html is a TEMPORARY design preview, not part of the app -- nothing
+   links to it and it links to nothing. It is served from this domain only
+   because the artifact sandbox blocks every external host, so it is the one
+   place the redesign can be seen with the real player photos and club crests
+   (which _headers already allows from media.api-sports.io). Delete this entry
+   and the file once a direction is chosen. */
+const OPTIONAL = ["fixtures.json", "photos.json", "injuries.json", "sticker.html"];
 
 /* styles.css is GENERATED from the classes used in index.html, app.js and
    sim.js — so adding a utility class and running only this script copies a

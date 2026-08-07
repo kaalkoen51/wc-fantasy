@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>DraftBaron — Sticker Album preview</title>
+<!--
+  TEMPORARY design preview. Not part of the app.
+
+  It exists because the Artifact sandbox blocks every external host, so a
+  mockup published there cannot load the player photos and club crests the app
+  streams from media.api-sports.io. Served from this domain the app's own CSP
+  already allows that host, so this is the only place the direction can be seen
+  with the real imagery.
+
+  Delete this file and its entry in build.js's OPTIONAL list once a direction
+  is chosen. It links to nothing and nothing links to it.
+
+  No <script> anywhere: the CSP is script-src 'self' with no inline handlers,
+  so images are loaded as CSS background-image. A background that 404s simply
+  reveals the layer underneath, which gives a graceful fallback with no JS.
+-->
+<style>
+:root{
+  --paper:#F2EAD9; --card:#FBF6EC; --ink:#1A1A2E; --red:#D0021B;
+  --foil:#C9A227; --blue:#0B3C8C; --edge:#DCCFB4; --muted:#8A8070;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --disp:"Avenir Next Condensed","Arial Narrow",ui-sans-serif,system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html{background:#14161A}
+body{
+  margin:0;background:var(--paper);color:var(--ink);font-family:var(--disp);
+  line-height:1.45;-webkit-font-smoothing:antialiased;
+  background-image:
+    radial-gradient(rgba(26,26,46,.045) 1px,transparent 1px),
+    radial-gradient(rgba(26,26,46,.03) 1px,transparent 1px);
+  background-size:7px 7px,11px 11px;background-position:0 0,4px 5px;
+}
+.wrap{max-width:430px;margin:0 auto;padding:14px 12px 60px;display:flex;
+  flex-direction:column;gap:14px}
+
+/* ---- the temporary-preview banner, deliberately not in the design ---- */
+.tmp{
+  background:#1A1A2E;color:#F2EAD9;border-radius:3px;padding:12px 14px;
+  font-family:var(--mono);font-size:11px;line-height:1.6;
+}
+.tmp b{color:var(--foil);display:block;letter-spacing:.14em;text-transform:uppercase;
+  font-size:10px;margin-bottom:6px}
+.tmp span{color:#9A93A8}
+
+.lbl{font-family:var(--mono);font-size:9px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--muted)}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.brand{font-size:19px;font-weight:800;text-transform:uppercase;letter-spacing:.02em}
+.brand em{font-style:normal;color:var(--red)}
+.hero{background:var(--red);color:var(--card);padding:11px 13px;border-radius:2px;
+  display:flex;align-items:center;justify-content:space-between}
+.hero .lbl{color:rgba(251,246,236,.72)}
+.hero .big{font-size:32px;font-weight:800;letter-spacing:-.03em;line-height:1;
+  font-variant-numeric:tabular-nums}
+.seg{display:flex;padding:3px;background:#E3D7BC;border-radius:2px}
+.seg span{flex:1;text-align:center;font-size:12px;font-weight:700;padding:6px 0;color:#7A705C}
+.seg span.on{background:var(--ink);color:var(--paper);border-radius:2px}
+.ttl{font-size:17px;font-weight:800;text-transform:uppercase;letter-spacing:.02em}
+
+/* ============ FLAGS — the fallback layer under every crest ============ */
+.fl{position:relative;border-radius:50%;overflow:hidden;flex:0 0 auto;background:#C9C2B4;
+  box-shadow:0 0 0 1.5px var(--card),0 1px 3px rgba(0,0,0,.45)}
+.fl::before,.fl::after{content:"";position:absolute;inset:0}
+.f-fra{background:linear-gradient(90deg,#002395 0 33.3%,#fff 33.3% 66.6%,#ED2939 66.6%)}
+.f-bel{background:linear-gradient(90deg,#141414 0 33.3%,#FAE042 33.3% 66.6%,#ED2939 66.6%)}
+.f-civ{background:linear-gradient(90deg,#F77F00 0 33.3%,#fff 33.3% 66.6%,#009E60 66.6%)}
+.f-egy{background:linear-gradient(180deg,#CE1126 0 33.3%,#fff 33.3% 66.6%,#141414 66.6%)}
+.f-irn{background:linear-gradient(180deg,#239F40 0 33.3%,#fff 33.3% 66.6%,#DA0000 66.6%)}
+.f-gha{background:linear-gradient(180deg,#CE1126 0 33.3%,#FCD116 33.3% 66.6%,#006B3F 66.6%)}
+.f-gha::after{content:"★";inset:auto;left:50%;top:50%;transform:translate(-50%,-52%);
+  color:#141414;font-size:.62em;line-height:1}
+.f-alg{background:linear-gradient(90deg,#006233 0 50%,#fff 50%)}
+.f-alg::after{content:"☾";inset:auto;left:50%;top:50%;transform:translate(-52%,-54%);
+  color:#D21034;font-size:.72em;line-height:1}
+.f-jpn{background:#fff}
+.f-jpn::after{inset:auto;left:50%;top:50%;width:46%;height:46%;border-radius:50%;
+  background:#BC002D;transform:translate(-50%,-50%)}
+.f-kor{background:#fff}
+.f-kor::before{inset:auto;left:50%;top:50%;width:46%;height:46%;border-radius:50%;
+  background:linear-gradient(140deg,#CD2E3A 0 50%,#0047A0 50%);transform:translate(-50%,-50%)}
+.f-mar{background:#C1272D}
+.f-mar::after{content:"★";inset:auto;left:50%;top:50%;transform:translate(-50%,-52%);
+  color:#006233;font-size:.78em;line-height:1}
+.f-can{background:linear-gradient(90deg,#D80621 0 26%,#fff 26% 74%,#D80621 74%)}
+.f-can::after{content:"🍁";inset:auto;left:50%;top:50%;transform:translate(-50%,-50%);
+  font-size:.6em;line-height:1}
+.f-bra{background:#009C3B}
+.f-bra::before{inset:14%;background:#FFDF00;transform:rotate(45deg);border-radius:2px}
+.f-bra::after{inset:auto;left:50%;top:50%;width:38%;height:38%;border-radius:50%;
+  background:#002776;transform:translate(-50%,-50%)}
+.f-aus{background:#012169}
+.f-aus::before{inset:auto;left:8%;top:10%;width:42%;height:38%;
+  background:linear-gradient(90deg,transparent 40%,#fff 40% 60%,transparent 60%),
+             linear-gradient(180deg,transparent 40%,#fff 40% 60%,transparent 60%),#012169}
+.f-aus::after{content:"★";inset:auto;right:14%;top:44%;color:#fff;font-size:.5em;line-height:1}
+.f-cod{background:#007FFF}
+.f-cod::before{background:linear-gradient(56deg,transparent 42%,#CE1021 42% 50%,#F7D618 50% 58%,transparent 58%)}
+.f-cod::after{content:"★";inset:auto;left:12%;top:8%;color:#F7D618;font-size:.5em;line-height:1}
+.f-cuw{background:#002B7F}
+.f-cuw::before{inset:auto;left:0;right:0;top:62%;height:16%;background:#F9E814}
+.f-cuw::after{content:"★★";inset:auto;left:10%;top:14%;color:#fff;font-size:.36em;
+  letter-spacing:-.06em;line-height:1}
+.f-bih{background:#002395}
+.f-bih::before{background:linear-gradient(38deg,transparent 46%,#FECB00 46% 72%,transparent 72%)}
+.f-bih::after{content:"★";inset:auto;left:44%;top:26%;color:#fff;font-size:.44em;line-height:1}
+
+/* The real crest, layered ON TOP of the flag. If it 404s the flag shows
+   through — a better fallback than the three-letter code the app uses now. */
+.fl.crest{background-repeat:no-repeat;background-position:center;background-size:78%}
+
+/* ============ THE PITCH ============ */
+.pitch{position:relative;padding:16px 6px 12px;display:flex;flex-direction:column;gap:14px;
+  background:repeating-linear-gradient(0deg,rgba(255,255,255,.05) 0 8%,transparent 8% 16%),
+             linear-gradient(175deg,#2F7D4F,#1F5F3A);
+  border:6px solid var(--card);border-radius:3px;
+  box-shadow:0 2px 0 var(--edge),inset 0 0 0 1px rgba(255,255,255,.22)}
+.line{display:flex;justify-content:space-evenly;gap:3px}
+.pl{width:78px;display:flex;flex-direction:column;align-items:center;gap:3px}
+
+/* THE STICKER: the photo is a background, so a 404 leaves the card intact. */
+.stk{width:56px;height:64px;position:relative;border:2.5px solid var(--card);border-radius:3px;
+  box-shadow:0 2px 5px rgba(0,0,0,.45);transform:rotate(-2deg);overflow:hidden;
+  background-color:#D8CCB2;
+  background-image:linear-gradient(165deg,rgba(255,255,255,.5),rgba(0,0,0,.08));
+  background-size:cover;background-position:top center;background-repeat:no-repeat}
+.pl:nth-child(even) .stk{transform:rotate(2.4deg)}
+.pl:nth-child(3n) .stk{transform:rotate(-.8deg)}
+.stk .pip{position:absolute;left:2px;bottom:2px;width:17px;height:17px}
+.stk.foil{background-image:
+  linear-gradient(115deg,rgba(201,162,39,.86) 0%,rgba(245,230,168,.7) 22%,rgba(201,162,39,.86) 40%,
+    rgba(140,111,20,.8) 55%,rgba(245,230,168,.7) 74%,rgba(201,162,39,.86) 100%);
+  background-size:280% 100%,cover;animation:foil 4.5s linear infinite;
+  box-shadow:0 2px 10px rgba(201,162,39,.75)}
+@keyframes foil{to{background-position:280% 0,top center}}
+.pts{position:absolute;top:2px;right:2px;min-width:20px;height:17px;display:flex;
+  align-items:center;justify-content:center;font-size:11px;font-weight:800;padding:0 3px;
+  font-variant-numeric:tabular-nums;background:var(--ink);color:var(--foil);border-radius:2px;
+  box-shadow:0 0 0 1px rgba(251,246,236,.85);z-index:2}
+.badge{position:absolute;top:2px;left:2px;width:16px;height:16px;display:flex;
+  align-items:center;justify-content:center;font-size:9px;font-weight:800;background:var(--red);
+  color:var(--card);border-radius:2px;box-shadow:0 0 0 1px rgba(251,246,236,.85);z-index:2}
+.nm{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.01em;
+  color:var(--card);text-align:center;white-space:nowrap;max-width:78px}
+.nm.long{font-size:8.5px;letter-spacing:-.01em}
+.opp{font-size:9px;color:rgba(251,246,236,.82);display:flex;align-items:center;gap:3px}
+.opp .fl{width:10px;height:10px;box-shadow:0 0 0 1px rgba(251,246,236,.6)}
+
+.bench{display:flex;gap:7px;padding:9px;background:#EDE2CB;border:1px dashed #C3B491;
+  border-radius:2px;overflow-x:auto}
+.sub{width:60px;display:flex;flex-direction:column;align-items:center;gap:3px;flex:0 0 auto}
+.sub .stk{width:42px;height:48px;transform:none}
+.sub .stk .pip{width:14px;height:14px}
+.sub .nm{color:#4A4436;font-size:8.5px;max-width:60px}
+.sub .nm.long{font-size:7.2px}
+.slot{width:42px;height:48px;border:2px dashed #B9A87F;border-radius:3px;display:flex;
+  align-items:center;justify-content:center;color:#B9A87F;font-size:16px;font-weight:800}
+
+/* ============ PLAYERS LIST ============ */
+.plist{background:var(--card);border:1px solid var(--edge);border-radius:2px}
+.prow{display:flex;align-items:center;gap:10px;padding:9px 11px;border-bottom:1px solid #EBE0C8}
+.prow:last-child{border-bottom:0}
+.prk{font-family:var(--mono);font-size:11px;color:var(--muted);width:16px;
+  font-variant-numeric:tabular-nums}
+.pmini{width:36px;height:42px;border:2px solid var(--card);border-radius:2px;flex:0 0 auto;
+  box-shadow:0 1px 3px rgba(0,0,0,.35);background-color:#D8CCB2;
+  background-image:linear-gradient(165deg,rgba(255,255,255,.5),rgba(0,0,0,.08));
+  background-size:cover;background-position:top center;background-repeat:no-repeat}
+.pinfo{flex:1;min-width:0}
+.pname{font-size:13.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pclub{display:flex;align-items:center;gap:6px;font-size:10.5px;color:#7A705C;margin-top:2px;
+  min-width:0}
+/* fixed slot, so the column never goes ragged whatever fills it */
+.pclub .fl,.pclub .own,.pclub .fa{flex:0 0 auto}
+.pclub .fl{width:16px;height:16px}
+.cname{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.own{width:17px;height:17px;border-radius:2px;display:flex;align-items:center;
+  justify-content:center;font-size:10px;border:1.5px solid var(--card)}
+.fa{font-family:var(--mono);font-size:8px;background:var(--blue);color:var(--card);
+  padding:2px 4px;border-radius:2px;letter-spacing:.06em}
+.pv{font-size:16px;font-weight:800;font-variant-numeric:tabular-nums}
+.pos{font-family:var(--mono);font-size:8px;padding:2px 4px;border-radius:2px;letter-spacing:.05em}
+.pos.g{background:#EDE4F6;color:#5B21B6}
+.pos.d{background:#E0F0FA;color:#075985}
+.pos.m{background:#E3F5E7;color:#166534}
+.pos.f{background:#FDEBDD;color:#9A3412}
+
+/* ============ LADDER ============ */
+.tbl{background:var(--card);border:1px solid var(--edge);border-radius:2px}
+.tr{display:flex;align-items:center;gap:9px;padding:10px 11px;border-bottom:1px solid #EBE0C8}
+.tr:nth-child(even){background:#F6EFE0}
+.tr:last-child{border-bottom:0}
+.tr.you{background:#FDF3D6;box-shadow:inset 3px 0 0 var(--foil)}
+.rk{font-family:var(--mono);font-size:12px;width:15px;color:var(--muted);font-weight:700;
+  font-variant-numeric:tabular-nums}
+.mv{font-size:9px;width:14px;text-align:center}
+.mcrest{width:28px;height:28px;flex:0 0 auto;display:flex;align-items:center;
+  justify-content:center;font-size:14px;border-radius:2px;border:2px solid var(--card);
+  box-shadow:0 1px 3px rgba(0,0,0,.32)}
+.mgr{flex:1;min-width:0}
+.who{font-size:13.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.form{display:flex;gap:2px;margin-top:3px}
+.form i{width:9px;height:9px;display:block;border-radius:1px}
+.tot{text-align:right;font-variant-numeric:tabular-nums}
+.tot b{display:block;font-size:17px;font-weight:800;letter-spacing:-.02em}
+.tot s{display:block;font-size:10px;text-decoration:none;color:var(--blue);font-weight:700}
+
+@media (prefers-reduced-motion:reduce){
+  .stk.foil{animation:none;background-position:40% 0,top center}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="tmp">
+    <b>Temporary design preview</b>
+    <span>Not the app. A mockup of the "Sticker Album" direction, served from this
+    domain so the real player photos and club crests can load — the artifact sandbox
+    blocks them. Delete once a direction is picked.</span>
+  </div>
+
+  <div class="topbar">
+    <div class="brand">Draft<em>Baron</em></div>
+    <div class="lbl">Matchweek 3</div>
+  </div>
+
+  <div class="hero">
+    <div>
+      <div class="lbl">Koen · 1st of 6</div>
+      <div style="font-size:14px;font-weight:700;margin-top:2px">Album complete · 15/15</div>
+    </div>
+    <div style="text-align:right"><div class="big">90</div><div class="lbl">points</div></div>
+  </div>
+
+  <div class="seg"><span class="on">This round</span><span>Total</span></div>
+
+  <div class="pitch">
+    <div class="line">
+      <div class="pl">
+        <div class="stk foil" style="background-image:linear-gradient(115deg,rgba(201,162,39,.86) 0%,rgba(245,230,168,.7) 22%,rgba(201,162,39,.86) 40%,rgba(140,111,20,.8) 55%,rgba(245,230,168,.7) 74%,rgba(201,162,39,.86) 100%),url('https://media.api-sports.io/football/players/303467.png')">
+          <span class="pts">24</span>
+          <span class="pip fl f-gha crest" style="background-image:url('https://media.api-sports.io/football/teams/1504.png')"></span>
+        </div>
+        <div class="nm">Fatawu</div>
+        <div class="opp"><span class="fl f-irn"></span>v IRN</div>
+      </div>
+      <div class="pl">
+        <div class="stk" style="background-image:url('https://media.api-sports.io/football/players/153.png')">
+          <span class="badge">C</span><span class="pts">12</span>
+          <span class="pip fl f-fra crest" style="background-image:url('https://media.api-sports.io/football/teams/2.png')"></span>
+        </div>
+        <div class="nm">Dembele</div>
+        <div class="opp"><span class="fl f-egy"></span>@ EGY</div>
+      </div>
+    </div>
+
+    <div class="line">
+      <div class="pl">
+        <div class="stk" style="background-image:url('https://media.api-sports.io/football/players/375598.png')">
+          <span class="pts">9</span>
+          <span class="pip fl f-cod crest" style="background-image:url('https://media.api-sports.io/football/teams/1508.png')"></span>
+        </div>
+        <div class="nm">Mukau</div><div class="opp"><span class="fl f-can"></span>@ CAN</div>
+      </div>
+      <div class="pl">
+        <div class="stk" style="background-image:url('https://media.api-sports.io/football/players/36842.png')">
+          <span class="pts">9</span>
+          <span class="pip fl f-cuw crest" style="background-image:url('https://media.api-sports.io/football/teams/5530.png')"></span>
+        </div>
+        <div class="nm long">Roemeratoe</div><div class="opp"><span class="fl f-civ"></span>v CIV</div>
+      </div>
+      <div class="pl">
+        <div class="stk" style="background-image:url('https://media.api-sports.io/football/players/3243.png')">
+          <span class="pts">12</span>
+          <span class="pip fl f-civ crest" style="background-image:url('https://media.api-sports.io/football/teams/1501.png')"></span>
+        </div>
+        <div class="nm">Seri</div><div class="opp"><span class="fl f-cuw"></span>@ CUW</div>
+      </div>
+      <div class="pl">
+        <div class="stk" style="background-image:url('https://media.api-sports.io/football/players/17269.png')">
+          <span class="badge">V</span><span class="pts">9</span>
+          <span class="pip fl f-egy crest" style="background-image:url('https://media.api-sports.io/football/teams/32.png')"></span>
+        </div>
+        <div class="nm">Ashour</div><div class="opp"><span class="fl f-fra"></span>v FRA</div>
+      </div>
+    </div>
+
+    <div class="line">
+      <div class="pl">
+        <div class="stk" style="background-image:url('https://media.api-sports.io/football/players/2742.png')">
+          <span class="pts">12</span>
+          <span class="pip fl f-aus crest" style="background-image:url('https://media.api-sports.io/football/teams/20.png')"></span>
+        </div>
+        <div class="nm">Degenek</div><div class="opp"><span class="fl f-alg"></span>@ ALG</div>
+      </div>
+      <div class="pl">
+        <div class="stk" style="background-image:url('https://media.api-sports.io/football/players/304228.png')">
+          <span class="pts">0</span>
+          <span class="pip fl f-bel crest" style="background-image:url('https://media.api-sports.io/football/teams/1.png')"></span>
+        </div>
+        <div class="nm">Debast</div><div class="opp"><span class="fl f-bra"></span>v BRA</div>
+      </div>
+      <div class="pl">
+        <div class="stk" style="background-image:url('https://media.api-sports.io/football/players/22224.png')">
+          <span class="pts">0</span>
+          <span class="pip fl f-bra crest" style="background-image:url('https://media.api-sports.io/football/teams/6.png')"></span>
+        </div>
+        <div class="nm long">Magalhaes</div><div class="opp"><span class="fl f-bel"></span>@ BEL</div>
+      </div>
+      <div class="pl">
+        <div class="stk" style="background-image:url('https://media.api-sports.io/football/players/78547.png')">
+          <span class="pts">0</span>
+          <span class="pip fl f-can crest" style="background-image:url('https://media.api-sports.io/football/teams/5529.png')"></span>
+        </div>
+        <div class="nm long">Johnston</div><div class="opp"><span class="fl f-cod"></span>v COD</div>
+      </div>
+    </div>
+
+    <div class="line">
+      <div class="pl">
+        <div class="stk" style="background-image:url('https://media.api-sports.io/football/players/304229.png')">
+          <span class="pts">3</span>
+          <span class="pip fl f-alg crest" style="background-image:url('https://media.api-sports.io/football/teams/1532.png')"></span>
+        </div>
+        <div class="nm">Mastil</div><div class="opp"><span class="fl f-aus"></span>v AUS</div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="lbl" style="margin-bottom:6px">Bench · in the order they come on</div>
+    <div class="bench">
+      <div class="sub">
+        <div class="stk" style="background-image:url('https://media.api-sports.io/football/players/2682.png')">
+          <span class="pip fl f-irn crest" style="background-image:url('https://media.api-sports.io/football/teams/22.png')"></span></div>
+        <div class="nm long">Beiranvand</div></div>
+      <div class="sub">
+        <div class="stk" style="background-image:url('https://media.api-sports.io/football/players/32887.png')">
+          <span class="pip fl f-jpn crest" style="background-image:url('https://media.api-sports.io/football/teams/12.png')"></span></div>
+        <div class="nm long">Sugawara</div></div>
+      <div class="sub">
+        <div class="stk" style="background-image:url('https://media.api-sports.io/football/players/34710.png')">
+          <span class="pip fl f-kor crest" style="background-image:url('https://media.api-sports.io/football/teams/17.png')"></span></div>
+        <div class="nm">Lee</div></div>
+      <div class="sub">
+        <div class="stk" style="background-image:url('https://media.api-sports.io/football/players/36579.png')">
+          <span class="pip fl f-mar crest" style="background-image:url('https://media.api-sports.io/football/teams/31.png')"></span></div>
+        <div class="nm">Rahimi</div></div>
+      <div class="sub"><div class="slot">+</div><div class="nm" style="color:#B9A87F">Empty</div></div>
+    </div>
+  </div>
+
+  <div class="topbar" style="margin-top:6px">
+    <div class="ttl">Players</div><div class="lbl">Round 3 · by points</div>
+  </div>
+  <div class="plist">
+    <div class="prow">
+      <span class="prk">1</span>
+      <div class="pmini" style="background-image:url('https://media.api-sports.io/football/players/303467.png')"></div>
+      <div class="pinfo"><div class="pname">Abdul Fatawu</div>
+        <div class="pclub"><span class="own" style="background:#3987e5;color:#fff">🦁</span>
+          <span class="fl f-gha crest" style="background-image:url('https://media.api-sports.io/football/teams/1504.png')"></span>
+          <span class="cname">Ghana</span></div></div>
+      <span class="pos f">FWD</span><span class="pv">24</span>
+    </div>
+    <div class="prow">
+      <span class="prk">2</span>
+      <div class="pmini" style="background-image:url('https://media.api-sports.io/football/players/153.png')"></div>
+      <div class="pinfo"><div class="pname">Ousmane Dembele</div>
+        <div class="pclub"><span class="own" style="background:#3987e5;color:#fff">🦁</span>
+          <span class="fl f-fra crest" style="background-image:url('https://media.api-sports.io/football/teams/2.png')"></span>
+          <span class="cname">France</span></div></div>
+      <span class="pos f">FWD</span><span class="pv">12</span>
+    </div>
+    <div class="prow">
+      <span class="prk">3</span>
+      <div class="pmini" style="background-image:url('https://media.api-sports.io/football/players/3243.png')"></div>
+      <div class="pinfo"><div class="pname">Jean Michael Seri</div>
+        <div class="pclub"><span class="fa">FA</span>
+          <span class="fl f-civ crest" style="background-image:url('https://media.api-sports.io/football/teams/1501.png')"></span>
+          <span class="cname">Côte d'Ivoire</span></div></div>
+      <span class="pos m">MID</span><span class="pv">12</span>
+    </div>
+    <div class="prow">
+      <span class="prk">4</span>
+      <div class="pmini" style="background-image:url('https://media.api-sports.io/football/players/1.png')"></div>
+      <div class="pinfo"><div class="pname">Nihad Mujakic</div>
+        <div class="pclub"><span class="own" style="background:#d95926;color:#fff">🐉</span>
+          <span class="fl f-bih crest" style="background-image:url('https://media.api-sports.io/football/teams/999999.png')"></span>
+          <span class="cname">Bosnia And Herzegovina</span></div></div>
+      <span class="pos d">DEF</span><span class="pv">9</span>
+    </div>
+    <div class="prow">
+      <span class="prk">5</span>
+      <div class="pmini" style="background-image:url('https://media.api-sports.io/football/players/36842.png')"></div>
+      <div class="pinfo"><div class="pname">Godfried Roemeratoe</div>
+        <div class="pclub"><span class="own" style="background:#3987e5;color:#fff">🦁</span>
+          <span class="fl f-cuw crest" style="background-image:url('https://media.api-sports.io/football/teams/5530.png')"></span>
+          <span class="cname">Curaçao</span></div></div>
+      <span class="pos m">MID</span><span class="pv">9</span>
+    </div>
+    <div class="prow">
+      <span class="prk">6</span>
+      <div class="pmini" style="background-image:url('https://media.api-sports.io/football/players/2682.png')"></div>
+      <div class="pinfo"><div class="pname">Alireza Beiranvand</div>
+        <div class="pclub"><span class="fa">FA</span>
+          <span class="fl f-irn crest" style="background-image:url('https://media.api-sports.io/football/teams/22.png')"></span>
+          <span class="cname">IR Iran</span></div></div>
+      <span class="pos g">GK</span><span class="pv">6</span>
+    </div>
+    <div class="prow">
+      <span class="prk">7</span>
+      <div class="pmini" style="background-image:url('https://media.api-sports.io/football/players/22224.png')"></div>
+      <div class="pinfo"><div class="pname">Gabriel Magalhaes</div>
+        <div class="pclub"><span class="own" style="background:#3987e5;color:#fff">🦁</span>
+          <span class="fl f-bra crest" style="background-image:url('https://media.api-sports.io/football/teams/6.png')"></span>
+          <span class="cname">Brazil</span></div></div>
+      <span class="pos d">DEF</span><span class="pv">4</span>
+    </div>
+    <div class="prow">
+      <span class="prk">8</span>
+      <div class="pmini" style="background-image:url('https://media.api-sports.io/football/players/34710.png')"></div>
+      <div class="pinfo"><div class="pname">Gihyuk Lee</div>
+        <div class="pclub"><span class="fa">FA</span>
+          <span class="fl f-kor crest" style="background-image:url('https://media.api-sports.io/football/teams/17.png')"></span>
+          <span class="cname">Korea Republic</span></div></div>
+      <span class="pos m">MID</span><span class="pv">3</span>
+    </div>
+  </div>
+
+  <div class="topbar" style="margin-top:6px">
+    <div class="ttl">League ladder</div><div class="lbl">After round 3</div>
+  </div>
+  <div class="tbl">
+    <div class="tr you"><span class="rk">1</span><span class="mv" style="color:#2E8B57">▲1</span>
+      <span class="mcrest" style="background:#3987e5;color:#fff">🦁</span>
+      <span class="mgr"><span class="who">Koen (you)</span><span class="form">
+        <i style="background:#2E8B57"></i><i style="background:#2E8B57"></i><i style="background:#C9A227"></i><i style="background:#2E8B57"></i><i style="background:#D0021B"></i></span></span>
+      <span class="tot"><b>90</b><s>+30</s></span></div>
+    <div class="tr"><span class="rk">2</span><span class="mv" style="color:#D0021B">▼1</span>
+      <span class="mcrest" style="background:#d95926;color:#fff">🐉</span>
+      <span class="mgr"><span class="who">Jean-Pierre</span><span class="form">
+        <i style="background:#2E8B57"></i><i style="background:#D0021B"></i><i style="background:#2E8B57"></i><i style="background:#2E8B57"></i><i style="background:#2E8B57"></i></span></span>
+      <span class="tot"><b>87</b><s>+29</s></span></div>
+    <div class="tr"><span class="rk">3</span><span class="mv" style="color:#8A8070">–</span>
+      <span class="mcrest" style="background:#199e70;color:#fff">🦅</span>
+      <span class="mgr"><span class="who">Thandiwe</span><span class="form">
+        <i style="background:#C9A227"></i><i style="background:#2E8B57"></i><i style="background:#D0021B"></i><i style="background:#2E8B57"></i><i style="background:#2E8B57"></i></span></span>
+      <span class="tot"><b>84</b><s>+21</s></span></div>
+    <div class="tr"><span class="rk">4</span><span class="mv" style="color:#2E8B57">▲2</span>
+      <span class="mcrest" style="background:#c98500;color:#fff">🐺</span>
+      <span class="mgr"><span class="who">Alexandra-Rose</span><span class="form">
+        <i style="background:#D0021B"></i><i style="background:#2E8B57"></i><i style="background:#2E8B57"></i><i style="background:#C9A227"></i><i style="background:#2E8B57"></i></span></span>
+      <span class="tot"><b>79</b><s>+26</s></span></div>
+    <div class="tr"><span class="rk">5</span><span class="mv" style="color:#D0021B">▼2</span>
+      <span class="mcrest" style="background:#a855f7;color:#fff">🦈</span>
+      <span class="mgr"><span class="who">Bosman</span><span class="form">
+        <i style="background:#D0021B"></i><i style="background:#D0021B"></i><i style="background:#2E8B57"></i><i style="background:#C9A227"></i><i style="background:#D0021B"></i></span></span>
+      <span class="tot"><b>71</b><s>+12</s></span></div>
+    <div class="tr"><span class="rk">6</span><span class="mv" style="color:#8A8070">–</span>
+      <span class="mcrest" style="background:#14b8a6;color:#fff">🐻</span>
+      <span class="mgr"><span class="who">Sam</span><span class="form">
+        <i style="background:#D0021B"></i><i style="background:#C9A227"></i><i style="background:#D0021B"></i><i style="background:#D0021B"></i><i style="background:#2E8B57"></i></span></span>
+      <span class="tot"><b>66</b><s>+9</s></span></div>
+  </div>
+
+  <div class="tmp" style="margin-top:8px">
+    <b>Row 4 is the broken case</b>
+    <span>Mujakic's crest points at an id that does not exist. The flag underneath
+    shows through instead of the three-letter code the app falls back to today —
+    which is arguably the better fallback, and free.</span>
+  </div>
+
+</div>
+</body>
+</html>
