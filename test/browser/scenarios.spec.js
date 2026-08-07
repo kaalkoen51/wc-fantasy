@@ -645,6 +645,46 @@ test("every screen holds together in the sticker theme", async ({ page }) => {
     .toEqual([]);
 });
 
+test("the foil goes to the round's best, and only when someone earned it", async ({ page }) => {
+  /* The reward moment the app never had. What matters is not the shine but
+     what it claims: it has to point at the top scorer, at ALL of them when
+     they tie, and at nobody in a round where nothing happened -- otherwise it
+     stops meaning "this one did something". */
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const read = () => page.evaluate(() => {
+    showView("board"); setBoardTab("home");
+    const chips = [...document.querySelectorAll("#board-home .pp, #board-home .sub-chip")];
+    const val = (el) => Number(el.querySelector(".pp-pts, .sub-pts")?.textContent
+      || el.textContent.match(/\d+/)?.[0] || 0);
+    return chips.map((el) => ({ foil: el.classList.contains("pp-foil"), pts: val(el) }))
+      .filter((c) => c.pts >= 0);
+  });
+
+  const chips = await read();
+  expect(chips.length, "no squad rendered").toBeGreaterThan(0);
+  const foiled = chips.filter((c) => c.foil);
+  const best = Math.max(...chips.map((c) => c.pts));
+
+  expect(best, "the seed scored nothing, so this proves nothing").toBeGreaterThan(0);
+  expect(foiled.length, "nobody got the foil").toBeGreaterThan(0);
+  // Every foiled chip is on the best score...
+  for (const f of foiled)
+    expect(f.pts, "the foil went to someone who was not the round's best").toBe(best);
+  // ...and every chip on the best score is foiled, so a tie foils together.
+  expect(foiled.length, "a player tied on the best score missed the foil")
+    .toBe(chips.filter((c) => c.pts === best).length);
+
+  // A round nobody scored in must foil nobody at all.
+  const blank = await page.evaluate(() => {
+    S.stats = [];
+    bustScores();
+    showView("board"); setBoardTab("home"); renderBoard();
+    return document.querySelectorAll("#board-home .pp-foil").length;
+  });
+  expect(blank, "a scoreless round still handed out a foil").toBe(0);
+});
+
 test("a blank gameweek does not break any screen", async ({ page }) => {
   /* A club with no fixture in a round is the shape that broke round numbering
      before -- everything downstream keys off the round rather than a count of

@@ -5922,6 +5922,13 @@ function squadBoardHtml(items, mgrId, opts = {}) {
   const bonus = items.filter((it) => !isPlayer(it));
   const ptsOf = (it) => (roundMode ? it.roundPts : it.pts);
   const anyPts = play.some((it) => (ptsOf(it) || 0) > 0);
+  /* The round's best, for the foil. Guarded on somebody having actually
+     scored: a blank week must foil nobody, or the treatment stops meaning
+     "this one did something" and starts meaning "this one exists". Ties foil
+     together rather than picking a winner -- shinies were never unique, and
+     choosing between equal scores would be inventing a fact. */
+  const bestPts = anyPts ? Math.max(...play.map((it) => ptsOf(it) || 0)) : 0;
+  const isBest = (it) => bestPts > 0 && (ptsOf(it) || 0) === bestPts;
 
   const nameOf = (pid) => play.find((it) => it.entry.player_id === pid)?.entry.player_name || "";
   const onPitch = (it) => offFor.has(it.entry.player_id)
@@ -5938,6 +5945,7 @@ function squadBoardHtml(items, mgrId, opts = {}) {
       id: e.player_id, player_id: e.player_id, name: e.player_name, team: e.team,
       opp: oppShort(e.team),
       note: anyPts ? (ptsOf(it) || 0) : undefined,
+      foil: isBest(it),
       dim: out,
       // The sub badge wins over the captain armband: coming on is the rarer
       // fact and the one being asked about.
@@ -5976,6 +5984,7 @@ function squadBoardHtml(items, mgrId, opts = {}) {
           player_id: it.entry.player_id, name: it.entry.player_name,
           team: it.entry.team, position: it.entry.position,
           note: anyPts ? (ptsOf(it) || 0) : undefined,
+          foil: isBest(it),
           /* A sub whose points counted without displacing anyone — only
              possible with uncapped subs, where several bench players in a
              position can all count against one no-show. Marked rather than
@@ -5987,6 +5996,7 @@ function squadBoardHtml(items, mgrId, opts = {}) {
           player_id: it.entry.player_id, name: it.entry.player_name,
           team: it.entry.team, position: it.entry.position,
           note: anyPts ? (ptsOf(it) || 0) : undefined,
+          foil: isBest(it),
           mark: "▼", dim: true,
           title: `Did not play — replaced by ${nameOf(onFor.get(it.entry.player_id))}`,
         })),
@@ -9861,7 +9871,7 @@ function dugoutHtml(subs, opts = {}) {
        bench" is a lie about someone who was picked to start. */
     const markCls = e.mark === "▲" ? " sub-no-up" : e.mark ? " sub-no-mark" : "";
     return `<button type="button" ${tap}${e.title ? ` title="${esc(e.title)}"` : ""}
-      class="sub-chip ${e.dim ? "opacity-50" : ""}">
+      class="sub-chip ${e.dim ? "opacity-50" : ""} ${e.foil ? "pp-foil" : ""}">
       <span class="sub-no${markCls}">${e.mark ? esc(e.mark) : i + 1}</span>
       <span class="relative inline-flex">
         ${avatarHtml(e.player_id, e.team, "w-9 h-9")}
@@ -9893,7 +9903,7 @@ function pitchRowsHtml(byPos, opts = {}) {
            ><span class="rounded-full bg-wcred text-white text-sm font-bold w-5 h-5 inline-flex items-center justify-center leading-none shadow ring-2 ring-slate-900/60">−</span></button>` : "";
     return `<div class="relative flex justify-center">
       ${rm}
-      <button type="button" ${tap}${e.title ? ` title="${esc(e.title)}"` : ""} class="pp ${e.dim ? "pp-dim" : ""} ${e.planned ? "pp-planned" : ""}">
+      <button type="button" ${tap}${e.title ? ` title="${esc(e.title)}"` : ""} class="pp ${e.dim ? "pp-dim" : ""} ${e.planned ? "pp-planned" : ""} ${e.foil ? "pp-foil" : ""}">
         <span class="relative inline-flex">
           ${avatarHtml(e.player_id, e.team, av)}
           ${opts.crests && teamCrestHtml(e.team) ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${teamCrestHtml(e.team, "w-3.5 h-3.5")}</span>` : ""}
