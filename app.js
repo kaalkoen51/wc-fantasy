@@ -5601,7 +5601,12 @@ function scoringByPositionHtml() {
   const cell = (r, g) => {
     const v = r.perPosition ? (r.points?.[g] ?? 0) : (r.points ?? 0);
     return `<td class="py-1.5 text-center font-mono ${
-      v > 0 ? "text-wcgold" : v < 0 ? "text-red-400" : "text-slate-600"}">${v > 0 ? "+" : ""}${v}</td>`;
+      /* slate-500, not slate-600: the 600 tier is the app's border colour and
+         this is the only place it was ever used as TEXT. Reading a rule colour
+         as type is why a zero here sat at 1.74:1 on paper -- below the dimmest
+         thing the dark theme does. The faintest TEXT tier still says "nothing
+         happened" without disappearing. */
+      v > 0 ? "text-wcgold" : v < 0 ? "text-red-400" : "text-slate-500"}">${v > 0 ? "+" : ""}${v}</td>`;
   };
   const qual = (r) => {
     const bits = [];
