@@ -14,6 +14,9 @@ document.addEventListener("error", (e) => {
   if (!code) return t.remove();
   const span = document.createElement("span");
   span.className = "shrink-0 font-mono text-xs";
+  // Same hook the server-rendered fallback carries, so a test looking for
+  // "the club as a code" finds both routes to it rather than only one.
+  span.setAttribute("data-crest-fallback", "");
   span.title = t.title || "";
   span.textContent = code;
   t.replaceWith(span);
@@ -8090,7 +8093,7 @@ const H2H_SORT_TAG = {
 function scoreBarHtml(aVal, bVal, aColor, bColor, opts = {}) {
   const total = Math.max(1, (aVal || 0) + (bVal || 0));
   const pct = (v) => ((v || 0) / total) * 100;
-  return `<div class="${opts.cls || "mt-1.5"} h-1.5 rounded-full bg-slate-800 overflow-hidden flex
+  return `<div data-scorebar class="${opts.cls || "mt-1.5"} h-1.5 rounded-full bg-slate-800 overflow-hidden flex
     ring-1 ring-inset ring-white/10">
     <span class="shrink-0" style="width:${pct(aVal)}%;background:${aColor};
       border-right:2px solid rgb(15 23 42)"></span>
@@ -8167,7 +8170,7 @@ function h2hStandingsHtml(me) {
             <!-- The number the table is currently ordered by, named. Sorting by
                  points-for and then not showing points-for asks you to take the
                  order on trust. -->
-            ${sortKey !== "logPts" ? `<span class="ml-0.5 shrink-0 rounded bg-wcgold/15 px-1.5 py-0.5 text-[10px] font-semibold text-wcgold tabular-nums">${
+            ${sortKey !== "logPts" ? `<span data-sortkey class="ml-0.5 shrink-0 rounded bg-wcgold/15 px-1.5 py-0.5 text-[10px] font-semibold text-wcgold tabular-nums">${
               esc(H2H_SORT_TAG[sortKey] || sortKey)} ${valOf(id) > 0 && sortKey === "diff" ? "+" : ""}${valOf(id)}</span>` : ""}
           </span>
         </span>
@@ -8870,7 +8873,7 @@ function matchLogHtml(pid, position, team, managerId) {
             slotLabel(os.entry) === "sub" ? "(sub)" : "(start)"}</span>`
         : '<span class="text-slate-500">free agent</span>';
     }
-    return `<div class="rounded-lg bg-slate-800/60 px-2 py-1.5">
+    return `<div data-matchrow class="rounded-lg bg-slate-800/60 px-2 py-1.5">
       <div class="flex items-center gap-2 text-xs">
         <span class="text-slate-400 shrink-0">${homeAt ? "vs" : "@"}</span>
         ${avatarHtml("team:" + opp, opp, "w-4 h-4")}
@@ -9377,7 +9380,7 @@ function renderStatsTab() {
         </span>
         <span class="pos-${p.position} rounded px-1.5 py-0.5 text-xs font-semibold shrink-0">${p.position}</span>
         <span class="shrink-0 w-10 text-right">
-          <span class="block font-mono font-bold ${val > 0 ? "text-wcgold" : val < 0 ? "text-red-400" : "text-slate-400"}">${val}</span>
+          <span data-val class="block font-mono font-bold ${val > 0 ? "text-wcgold" : val < 0 ? "text-red-400" : "text-slate-400"}">${val}</span>
           ${showSub ? `<span class="block text-xs text-slate-400">${sub}</span>` : ""}
         </span>
       </button></li>`;
@@ -9728,7 +9731,7 @@ function lineupValid(counts) {
    and the crest is decoration. */
 function teamCrestHtml(team, size = "w-4 h-4", code) {
   const id = S.photos?.teams?.[team] ?? teamLogoId(team);
-  if (!id) return code ? `<span class="shrink-0 font-mono text-xs" title="${esc(team)}">${esc(code)}</span>` : "";
+  if (!id) return code ? `<span data-crest-fallback class="shrink-0 font-mono text-xs" title="${esc(team)}">${esc(code)}</span>` : "";
   return `<img src="https://media.api-sports.io/football/teams/${id}.png" loading="lazy" data-avatar${
     code ? ` data-crest-code="${esc(code)}"` : ""}
     class="${size} inline-block object-contain shrink-0 align-[-2px]" alt="${
@@ -9850,7 +9853,7 @@ function pitchRowsHtml(byPos, opts = {}) {
            ><span class="rounded-full bg-wcred text-white text-sm font-bold w-5 h-5 inline-flex items-center justify-center leading-none shadow ring-2 ring-slate-900/60">−</span></button>` : "";
     return `<div class="relative flex justify-center">
       ${rm}
-      <button type="button" ${tap}${e.title ? ` title="${esc(e.title)}"` : ""} class="pp ${e.dim ? "opacity-50" : ""} ${e.planned ? "pp-planned" : ""}">
+      <button type="button" ${tap}${e.title ? ` title="${esc(e.title)}"` : ""} class="pp ${e.dim ? "pp-dim" : ""} ${e.planned ? "pp-planned" : ""}">
         <span class="relative inline-flex">
           ${avatarHtml(e.player_id, e.team, av)}
           ${opts.crests && teamCrestHtml(e.team) ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${teamCrestHtml(e.team, "w-3.5 h-3.5")}</span>` : ""}
@@ -10253,7 +10256,7 @@ function renderSwapList() {
         </span>
       </button>
       <span class="shrink-0 w-10 text-right">
-        <span class="block font-mono font-bold ${val > 0 ? "text-wcgold" : "text-slate-400"}">${val}</span>
+        <span data-val class="block font-mono font-bold ${val > 0 ? "text-wcgold" : "text-slate-400"}">${val}</span>
         ${byPoints ? "" : `<span class="block text-xs text-slate-400">${pts}p</span>`}
       </span>
       ${action}
@@ -11371,7 +11374,7 @@ function shortlistSectionHtml(me) {
         </span>
         <span class="pos-${p.position} rounded px-1.5 py-0.5 text-xs font-semibold shrink-0">${p.position}</span>
         <span class="shrink-0 w-9 text-right leading-tight">
-          <span class="block font-mono font-bold ${val > 0 ? "text-wcgold" : "text-slate-400"}">${val}</span>
+          <span data-val class="block font-mono font-bold ${val > 0 ? "text-wcgold" : "text-slate-400"}">${val}</span>
           ${per90 ? `<span class="block text-[10px] text-slate-500">${mins}′</span>` : ""}
         </span>
       </button>
@@ -11708,7 +11711,7 @@ function renderPlannerPick() {
         </span>
       </button>
       <span class="shrink-0 w-10 text-right">
-        <span class="block font-mono font-bold ${val > 0 ? "text-wcgold" : "text-slate-400"}">${val}</span>
+        <span data-val class="block font-mono font-bold ${val > 0 ? "text-wcgold" : "text-slate-400"}">${val}</span>
         ${byPoints ? "" : `<span class="block text-xs text-slate-400">${pts}p</span>`}
       </span>
       <button data-pltoggle="${esc(p.player_id)}" class="shrink-0 rounded-lg px-3 py-1 text-xs font-semibold ${

@@ -277,6 +277,11 @@
 
   /* A shirt holding a planned replacement rather than the player who is
      actually there — the plan, drawn as the team it would produce. */
+  /* Was the utility class `opacity-50`, which two tests selected on to find a
+     starter who did not turn out. A restyle of how "did not play" looks would
+     have silently emptied that selector, so the STATE has a name of its own
+     now and the styling hangs off it. */
+  .pp-dim { opacity: .5; }
   .pp-planned .pp-name { background: rgba(255,199,44,.22); outline: 1px solid rgba(255,199,44,.5); }
 
   /* The bench, drawn as a bench: a row of smaller faces under the pitch in the

@@ -938,7 +938,7 @@ const matchLogRounds = (page) => page.evaluate(() => {
   const pid = managerPicks(myManager().id).find((p) => !p.is_sub).player_id;
   openPlayerDetail(pid);
   const body = document.getElementById("player-sheet-body");
-  return [...body.querySelectorAll(".space-y-1 > .rounded-lg")]
+  return [...body.querySelectorAll("[data-matchrow]")]
     .map((row) => row.textContent.replace(/\s+/g, " ").trim());
 });
 
@@ -1002,7 +1002,7 @@ test("a round nobody could be subbed into still draws a full XI", async ({ page 
       benchDown: [...el.querySelectorAll(".dugout .sub-no")]
         .filter((n) => n.textContent.trim() === "▼").length,
       // Still on the field, but visibly not part of the result.
-      dimmed: el.querySelectorAll(".pitch .pp.opacity-50").length,
+      dimmed: el.querySelectorAll(".pitch .pp.pp-dim").length,
     };
   });
 
@@ -1134,7 +1134,7 @@ test("the two ways of picking a player to bring in behave the same", async ({ pa
   // Turning the filter off widens it, and the list comes back sorted.
   const all = await page.evaluate(() => {
     document.getElementById("swap-slfilter").click();
-    const val = (li) => Number(li.querySelector(".font-mono")?.textContent || 0);
+    const val = (li) => Number(li.querySelector("[data-val]")?.textContent || 0);
     const items = [...document.querySelectorAll("#swap-list li")].filter((li) => li.querySelector("[data-swapin]"));
     return { n: items.length, vals: items.map(val) };
   });
@@ -1164,7 +1164,7 @@ test("the league table sorts, moves and keeps league position honest", async ({ 
     const rows = [...document.querySelectorAll("#board-lb details[data-mgr]")];
     return rows.map((d) => {
       const t = d.querySelector("summary").textContent.replace(/\s+/g, " ").trim();
-      const tag = d.querySelector("summary .text-wcgold.tabular-nums");
+      const tag = d.querySelector("summary [data-sortkey]");
       return { id: d.dataset.mgr, rank: Number(t.match(/^(\d+)/)?.[1]),
                tag: tag ? tag.textContent.trim() : null };
     });

@@ -341,7 +341,7 @@ test("the score bar shows its split even when both managers share a colour", asy
   const read = await page.evaluate(() => {
     for (const m of S.managers) m.color = "#C8102E";   // the reported case
     showView("board"); setBoardTab("fixtures"); renderBoard();
-    const bar = document.querySelector("#board-fixtures .rounded-full.flex");
+    const bar = document.querySelector("#board-fixtures [data-scorebar]");
     if (!bar) return null;
     const [a, b] = [...bar.children];
     const ca = getComputedStyle(a), cb = getComputedStyle(b);
@@ -447,7 +447,7 @@ test("the club shows as a crest, and as its code when the crest cannot load", as
     [...document.querySelectorAll("#stats-list li")].slice(0, 5).map((li) => {
       const img = li.querySelector("img[data-crest-code]");
       // [title] distinguishes it from the rank number, which is also mono.
-      const code = li.querySelector("span.font-mono[title]");
+      const code = li.querySelector("[data-crest-fallback]");
       return { crest: img?.getAttribute("alt") || null,
                code: code ? code.textContent.trim() : null };
     }));
@@ -512,7 +512,7 @@ test("the club column stays aligned whether or not a player is owned", async ({ 
   await page.waitForTimeout(400);
   const rows = await page.evaluate(() =>
     [...document.querySelectorAll("#stats-list li")].map((li) => {
-      const crest = li.querySelector("img[data-crest-code], span.font-mono[title]");
+      const crest = li.querySelector("img[data-crest-code], [data-crest-fallback]");
       /* Kind is decided by the OWNER chip alone, never by the presence of a
          free-agent chip — otherwise removing that chip drops free rows from
          the sample entirely and the test fails for the wrong reason instead
