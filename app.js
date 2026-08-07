@@ -8768,8 +8768,11 @@ function avatarHtml(playerId, team, size = "w-7 h-7") {
     const id = S.photos?.players?.[playerId];
     if (id) url = `https://media.api-sports.io/football/players/${id}.png`;
   }
-  if (!url) return `<span class="${size} rounded-full bg-slate-800 shrink-0"></span>`;
-  return `<span class="${size} rounded-full bg-slate-800 overflow-hidden shrink-0 inline-flex items-center justify-center">
+  /* `avatar` is a hook, not a style: a theme that draws players as something
+     other than a circle -- a sticker, a card -- needs to be able to find them
+     without guessing at the size utility. */
+  if (!url) return `<span class="avatar ${size} rounded-full bg-slate-800 shrink-0"></span>`;
+  return `<span class="avatar ${size} rounded-full bg-slate-800 overflow-hidden shrink-0 inline-flex items-center justify-center">
     <img src="${esc(url)}" loading="lazy" data-avatar
          class="w-full h-full ${isTeam ? "object-contain p-0.5" : "object-cover"}" alt=""></span>`;
 }

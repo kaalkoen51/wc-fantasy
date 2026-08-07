@@ -107,6 +107,50 @@ test.describe("visual", () => {
   });
 });
 
+test("the sticker theme keeps every layout budget the default does", async ({ page }) => {
+  /* The budgets are not decoration: each was won by fixing a real complaint
+     about the app being too tall to use on a phone. A second theme is exactly
+     where they quietly stop holding, because nobody looks at it as often --
+     so it is checked rather than assumed.
+
+     The name check is the one that mattered most in the mockups: Sticker
+     Album's chips carry the same surnames in the same 62px box, and if this
+     theme ever grows the condensed display face it wants, "Roemeratoe" is
+     where it will break first. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLeague(page, { managers: 4, played: 3 });
+  await page.evaluate(() => setTheme("sticker"));
+
+  const cut = await page.evaluate(() => {
+    const bad = [];
+    showView("board"); setBoardTab("home");
+    for (const el of document.querySelectorAll(".pp-name, .sub-name")) {
+      if (!el.getBoundingClientRect().width) continue;
+      if (el.scrollWidth > el.clientWidth + 1)
+        bad.push(`${el.textContent.trim()} (${el.scrollWidth} > ${el.clientWidth})`);
+    }
+    return bad;
+  });
+  expect(cut, "a player name is clipped in the sticker theme").toEqual([]);
+
+  const over = await page.evaluate(() => {
+    const bad = [];
+    for (const tabs of Object.values(navGroups())) for (const tab of tabs) {
+      setBoardTab(tab);
+      const pane = document.getElementById("board-" + tab);
+      if (!pane || pane.classList.contains("hidden")) continue;
+      for (const el of pane.querySelectorAll("*")) {
+        if (el.hasAttribute("data-decor")) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width && r.right > 390 + 1)
+          bad.push(`${tab}: ${el.tagName.toLowerCase()}.${(el.className || "").toString().split(" ")[0]} → ${Math.round(r.right)}px`);
+      }
+    }
+    return [...new Set(bad)].slice(0, 6);
+  });
+  expect(over, "something overflows the phone in the sticker theme").toEqual([]);
+});
+
 test("no player name is cut off on a pitch", async ({ page }) => {
   /* Measured, not eyeballed. .pp-name was capped at 62px while "Roemeratoe"
      needed 75 and "Magalhaes" 67, so both rendered with an ellipsis — on the

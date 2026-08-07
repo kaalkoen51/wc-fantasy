@@ -285,6 +285,62 @@ html[data-theme="sticker"] {
   --planned-ring: rgba(201,162,39,.7);
 }
 
+/* ===========================================================================
+   STICKER ALBUM — the parts that are shape rather than colour.
+
+   Scoped to the theme so none of it can reach the default. Everything here
+   restyles markup that already exists; nothing below needed a new element.
+   =========================================================================== */
+
+/* The pitch becomes a page of the album: a printed panel, trimmed in paper,
+   sitting on the sheet rather than glowing out of it. */
+html[data-theme="sticker"] .pitch {
+  border: 6px solid rgb(var(--c-slate-900));
+  border-radius: 3px;
+  box-shadow: 0 2px 0 rgb(var(--c-slate-700)), inset 0 0 0 1px rgba(255,255,255,.22);
+}
+
+/* A player is a STICKER: a die-cut rectangle, trimmed in paper, stuck on
+   slightly crooked. This is the whole idea of the theme, and it is one
+   border-radius and one transform away from the circle that is already there. */
+html[data-theme="sticker"] .pp .avatar {
+  border-radius: 3px;
+  border: 2.5px solid rgb(var(--c-slate-900));
+  background: linear-gradient(165deg, #E8DCC4, #CFC0A0);
+  box-shadow: 0 2px 5px rgba(0,0,0,.42);
+  transform: rotate(-2deg);
+}
+/* Not all at the same angle, or it reads as a skewed grid rather than as
+   things stuck on by hand. */
+html[data-theme="sticker"] .pitch-row > *:nth-child(even) .pp .avatar { transform: rotate(2.2deg); }
+html[data-theme="sticker"] .pitch-row > *:nth-child(3n) .pp .avatar { transform: rotate(-.8deg); }
+
+/* The points bubble is the foil corner number, printed ON the sticker. */
+html[data-theme="sticker"] .pp-pts {
+  border-radius: 2px;
+  bottom: auto; top: -2px; right: -4px;
+  box-shadow: 0 0 0 1px rgb(var(--c-slate-900));
+}
+
+/* The bench is the strip of spares at the back of the album. */
+html[data-theme="sticker"] .dugout {
+  border-style: dashed;
+  border-radius: 2px;
+}
+html[data-theme="sticker"] .sub-chip .avatar {
+  border-radius: 2px;
+  border: 2px solid rgb(var(--c-slate-900));
+  background: linear-gradient(165deg, #E8DCC4, #CFC0A0);
+  box-shadow: 0 1px 3px rgba(0,0,0,.35);
+}
+
+/* An empty slot is a die-cut outline — the space in an unfilled album. */
+html[data-theme="sticker"] .pp .border-dashed {
+  border-radius: 3px;
+  border-color: rgba(26,26,46,.35);
+  color: rgba(26,26,46,.45);
+}
+
 /* The selected segment of any segmented control, everywhere in the app. */
 .is-selected { background: rgb(var(--sel-bg)); color: rgb(var(--sel-fg)); }
 
