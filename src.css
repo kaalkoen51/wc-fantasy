@@ -4,6 +4,120 @@
 @tailwind utilities;
 
 /* ===========================================================================
+   DESIGN TOKENS
+
+   Every value below is exactly what the app rendered before tokens existed.
+   That is the point: this file makes the app themeable and changes nothing,
+   which is a claim the three pixel baselines can check. If one of them moves
+   after this commit, a value here is wrong -- and it is far cheaper to find
+   that now than after a theme is built on top of it.
+
+   Colours are space-separated RGB CHANNELS, not colours, so Tailwind's
+   <alpha-value> can supply the opacity for the 164 sites that use a modifier.
+   =========================================================================== */
+:root {
+  /* Greys. Named for the Tailwind shade that resolves to them, because 1,330
+     call sites say slate-400 and renaming those is a different job. */
+  --c-slate-100: 241 245 249;
+  --c-slate-200: 226 232 240;
+  --c-slate-300: 203 213 225;
+  --c-slate-400: 148 163 184;
+  --c-slate-500: 100 116 139;
+  --c-slate-600: 71 85 105;
+  --c-slate-700: 51 65 85;
+  --c-slate-800: 30 41 59;
+  --c-slate-900: 15 23 42;
+  --c-slate-950: 2 6 23;
+
+  /* Brand and state. */
+  --c-wcred: 200 16 46;
+  --c-wcred-hov: 226 41 69;
+  --c-wcgold: 255 199 44;
+  --c-wcgreen: 0 168 89;
+  --c-wcblue: 26 125 196;
+  --c-wcnavy: 7 11 36;
+  --c-live: 79 178 134;
+  --c-warn: 232 185 63;
+  --c-danger: 229 100 106;
+
+  /* Shape. `full` is not a token on purpose -- avatars stay round. */
+  --r-sm: .25rem;
+  --r-md: .375rem;
+  --r-lg: .5rem;
+  --r-xl: .75rem;
+  --r-2xl: 1rem;
+
+  /* Type. No webfont is loaded today, so --font-display resolves to the body
+     stack and the app looks the same; a theme that ships a face overrides it. */
+  --font-body: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji",
+               "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+               "Liberation Mono", "Courier New", monospace;
+  --font-display: var(--font-body);
+
+  /* Surfaces the hand-written CSS below paints directly, which Tailwind never
+     sees. The pitch is the app's most characterful surface and was three
+     hard-coded greens. */
+  --turf-top: #14512f;
+  --turf-mid: #0c3a22;
+  --turf-bot: #0a2f1c;
+  --pitch-line: rgba(255,255,255,.16);
+  --pitch-edge: rgba(255,255,255,.14);
+  --pitch-stripe: rgba(255,255,255,.04);
+
+  /* Buttons. */
+  --btn-primary-bg: #FFC72C;
+  --btn-primary-fg: #0B1220;
+  --btn-primary-bg-hover: #FFD65C;
+  --btn-disabled-bg: #1E293B;
+  --btn-disabled-fg: #94A3B8;
+  --btn-quiet-fg: #FFC72C;
+  --btn-quiet-border: rgba(255,199,44,.5);
+  --btn-quiet-hover: rgba(255,199,44,.14);
+  --btn-quiet-disabled-fg: #64748B;
+  --btn-quiet-disabled-border: #334155;
+
+  /* Player chips and the points bubble they carry. */
+  --chip-name-bg: rgba(2,6,23,.74);
+  --chip-opp-fg: #cbd5e1;
+  --pts-bg: #0b1220;
+  --pts-fg: #ffc72c;
+  --pts-border: rgba(255,199,44,.55);
+
+  /* Position chips. */
+  --pos-gk-bg: #7c3aed33;  --pos-gk-fg: #c4b5fd;
+  --pos-def-bg: #0ea5e933; --pos-def-fg: #7dd3fc;
+  --pos-mid-bg: #22c55e33; --pos-mid-fg: #86efac;
+  --pos-fwd-bg: #f9731633; --pos-fwd-fg: #fdba74;
+  --pos-team-bg: #eab30833; --pos-team-fg: #fde047;
+
+  /* Everything else the block hard-codes. */
+  --focus-ring: #FFC72C;
+  --eyebrow-fg: #94a3b8;
+  --scoreboard-glow: rgba(255, 199, 44, .3);
+  --bracket-line: #475569;
+  --drag-lift-bg: #33415e;
+  --drag-lift-ring: rgba(255,199,44,.75);
+  --spinner-track: rgba(148,163,184,.25);
+  --spinner-head: #ffc72c;
+  --dugout-top: rgba(30,41,59,.85);
+  --dugout-bot: rgba(15,23,42,.85);
+  --dugout-edge: rgba(255,255,255,.08);
+  --sub-no-bg: #0b1220;
+  --sub-no-fg: #94a3b8;
+  --sub-no-border: rgba(148,163,184,.45);
+  --sub-miss-fg: #fca5a5;
+  --sub-miss-border: rgba(248,113,113,.55);
+  --sub-on-fg: #86efac;
+  --sub-on-border: rgba(134,239,172,.55);
+  --sub-name-fg: #cbd5e1;
+  --row-hover: rgba(30, 41, 59, .55);
+  --mini-accent: #FFC72C;
+  --planned-bg: rgba(255,199,44,.22);
+  --planned-ring: rgba(255,199,44,.5);
+}
+
+/* ===========================================================================
    The app's hand-written CSS, moved here VERBATIM from the <style> block that
    used to sit in index.html.
 
@@ -31,20 +145,20 @@
     .ticker { animation: none; }
     .ticker-wrap { overflow-x: auto; }
   }
-  .pos-GK  { background:#7c3aed33; color:#c4b5fd; }
-  .pos-DEF { background:#0ea5e933; color:#7dd3fc; }
-  .pos-MID { background:#22c55e33; color:#86efac; }
-  .pos-FWD { background:#f9731633; color:#fdba74; }
-  .pos-TEAM{ background:#eab30833; color:#fde047; }
+  .pos-GK  { background:var(--pos-gk-bg); color:var(--pos-gk-fg); }
+  .pos-DEF { background:var(--pos-def-bg); color:var(--pos-def-fg); }
+  .pos-MID { background:var(--pos-mid-bg); color:var(--pos-mid-fg); }
+  .pos-FWD { background:var(--pos-fwd-bg); color:var(--pos-fwd-fg); }
+  .pos-TEAM{ background:var(--pos-team-bg); color:var(--pos-team-fg); }
   /* Knockout bracket tree: columns per round; each pair wrapper's right border
      is the connector joining the two feeder matches into their next-round tie. */
   .kb { display: inline-flex; align-items: stretch; }
   .kb-col { display: flex; flex-direction: column; }
   .kb-round { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: space-around; }
   .kb-pair { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: space-around; position: relative; }
-  .kb-col:not(.kb-last) .kb-pair { margin-right: 18px; border-right: 2px solid #475569; }
+  .kb-col:not(.kb-last) .kb-pair { margin-right: 18px; border-right: 2px solid var(--bracket-line); }
   .kb-col:not(.kb-last) .kb-pair::after { content: ""; position: absolute; right: -18px; top: 50%;
-                                          width: 18px; height: 2px; background: #475569; }
+                                          width: 18px; height: 2px; background: var(--bracket-line); }
   .kb-card { margin: 5px 0; }
   /* Small icon controls still need a finger-sized hit area, so pad the target
      without changing how big the glyph looks. */
@@ -54,11 +168,11 @@
 
   /* Hero numerals: tight, tabular, faintly lit. */
   .scoreboard { font-variant-numeric: tabular-nums; letter-spacing: -.02em;
-                text-shadow: 0 0 20px rgba(255, 199, 44, .3); }
+                text-shadow: 0 0 20px var(--scoreboard-glow); }
 
   /* Uppercase micro-labels — the vernacular of a printed team sheet. */
   .eyebrow { text-transform: uppercase; letter-spacing: .12em;
-             font-size: 11px; font-weight: 700; color: #94a3b8; }
+             font-size: 11px; font-weight: 700; color: var(--eyebrow-fg); }
 
   /* Controls acknowledge a tap instead of just changing colour. */
   button { transition: transform .12s ease, background-color .15s ease,
@@ -66,14 +180,14 @@
   button:active:not(:disabled) { transform: scale(.985); }
 
   /* Rows respond on pointer devices only, so touch doesn't get a stuck state. */
-  @media (hover: hover) { .row-hover:hover { background-color: rgb(30 41 59 / .55); } }
+  @media (hover: hover) { .row-hover:hover { background-color: var(--row-hover); } }
 
   /* A deadline inside the final hour should feel like one. */
   @keyframes deadline-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .5 } }
   .urgent { animation: deadline-pulse 1.7s ease-in-out infinite; }
 
   /* Keyboard users shouldn't have to guess where they are. */
-  :focus-visible { outline: 2px solid #FFC72C; outline-offset: 2px; border-radius: 5px; }
+  :focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: 5px; }
 
   @media (prefers-reduced-motion: reduce) {
     .urgent { animation: none }
@@ -93,15 +207,15 @@
      lettering, and a slow breathe so it reads as live rather than decorative.
      Someone else's turn stays deliberately quiet by contrast. */
   #draft-mini.mini-yours { background: rgba(255,199,44,.10); }
-  #draft-mini.mini-yours #draft-mini-who { color: #FFC72C; font-weight: 800; }
+  #draft-mini.mini-yours #draft-mini-who { color: var(--mini-accent); font-weight: 800; }
   @keyframes mini-breathe {
-    0%, 100% { box-shadow: inset 0 3px 0 #FFC72C, inset 0 -3px 0 #FFC72C; }
+    0%, 100% { box-shadow: inset 0 3px 0 var(--mini-accent), inset 0 -3px 0 var(--mini-accent); }
     50%      { box-shadow: inset 0 3px 0 rgba(255,199,44,.45), inset 0 -3px 0 rgba(255,199,44,.45); }
   }
   #draft-mini.mini-yours { animation: mini-breathe 1.9s ease-in-out infinite; }
   @media (prefers-reduced-motion: reduce) {
     #draft-mini.mini-yours { animation: none;
-      box-shadow: inset 0 3px 0 #FFC72C, inset 0 -3px 0 #FFC72C; }
+      box-shadow: inset 0 3px 0 var(--mini-accent), inset 0 -3px 0 var(--mini-accent); }
   }
 
   /* Sits clear of the sticky clock bar (which occupies the band right under the
@@ -120,7 +234,7 @@
   .queue-moved { animation: queue-move .45s ease-out; }
   @keyframes spin { to { transform: rotate(360deg) } }
   .spinner { width: 34px; height: 34px; border-radius: 50%;
-    border: 3px solid rgba(148,163,184,.25); border-top-color: #ffc72c;
+    border: 3px solid var(--spinner-track); border-top-color: var(--spinner-head);
     animation: spin .8s linear infinite; }
   /* A stalled connection is worth naming: the header dot turns amber and
      pulses rather than the app just going quiet. */
@@ -141,10 +255,10 @@
   .drag-lift {
     position: relative; z-index: 30; cursor: grabbing;
     box-shadow: 0 10px 24px rgba(0,0,0,.55);
-    outline: 1px solid rgba(255,199,44,.75);
+    outline: 1px solid var(--drag-lift-ring);
     /* Clearly lighter than any row surface, so the held row reads as picked up
        and nothing inside it (avatars, chips) merges with its own background. */
-    border-radius: 8px; background-color: #33415e;
+    border-radius: 8px; background-color: var(--drag-lift-bg);
     transition: box-shadow .15s ease, background-color .15s ease;
   }
   /* Everything that isn't being held recedes, so it's obvious what you've got.
@@ -226,9 +340,9 @@
      image to load and it recolours with the theme. */
   .pitch { position: relative; border-radius: 14px; overflow: hidden; min-height: 240px;
     background:
-      repeating-linear-gradient(0deg, rgba(255,255,255,.04) 0 7.5%, transparent 7.5% 15%),
-      linear-gradient(180deg, #14512f 0%, #0c3a22 55%, #0a2f1c 100%);
-    border: 1px solid rgba(255,255,255,.14); }
+      repeating-linear-gradient(0deg, var(--pitch-stripe) 0 7.5%, transparent 7.5% 15%),
+      linear-gradient(180deg, var(--turf-top) 0%, var(--turf-mid) 55%, var(--turf-bot) 100%);
+    border: 1px solid var(--pitch-edge); }
   .pitch::before { content: ""; position: absolute; inset: 6px;
     border: 2px solid rgba(255,255,255,.16); border-radius: 8px; pointer-events: none; }
   .pitch::after { content: ""; position: absolute; left: 50%; top: 50%; width: 24%;
@@ -256,10 +370,10 @@
   .pitch-row { display: flex; justify-content: space-evenly; align-items: flex-start; gap: 2px; }
   .pp { display: flex; flex-direction: column; align-items: center; gap: 2px;
         width: 62px; min-width: 0; background: none; border: 0; padding: 0; }
-  .pp-opp { font-size: 10px; line-height: 1.1; color: #cbd5e1;
+  .pp-opp { font-size: 10px; line-height: 1.1; color: var(--chip-opp-fg);
             text-shadow: 0 1px 2px rgba(0,0,0,.9); }
   .pp-name { max-width: 62px; font-size: 11px; line-height: 1.15; text-align: center;
-    background: rgba(2,6,23,.74); border-radius: 4px; padding: 1px 3px;
+    background: var(--chip-name-bg); border-radius: 4px; padding: 1px 3px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* Long surnames step down rather than truncating. The ellipsis stays as a
      backstop for the genuinely absurd, but at these sizes it should never
@@ -271,7 +385,7 @@
   .pp-pts { position: absolute; bottom: -2px; right: -6px; min-width: 18px; height: 16px;
     padding: 0 3px; border-radius: 8px; display: inline-flex; align-items: center;
     justify-content: center; font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums;
-    background: #0b1220; color: #ffc72c; border: 1px solid rgba(255,199,44,.55);
+    background: var(--pts-bg); color: var(--pts-fg); border: 1px solid var(--pts-border);
     box-shadow: 0 1px 3px rgba(0,0,0,.6); }
 
   /* The Nightmare XI, on a colder pitch. Both XIs were drawn identically, so a
@@ -287,13 +401,13 @@
      have silently emptied that selector, so the STATE has a name of its own
      now and the styling hangs off it. */
   .pp-dim { opacity: .5; }
-  .pp-planned .pp-name { background: rgba(255,199,44,.22); outline: 1px solid rgba(255,199,44,.5); }
+  .pp-planned .pp-name { background: var(--planned-bg); outline: 1px solid var(--planned-ring); }
 
   /* The bench, drawn as a bench: a row of smaller faces under the pitch in the
      order they'd come on. */
   .dugout { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
-    padding: 8px 8px 6px; border-radius: 12px; border: 1px solid rgba(255,255,255,.08);
-    background: linear-gradient(180deg, rgba(30,41,59,.85), rgba(15,23,42,.85)); }
+    padding: 8px 8px 6px; border-radius: 12px; border: 1px solid var(--dugout-edge);
+    background: linear-gradient(180deg, var(--dugout-top), var(--dugout-bot)); }
   .dugout::-webkit-scrollbar { display: none; }
   .sub-chip { position: relative; flex: 0 0 auto; width: 58px; display: flex;
     flex-direction: column; align-items: center; gap: 2px;
@@ -301,16 +415,16 @@
   .sub-chip .sub-no { position: absolute; top: -2px; left: 2px; z-index: 1;
     width: 15px; height: 15px; border-radius: 50%; font-size: 9px; font-weight: 700;
     display: inline-flex; align-items: center; justify-content: center;
-    background: #0b1220; color: #94a3b8; border: 1px solid rgba(148,163,184,.45); }
+    background: var(--sub-no-bg); color: var(--sub-no-fg); border: 1px solid var(--sub-no-border); }
   /* A starter who never played sits on the bench too, but the corner badge has
      to say WHY -- an order number would read as "third choice sub", which is a
      lie about someone the manager picked to start. */
-  .sub-chip .sub-no-mark { color: #fca5a5; border-color: rgba(248,113,113,.55);
+  .sub-chip .sub-no-mark { color: var(--sub-miss-fg); border-color: var(--sub-miss-border);
     font-size: 8px; }
-  .sub-chip .sub-no-up { color: #86efac; border-color: rgba(134,239,172,.55);
+  .sub-chip .sub-no-up { color: var(--sub-on-fg); border-color: var(--sub-on-border);
     font-size: 8px; }
   .sub-name { max-width: 58px; font-size: 10px; line-height: 1.15; text-align: center;
-    color: #cbd5e1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    color: var(--sub-name-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* ---- what a button means, said in colour ----------------------------
      Red was doing two jobs. "Create league", "Set your lineup", "Claim" and
@@ -325,13 +439,13 @@
 
      Gold on the dark ground carries dark text, which is a far higher contrast
      pairing than white on red was. */
-  .btn-primary { background: #FFC72C; color: #0B1220; }
-  .btn-primary:hover:not(:disabled) { background: #FFD65C; }
-  .btn-primary:disabled { background: #1E293B; color: #94A3B8; }
-  .btn-quiet { background: transparent; color: #FFC72C;
-    border: 1px solid rgba(255,199,44,.5); }
-  .btn-quiet:hover:not(:disabled) { background: rgba(255,199,44,.14); }
-  .btn-quiet:disabled { color: #64748B; border-color: #334155; }
+  .btn-primary { background: var(--btn-primary-bg); color: var(--btn-primary-fg); }
+  .btn-primary:hover:not(:disabled) { background: var(--btn-primary-bg-hover); }
+  .btn-primary:disabled { background: var(--btn-disabled-bg); color: var(--btn-disabled-fg); }
+  .btn-quiet { background: transparent; color: var(--btn-quiet-fg);
+    border: 1px solid var(--btn-quiet-border); }
+  .btn-quiet:hover:not(:disabled) { background: var(--btn-quiet-hover); }
+  .btn-quiet:disabled { color: var(--btn-quiet-disabled-fg); border-color: var(--btn-quiet-disabled-border); }
 
   /* Keep the bottom bar clear of the iOS home indicator. */
   #bottom-nav { padding-bottom: env(safe-area-inset-bottom); }
@@ -350,7 +464,7 @@
      never be left behind on a screen that has no navigation. */
   @media (min-width: 1024px) {
     #bottom-nav { top: 0; bottom: 0; right: auto; width: 14rem; z-index: 10;
-      border-top: 0; border-right: 1px solid #1e293b;
+      border-top: 0; border-right: 1px solid rgb(var(--c-slate-800));
       padding-top: 4.25rem; padding-bottom: 0; overflow-y: auto; }
     #bottom-nav > div { max-width: none; margin: 0; grid-template-columns: 1fr;
       align-content: start; gap: 2px; padding: 8px; }
