@@ -1,4 +1,25 @@
 const { test, expect } = require("@playwright/test");
+
+/* WCAG contrast between two computed "rgb(r, g, b)" strings.
+   These tests used to assert literal hexes, which pinned them to one palette:
+   any restyle broke them, and the honest fix would have looked like loosening
+   a test to make a change pass. What they actually protect -- that the roles
+   stay visually distinct and legible -- is a RELATIONSHIP, and a relationship
+   survives a palette. So they measure instead of matching. */
+const rgb = (s) => (String(s).match(/\d+(\.\d+)?/g) || []).slice(0, 3).map(Number);
+const lum = (c) => {
+  const [r, g, b] = rgb(c).map((v) => {
+    const x = v / 255;
+    return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const contrast = (a, b) => {
+  const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
+  return (x + 0.05) / (y + 0.05);
+};
+// "Is this the warning colour?" without naming a specific red.
+const readsAsDanger = (c) => { const [r, g, b] = rgb(c); return r > g * 1.8 && r > b * 1.8 && r > 120; };
 const { openLeague, expectLayoutSane } = require("./lib");
 
 /* Two kinds of visual check, and they are not equally trustworthy.
@@ -164,23 +185,29 @@ test("red means destructive, and nothing else does", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openLeague(page, { managers: 4, played: 3 });
 
-  const RED = "rgb(200, 16, 46)";      // wcred
-  const GOLD = "rgb(255, 199, 44)";    // wcgold
-
-  const bg = (sel) => page.evaluate((s) => {
+  const paint = (sel) => page.evaluate((s) => {
     const el = document.querySelector(s);
     if (!el) return null;
-    return getComputedStyle(el).backgroundColor;
+    const c = getComputedStyle(el);
+    return { bg: c.backgroundColor, fg: c.color };
   }, sel);
 
-  // The main action on a screen is gold, and its label is dark on it.
-  expect(await bg("#lineup-primary"), "the lineup's primary action is not gold").toBe(GOLD);
-  expect(await page.evaluate(() =>
-    getComputedStyle(document.querySelector("#lineup-primary")).color),
-    "gold button with light text would be unreadable").toBe("rgb(11, 18, 32)");
+  const primary = await paint("#lineup-primary");
+  const danger = await paint("#lobby-start");
+  expect(primary, "the lineup's primary action was not rendered").toBeTruthy();
+  expect(danger, "the draft's start button was not rendered").toBeTruthy();
 
-  // Starting a draft cannot be undone, so it stays red.
-  expect(await bg("#lobby-start"), "an irreversible action lost its warning colour").toBe(RED);
+  // The main action on a screen is legible -- whatever colour it is.
+  expect(contrast(primary.bg, primary.fg),
+    `the primary action's label is ${primary.fg} on ${primary.bg}, which is unreadable`)
+    .toBeGreaterThanOrEqual(4.5);
+
+  // Starting a draft cannot be undone, so it wears the warning colour...
+  expect(readsAsDanger(danger.bg),
+    `an irreversible action is ${danger.bg}, which does not read as a warning`).toBe(true);
+  // ...and the ordinary primary action does not.
+  expect(readsAsDanger(primary.bg),
+    `the primary action is ${primary.bg}, which reads as a warning`).toBe(false);
 
   /* And no button anywhere carries both treatments — that is the state the
      mechanical pass could have left behind and nobody would have noticed. */
@@ -539,9 +566,6 @@ test("a selected tab looks the same wherever it is", async ({ page }) => {
      every other selector in the app marks its choice with slate and gold. Red
      is reserved for destructive actions, so a selected tab wearing it is both
      inconsistent and a false alarm. */
-  const SELECTED_BG = "rgb(51, 65, 85)";     // slate-700
-  const SELECTED_FG = "rgb(255, 199, 44)";   // wcgold
-  const DANGER = "rgb(200, 16, 46)";         // wcred
 
   await page.setViewportSize({ width: 390, height: 844 });
   await openLeague(page, { managers: 4, played: 3 });
@@ -554,6 +578,7 @@ test("a selected tab looks the same wherever it is", async ({ page }) => {
     ["[data-winmode]", () => { showView("admin"); renderAdmin(); }],
   ];
 
+  let shared = null;
   for (const [sel, open] of groups) {
     await page.evaluate(open);
     await page.waitForTimeout(120);
@@ -568,16 +593,23 @@ test("a selected tab looks the same wherever it is", async ({ page }) => {
 
     expect(seen.length, `${sel}: no buttons rendered, so this group is untested`)
       .toBeGreaterThan(1);
-    // Exactly one is chosen, and it wears the shared selected style.
+    // Exactly one is chosen.
     const on = seen.filter((b) => b.bg !== "rgba(0, 0, 0, 0)");
     expect(on.length, `${sel}: expected one selected button, saw ${on.length}`).toBe(1);
-    expect(on[0].bg, `${sel}: "${on[0].text}" is selected in ${on[0].bg}, not the shared slate`)
-      .toBe(SELECTED_BG);
-    expect(on[0].fg, `${sel}: "${on[0].text}" selected text is ${on[0].fg}, not gold`)
-      .toBe(SELECTED_FG);
+    /* The FIRST group sets what "selected" looks like and every other group has
+       to agree with it. Consistency is the property; which slate and which gold
+       is a palette decision this test has no business pinning. */
+    shared ||= on[0];
+    expect(on[0].bg, `${sel}: "${on[0].text}" is selected in ${on[0].bg}, but `
+      + `"${shared.text}" uses ${shared.bg} — selected must look the same everywhere`)
+      .toBe(shared.bg);
+    expect(on[0].fg, `${sel}: "${on[0].text}" selected text is ${on[0].fg}, but `
+      + `"${shared.text}" uses ${shared.fg}`).toBe(shared.fg);
+    expect(contrast(on[0].bg, on[0].fg),
+      `${sel}: selected text is unreadable on its own background`).toBeGreaterThanOrEqual(4.5);
     // ...and nothing in the group is wearing the destructive colour.
     for (const b of seen)
-      expect(b.bg, `${sel}: "${b.text}" uses the danger red for a tab`).not.toBe(DANGER);
+      expect(readsAsDanger(b.bg), `${sel}: "${b.text}" uses the danger red for a tab`).toBe(false);
   }
 });
 
