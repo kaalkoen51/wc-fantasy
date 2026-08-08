@@ -681,6 +681,71 @@ for (const [theme, floor] of [["sticker", 4.5], ["dark", 2.1]]) {
   });
 }
 
+test("a player is a sticker everywhere, and a club is still a badge", async ({ page }) => {
+  /* The theme's one idea has to carry the whole app, not just the pitch --
+     otherwise it reads as decoration bolted to one screen. And the distinction
+     has to survive: a crest stays round, because the pitch tucks one into the
+     corner of the other and needs the shapes to differ. */
+  await openLeague(page, { managers: 4, played: 3 });
+  await page.evaluate(() => setTheme("sticker"));
+  await page.waitForTimeout(300);          // let the colour transition settle
+
+  const shapes = await page.evaluate(() => {
+    const seen = new Set();
+    showView("board");
+    for (const tabs of Object.values(navGroups())) for (const tab of tabs) {
+      setBoardTab(tab);
+      for (const el of document.querySelectorAll('[data-view="board"] .avatar-player')) {
+        if (!el.getBoundingClientRect().width) continue;
+        seen.add(getComputedStyle(el).borderRadius);
+      }
+    }
+    return [...seen];
+  });
+
+  expect(shapes.length, "no player avatars were found to check").toBeGreaterThan(0);
+  // A sticker is a rounded RECTANGLE: a small pixel radius, never a circle.
+  for (const r of shapes)
+    expect(r, `a player avatar is still round (${r})`).not.toMatch(/%|9999px/);
+
+  /* The other half of the rule -- a crest is a BADGE, not a sticker -- has to
+     be checked against the code that actually draws crests, and that is a
+     different pair of functions from the one above: avatarHtml("team:…") for
+     the matchday banner, teamCrestHtml() for every club column. Neither is
+     reachable from the seeded league (the fixture carries no crest ids, so
+     teamCrestHtml falls back to a text code, and the banner needs a live
+     fixture), so their markup is rendered here directly. Same functions, same
+     theme, same document -- only the trigger is synthetic. */
+  const clubs = await page.evaluate(() => {
+    const team = S.players[0].team;
+    ((S.photos ||= {}).teams ||= {})[team] = 1;   // force the image path in both
+    const host = document.createElement("div");
+    host.style.cssText = "position:fixed;left:0;top:0";
+    host.innerHTML = avatarHtml("team:" + team, team, "w-4 h-4")
+      + teamCrestHtml(team, "w-4 h-4", "ARG")
+      + avatarHtml(S.players[0].player_id, team, "w-4 h-4");   // positive control
+    document.body.appendChild(host);
+    const read = (el) => {
+      const cs = getComputedStyle(el);
+      return { radius: cs.borderRadius, shadow: cs.boxShadow };
+    };
+    return {
+      banner: read(host.querySelector(".avatar-team")),
+      column: read(host.querySelector("img[data-crest-code]")),
+      player: read(host.querySelector(".avatar-player")),
+    };
+  });
+
+  /* The control first: if the sticker treatment is not landing at all, every
+     assertion below passes for the wrong reason. */
+  expect(clubs.player.shadow, "the sticker treatment is not being applied").not.toBe("none");
+  expect(clubs.player.radius).not.toMatch(/%|9999px/);
+
+  expect(clubs.banner.radius, "a club crest stopped being round").toMatch(/%|9999px/);
+  expect(clubs.banner.shadow, "a club crest was given the sticker trim").toBe("none");
+  expect(clubs.column.shadow, "a club column crest was given the sticker trim").toBe("none");
+});
+
 test("a blank gameweek does not break any screen", async ({ page }) => {
   /* A club with no fixture in a round is the shape that broke round numbering
      before -- everything downstream keys off the round rather than a count of

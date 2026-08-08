@@ -8786,8 +8786,13 @@ function avatarHtml(playerId, team, size = "w-7 h-7") {
   /* `avatar` is a hook, not a style: a theme that draws players as something
      other than a circle -- a sticker, a card -- needs to be able to find them
      without guessing at the size utility. */
-  if (!url) return `<span class="avatar ${size} rounded-full bg-slate-800 shrink-0"></span>`;
-  return `<span class="avatar ${size} rounded-full bg-slate-800 overflow-hidden shrink-0 inline-flex items-center justify-center">
+  /* Player or club, said out loud. A theme that draws players as stickers must
+     NOT draw clubs as stickers: a crest is a badge and stays a badge, which is
+     a distinction the caller already makes ("team:" prefix) and the markup
+     previously threw away. */
+  const kind = isTeam ? "avatar-team" : "avatar-player";
+  if (!url) return `<span class="avatar ${kind} ${size} rounded-full bg-slate-800 shrink-0"></span>`;
+  return `<span class="avatar ${kind} ${size} rounded-full bg-slate-800 overflow-hidden shrink-0 inline-flex items-center justify-center">
     <img src="${esc(url)}" loading="lazy" data-avatar
          class="w-full h-full ${isTeam ? "object-contain p-0.5" : "object-cover"}" alt=""></span>`;
 }

@@ -306,20 +306,46 @@ html[data-theme="sticker"] .pitch {
   box-shadow: 0 2px 0 rgb(var(--c-slate-700)), inset 0 0 0 1px rgba(255,255,255,.22);
 }
 
-/* A player is a STICKER: a die-cut rectangle, trimmed in paper, stuck on
-   slightly crooked. This is the whole idea of the theme, and it is one
-   border-radius and one transform away from the circle that is already there. */
-html[data-theme="sticker"] .pp .avatar {
+/* A player is a STICKER, EVERYWHERE a player appears -- the pitch, the bench,
+   the players list, the draft board, the trade builder, the match log. One
+   idea has to carry the whole app or it reads as decoration bolted to one
+   screen.
+
+   The trim is a box-shadow rather than a border on purpose. A border changes
+   the content box at every one of these sizes, and both the club column's
+   alignment and the phone layout budgets are measured in pixels; a spread
+   shadow paints the same paper edge and moves nothing.
+
+   Clubs are deliberately excluded. A crest is a badge, not a sticker, and
+   making both the same shape would lose the contrast the pitch relies on when
+   it tucks one into the corner of the other. */
+html[data-theme="sticker"] .avatar-player {
   border-radius: 3px;
-  border: 2.5px solid rgb(var(--c-slate-900));
   background: linear-gradient(165deg, #E8DCC4, #CFC0A0);
-  box-shadow: 0 2px 5px rgba(0,0,0,.42);
+  box-shadow: 0 0 0 2px rgb(var(--c-slate-900)), 0 1px 3px rgba(0,0,0,.34);
+}
+/* Below ~24px the 2px trim is most of the sticker, so it thins out. */
+html[data-theme="sticker"] .avatar-player.w-4,
+html[data-theme="sticker"] .avatar-player.w-5 {
+  border-radius: 2px;
+  box-shadow: 0 0 0 1.5px rgb(var(--c-slate-900)), 0 1px 2px rgba(0,0,0,.3);
+}
+/* The hero sticker on the player sheet gets the full die-cut trim. */
+html[data-theme="sticker"] .avatar-player.w-14 {
+  border-radius: 4px;
+  box-shadow: 0 0 0 3px rgb(var(--c-slate-900)), 0 3px 8px rgba(0,0,0,.4);
+}
+
+/* Only ON THE PITCH do they sit crooked. In a list a rotation reads as a
+   rendering fault rather than as something stuck on by hand. */
+html[data-theme="sticker"] .pp .avatar-player {
+  box-shadow: 0 0 0 2.5px rgb(var(--c-slate-900)), 0 2px 5px rgba(0,0,0,.42);
   transform: rotate(-2deg);
 }
 /* Not all at the same angle, or it reads as a skewed grid rather than as
    things stuck on by hand. */
-html[data-theme="sticker"] .pitch-row > *:nth-child(even) .pp .avatar { transform: rotate(2.2deg); }
-html[data-theme="sticker"] .pitch-row > *:nth-child(3n) .pp .avatar { transform: rotate(-.8deg); }
+html[data-theme="sticker"] .pitch-row > *:nth-child(even) .pp .avatar-player { transform: rotate(2.2deg); }
+html[data-theme="sticker"] .pitch-row > *:nth-child(3n) .pp .avatar-player { transform: rotate(-.8deg); }
 
 /* The points bubble is the foil corner number, printed ON the sticker. */
 html[data-theme="sticker"] .pp-pts {
@@ -333,11 +359,8 @@ html[data-theme="sticker"] .dugout {
   border-style: dashed;
   border-radius: 2px;
 }
-html[data-theme="sticker"] .sub-chip .avatar {
-  border-radius: 2px;
-  border: 2px solid rgb(var(--c-slate-900));
-  background: linear-gradient(165deg, #E8DCC4, #CFC0A0);
-  box-shadow: 0 1px 3px rgba(0,0,0,.35);
+html[data-theme="sticker"] .sub-chip .avatar-player {
+  box-shadow: 0 0 0 2px rgb(var(--c-slate-900)), 0 1px 3px rgba(0,0,0,.35);
 }
 
 /* An empty slot is a die-cut outline — the space in an unfilled album. */
@@ -356,12 +379,12 @@ html[data-theme="sticker"] .pp .border-dashed {
    BEHIND the photo and is never seen. A real foil sticker is a sheen over the
    print anyway, so ::after with a blend mode is both the only thing that works
    and the honest thing to draw. */
-html[data-theme="sticker"] .pp-foil .avatar {
+html[data-theme="sticker"] .pp-foil .avatar-player {
   position: relative;
   border-color: #F5E6A8;
   box-shadow: 0 2px 9px rgba(201,162,39,.7);
 }
-html[data-theme="sticker"] .pp-foil .avatar::after {
+html[data-theme="sticker"] .pp-foil .avatar-player::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -379,7 +402,7 @@ html[data-theme="sticker"] .pp-foil .avatar::after {
    eleven keyframes has a counterpart here; losing one in a decorative pass is
    the easiest mistake in the file to make. */
 @media (prefers-reduced-motion: reduce) {
-  html[data-theme="sticker"] .pp-foil .avatar::after {
+  html[data-theme="sticker"] .pp-foil .avatar-player::after {
     animation: none;
     background-position: 40% 0;
   }
