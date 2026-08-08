@@ -34,7 +34,8 @@ const REQUIRED = [
    place the redesign can be seen with the real player photos and club crests
    (which _headers already allows from media.api-sports.io). Delete this entry
    and the file once a direction is chosen. */
-const OPTIONAL = ["fixtures.json", "photos.json", "injuries.json", "sticker.html"];
+const OPTIONAL = ["fixtures.json", "photos.json", "injuries.json", "sticker.html",
+  "mockup.html", "mockup.js"];
 
 /* styles.css is GENERATED from the classes used in index.html, app.js and
    sim.js — so adding a utility class and running only this script copies a
