@@ -1538,3 +1538,109 @@ test("the season chart shows league position by default, and points on request",
   expect(plain.mode, "a points-tally league is offering a league-position chart")
     .toBeUndefined();
 });
+
+test("the packet stays sealed until it is opened, then deals the squad out", async ({ page }) => {
+  /* The order is the whole point of the moment. A squad that is already on the
+     page behind a wrapper is not a packet, it is a curtain -- and the deal
+     starting before the tear would show exactly that. */
+  await openLeague(page, { managers: 4, played: 3 });
+  const seen = await page.evaluate(() => {
+    openReveal();
+    const packet = document.getElementById("reveal-packet");
+    const page_ = document.getElementById("reveal-page");
+    const before = { sealed: !packet.classList.contains("hidden"),
+                     open: packet.classList.contains("packet-open"),
+                     dealing: page_.classList.contains("dealt"),
+                     stickers: page_.querySelectorAll(".reveal-slot").length };
+    document.getElementById("reveal-open").click();
+    return { before, after: { open: packet.classList.contains("packet-open"),
+                              dealing: page_.classList.contains("dealt") } };
+  });
+
+  expect(seen.before.sealed, "the reveal opened with no packet over it").toBe(true);
+  expect(seen.before.open, "the packet was already torn open").toBe(false);
+  expect(seen.before.dealing, "the squad started dealing before the packet was opened").toBe(false);
+  expect(seen.before.stickers, "the reveal drew no stickers").toBeGreaterThan(10);
+  expect(seen.after.open, "tapping the packet did not open it").toBe(true);
+  expect(seen.after.dealing, "the squad never dealt out").toBe(true);
+});
+
+test("the shiny in the packet is the first pick, and only that one", async ({ page }) => {
+  /* Nothing has been played when the reveal fires, so the foil cannot mean
+     "top scorer" here. It means the player you spent the top of your draft on
+     -- a fact the moment already holds, and one that always resolves. */
+  await openLeague(page, { managers: 4, played: 3 });
+  const got = await page.evaluate(() => {
+    const me = myManager();
+    const mine = managerPicks(me.id);
+    const first = mine.reduce((a, b) => (a && a.pick_number <= b.pick_number ? a : b), null);
+    openReveal();
+    const foils = [...document.querySelectorAll("#reveal-page .reveal-slot.pp-foil")];
+    return {
+      firstName: shortName(first.player_name),
+      picks: mine.length,
+      foiled: foils.map((el) => el.querySelector(".reveal-name").textContent),
+      caption: document.getElementById("reveal-body").textContent,
+    };
+  });
+
+  expect(got.picks, "the manager drafted nobody").toBeGreaterThan(1);
+  expect(got.foiled, "exactly one sticker should shine, and it should be the first pick")
+    .toEqual([got.firstName]);
+  // ...and the page says why, rather than leaving the shine to be guessed at.
+  expect(got.caption).toContain("your first pick");
+  expect(got.caption).toContain(got.firstName);
+});
+
+test("a pick is stamped on the album theme and left alone on the default one", async ({ page }) => {
+  /* The stamp was chosen over restyling the flash card precisely because it
+     can be inert on dark. That has to be checked, not assumed: the class is
+     emitted in both themes and only the CSS keeps them apart. */
+  await openLeague(page, { managers: 4, played: 3 });
+  const read = async (theme) => page.evaluate((t) => {
+    setTheme(t);
+    document.querySelector(".pick-flash")?.remove();
+    flashPick(S.picks[0]);
+    const stamp = document.querySelector(".pick-flash .pick-stamp");
+    const cs = stamp && getComputedStyle(stamp);
+    return { present: !!stamp, shown: cs ? cs.display !== "none" : false,
+             text: stamp ? stamp.textContent.trim() : "" };
+  }, theme);
+
+  const dark = await read("dark");
+  const sticker = await read("sticker");
+
+  expect(dark.present, "the stamp element should exist in both themes").toBe(true);
+  expect(dark.shown, "the default theme's pick flash grew a stamp").toBe(false);
+  expect(sticker.shown, "the album theme's pick flash has no stamp").toBe(true);
+  expect(sticker.text.toLowerCase()).toContain("stuck in");
+});
+
+test("with motion turned down the packet is already open and the squad already there",
+  async ({ browser }) => {
+    /* Every animation in the app has a reduced-motion counterpart, and this is
+       the easiest place to lose one: a squad reveal that never animates must
+       still END somewhere, and "nowhere" would mean a sealed packet you can
+       never get past. */
+    const ctx = await browser.newContext({ reducedMotion: "reduce" });
+    const page = await ctx.newPage();
+    await openLeague(page, { managers: 4, played: 3 });
+    await page.evaluate(() => { setTheme("sticker"); openReveal(); });
+    await page.click("#reveal-open");
+    await page.waitForTimeout(120);          // far less than the 0.75s deal delay
+
+    const state = await page.evaluate(() => {
+      const packet = document.getElementById("reveal-packet");
+      const slot = document.querySelector("#reveal-page .reveal-slot");
+      const cs = getComputedStyle(slot), pcs = getComputedStyle(packet);
+      return { slotOpacity: Number(cs.opacity), slotAnim: cs.animationName,
+               packetHidden: pcs.visibility === "hidden" || Number(pcs.opacity) === 0,
+               stampAnim: getComputedStyle(
+                 document.createElement("div")).animationName };
+    });
+
+    expect(state.slotAnim, "the stickers still animate with motion turned down").toBe("none");
+    expect(state.slotOpacity, "the squad is invisible with motion turned down").toBe(1);
+    expect(state.packetHidden, "the packet never gets out of the way").toBe(true);
+    await ctx.close();
+  });

@@ -2963,7 +2963,8 @@ function flashPick(pk) {
       <div class="eyebrow">${m?.id === myManager()?.id ? "You picked" : esc(m?.name ?? "?") + " picked"}</div>
       <div class="font-bold truncate">${esc(pk.player_name)}</div>
     </div>
-    <span class="shrink-0 rounded px-1.5 py-0.5 text-xs font-semibold pos-${pk.position}">${pk.position}</span>`;
+    <span class="shrink-0 rounded px-1.5 py-0.5 text-xs font-semibold pos-${pk.position}">${pk.position}</span>
+    <span class="pick-stamp" aria-hidden="true">Stuck in!</span>`;
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 3600);
 }
@@ -6534,6 +6535,24 @@ function openCrestPicker() {
    The draft used to just stop and drop everyone on the leaderboard. This is the
    closing moment: your finished squad, how it's balanced, and a handoff into
    the season. Shown once per league. */
+/* Which sticker is the shiny.
+
+   Nothing has been played when this fires, so there is no points fact to
+   reward -- and the pool the app drafts from carries no strength signal at
+   all (players.json is name, position, club, nothing else). Prior-season
+   points under this league's own scoring ARE computable, and scoringBalance()
+   already does exactly that sum -- but only for API competitions whose
+   history somebody pulled, and never for a World Cup, whose squads have no
+   previous season to have played. A rule that resolves for some leagues and
+   not others is not a rule.
+
+   So it is your FIRST PICK: the player you spent the top of your draft on and
+   built the squad around. Always defined, cannot tie, and needs nothing the
+   reveal is not already holding. The page says so out loud rather than
+   leaving the shine to be guessed at. */
+const revealFoilPick = (picks) =>
+  picks.reduce((a, b) => (a && a.pick_number <= b.pick_number ? a : b), null);
+
 function openReveal() {
   const me = myManager(), body = $("reveal-body");
   if (!me || !body) return;
@@ -6541,24 +6560,55 @@ function openReveal() {
   const byPos = { GK: [], DEF: [], MID: [], FWD: [], TEAM: [] };
   for (const pk of mine) (byPos[pk.position] || byPos.TEAM).push(pk);
   const counts = ["DEF", "MID", "FWD"].map((g) => `${byPos[g].length}`).join("-");
-  const group = (g) => byPos[g].length ? `<div>
-      <div class="text-xs text-slate-400 mb-1">${g}</div>
-      <div class="space-y-1">${byPos[g].map((pk) => `<div class="flex items-center gap-2">
-        ${avatarHtml(pk.player_id, pk.team, "w-6 h-6")}
-        <span class="min-w-0 flex-1 truncate text-sm">${esc(pk.player_name)}</span>
-        <span class="shrink-0 text-xs text-slate-400">${esc(pk.team || "")}</span>
-      </div>`).join("")}</div></div>` : "";
+  const foil = revealFoilPick(mine);
+
+  /* An album page: bands of stickers rather than a list of rows. `i` runs
+     across the WHOLE page and not per band, because it is the deal order --
+     restarting it per band would have the second band dealing over the
+     first. */
+  let i = 0;
+  const group = ([g, label]) => byPos[g].length ? `<div>
+      <div class="eyebrow mb-1">${label}</div>
+      <div class="reveal-row">${byPos[g].map((pk) => `<span
+        class="reveal-slot ${pk.player_id === foil?.player_id ? "pp-foil" : ""}" style="--i:${i++}">
+        ${avatarHtml(pk.player_id, pk.team, "w-full aspect-[3/4]")}
+        <span class="reveal-name">${esc(shortName(pk.player_name))}</span>
+      </span>`).join("")}</div></div>` : "";
   body.innerHTML = `
     <div class="text-center">
       <div class="text-xs text-slate-400">Draft complete</div>
       <div class="text-2xl font-bold">${esc(me.name)}</div>
       <div class="text-xs text-slate-400">${mine.length} players · ${counts} outfield shape</div>
     </div>
-    <div class="space-y-2.5">${["GK", "DEF", "MID", "FWD", "TEAM"].map(group).join("")}</div>
+    <div id="reveal-page" class="space-y-2">${
+      [["GK", "GK"], ["DEF", "DEF"], ["MID", "MID"], ["FWD", "FWD"], ["TEAM", "CLUB"]]
+        .map(group).join("")}</div>
+    ${foil ? `<p class="text-xs text-slate-400 text-center">✨ <b class="text-slate-200">${
+      esc(shortName(foil.player_name))}</b> — your first pick.</p>` : ""}
     <p class="text-xs text-slate-400 text-center">Set your starting XI before the first deadline — the matchday card on your team page counts it down.</p>`;
+
+  /* Sealed, then torn open. The count is on the wrapper because a packet that
+     does not say what is in it is just a red rectangle. */
+  const packet = $("reveal-packet");
+  if (packet) {
+    const n = $("reveal-packet-n");
+    if (n) n.textContent = `${mine.length} STICKER${mine.length === 1 ? "" : "S"}`;
+    packet.classList.remove("hidden", "packet-open");
+    $("reveal-page")?.classList.remove("dealt");
+  }
   $("reveal-sheet").classList.remove("hidden");
   if (S.league?.id) localStorage.setItem("wcf_reveal_" + S.league.id, "1");
 }
+
+/* Tear it open: the strip flies off, the wrapper goes, the squad deals out.
+   The page only starts dealing once the packet is opened -- stickers sliding
+   in behind a sealed wrapper would be the one thing the animation must not
+   show. */
+function openRevealPacket() {
+  $("reveal-packet")?.classList.add("packet-open");
+  $("reveal-page")?.classList.add("dealt");
+}
+
 const closeReveal = () => $("reveal-sheet")?.classList.add("hidden");
 
 function maybeSquadReveal() {
@@ -13849,6 +13899,7 @@ function wire() {
   $("chart-close").onclick = closeChartSheet;
   $("recap-close").onclick = closeRecap;
   $("reveal-close").onclick = closeReveal;
+  $("reveal-open").onclick = openRevealPacket;
   $("reveal-sheet").onclick = (e) => { if (e.target.id === "reveal-sheet") closeReveal(); };
   $("recap-sheet").onclick = (e) => { if (e.target.id === "recap-sheet") closeRecap(); };
   $("chart-sheet").onclick = (e) => { if (e.target.id === "chart-sheet") closeChartSheet(); };  // tap backdrop

@@ -408,6 +408,46 @@ html[data-theme="sticker"] .pp-foil .avatar-player::after {
   }
 }
 
+/* The album page, stuck in by hand. The trim and the paper come from
+   .avatar-player, which already reaches every player in the app; only the
+   angles are new, and only here -- a tilt in an ordinary list reads as a
+   rendering fault rather than as something stuck on. */
+html[data-theme="sticker"] .reveal-slot .avatar-player { border-radius: 3px; }
+/* The angle is a VARIABLE the whole slot turns on, not a transform of its own.
+   Two earlier versions got this wrong in opposite directions: tilting the slot
+   directly fought the deal animation and had to be handed back when it ended,
+   which straightened every sticker at the exact moment they were meant to look
+   stuck on by hand; tilting the photo inside left the name plate square while
+   the face turned under it. As a variable the deal keyframes can land ON the
+   angle, and the plate turns with the sticker it belongs to. */
+html[data-theme="sticker"] .reveal-row > *:nth-child(3n+1) { --tilt: -1.8deg; }
+html[data-theme="sticker"] .reveal-row > *:nth-child(3n+2) { --tilt: 1.4deg; }
+html[data-theme="sticker"] .reveal-row > *:nth-child(3n)   { --tilt: -.7deg; }
+html[data-theme="sticker"] .reveal-slot { transform: rotate(var(--tilt, 0deg)); }
+
+/* STUCK IN! -- a pick landing, stamped. The card underneath is untouched: this
+   is one pseudo-free absolute span over the corner, drawn only on this theme,
+   which is why the default's flash is byte-identical to what it always was. */
+html[data-theme="sticker"] .pick-stamp {
+  /* Below the card's bottom edge rather than across it: at -16px the stamp
+     landed over the position chip, which is information rather than
+     decoration and must not be stamped out. */
+  display: block; position: absolute; right: -6px; bottom: -22px; z-index: 2;
+  font-size: 15px; font-weight: 900; letter-spacing: .04em; text-transform: uppercase;
+  color: rgb(var(--c-wcred)); border: 3px solid rgb(var(--c-wcred));
+  border-radius: 5px; padding: 2px 8px; background: rgb(var(--c-slate-900) / .28);
+  transform: rotate(-9deg); opacity: .9;
+  animation: pick-stamp-thump .42s cubic-bezier(.2,1.4,.4,1) .34s backwards;
+}
+@keyframes pick-stamp-thump {
+  from { opacity: 0; transform: rotate(-24deg) scale(2.6); }
+  70%  { opacity: .95; transform: rotate(-7deg) scale(.94); }
+  to   { opacity: .9; transform: rotate(-9deg) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-theme="sticker"] .pick-stamp { animation: none; }
+}
+
 /* The selected segment of any segmented control, everywhere in the app. */
 .is-selected { background: rgb(var(--sel-bg)); color: rgb(var(--sel-fg)); }
 
@@ -804,3 +844,100 @@ html[data-theme="sticker"] .pp-foil .avatar-player::after {
   .create-sec > summary::-webkit-details-marker { display: none; }
   .create-sec .sec-caret { transition: transform .15s; }
   .create-sec[open] .sec-caret { transform: rotate(180deg); }
+
+  /* ===== The squad reveal as an album page, and the packet over it =====
+
+     The reveal is the one screen in the app where you have just acquired a
+     set of stickers, and it used to print a list. It is now a page: bands of
+     stickers by position, sealed under a wrapper until you tear it open.
+
+     This is deliberately NOT theme-scoped. A grid of faces is a better reveal
+     than a column of rows on any ground, and gating the app's best moment
+     behind a theme most people will not switch to would be a strange thing to
+     build. Only the foil and the stamp are sticker-only. */
+  .reveal-row { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
+                gap: 5px; }
+  .reveal-slot { position: relative; display: block; }
+  /* Everywhere else an avatar is a circle; here it is a card. Without this the
+     3:4 cell would render every player as an ellipse on the default theme. */
+  .reveal-slot .avatar { border-radius: 4px; }
+  .reveal-name { position: absolute; inset: auto 0 0 0; padding: 2px;
+                 font-size: 8px; font-weight: 700; text-align: center;
+                 background: var(--chip-name-bg); color: var(--chip-name-fg);
+                 border-radius: 0 0 4px 4px;
+                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* The wrapper. Its colours are tokens, so it is Panini red on the sticker
+     theme and the app's own red on the default one. */
+  .packet { position: relative; width: 168px; height: 226px; border: 0;
+            padding: 0; background: transparent; font: inherit; cursor: pointer; }
+  .packet-body { position: absolute; inset: 0; border-radius: 4px; overflow: hidden;
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 6px; color: #FFF6D8;
+      /* Shaded with black over an OPAQUE red, not with alpha on the red: an
+         alpha stop composites with the card behind it, which on the cream
+         theme washed the bottom of the packet out to pink. */
+      background: linear-gradient(150deg, rgba(0,0,0,.38) 0%, rgba(0,0,0,0) 38%,
+                  rgba(0,0,0,.16) 65%, rgba(0,0,0,.42) 100%), rgb(var(--c-wcred));
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.22), 0 6px 16px rgba(0,0,0,.3); }
+  .packet-body::before {                       /* foil sheen on the wrapper */
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(118deg, rgba(255,255,255,0) 38%,
+                rgba(255,255,255,.30) 47%, rgba(255,236,170,.42) 52%,
+                rgba(255,255,255,0) 62%);
+    background-size: 300% 100%; animation: foil-sweep 6s linear infinite; }
+  .packet-mark { font-size: 21px; font-weight: 900; letter-spacing: -.02em; }
+  .packet-mark i { font-style: normal; color: #FFD66B; }
+  .packet-n { font-size: 10px; font-weight: 700; letter-spacing: .18em; }
+  .packet-tap { position: absolute; inset: auto 0 -24px 0; text-align: center;
+                font-size: 11px; font-weight: 700; letter-spacing: .04em;
+                color: rgb(var(--c-slate-400));
+                animation: packet-nudge 1.8s ease-in-out infinite; }
+  /* The serrated edge of a torn-off strip, cut rather than drawn: a border
+     image would sit inside the box and change the wrapper's height. */
+  .packet-strip { position: absolute; left: 0; right: 0; top: 0; height: 30px;
+      border-radius: 4px 4px 0 0;
+      background: linear-gradient(150deg, rgba(0,0,0,.38), rgba(0,0,0,0)), rgb(var(--c-wcred));
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.22);
+      clip-path: polygon(0 0, 100% 0, 100% 74%, 96% 100%, 92% 76%, 88% 100%,
+        84% 76%, 80% 100%, 76% 76%, 72% 100%, 68% 76%, 64% 100%, 60% 76%,
+        56% 100%, 52% 76%, 48% 100%, 44% 76%, 40% 100%, 36% 76%, 32% 100%,
+        28% 76%, 24% 100%, 20% 76%, 16% 100%, 12% 76%, 8% 100%, 4% 76%, 0 100%); }
+
+  @keyframes packet-nudge { 0%, 100% { transform: translateY(0) }
+                            50%      { transform: translateY(3px) } }
+  @keyframes packet-tear { to { transform: translate(58px, -108px) rotate(26deg);
+                                opacity: 0; } }
+  @keyframes packet-away { to { opacity: 0; transform: scale(.94) translateY(10px);
+                                visibility: hidden; } }
+  #reveal-packet.packet-open { animation: packet-away .5s ease-in .42s forwards; }
+  #reveal-packet.packet-open .packet-strip { animation: packet-tear .55s
+                                             cubic-bezier(.3,.9,.4,1) forwards; }
+  #reveal-packet.packet-open .packet-tap { opacity: 0; }
+
+  /* Dealt out of the packet, one at a time. `backwards` holds each sticker
+     off-screen through its delay -- without it the whole squad is visible for
+     one frame before the first one moves. */
+  @keyframes deal-in {
+    from { opacity: 0; transform: translate(0, -120px) rotate(-16deg) scale(1.3); }
+    55%  { opacity: 1; }
+    /* Lands ON the theme's angle. --tilt is unset on the default theme, so the
+       0deg fallback leaves it straight there. */
+    to   { opacity: 1; transform: rotate(var(--tilt, 0deg)); }
+  }
+  #reveal-page.dealt .reveal-slot { animation: deal-in .46s
+      cubic-bezier(.2,.85,.3,1.05) backwards;
+      animation-delay: calc(.75s + var(--i, 0) * .075s); }
+
+  /* A pick landing is a sticker being stuck in. Inert unless a theme draws it:
+     on the default ground the flash card is already the whole message. */
+  .pick-stamp { display: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    /* The end state, with nothing moving: the packet already gone and the
+       squad already on the page. */
+    .packet-body::before, .packet-tap { animation: none; }
+    #reveal-packet.packet-open, #reveal-packet.packet-open .packet-strip,
+    #reveal-page.dealt .reveal-slot { animation: none; }
+    #reveal-packet.packet-open { opacity: 0; visibility: hidden; }
+  }

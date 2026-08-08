@@ -906,6 +906,19 @@
   <div class="absolute inset-x-3 top-1/2 -translate-y-1/2 max-h-[88vh] bg-slate-900 border border-wcgold/60 rounded-2xl p-4 flex flex-col">
     <div id="reveal-body" class="space-y-3 overflow-y-auto min-h-0"></div>
     <button id="reveal-close" class="mt-3 shrink-0 w-full btn-primary rounded-lg py-2.5 text-sm font-semibold">Let's play</button>
+    <!-- The sealed packet, laid over the squad until it is opened. It starts
+         hidden and openReveal() shows it; a squad that somehow renders with
+         the script broken is therefore visible rather than sealed shut. -->
+    <div id="reveal-packet" class="hidden absolute inset-0 z-10 rounded-2xl bg-slate-900 flex items-center justify-center">
+      <button id="reveal-open" class="packet" aria-label="Open the packet">
+        <span class="packet-body">
+          <span class="packet-mark">Draft<i>Baron</i></span>
+          <span class="packet-n" id="reveal-packet-n"></span>
+        </span>
+        <span class="packet-strip" aria-hidden="true"></span>
+        <span class="packet-tap" aria-hidden="true">tap to open</span>
+      </button>
+    </div>
   </div>
 </div>
 
