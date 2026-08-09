@@ -112,6 +112,18 @@
   --pos-mid-bg: #22c55e33; --pos-mid-fg: #86efac;
   --pos-fwd-bg: #f9731633; --pos-fwd-fg: #fdba74;
   --pos-team-bg: #eab30833; --pos-team-fg: #fde047;
+  /* Rugby's eight. Forwards run warm and backs run cool, so the two halves of
+     a side read apart at a glance rather than as eight arbitrary colours --
+     which is the one thing eight chips have to get right. Same /20-style wash
+     over a bright ink as the football five. */
+  --pos-pr-bg: #b4530033; --pos-pr-fg: #fdba74;
+  --pos-hk-bg: #c2410c33; --pos-hk-fg: #fca5a5;
+  --pos-lk-bg: #a1620033; --pos-lk-fg: #fcd34d;
+  --pos-lf-bg: #4d7c0f33; --pos-lf-fg: #bef264;
+  --pos-sh-bg: #0e766933; --pos-sh-fg: #5eead4;
+  --pos-fh-bg: #0369a133; --pos-fh-fg: #7dd3fc;
+  --pos-ce-bg: #4338ca33; --pos-ce-fg: #a5b4fc;
+  --pos-ob-bg: #6d28d933; --pos-ob-fg: #c4b5fd;
 
   /* The selected state of a segmented control, named because it is a role
      rather than a colour. It used to be spelled `bg-slate-700 text-wcgold` at
@@ -264,6 +276,16 @@ html[data-theme="sticker"] {
   --pos-mid-bg: #E3F5E7; --pos-mid-fg: #166534;
   --pos-fwd-bg: #FDEBDD; --pos-fwd-fg: #9A3412;
   --pos-team-bg: #FBF0D5; --pos-team-fg: #854D0E;
+  /* ...and printed. Each pairs a pale wash with an ink dark enough to clear
+     the contrast floor this theme is held to. */
+  --pos-pr-bg: #FBE7D5; --pos-pr-fg: #9A3412;
+  --pos-hk-bg: #FBDDD8; --pos-hk-fg: #A32218;
+  --pos-lk-bg: #FAEFD2; --pos-lk-fg: #855200;
+  --pos-lf-bg: #E8F0D4; --pos-lf-fg: #3F6212;
+  --pos-sh-bg: #D6F1EC; --pos-sh-fg: #0F5F55;
+  --pos-fh-bg: #D9EDFA; --pos-fh-fg: #0B5787;
+  --pos-ce-bg: #E0E1FA; --pos-ce-fg: #3730A3;
+  --pos-ob-bg: #EBE2FA; --pos-ob-fg: #5B21B6;
 
   /* The rest. */
   --focus-ring: #0B3C8C;
@@ -484,6 +506,17 @@ html[data-theme="sticker"] .pick-stamp {
   .pos-MID { background:var(--pos-mid-bg); color:var(--pos-mid-fg); }
   .pos-FWD { background:var(--pos-fwd-bg); color:var(--pos-fwd-fg); }
   .pos-TEAM{ background:var(--pos-team-bg); color:var(--pos-team-fg); }
+  /* Rugby's eight groups. Emitted the same way the football five are, by
+     `pos-${group}` at sixteen call sites, so nothing in the JS had to learn a
+     second scheme. */
+  .pos-PR  { background:var(--pos-pr-bg); color:var(--pos-pr-fg); }
+  .pos-HK  { background:var(--pos-hk-bg); color:var(--pos-hk-fg); }
+  .pos-LK  { background:var(--pos-lk-bg); color:var(--pos-lk-fg); }
+  .pos-LF  { background:var(--pos-lf-bg); color:var(--pos-lf-fg); }
+  .pos-SH  { background:var(--pos-sh-bg); color:var(--pos-sh-fg); }
+  .pos-FH  { background:var(--pos-fh-bg); color:var(--pos-fh-fg); }
+  .pos-CE  { background:var(--pos-ce-bg); color:var(--pos-ce-fg); }
+  .pos-OB  { background:var(--pos-ob-bg); color:var(--pos-ob-fg); }
   /* Knockout bracket tree: columns per round; each pair wrapper's right border
      is the connector joining the two feeder matches into their next-round tie. */
   .kb { display: inline-flex; align-items: stretch; }

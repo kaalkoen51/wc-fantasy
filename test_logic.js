@@ -35,7 +35,7 @@ const lsStub = {
 globalThis.appended = appended;
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, scoringRules, rugbyPosCode, isRugbyBenchSlot, parseRugbyPlayer, parseRugbyMatch, usableRugbyMatches, rugbyStatRows, rugbyStatsOf, RUGBY_STAT_KEYS, RUGBY_COMPETITIONS, rugbyBody, parseCompKey, competitionsFor, SPORTS, sportOf, sportDef, posGroups, playGroups, slotPosMap, slotRankMap, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid, pitchHtml, pitchFacingHtml, pitchRowsHtml, squadBoardHtml, historyViewHtml, benchInOrder, moveBench, orderedRoster, flipRows, wireLineupControls, markQueueMoved, matchdayCtaAct, matchdayCardHtml, renderLineup, renderHomeTab, openH2HPreview, openH2HFixture, lineupRowHtml, dugoutHtml, renderFixturesTab, h2hRoundFixtures, h2hTotalRounds, h2hFormOf, h2hStandingsHtml, seasonChartHtml, renderScoutList, renderStatsTab, renderPredraftShortlist, preDraftBrowsing, shortlistCoverage, coverageHint, scoringByPositionHtml, openScoringSheet, animateReorder, applyLocalOverrides, queueManagerWrite, wireStars, starHtml, draftFactCards, draftRulesHtml, lobbyRulesHtml, scoringHtml, applyVisibleOrder, makeReorderable, refetchAll, markConnection, enterLeagueWithFeedback, route, showView, dragActive, afterDrag, overrideStillWins, queueManagerWrite, applyLocalOverrides, keepLocalPick, autoPickStale, makePick, autoPick, tickTimer, mergeOptimisticPicks, pickKey, queueFieldWrite, OVERRIDE_TABLES, setPlanner, saveLineup, toggleKeeper, setFinalPick, txWindowStarts, txWhen, txShell, txAvatar, txMgrChip, tradeTxCard, swapTxCard, transactionsLogHtml, renderTrades, builderHtml, faClaimsSectionHtml, waiverOrderHtml, shortlistSectionHtml, plannerSectionHtml, plannerMoveHtml, squadChooserHtml, tradeSectionHtml, setClaimOrder, reorderClaim, tradeForShortlisted, submitTrade, TRADE_TABS, tradeTabBodyHtml, faClaimRowHtml, faClaimRowsHtml, renderClaimList, wireClaimControls, ROW_ATTRS, plannerMoveChoice, plannerSetChoiceOrder, plannerPickPool, renderPlannerPick, setWindowMode, toggleLineups, squadPitchHtml, squadShape, renderDreamTeam, dreamTeam, renderChat, chatThreads, interacting, markInteracting, scheduleDeferredFlush, INTERACT_MS, animateReorder, flipRows, flushDeferredRender, currentSeasonFor, seasonOptions, seasonLabel, backtestSeason, createCompKind, createPreviewSeason, loadScoringPreviewData, pullCreateHistory, renderCreateBalance, updateCreatePullStatus, renderCreateForm, pickReconciliation, reconcilePicksToPool, mapApiPlayer, loadCompetition, roundResolvers, roundIndex, mwNo, FINAL_STATUS, draftOrderMode, lobbyOrderManagers, shuffled, setDraftOrder, renderLobbyOrder, lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow, nextLockMs, lockAfterWindow, snapshotAt, snapshotForNextLock, rosterAtFor, setSession, getSession, repairStarters, lineupShape, repairLineupFor, faWindowKey, roundToSettle, closedWindowRound, closedWindowRounds, closedTradeWindows, roundsOwedSettlement, isRoundSettled, matchFixture, matchTimeFor, computeScoresUncached, bustScores, roundKeyLockedAt, roundKeyOfLabel, roundLabelShort, roundIndex, rosterAtFor, snapshotsByManager, advanceRound, maybeAdvanceRounds };"
+  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, scoringRules, RUGBY_QUOTA, RUGBY_STARTERS, RUGBY_PLAY_GROUPS, RUGBY_PITCH_BANDS, RUGBY_RULES, RUGBY_STAT_CATALOG, RUGBY_SLOTS, slotMapsFor, sumGroups, zeroByGroup, outfieldGroups, squadSize, flexComplete, flexLeft, fixedRoundSubs, SLOT_POS, SLOT_RANK, rugbyPosCode, isRugbyBenchSlot, parseRugbyPlayer, parseRugbyMatch, usableRugbyMatches, rugbyStatRows, rugbyStatsOf, RUGBY_STAT_KEYS, RUGBY_COMPETITIONS, rugbyBody, parseCompKey, competitionsFor, SPORTS, sportOf, sportDef, posGroups, playGroups, slotPosMap, slotRankMap, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid, pitchHtml, pitchFacingHtml, pitchRowsHtml, squadBoardHtml, historyViewHtml, benchInOrder, moveBench, orderedRoster, flipRows, wireLineupControls, markQueueMoved, matchdayCtaAct, matchdayCardHtml, renderLineup, renderHomeTab, openH2HPreview, openH2HFixture, lineupRowHtml, dugoutHtml, renderFixturesTab, h2hRoundFixtures, h2hTotalRounds, h2hFormOf, h2hStandingsHtml, seasonChartHtml, renderScoutList, renderStatsTab, renderPredraftShortlist, preDraftBrowsing, shortlistCoverage, coverageHint, scoringByPositionHtml, openScoringSheet, animateReorder, applyLocalOverrides, queueManagerWrite, wireStars, starHtml, draftFactCards, draftRulesHtml, lobbyRulesHtml, scoringHtml, applyVisibleOrder, makeReorderable, refetchAll, markConnection, enterLeagueWithFeedback, route, showView, dragActive, afterDrag, overrideStillWins, queueManagerWrite, applyLocalOverrides, keepLocalPick, autoPickStale, makePick, autoPick, tickTimer, mergeOptimisticPicks, pickKey, queueFieldWrite, OVERRIDE_TABLES, setPlanner, saveLineup, toggleKeeper, setFinalPick, txWindowStarts, txWhen, txShell, txAvatar, txMgrChip, tradeTxCard, swapTxCard, transactionsLogHtml, renderTrades, builderHtml, faClaimsSectionHtml, waiverOrderHtml, shortlistSectionHtml, plannerSectionHtml, plannerMoveHtml, squadChooserHtml, tradeSectionHtml, setClaimOrder, reorderClaim, tradeForShortlisted, submitTrade, TRADE_TABS, tradeTabBodyHtml, faClaimRowHtml, faClaimRowsHtml, renderClaimList, wireClaimControls, ROW_ATTRS, plannerMoveChoice, plannerSetChoiceOrder, plannerPickPool, renderPlannerPick, setWindowMode, toggleLineups, squadPitchHtml, squadShape, renderDreamTeam, dreamTeam, renderChat, chatThreads, interacting, markInteracting, scheduleDeferredFlush, INTERACT_MS, animateReorder, flipRows, flushDeferredRender, currentSeasonFor, seasonOptions, seasonLabel, backtestSeason, createCompKind, createPreviewSeason, loadScoringPreviewData, pullCreateHistory, renderCreateBalance, updateCreatePullStatus, renderCreateForm, pickReconciliation, reconcilePicksToPool, mapApiPlayer, loadCompetition, roundResolvers, roundIndex, mwNo, FINAL_STATUS, draftOrderMode, lobbyOrderManagers, shuffled, setDraftOrder, renderLobbyOrder, lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow, nextLockMs, lockAfterWindow, snapshotAt, snapshotForNextLock, rosterAtFor, setSession, getSession, repairStarters, lineupShape, repairLineupFor, faWindowKey, roundToSettle, closedWindowRound, closedWindowRounds, closedTradeWindows, roundsOwedSettlement, isRoundSettled, matchFixture, matchTimeFor, computeScoresUncached, bustScores, roundKeyLockedAt, roundKeyOfLabel, roundLabelShort, roundIndex, rosterAtFor, snapshotsByManager, advanceRound, maybeAdvanceRounds };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -52,7 +52,8 @@ const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcT
         apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture,
         fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey,
         rugbyPosCode, isRugbyBenchSlot, parseRugbyPlayer, parseRugbyMatch, usableRugbyMatches, rugbyStatRows, rugbyStatsOf, RUGBY_STAT_KEYS, RUGBY_COMPETITIONS, rugbyBody, 
-        parseCompKey, competitionsFor, SPORTS, sportOf, sportDef, posGroups, playGroups, slotPosMap, slotRankMap, scoringRules, 
+        parseCompKey, competitionsFor, SPORTS, sportOf, sportDef, posGroups, playGroups, slotPosMap, slotRankMap, scoringRules, pitchRowsHtml, 
+        RUGBY_QUOTA, RUGBY_STARTERS, RUGBY_PLAY_GROUPS, RUGBY_PITCH_BANDS, RUGBY_RULES, RUGBY_STAT_CATALOG, RUGBY_SLOTS, slotMapsFor, sumGroups, zeroByGroup, outfieldGroups, squadSize, flexComplete, flexLeft, fixedRoundSubs, SLOT_POS, SLOT_RANK, 
         slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick,
         posQuota, picksPerManager, totalPicks,
         playerBreakdown, playerPoints, suspendedNext, resilientWrite,
@@ -3314,6 +3315,132 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
     RUGBY_COMPETITIONS.find((c) => c.apiLeagueId === 1068).kind, "league");
   check("Super Rugby is a calendar-year one",
     RUGBY_COMPETITIONS.find((c) => c.apiLeagueId === 1020).kind, "cup");
+
+
+  /* ---------- the rugby preset ---------- */
+
+  /* The slot maps are generated. Football's are still written out as literals,
+     so generating them from the same groups and getting the same object back
+     is the proof that the generator is the shape the app has always used. */
+  const fbSlots = slotMapsFor(["GK", "DEF", "MID", "FWD"]);
+  check("the generator reproduces football's slot positions exactly",
+    JSON.stringify(Object.entries(fbSlots.pos).sort()),
+    JSON.stringify(Object.entries(SLOT_POS).sort()));
+  check("...and its slot ordering exactly",
+    JSON.stringify(Object.entries(fbSlots.rank).sort()),
+    JSON.stringify(Object.entries(SLOT_RANK).sort()));
+
+  // The XV is the shirt-number mapping counted up; the two cannot disagree.
+  check("the starting XV is fifteen players",
+    Object.values(RUGBY_STARTERS).reduce((a, b) => a + b, 0), 15);
+  const fromShirts = {};
+  for (let n = 1; n <= 15; n++) {
+    const c = rugbyPosCode(n);
+    fromShirts[c] = (fromShirts[c] || 0) + 1;
+  }
+  /* Compared per group rather than by serialising, because the two are built
+     in different orders on purpose: shirt 11 is a wing, so walking 1-15 meets
+     an outside back before a centre, while the group list is in team-sheet
+     order. The counts are the claim; the order is not. */
+  check("...and it matches the shirt numbers exactly, position by position",
+    RUGBY_PLAY_GROUPS.every((g) => (fromShirts[g] || 0) === RUGBY_STARTERS[g]), true);
+  check("...with no position invented by one and not the other",
+    Object.keys(fromShirts).sort().join(","), RUGBY_PLAY_GROUPS.slice().sort().join(","));
+
+  // A quota below the XV would let a manager draft a squad they cannot field.
+  check("no position is quota'd below its starters",
+    RUGBY_PLAY_GROUPS.every((g) => RUGBY_QUOTA[g] >= RUGBY_STARTERS[g]), true);
+  check("the squad is the XV plus a four-man bench",
+    RUGBY_PLAY_GROUPS.reduce((a, g) => a + RUGBY_QUOTA[g], 0), 19);
+  check("...and one club pick on top", RUGBY_QUOTA.TEAM, 1);
+
+  /* Four rows, not eight -- and every group has to appear in exactly one of
+     them, or players in a missing group would simply not be drawn. */
+  const banded = RUGBY_PITCH_BANDS.flat();
+  check("the pitch draws four bands", RUGBY_PITCH_BANDS.length, 4);
+  check("...covering every position group", banded.slice().sort().join(","),
+    RUGBY_PLAY_GROUPS.slice().sort().join(","));
+  check("...each exactly once", banded.length, new Set(banded).size);
+
+  /* Scoring may only name stats the feed actually populates. A rule on one of
+     its permanently-null fields scores zero for ever and never errors. */
+  const catalogKeys = new Set(RUGBY_STAT_CATALOG.map((c) => c.key));
+  check("every catalogue entry is a field the feed populates",
+    RUGBY_STAT_CATALOG.every((c) => RUGBY_STAT_KEYS.includes(c.key)), true);
+  check("...and every populated field is offered", RUGBY_STAT_KEYS.every((k) => catalogKeys.has(k)), true);
+  check("every default rule names a real stat",
+    RUGBY_RULES.every((r) => catalogKeys.has(r.stat)), true);
+  check("there is no assist rule, because the feed has no assists",
+    RUGBY_RULES.some((r) => /assist/i.test(r.stat)), false);
+  check("...and no rule on `points`, which would pay for a try twice",
+    RUGBY_RULES.some((r) => r.stat === "points"), false);
+  check("a try is worth more than a penalty goal",
+    RUGBY_RULES.find((r) => r.stat === "tries").points
+      > RUGBY_RULES.find((r) => r.stat === "penaltyGoals").points, true);
+
+  /* Now with a rugby league actually loaded. */
+  S.league = { id: "L1", competition: { apiLeagueId: 1068, season: 2025, sport: "rugby" } };
+  check("the league is rugby", sportOf(), "rugby");
+  check("the squad size follows the sport", squadSize(), 19);
+  check("the pitch bands follow it too", sportDef().pitchBands().length, 4);
+  check("nothing is fixed to an exact count", sportDef().exactGroups().length, 0);
+  check("...so every group is 'outfield'", outfieldGroups().length, 8);
+  check("a zeroed tally has a key per position, not four",
+    Object.keys(zeroByGroup()).join(","), "PR,HK,LK,LF,SH,FH,CE,OB");
+  check("...and every one of them starts at zero",
+    Object.values(zeroByGroup()).every((v) => v === 0), true);
+  check("summing a quota adds up all eight", sumGroups(RUGBY_QUOTA), 19);
+  check("the scoring rules are rugby's", scoringRules()[0].stat, "tries");
+  check("a try scores what the preset says",
+    rowPointsWith({ appeared: true, raw: { tries: 1 } }, "OB", scoringRules()), 10);
+  check("...and a tackle count scores per five, rounding down",
+    rowPointsWith({ appeared: true, raw: { tackles: 12 } }, "LF", scoringRules()), 2);
+  check("a card costs points", rowPointsWith({ appeared: true, raw: { yellowCards: 1 } }, "PR", scoringRules()), -3);
+
+  /* A full XV is a complete line-up; one short is not. This is the check that
+     would have failed silently on a four-key literal tally. */
+  const xv = { ...RUGBY_STARTERS };
+  check("a full XV is a valid line-up", flexComplete(xv, RUGBY_STARTERS, 0), true);
+  check("...and one short is not",
+    flexComplete({ ...xv, OB: 2 }, RUGBY_STARTERS, 0), false);
+
+  /* Fixed-mode auto-subs across eight groups. The no-show tally used to be an
+     object literal of four keys, so every rugby position read undefined and
+     `undefined++` gave NaN -- which compares false against every threshold, so
+     no substitution ever activated and nothing ever errored. */
+  const roster = [
+    { player_id: "p1", position: "FH", is_sub: false },
+    { player_id: "p2", position: "OB", is_sub: false },
+    { player_id: "b1", position: "FH", is_sub: true },
+    { player_id: "b2", position: "PR", is_sub: true },
+  ];
+  const labelFor = () => "R1";
+  const played = new Set(["p2", "b1", "b2"]);          // p1 did not play
+  const subs = fixedRoundSubs(roster, 1, labelFor, (pid) => played.has(pid), 3, null);
+  check("a bench player of the same position covers a no-show", subs.has("b1"), true);
+  check("...and one of a different position does not", subs.has("b2"), false);
+
+  /* And the pitch actually draws in bands. Without this, reverting the band
+     loop to one row per group passes every other assertion here and only
+     shows up as eight rows on a phone. */
+  const rugbyByPos = {};
+  RUGBY_PLAY_GROUPS.forEach((g, i) => {
+    rugbyByPos[g] = [{ player_id: "rp" + i, name: "Player" + i, team: "Leinster" }];
+  });
+  const rowsHtml = pitchRowsHtml(rugbyByPos, {});
+  check("eight position groups are drawn in four rows",
+    (rowsHtml.match(/class="pitch-row"/g) || []).length, 4);
+  check("...with nobody dropped on the way",
+    RUGBY_PLAY_GROUPS.every((g, i) => rowsHtml.includes("Player" + i)), true);
+  S.league = null;
+
+  // ...and football still draws its four, one group each.
+  const fbByPos = { GK: [{ player_id: "f0", name: "Keeper", team: "A" }],
+                    DEF: [{ player_id: "f1", name: "Back", team: "A" }],
+                    MID: [{ player_id: "f2", name: "Middle", team: "A" }],
+                    FWD: [{ player_id: "f3", name: "Front", team: "A" }] };
+  check("football still draws one row per position",
+    (pitchRowsHtml(fbByPos, {}).match(/class="pitch-row"/g) || []).length, 4);
 
   process.exit(fails ? 1 : 0);
 })();

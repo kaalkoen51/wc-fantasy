@@ -1644,3 +1644,53 @@ test("with motion turned down the packet is already open and the squad already t
     expect(state.packetHidden, "the packet never gets out of the way").toBe(true);
     await ctx.close();
   });
+
+test("choosing rugby re-designs the draft, and football is left alone", async ({ page }) => {
+  /* The sport question is the first one the create form asks, and answering it
+     has to change more than a label: a football scoring rule names stats a
+     rugby feed will never send, so carrying the editor across would leave a
+     league quietly scoring every player zero. */
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const read = await page.evaluate(() => {
+    showView("create");
+    renderCreateForm();
+    const snap = () => ({
+      sport: sportOf(),
+      comps: [...document.getElementById("create-comp").options].map((o) => o.text),
+      groups: playGroups().join(","),
+      firstRule: (S._createRules || [])[0]?.stat,
+      quotaKeys: Object.keys(effectiveConfig({}).quota).join(","),
+      bands: sportDef().pitchBands().length,
+    });
+    const before = snap();
+    // Click the rugby button the way a person would.
+    document.querySelector('#create-sport [data-sport="rugby"]').click();
+    const after = snap();
+    document.querySelector('#create-sport [data-sport="football"]').click();
+    return { before, after, back: snap() };
+  });
+
+  // Football, as it always was.
+  expect(read.before.sport).toBe("football");
+  expect(read.before.groups).toBe("GK,DEF,MID,FWD");
+  expect(read.before.comps.join(" "), "the built-in pool is a football squad list")
+    .toContain("World Cup");
+
+  // Rugby: different positions, different competitions, different scoring.
+  expect(read.after.sport).toBe("rugby");
+  expect(read.after.groups).toBe("PR,HK,LK,LF,SH,FH,CE,OB");
+  expect(read.after.bands, "eight groups still draw four rows").toBe(4);
+  expect(read.after.comps.join(" ")).toContain("United Rugby Championship");
+  expect(read.after.comps.join(" "), "the built-in football pool is not offered for rugby")
+    .not.toContain("World Cup");
+  expect(read.after.firstRule, "the scoring editor was reloaded for the new sport")
+    .toBe("tries");
+  expect(read.after.quotaKeys).toContain("PR");
+
+  // ...and switching back restores football rather than leaving a hybrid.
+  expect(read.back.sport).toBe("football");
+  expect(read.back.groups).toBe("GK,DEF,MID,FWD");
+  expect(read.back.firstRule).toBe("goals.total");
+  expect(read.back.comps.join(" ")).toContain("World Cup");
+});

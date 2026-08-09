@@ -37,6 +37,16 @@ const GROUPS = ["GK", "DEF", "MID", "FWD", "TEAM"];
    the club pick. Naming it is what lets a second sport have a different
    number of them. */
 const PLAY_GROUPS = ["GK", "DEF", "MID", "FWD"];
+/* Which groups share a row on the pitch. Football draws one band per group,
+   which is why the pitch could be a straight map over the groups until now --
+   but a sport with eight of them would draw eight rows and blow every layout
+   budget on a phone. Bands are the drawing order; the groups stay the unit
+   everything else counts in. */
+const PITCH_BANDS = [["GK"], ["DEF"], ["MID"], ["FWD"]];
+/* Positions filled to an EXACT count rather than to a minimum, so a flex slot
+   can never land there. Football has one: you field one keeper, and the rule
+   that says so was written as `counts.GK === mins.GK` in three places. */
+const EXACT_GROUPS = ["GK"];
 const SLOT_POS = { GK:"GK", DEF:"DEF", MID:"MID", FWD:"FWD", TEAM:"TEAM",
                    SUB_GK:"GK", SUB_DEF:"DEF", SUB_MID:"MID", SUB_FWD:"FWD" };
 const SLOT_RANK = { GK:0, DEF:1, MID:2, FWD:3, TEAM:4,
@@ -63,6 +73,8 @@ const SPORTS = {
     label: "Football",
     groups:       () => GROUPS,
     playGroups:   () => PLAY_GROUPS,
+    pitchBands:   () => PITCH_BANDS,
+    exactGroups:  () => EXACT_GROUPS,
     slotPos:      () => SLOT_POS,
     slotRank:     () => SLOT_RANK,
     quota:        () => PHASE1_QUOTA,
@@ -71,6 +83,7 @@ const SPORTS = {
     statCatalog:  () => STAT_CATALOG,
     rules:        () => DEFAULT_RULES,
     competitions: () => COMPETITIONS,
+    squadSize:    () => 15,
   },
 };
 const DEFAULT_SPORT = "football";
@@ -84,7 +97,9 @@ function sportOf() {
 }
 const sportDef = (name) => SPORTS[name || sportOf()] || SPORTS[DEFAULT_SPORT];
 
-const posGroups   = () => sportDef().groups();
+// The squad a league drafts, unless its organiser has set their own.
+const squadSize  = () => cfgOf().squadSize ?? sportDef().squadSize();
+const posGroups  = () => sportDef().groups();
 const playGroups  = () => sportDef().playGroups();
 const slotPosMap  = () => sportDef().slotPos();
 const slotRankMap = () => sportDef().slotRank();
@@ -147,7 +162,7 @@ function effectiveConfig(cfg, sportName) {
     starters: { ...sp.starters(), ...(cfg.starters || {}) },
     formationMode: cfg.formationMode || "fixed",
     formation: { ...sp.formation(), ...(cfg.formation || {}) },
-    squadSize: cfg.squadSize ?? 15,
+    squadSize: cfg.squadSize ?? sp.squadSize(),
     h2hEnabled: cfg.h2hEnabled === true,
     h2h: { ...H2H_DEFAULTS, ...(cfg.h2h || {}) },
     faDeferToClose: cfg.fa_defer_to_close === true,
@@ -629,6 +644,139 @@ const RUGBY_COMPETITIONS = [
   { name: "Nations Championship",      apiLeagueId: 2146, kind: "cup",
     feedName: "Nations Championship" },
 ];
+
+/* ---------- the rugby preset ----------
+   Eight position groups, in the order a team sheet lists them: the front row
+   and the rest of the pack, then the halves and the backs. */
+const RUGBY_PLAY_GROUPS = ["PR", "HK", "LK", "LF", "SH", "FH", "CE", "OB"];
+const RUGBY_GROUPS = [...RUGBY_PLAY_GROUPS, "TEAM"];
+
+/* Four rows on the pitch, not eight. Eight would not survive the phone layout
+   budgets, and these are the lines a side actually stands in: front row,
+   locks and loose forwards, the halves, then centres and back three. */
+const RUGBY_PITCH_BANDS = [["PR", "HK"], ["LK", "LF"], ["SH", "FH"], ["CE", "OB"]];
+
+/* Nothing is fixed to an exact count the way a goalkeeper is -- rugby has no
+   position of which you field exactly one and no other can cover. */
+const RUGBY_EXACT_GROUPS = [];
+
+/* Slot maps, generated rather than written out: a slot is its group, or that
+   group with SUB_ in front, and hand-typing sixteen of each invites exactly
+   the sort of typo that produces an undefined lookup and no error. Generating
+   football's the same way reproduces its literals precisely, which is what
+   the test asserts. */
+function slotMapsFor(groups) {
+  const pos = {}, rank = {};
+  groups.forEach((g, i) => { pos[g] = g; rank[g] = i; });
+  pos.TEAM = "TEAM"; rank.TEAM = groups.length;
+  groups.forEach((g, i) => { pos["SUB_" + g] = g; rank["SUB_" + g] = groups.length + 1 + i; });
+  return { pos, rank };
+}
+const RUGBY_SLOTS = slotMapsFor(RUGBY_PLAY_GROUPS);
+
+/* The starting XV, which IS the shirt-number mapping counted up: two props,
+   a hooker, two locks, three loose forwards, 9, 10, two centres and a back
+   three. */
+const RUGBY_STARTERS = { PR: 2, HK: 1, LK: 2, LF: 3, SH: 1, FH: 1, CE: 2, OB: 3 };
+
+/* ...and the squad: the XV plus four on the bench plus the club pick, so
+   twenty picks a manager against football's fifteen.
+
+   The four go to the front row, hooker, 9 and 10 -- the positions where a
+   replacement genuinely has to be like-for-like, and where the fixed-mode
+   auto-sub can therefore only use a player of the same group. A four-man
+   bench cannot cover all eight; that is the honest cost of not making the
+   draft half as long again, and squadSize is league config for anyone who
+   would rather pay it. */
+const RUGBY_QUOTA = { PR: 3, HK: 2, LK: 2, LF: 3, SH: 2, FH: 2, CE: 2, OB: 3, TEAM: 1 };
+const RUGBY_SQUAD_SIZE = 19;          // players; the club pick sits outside it
+
+// Only read in flex mode, which the rugby preset does not use -- present so
+// the shape is complete rather than absent.
+const RUGBY_FORMATION = { PR: [2, 3], HK: [1, 2], LK: [2, 2], LF: [3, 3], SH: [1, 2],
+                          FH: [1, 2], CE: [2, 2], OB: [3, 3], starters: 15 };
+
+/* The stat catalogue is exactly the fields the feed populates -- see
+   RUGBY_STAT_KEYS. Nothing else may appear here: a rule built on one of the
+   feed's permanently-null fields awards every player zero for ever and never
+   errors once. */
+const RUGBY_STAT_CATALOG = [
+  { key: "tries", label: "Try" },
+  { key: "conversionGoals", label: "Conversion" },
+  { key: "penaltyGoals", label: "Penalty goal" },
+  { key: "dropGoalsConverted", label: "Drop goal" },
+  { key: "missedConversionGoals", label: "Conversion missed" },
+  { key: "carries", label: "Carry" },
+  { key: "carriesCrossedGainLine", label: "Carry over the gain line" },
+  { key: "metres", label: "Metre carried" },
+  { key: "cleanBreaks", label: "Clean break" },
+  { key: "defendersBeaten", label: "Defender beaten" },
+  { key: "offload", label: "Offload" },
+  { key: "passes", label: "Pass" },
+  { key: "tackles", label: "Tackle made" },
+  { key: "missedTackles", label: "Missed tackle" },
+  { key: "tackleSuccess", label: "Tackle success %" },
+  { key: "turnoverWon", label: "Turnover won" },
+  { key: "turnoversConceded", label: "Turnover conceded" },
+  { key: "lineoutsWon", label: "Lineout won" },
+  { key: "lineoutSteals", label: "Lineout steal" },
+  { key: "kicksFromHand", label: "Kick from hand" },
+  { key: "kickFromHandMetres", label: "Kick metre (from hand)" },
+  { key: "kickMetres", label: "Kick metre (total)" },
+  { key: "retainedKicks", label: "Kick retained" },
+  { key: "tryKicks", label: "Kick leading to a try" },
+  { key: "penaltiesConceded", label: "Penalty conceded" },
+  { key: "yellowCards", label: "Yellow card" },
+  { key: "redCards", label: "Red card" },
+  { key: "minutesPlayedTotal", label: "Minute played" },
+  { key: "points", label: "Match points scored" },
+];
+
+/* A starting point, not a considered scoring system. It is position-neutral
+   on purpose: forwards tackle and carry, backs run and score, and which way
+   that skews is a question the balance backtest can answer against a real
+   season far better than I can guess at it here. Every value is editable in
+   the scoring editor before anyone drafts.
+
+   Two absences are deliberate rather than oversights. There is no assist:
+   `tryAssists` is null across the whole feed, so a rule for it would silently
+   award nothing. And there is no `points`, which is the player's own match
+   points -- scoring it alongside tries, conversions and penalties would pay
+   for the same act twice. */
+const RUGBY_RULES = [
+  { stat: "tries", mode: "each", perPosition: false, points: 10 },
+  { stat: "conversionGoals", mode: "each", perPosition: false, points: 2 },
+  { stat: "penaltyGoals", mode: "each", perPosition: false, points: 3 },
+  { stat: "dropGoalsConverted", mode: "each", perPosition: false, points: 5 },
+  { stat: "cleanBreaks", mode: "each", perPosition: false, points: 2 },
+  { stat: "defendersBeaten", mode: "each", perPosition: false, points: 1 },
+  { stat: "offload", mode: "each", perPosition: false, points: 1 },
+  { stat: "turnoverWon", mode: "each", perPosition: false, points: 3 },
+  { stat: "lineoutSteals", mode: "each", perPosition: false, points: 3 },
+  { stat: "tackles", mode: "per", per: 5, perPosition: false, points: 1 },
+  { stat: "metres", mode: "per", per: 25, perPosition: false, points: 1 },
+  { stat: "penaltiesConceded", mode: "each", perPosition: false, points: -1 },
+  { stat: "turnoversConceded", mode: "each", perPosition: false, points: -1 },
+  { stat: "yellowCards", mode: "each", perPosition: false, points: -3 },
+  { stat: "redCards", mode: "each", perPosition: false, points: -8 },
+];
+
+SPORTS.rugby = {
+  label: "Rugby union",
+  groups:       () => RUGBY_GROUPS,
+  playGroups:   () => RUGBY_PLAY_GROUPS,
+  pitchBands:   () => RUGBY_PITCH_BANDS,
+  exactGroups:  () => RUGBY_EXACT_GROUPS,
+  slotPos:      () => RUGBY_SLOTS.pos,
+  slotRank:     () => RUGBY_SLOTS.rank,
+  quota:        () => RUGBY_QUOTA,
+  starters:     () => RUGBY_STARTERS,
+  formation:    () => RUGBY_FORMATION,
+  statCatalog:  () => RUGBY_STAT_CATALOG,
+  rules:        () => RUGBY_RULES,
+  competitions: () => RUGBY_COMPETITIONS,
+  squadSize:    () => RUGBY_SQUAD_SIZE,
+};
 
 /* Shirt number to position group. 1-15 is the starting XV in shirt order and
    the mapping is not a judgement call -- 1 and 3 are the props, 2 hooks, 4-5
@@ -1164,20 +1312,33 @@ const starterQuota = () => {
 // Fluid ("flex") squad slots for a redraft: extra places that can go to ANY
 // outfield position (DEF/MID/FWD, never GK). The per-position quota is then a
 // MINIMUM; flex fills the rest. 0 in phase 1 / when unset = the old fixed model.
-const OUTFIELD = ["DEF", "MID", "FWD"];
+/* Every play group that is not fixed to an exact count -- what "outfield"
+   meant. Kept as a function because the answer depends on the sport. */
+const outfieldGroups = () => {
+  const ex = sportDef().exactGroups();
+  return playGroups().filter((g) => !ex.includes(g));
+};
+/* A zeroed tally, one key per play group. Written as an object literal in
+   six places, and every one of them was the same latent bug for a sport with
+   different positions: an unlisted key reads undefined, `undefined++` is NaN,
+   and NaN compares false against every threshold -- so the count silently
+   stops working rather than throwing. */
+const zeroByGroup = () => Object.fromEntries(playGroups().map((g) => [g, 0]));
+// Adding up a per-position map, which four places did as a literal four-term sum.
+const sumGroups = (o) => playGroups().reduce((n, g) => n + (o?.[g] || 0), 0);
 const leagueFlex = () => {
   if (isFlexFormation()) {   // squad beyond the formation minimums is fluid
     const q = flexFormationMins();
-    return Math.max(0, (cfgOf().squadSize ?? 15) - (q.GK + q.DEF + q.MID + q.FWD));
+    return Math.max(0, squadSize() - sumGroups(q));
   }
   return leaguePhase() === 1 ? 0 : (S.league.phase_flex || 0);
 };
 // Flex-formation lineup slots (starting XI beyond the minimums are fluid).
 const lineupFlex = () => isFlexFormation()
-  ? Math.max(0, formationBounds().starters - (starterQuota().GK + starterQuota().DEF + starterQuota().MID + starterQuota().FWD))
+  ? Math.max(0, formationBounds().starters - sumGroups(starterQuota()))
   : leagueFlex();
 const posCounts = (picks) => {
-  const c = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+  const c = zeroByGroup();
   for (const pk of picks) if (c[pk.position] != null) c[pk.position]++;
   return c;
 };
@@ -1196,21 +1357,23 @@ const notSub = (pk) => pk.slot ? !String(pk.slot).startsWith("SUB_") : !pk.is_su
    Either way the OTHER positions' minimums stay reserved, so filling up on
    keepers can never leave you unable to field a legal XI. */
 function flexLeft(counts, group, mins, flex, gkFixed = true) {
-  if (group === "GK" && gkFixed) return Math.max(0, (mins.GK || 0) - (counts.GK || 0));
-  const size = (mins.GK || 0) + (mins.DEF || 0) + (mins.MID || 0) + (mins.FWD || 0) + (flex || 0);
-  const cur = (counts.GK || 0) + (counts.DEF || 0) + (counts.MID || 0) + (counts.FWD || 0);
+  if (gkFixed && sportDef().exactGroups().includes(group))
+    return Math.max(0, (mins[group] || 0) - (counts[group] || 0));
+  const size = sumGroups(mins) + (flex || 0);
+  const cur = sumGroups(counts);
   let reserved = 0;
-  for (const p of ["GK", ...OUTFIELD])
+  for (const p of playGroups())
     if (p !== group) reserved += Math.max(0, (mins[p] || 0) - (counts[p] || 0));
   return Math.max(0, size - cur - reserved);
 }
 // A squad/lineup is complete when every slot is filled, the GK count is exact,
 // and each outfield minimum is met (the flex sits on top, in any outfield).
 function flexComplete(counts, mins, flex) {
-  const size = (mins.GK || 0) + (mins.DEF || 0) + (mins.MID || 0) + (mins.FWD || 0) + (flex || 0);
-  const cur = (counts.GK || 0) + (counts.DEF || 0) + (counts.MID || 0) + (counts.FWD || 0);
-  return cur === size && (counts.GK || 0) === (mins.GK || 0)
-    && OUTFIELD.every((p) => (counts[p] || 0) >= (mins[p] || 0));
+  const size = sumGroups(mins) + (flex || 0);
+  const cur = sumGroups(counts);
+  return cur === size
+    && sportDef().exactGroups().every((p) => (counts[p] || 0) === (mins[p] || 0))
+    && outfieldGroups().every((p) => (counts[p] || 0) >= (mins[p] || 0));
 }
 const picksPerManager = () =>
   posGroups().reduce((s, g) => s + (posQuota()[g] || 0), 0) + leagueFlex();
@@ -1782,12 +1945,53 @@ function syncCreatePreset() {
   }
 }
 
+/* The competition list for whichever sport is selected. Rebuilt on every
+   sport change rather than once, and the built-in World Cup pool is offered
+   only for football because players.json IS a football squad list. */
+function paintCompetitionOptions() {
+  const sel = $("create-comp");
+  if (!sel) return;
+  const keep = sel.value;
+  sel.innerHTML = (sportOf() === "football"
+      ? `<option value="wc">World Cup 2026 (built-in squads)</option>` : "")
+    + competitionsFor().filter((c) => c.apiLeagueId !== 1)
+        .map((c) => `<option value="${c.apiLeagueId}">${esc(c.name)}</option>`).join("");
+  if ([...sel.options].some((o) => o.value === keep)) sel.value = keep;
+}
+
+/* Switching sport resets the draft's design, and has to.
+
+   A football scoring rule names stats a rugby feed will never send -- carrying
+   the editor's rules across would leave a league scoring every player zero for
+   ever without erroring once. The quota, starters and formation come from the
+   same place and are equally meaningless across the line. */
+function setCreateSport(name) {
+  if (!SPORTS[name] || S._createSport === name) return;
+  S._createSport = name;
+  paintCompetitionOptions();
+  $("create-comp").dispatchEvent(new Event("change"));
+  paintCreateFields();                 // rules, quota, starters, formation
+  paintCreateSport();
+  updateCreateSummaries();
+}
+
+function paintCreateSport() {
+  const box = $("create-sport");
+  if (!box) return;
+  const cur = sportOf();
+  box.innerHTML = Object.entries(SPORTS).map(([key, sp]) =>
+    `<button type="button" data-sport="${key}" class="flex-1 rounded-lg py-2 text-xs font-semibold border ${
+      key === cur ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400"
+    }">${esc(sp.label)}</button>`).join("");
+  box.querySelectorAll("[data-sport]").forEach((b) =>
+    b.onclick = () => setCreateSport(b.dataset.sport));
+}
+
 function renderCreateForm() {
   const sel = $("create-comp");
-  if (sel.options.length <= 1)
-    sel.innerHTML = `<option value="wc">World Cup 2026 (built-in squads)</option>`
-      + competitionsFor().filter((c) => c.apiLeagueId !== 1)
-          .map((c) => `<option value="${c.apiLeagueId}">${esc(c.name)}</option>`).join("");
+  S._createSport = S._createSport || DEFAULT_SPORT;
+  paintCreateSport();
+  if (sel.options.length <= 1) paintCompetitionOptions();
   const syncApi = () => {
     $("create-comp-api").classList.toggle("hidden", sel.value === "wc");
     // Repopulate the season list: which seasons are open depends on whether
@@ -1960,7 +2164,11 @@ async function createLeague() {
     const season = parseInt($("create-comp-season").value, 10);
     if (!season) return toast("Enter the season for the competition.");
     const c = competitionsFor().find((x) => x.apiLeagueId === +compVal);
-    competition = { name: c?.name || ("League " + compVal), apiLeagueId: +compVal, season };
+    /* The sport is stamped ONTO the competition, which is what every later
+       read of sportOf() resolves through -- and what keeps this league's
+       competition_key from colliding with another sport's identical id. */
+    competition = { name: c?.name || ("League " + compVal), apiLeagueId: +compVal,
+                    season, sport: sportOf() };
   }
   const config = readCreateConfig();   // null = pure WC defaults
 
@@ -3371,7 +3579,7 @@ function renderPredraftShortlist() {
   }).join("");
   // What the board actually covers, by position. A shortlist of eleven
   // strikers is a bad board and the count alone never tells you that.
-  const tally = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+  const tally = zeroByGroup();
   for (const pid of ids) {
     const e = entryForId(pid);
     if (e && tally[e.position] != null) tally[e.position]++;
@@ -3853,7 +4061,7 @@ function renderDraft() {
     if (isFlexFormation()) {
       const f = formationBounds();
       banner.innerHTML = `Your pick — draft any mix<br><span class="text-xs font-normal text-slate-300">`
-        + `Squad of ${cfgOf().squadSize ?? 15}. You must end with at least ${f.DEF[0]} DEF, ${f.MID[0]} MID, `
+        + `Squad of ${squadSize()}. You must end with at least ${f.DEF[0]} DEF, ${f.MID[0]} MID, `
         + `${f.FWD[0]} FWD and a GK; the rest is your call. Each round you'll pick a formation within `
         + `DEF ${f.DEF[0]}–${f.DEF[1]}, MID ${f.MID[0]}–${f.MID[1]}, FWD ${f.FWD[0]}–${f.FWD[1]} (${f.starters}-a-side).</span>`;
     } else banner.textContent = "Your pick — any position you still need";
@@ -3995,7 +4203,7 @@ function repairStarters(picks, mins, maxs, total) {
   for (const g of GROUPS4)
     byPos[g].sort((a, b) => (a.pk.is_sub ? 1 : 0) - (b.pk.is_sub ? 1 : 0) || a.i - b.i);
 
-  const chosen = new Set(), count = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+  const chosen = new Set(), count = zeroByGroup();
   const take = (g, x) => { chosen.add(x.pk.id); count[g]++; };
 
   // 1 · every minimum, or there is no legal side to build.
@@ -4115,7 +4323,7 @@ function flexRoundCounting(roster, rnd, labelFor, appeared) {
 // (no cap); the admin can set a lower config.maxSubs.
 function maxSubsPerRound() {
   if (cfgOf().maxSubs != null) return cfgOf().maxSubs;
-  if (isFlexFormation()) return Math.max(0, (cfgOf().squadSize ?? 15) - formationBounds().starters);
+  if (isFlexFormation()) return Math.max(0, squadSize() - formationBounds().starters);
   const q = posQuota(), s = starterQuota();
   return Math.max(0, playGroups().reduce((a, p) => a + ((q[p] || 0) - (s[p] || 0)), 0));
 }
@@ -4126,7 +4334,7 @@ const maxSubsCapped = () => cfgOf().maxSubs != null;
 // (or the no-shows) run out. Only used when a cap is configured.
 function fixedRoundSubs(roster, rnd, labelFor, appeared, cap, missed) {
   const starters = roster.filter((e) => !e.is_sub && e.position !== "TEAM");
-  const noShow = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+  const noShow = zeroByGroup();
   for (const st of starters) {
     // missed() also covers a blank gameweek, where there is no label at all.
     if (missed ? missed(st, rnd)
@@ -6036,7 +6244,7 @@ function draftFactCards() {
     `${picksPerManager()} rounds, and the order reverses every round — last pick in round one picks first in round two.${orderLine}`]);
 
   cards.push(["👕", "Your squad", flex
-    ? `Draft any mix you like up to ${cfgOf().squadSize ?? 15} players, as long as you can field a legal XI.`
+    ? `Draft any mix you like up to ${squadSize()} players, as long as you can field a legal side.`
     : `Pick any position on your turn within your quota: ${
         posGroups().filter((g) => q[g] > 0).map((g) => `${q[g]} ${g}`).join(", ")}.`]);
 
@@ -6527,7 +6735,7 @@ function lineupTodo(me) {
   if (!me || me.eliminated) return todo;
   const mine = managerPicks(me.id).filter((pk) => pk.slot !== "TEAM");
   if (!mine.length) return todo;
-  const counts = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+  const counts = zeroByGroup();
   for (const pk of mine) if (!pk.is_sub) counts[pk.position] = (counts[pk.position] || 0) + 1;
   if (!lineupValid(counts)) todo.push("Your starting XI isn't valid yet");
   if (captainEnabled() && !me.captain_id) todo.push("Captain not set");
@@ -6917,7 +7125,7 @@ function openReveal() {
   const mine = managerPicks(me.id);
   const byPos = { GK: [], DEF: [], MID: [], FWD: [], TEAM: [] };
   for (const pk of mine) (byPos[pk.position] || byPos.TEAM).push(pk);
-  const counts = ["DEF", "MID", "FWD"].map((g) => `${byPos[g].length}`).join("-");
+  const counts = outfieldGroups().map((g) => `${(byPos[g] || []).length}`).join("-");
   const foil = revealFoilPick(mine);
 
   /* An album page: bands of stickers rather than a list of rows. `i` runs
@@ -6939,7 +7147,7 @@ function openReveal() {
       <div class="text-xs text-slate-400">${mine.length} players · ${counts} outfield shape</div>
     </div>
     <div id="reveal-page" class="space-y-2">${
-      [["GK", "GK"], ["DEF", "DEF"], ["MID", "MID"], ["FWD", "FWD"], ["TEAM", "CLUB"]]
+      [...playGroups().map((g) => [g, g]), ["TEAM", "CLUB"]]
         .map(group).join("")}</div>
     ${foil ? `<p class="text-xs text-slate-400 text-center">✨ <b class="text-slate-200">${
       esc(shortName(foil.player_name))}</b> — your first pick.</p>` : ""}
@@ -9492,9 +9700,11 @@ function dreamTeam(round, per90, worst) {
      ever field. The ceilings are the same ones a real line-up must satisfy. */
   if (flex > 0) {
     const { maxs } = lineupShape();
-    const room = { DEF: 0, MID: 0, FWD: 0 };
-    for (const pos of OUTFIELD) room[pos] = Math.max(0, (maxs[pos] ?? Infinity) - out[pos].length);
-    for (const x of OUTFIELD.flatMap((pos) => byPos[pos])
+    // Seeded from the sport's own groups: an object literal here would leave
+    // any position it did not name at `undefined`, and `undefined--` is NaN.
+    const room = {};
+    for (const pos of outfieldGroups()) room[pos] = Math.max(0, (maxs[pos] ?? Infinity) - out[pos].length);
+    for (const x of outfieldGroups().flatMap((pos) => byPos[pos] || [])
       .filter((x) => !used.has(x.p.player_id)).sort(bySort)) {
       if (out.FLEX.length >= flex) break;
       const pos = x.p.position;
@@ -10177,7 +10387,7 @@ function openLineup() {
 
 function lineupCounts() {
   const me = myManager();
-  const counts = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+  const counts = zeroByGroup();
   for (const pk of managerPicks(me.id)) {
     if (S.lineupDraft.has(pk.id)) counts[pk.position]++;
   }
@@ -10335,8 +10545,12 @@ function pitchRowsHtml(byPos, opts = {}) {
       </button>
     </div>`;
   };
-  return playGroups().map((g) =>
-    `<div class="pitch-row">${(byPos[g] || []).map(chip).join("")}</div>`).join("");
+  /* One row per BAND, not per group. Football's bands are one group each, so
+     this produces exactly the markup it always did; rugby packs its eight
+     groups into four rows the way a side actually lines up. */
+  return sportDef().pitchBands().map((band) =>
+    `<div class="pitch-row">${
+      band.flatMap((g) => byPos[g] || []).map(chip).join("")}</div>`).join("");
 }
 
 // While a full-screen sheet is open the page behind it must not scroll, or a
@@ -11504,7 +11718,7 @@ function builderHtml(me) {
                and their best scorer are what make step 1 an informed choice. -->
           <span class="block text-xs text-slate-400 truncate">${(() => {
             const sq = managerPicks(m.id).filter((pk) => pk.slot !== "TEAM");
-            const by = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+            const by = zeroByGroup();
             for (const pk of sq) if (by[pk.position] != null) by[pk.position]++;
             const shape = playGroups().map((g) => `${by[g]}${g}`).join(" · ");
             const best = sq.map((pk) => ({ pk, v: playerPoints(pk.player_id, pk.position) }))
@@ -13241,8 +13455,8 @@ async function pullStatsNow() {
 /* ---------- admin: redrafts, eliminations & final phase ---------- */
 
 function admQuotaInputs(prefix) {
-  const v = (g) => Math.max(0, parseInt($(prefix + g.toLowerCase()).value, 10) || 0);
-  return { GK: v("GK"), DEF: v("DEF"), MID: v("MID"), FWD: v("FWD") };
+  const v = (g) => Math.max(0, parseInt($(prefix + g.toLowerCase())?.value, 10) || 0);
+  return Object.fromEntries(playGroups().map((g) => [g, v(g)]));
 }
 
 // Live "= N-player squad" hint under the redraft quota inputs.
