@@ -3465,9 +3465,37 @@ async function botPick(info) {
   await makePick(entry, info);
 }
 
+/* Why auto-pick found nobody.
+
+   "No available players fit the open quota" names the two things involved and
+   tells you nothing about either, which is a poor message to meet at the end
+   of a draft -- it points at the quota, and the quota is usually fine. This
+   says which positions are still open and how many draftable players each of
+   them actually has, so the answer is in the message rather than in a console
+   session afterwards. Pure, so the wording is testable. */
+function noCandidatesReason(mgrPicks, openGroups, counts) {
+  if (!openGroups.length) return "Nothing left to fill — this squad is complete.";
+  const empty = openGroups.filter((g) => !counts[g]);
+  const some = openGroups.filter((g) => counts[g]);
+  const bits = [];
+  if (empty.length) bits.push(`no players left at ${empty.join(", ")}`);
+  if (some.length) {
+    bits.push(`${some.map((g) => `${g}: ${counts[g]}`).join(", ")} available but `
+      + `already taken or ineligible`);
+  }
+  return `Nothing fits the open slots — ${bits.join("; ")}.`;
+}
+
 async function autoPick(info) {
-  const choice = autoPickPreview(info.manager);
-  if (!choice) { toast("No available players fit the open quota."); return; }
+  const cands = autoPickCandidates(info.manager);
+  const choice = autoPickPreview(info.manager, cands);
+  if (!choice) {
+    const mgrPicks = managerPicks(info.manager.id);
+    const open = posGroups().filter((g) => quotaLeft(mgrPicks, g) > 0);
+    const counts = Object.fromEntries(open.map((g) => [g, availableForGroup(g).length]));
+    toast(noCandidatesReason(mgrPicks, open, counts));
+    return;
+  }
   toast(`Time's up — auto-picked ${choice.entry.name}${
     choice.fromShortlist ? " (top of shortlist)" : ""} for ${info.manager.name}.`);
   await makePick(choice.entry, info);
