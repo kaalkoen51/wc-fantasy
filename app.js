@@ -30,10 +30,64 @@ document.addEventListener("error", (e) => {
 const PHASE1_QUOTA    = { GK: 2, DEF: 4, MID: 4, FWD: 3, TEAM: 1 };
 const PHASE1_STARTERS = { GK: 1, DEF: 3, MID: 3, FWD: 2 };   // rest are subs
 const GROUPS = ["GK", "DEF", "MID", "FWD", "TEAM"];
+/* The groups that hold PLAYERS, in display order — the full list without
+   the club pick.
+   Written out at ~31 call sites as a literal ["GK","DEF","MID","FWD"], every
+   one of them meaning this same thing: iterate the outfield positions, skip
+   the club pick. Naming it is what lets a second sport have a different
+   number of them. */
+const PLAY_GROUPS = ["GK", "DEF", "MID", "FWD"];
 const SLOT_POS = { GK:"GK", DEF:"DEF", MID:"MID", FWD:"FWD", TEAM:"TEAM",
                    SUB_GK:"GK", SUB_DEF:"DEF", SUB_MID:"MID", SUB_FWD:"FWD" };
 const SLOT_RANK = { GK:0, DEF:1, MID:2, FWD:3, TEAM:4,
                     SUB_GK:5, SUB_DEF:6, SUB_MID:7, SUB_FWD:8 };
+
+/* ---------- sports ----------
+   DraftBaron started as a World Cup app and every position, stat and
+   competition in it was a football one. It now hosts other sports, so those
+   have to come from the league rather than from the file.
+
+   The registry holds GETTERS, not values, and that is deliberate: a sport's
+   data is spread across this file at the point each concern is defined (the
+   stat catalogue lives beside the scoring engine, the formation beside the
+   auto-sub code), and hoisting three hundred lines of football to the top so
+   one object literal could hold it would bury the thing that matters — that
+   this refactor changes nothing. Arrow bodies resolve when called, so the
+   registry can sit up here and still point at constants declared far below.
+
+   Everything reads through the accessors under it. Nothing should reach for
+   the raw constants directly again; those are now football's values, not the
+   app's. */
+const SPORTS = {
+  football: {
+    label: "Football",
+    groups:       () => GROUPS,
+    playGroups:   () => PLAY_GROUPS,
+    slotPos:      () => SLOT_POS,
+    slotRank:     () => SLOT_RANK,
+    quota:        () => PHASE1_QUOTA,
+    starters:     () => PHASE1_STARTERS,
+    formation:    () => DEFAULT_FORMATION,
+    statCatalog:  () => STAT_CATALOG,
+    rules:        () => DEFAULT_RULES,
+    competitions: () => COMPETITIONS,
+  },
+};
+const DEFAULT_SPORT = "football";
+
+/* The sport of the league on screen. The legacy World Cup league and every
+   league created before this existed have no `sport` on their competition
+   (and no competition at all, in the WC case), so the fallback is not a
+   defensive nicety — it is what keeps every existing league working. */
+function sportOf() {
+  return S.league?.competition?.sport || S._createSport || DEFAULT_SPORT;
+}
+const sportDef = (name) => SPORTS[name || sportOf()] || SPORTS[DEFAULT_SPORT];
+
+const posGroups   = () => sportDef().groups();
+const playGroups  = () => sportDef().playGroups();
+const slotPosMap  = () => sportDef().slotPos();
+const slotRankMap = () => sportDef().slotRank();
 
 // Mirrors SCORING in daily_pull.py — keep the two in sync.
 const SCORING = {
@@ -75,23 +129,24 @@ function stageBonuses() {
 }
 const stageOrder     = () => cfgOf().stageOrder || STAGE_ORDER;
 const finalPickBonus = () => cfgOf().finalPickBonus ?? FINAL_PICK_BONUS;
-const phaseOneQuota  = () => ({ ...PHASE1_QUOTA, ...(cfgOf().quota || {}) });
-const phaseOneStarters = () => ({ ...PHASE1_STARTERS, ...(cfgOf().starters || {}) });
+const phaseOneQuota  = () => ({ ...sportDef().quota(), ...(cfgOf().quota || {}) });
+const phaseOneStarters = () => ({ ...sportDef().starters(), ...(cfgOf().starters || {}) });
 
 // The full effective config, defaults filled in — for pre-filling the "design
 // your draft" editors and comparing against defaults. `rules` is the scoring
 // rules array (custom or DEFAULT_RULES), deep-cloned so editors can mutate it.
-function effectiveConfig(cfg) {
+function effectiveConfig(cfg, sportName) {
   cfg = cfg || {};
-  const rules = Array.isArray(cfg.scoring) && cfg.scoring.length ? cfg.scoring : DEFAULT_RULES;
+  const sp = sportDef(sportName);
+  const rules = Array.isArray(cfg.scoring) && cfg.scoring.length ? cfg.scoring : sp.rules();
   return {
     rules: JSON.parse(JSON.stringify(rules)),
     stageBonus: { ...STAGE_BONUS, ...(cfg.stageBonus || {}) },
     finalPickBonus: cfg.finalPickBonus ?? FINAL_PICK_BONUS,
-    quota: { ...PHASE1_QUOTA, ...(cfg.quota || {}) },
-    starters: { ...PHASE1_STARTERS, ...(cfg.starters || {}) },
+    quota: { ...sp.quota(), ...(cfg.quota || {}) },
+    starters: { ...sp.starters(), ...(cfg.starters || {}) },
     formationMode: cfg.formationMode || "fixed",
-    formation: { ...DEFAULT_FORMATION, ...(cfg.formation || {}) },
+    formation: { ...sp.formation(), ...(cfg.formation || {}) },
     squadSize: cfg.squadSize ?? 15,
     h2hEnabled: cfg.h2hEnabled === true,
     h2h: { ...H2H_DEFAULTS, ...(cfg.h2h || {}) },
@@ -446,9 +501,30 @@ const backtestSeason = (season) => season - 1;
 
 // The league's competition (null → legacy static players.json / fixtures.json).
 const leagueCompetition = () => S.league?.competition || null;
-// Competition data (pool + stats) is SHARED across every league on the same
-// competition, keyed by "<apiLeagueId>-<season>". null → legacy WC league.
-const compKeyOf = (c) => c ? `${c.apiLeagueId}-${c.season}` : null;
+/* The competition list for a sport (defaults to the league on screen). */
+const competitionsFor = (sportName) => sportDef(sportName).competitions();
+
+/* Competition data (pool + stats) is SHARED across every league on the same
+   competition. null → legacy WC league.
+
+   The key is "<apiLeagueId>-<season>" for football and
+   "<sport>-<apiLeagueId>-<season>" for everything else. That asymmetry is the
+   whole point: league ids are per-provider, so rugby's 1068 and a football
+   league's 1068 are different competitions that would otherwise share a row --
+   but prefixing football too would orphan every competition_pools and
+   competition_stats row already written. Football keeps its keys byte-for-byte
+   and pays nothing; new sports carry the qualifier. */
+const compKeyOf = (c) => c
+  ? (c.sport && c.sport !== DEFAULT_SPORT ? `${c.sport}-` : "") + `${c.apiLeagueId}-${c.season}`
+  : null;
+
+/* ...and back again. Splitting on "-" is what the admin list used to do, which
+   reads `rugby` as the league id the moment a key carries a sport. */
+function parseCompKey(key) {
+  const parts = String(key || "").split("-");
+  const sport = parts.length > 2 ? parts.shift() : DEFAULT_SPORT;
+  return { sport, apiLeagueId: +parts[0], season: +parts[1] };
+}
 const competitionKey = () => compKeyOf(leagueCompetition());
 
 // --- pure API transforms (unit-tested) ---
@@ -803,9 +879,12 @@ const posQuota = () => {
   return leaguePhase() === 1 ? phaseOneQuota() : { TEAM: 0, ...(S.league.phase_quota || {}) };
 };
 const starterQuota = () => {
-  if (isFlexFormation()) { const f = formationBounds(); return { GK: f.GK[0], DEF: f.DEF[0], MID: f.MID[0], FWD: f.FWD[0] }; }
+  if (isFlexFormation()) {
+    const f = formationBounds();
+    return Object.fromEntries(playGroups().map((g) => [g, f[g]?.[0] ?? 0]));
+  }
   return leaguePhase() === 1 ? phaseOneStarters()
-    : (S.league.phase_starters || S.league.phase_quota || PHASE1_STARTERS);
+    : (S.league.phase_starters || S.league.phase_quota || sportDef().starters());
 };
 
 // Fluid ("flex") squad slots for a redraft: extra places that can go to ANY
@@ -860,7 +939,7 @@ function flexComplete(counts, mins, flex) {
     && OUTFIELD.every((p) => (counts[p] || 0) >= (mins[p] || 0));
 }
 const picksPerManager = () =>
-  GROUPS.reduce((s, g) => s + (posQuota()[g] || 0), 0) + leagueFlex();
+  posGroups().reduce((s, g) => s + (posQuota()[g] || 0), 0) + leagueFlex();
 const totalPicks = () => draftSequence().length;
 
 function route() {
@@ -1040,7 +1119,7 @@ function flexFieldsHtml(eff) {
       ${cfgNum("formation.starters", "Starting XI", f.starters, false)}
     </div>
     <div class="text-xs text-slate-400 font-medium">Formation bounds — min–max per position</div>
-    ${["GK", "DEF", "MID", "FWD"].map(boundRow).join("")}`;
+    ${playGroups().map(boundRow).join("")}`;
 }
 
 function paintSquad() {
@@ -1086,12 +1165,12 @@ function updateCreateSummaries() {
     return Number.isFinite(n) ? n : d;
   };
   const eff = effectiveConfig({});
-  const q = ["GK", "DEF", "MID", "FWD"].reduce((s, p) => s + val(`quota.${p}`, eff.quota[p]), 0);
-  const st = ["GK", "DEF", "MID", "FWD"].reduce((s, p) => s + val(`starters.${p}`, eff.starters[p]), 0);
+  const q = playGroups().reduce((s, p) => s + val(`quota.${p}`, eff.quota[p]), 0);
+  const st = playGroups().reduce((s, p) => s + val(`starters.${p}`, eff.starters[p]), 0);
   if ($("create-squad-summary")) $("create-squad-summary").textContent = S._createFlex
     ? `flex · ${val("formation.starters", eff.formation.starters)}-a-side`
     : `${q} squad · ${st} starters`;
-  const scoringCustom = JSON.stringify(S._createRules) !== JSON.stringify(DEFAULT_RULES);
+  const scoringCustom = JSON.stringify(S._createRules) !== JSON.stringify(sportDef().rules());
   if ($("create-scoring-summary")) $("create-scoring-summary").textContent =
     scoringCustom ? `${(S._createRules || []).length} custom rules` : "World Cup default";
   if ($("create-team-summary")) $("create-team-summary").textContent = S._createTeamOn
@@ -1263,7 +1342,7 @@ function updateCreatePullStatus() {
 function createCompKind() {
   const v = $("create-comp")?.value;
   if (!v || v === "wc") return "cup";
-  return COMPETITIONS.find((c) => String(c.apiLeagueId) === String(v))?.kind || "league";
+  return competitionsFor().find((c) => String(c.apiLeagueId) === String(v))?.kind || "league";
 }
 
 /* The season the balance check should read: the one you're creating for if it
@@ -1433,7 +1512,7 @@ function renderCreateForm() {
   const sel = $("create-comp");
   if (sel.options.length <= 1)
     sel.innerHTML = `<option value="wc">World Cup 2026 (built-in squads)</option>`
-      + COMPETITIONS.filter((c) => c.apiLeagueId !== 1)
+      + competitionsFor().filter((c) => c.apiLeagueId !== 1)
           .map((c) => `<option value="${c.apiLeagueId}">${esc(c.name)}</option>`).join("");
   const syncApi = () => {
     $("create-comp-api").classList.toggle("hidden", sel.value === "wc");
@@ -1528,7 +1607,7 @@ async function ensureCompetitionPool(competition, apiKey, log) {
 // the team-bonus toggle, and return null if it's all WC defaults.
 function readCreateConfig() {
   const cfg = readConfigFromFields(document.querySelector('[data-view="create"]'));
-  if (JSON.stringify(S._createRules) !== JSON.stringify(DEFAULT_RULES)) cfg.scoring = S._createRules;
+  if (JSON.stringify(S._createRules) !== JSON.stringify(sportDef().rules())) cfg.scoring = S._createRules;
   if (S._createFlex) {                     // flexible formations
     const g = (k) => Number(document.querySelector(`#create-squad [data-cfg="${k}"]`)?.value);
     cfg.formationMode = "flex";
@@ -1606,7 +1685,7 @@ async function createLeague() {
   if (compVal !== "wc") {
     const season = parseInt($("create-comp-season").value, 10);
     if (!season) return toast("Enter the season for the competition.");
-    const c = COMPETITIONS.find((x) => x.apiLeagueId === +compVal);
+    const c = competitionsFor().find((x) => x.apiLeagueId === +compVal);
     competition = { name: c?.name || ("League " + compVal), apiLeagueId: +compVal, season };
   }
   const config = readCreateConfig();   // null = pure WC defaults
@@ -2423,7 +2502,7 @@ function slotForNewPick(mgrPicks, group) {
 function squadShape(mgrPicks) {
   const counts = posCounts(mgrPicks);
   const mins = posQuota();
-  const groups = ["GK", "DEF", "MID", "FWD"];
+  const groups = playGroups();
   const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
   for (const pk of mgrPicks) if (byPos[pk.position]) byPos[pk.position].push(pk);
   let flexLeft = groups.reduce((a, g) => a + (mins[g] || 0), 0) + leagueFlex()
@@ -2440,7 +2519,7 @@ function squadShape(mgrPicks) {
 function squadPitchHtml(mgrPicks, opts = {}) {
   const s = squadShape(mgrPicks);
   const pitch = { GK: [], DEF: [], MID: [], FWD: [] };
-  for (const g of ["GK", "DEF", "MID", "FWD"]) {
+  for (const g of playGroups()) {
     for (const pk of s.byPos[g]) pitch[g].push({
       id: pk.player_id, player_id: pk.player_id, name: pk.player_name,
       team: pk.team, opp: oppShort(pk.team),
@@ -2452,7 +2531,7 @@ function squadPitchHtml(mgrPicks, opts = {}) {
     s.need[g] ? "" : "opacity-45"}">${g} ${s.counts[g] || 0}<span class="opacity-70">/${s.mins[g] || 0}</span></span>`;
   return `
     <div class="flex items-center gap-1 flex-wrap mb-1.5">
-      ${["GK", "DEF", "MID", "FWD"].map(chip).join("")}
+      ${playGroups().map(chip).join("")}
       ${s.flexLeft > 0 ? `<span class="rounded px-1.5 py-0.5 text-xs font-semibold bg-slate-700 text-slate-200">+${s.flexLeft} flex</span>` : ""}
       <span class="ml-auto text-xs ${s.complete ? "text-live" : "text-slate-400"}">${
         s.complete ? "squad complete ✓" : "dashed shirts = still to fill"}</span>
@@ -2468,7 +2547,7 @@ function needsSummary(mgrPicks) {
   if (teamLeft > 0) parts.push(`${teamLeft} TEAM`);
   let slots = (mins.GK || 0) + (mins.DEF || 0) + (mins.MID || 0) + (mins.FWD || 0) + flex
     - (counts.GK + counts.DEF + counts.MID + counts.FWD);
-  for (const g of ["GK", "DEF", "MID", "FWD"]) {
+  for (const g of playGroups()) {
     const need = Math.max(0, (mins[g] || 0) - (counts[g] || 0));
     if (need > 0) { parts.push(`${need} ${g}`); slots -= need; }
   }
@@ -2569,7 +2648,7 @@ function entryForId(pid) {
 // open quota slot, not already taken, and the team isn't knocked out.
 function autoPickCandidates(manager) {
   const mgrPicks = managerPicks(manager.id);
-  const openGroups = new Set(GROUPS.filter((g) => quotaLeft(mgrPicks, g) > 0));
+  const openGroups = new Set(posGroups().filter((g) => quotaLeft(mgrPicks, g) > 0));
   const picked = pickedIdSet();
   const eligible = (e) => !!e && openGroups.has(e.position)
     && !picked.has(e.player_id) && !isEliminated(e.team);
@@ -2743,7 +2822,7 @@ function renderPool(force) {
   const myTurn = !!me && info.manager.id === me.id;
   const onClockPicks = managerPicks(info.manager.id);
 
-  const groups = GROUPS.filter((g) => posQuota()[g] > 0);
+  const groups = posGroups().filter((g) => posQuota()[g] > 0);
   const chips = ["ALL", ...groups];
   $("pool-chips").innerHTML = chips.map((c) =>
     `<button data-chip="${c}" class="shrink-0 rounded-full px-3 py-1 border ${
@@ -2883,7 +2962,7 @@ function renderRosters(containerId, force) {
   const byMgr = {};
   for (const pk of S.picks) (byMgr[pk.manager_id] ||= []).push(pk);
   for (const k in byMgr) byMgr[k].sort((a, b) =>
-    (SLOT_RANK[a.slot] ?? 9) - (SLOT_RANK[b.slot] ?? 9) || a.pick_number - b.pick_number);
+    (slotRankMap()[a.slot] ?? 9) - (slotRankMap()[b.slot] ?? 9) || a.pick_number - b.pick_number);
   $(containerId).innerHTML = draftOrderManagers().map((m) => `
     <details data-mgr="${m.id}" class="rounded-xl border border-slate-700 bg-slate-900"
              ${open.has(m.id) || (!open.size && m.id === me?.id) ? "open" : ""}>
@@ -3024,7 +3103,7 @@ function renderPredraftShortlist() {
     if (e && tally[e.position] != null) tally[e.position]++;
   }
   const quota = posQuota();
-  const pips = GROUPS.slice(0, 4).map((g) => {
+  const pips = playGroups().map((g) => {
     const short = (quota[g] || 0) > 0 && tally[g] < quota[g];
     return `<span class="rounded px-1.5 py-0.5 text-xs font-semibold pos-${g} ${
       short ? "opacity-50" : ""}" title="${tally[g]} starred${
@@ -3583,7 +3662,12 @@ const STAT_CATALOG = [
   { key: "rating", label: "Match rating" },
   { key: "minutes", label: "Minute played" },
 ];
-const STAT_LABEL = Object.fromEntries(STAT_CATALOG.map((s) => [s.key, s.label]));
+/* Every sport's stat labels in one map. It is built across all of them
+   rather than per-sport because the keys do not overlap (a rugby feed has no
+   `goals.assists`, a football one has no `lineoutSteals`) and a plain object
+   keeps the ~20 lookup sites free of a sport argument they do not have. */
+const STAT_LABEL = Object.fromEntries(
+  Object.values(SPORTS).flatMap((sp) => sp.statCatalog().map((s) => [s.key, s.label])));
 
 const DEFAULT_RULES = [
   { stat: "goals.total", mode: "each", perPosition: true, points: { GK: 8, DEF: 6, MID: 5, FWD: 4 } },
@@ -3600,7 +3684,7 @@ const DEFAULT_RULES = [
 
 const scoringRules = () => {
   const c = cfgOf().scoring;
-  return Array.isArray(c) && c.length ? c : DEFAULT_RULES;
+  return Array.isArray(c) && c.length ? c : sportDef().rules();
 };
 
 /* ---------- flexible formations (Workstream B) ----------
@@ -3610,7 +3694,7 @@ const scoringRules = () => {
    order) to cover no-shows only where the resulting formation stays valid. */
 const DEFAULT_FORMATION = { GK: [1, 1], DEF: [3, 5], MID: [2, 5], FWD: [1, 3], starters: 11 };
 const isFlexFormation = () => cfgOf().formationMode === "flex";
-const formationBounds = () => ({ ...DEFAULT_FORMATION, ...(cfgOf().formation || {}) });
+const formationBounds = () => ({ ...sportDef().formation(), ...(cfgOf().formation || {}) });
 
 /* Choose a legal starting XI from a squad, changing as little as possible.
 
@@ -3630,7 +3714,7 @@ const formationBounds = () => ({ ...DEFAULT_FORMATION, ...(cfgOf().formation || 
 function repairStarters(picks, mins, maxs, total) {
   const squad = (picks || []).filter((pk) => pk.position !== "TEAM" && pk.slot !== "TEAM");
   if (squad.length < total) return null;
-  const GROUPS4 = ["GK", "DEF", "MID", "FWD"];
+  const GROUPS4 = playGroups();
   const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
   // Current starters first, then the bench in its own order.
   squad.forEach((pk, i) => { if (byPos[pk.position]) byPos[pk.position].push({ pk, i }); });
@@ -3677,7 +3761,7 @@ function lineupShape() {
 function formationValid(counts, bounds) {
   const b = bounds || formationBounds();
   let total = 0;
-  for (const p of ["GK", "DEF", "MID", "FWD"]) {
+  for (const p of playGroups()) {
     const n = counts[p] || 0, [lo, hi] = b[p] || [0, Infinity];
     if (n < lo || n > hi) return false;
     total += n;
@@ -3759,7 +3843,7 @@ function maxSubsPerRound() {
   if (cfgOf().maxSubs != null) return cfgOf().maxSubs;
   if (isFlexFormation()) return Math.max(0, (cfgOf().squadSize ?? 15) - formationBounds().starters);
   const q = posQuota(), s = starterQuota();
-  return Math.max(0, ["GK", "DEF", "MID", "FWD"].reduce((a, p) => a + ((q[p] || 0) - (s[p] || 0)), 0));
+  return Math.max(0, playGroups().reduce((a, p) => a + ((q[p] || 0) - (s[p] || 0)), 0));
 }
 const maxSubsCapped = () => cfgOf().maxSubs != null;
 
@@ -4485,9 +4569,9 @@ function scoringBalance(statRows, posOf, rules, minGames) {
   }
   const players = Object.values(agg).filter((e) => e.games >= minGames);
   const perPos = {};
-  for (const p of ["GK", "DEF", "MID", "FWD"])
+  for (const p of playGroups())
     perPos[p] = statSummary(players.filter((x) => x.pos === p).map((x) => x.points));
-  const means = ["GK", "DEF", "MID", "FWD"].map((p) => perPos[p]).filter((s) => s.n).map((s) => s.mean);
+  const means = playGroups().map((p) => perPos[p]).filter((s) => s.n).map((s) => s.mean);
   const spread = means.length ? Math.max(...means) - Math.min(...means) : 0;
   const overall = means.length ? means.reduce((a, b) => a + b, 0) / means.length : 0;
   return {
@@ -4506,7 +4590,7 @@ function pointsHistogram(players, nbins) {
   nbins = nbins || 14;
   const pts = players.map((p) => p.points);
   const series = {};
-  for (const pos of ["GK", "DEF", "MID", "FWD"]) series[pos] = new Array(nbins).fill(0);
+  for (const pos of playGroups()) series[pos] = new Array(nbins).fill(0);
   if (!pts.length) return { nbins, min: 0, max: 0, binW: 0, series };
   let min = Math.min(...pts), max = Math.max(...pts);
   if (max === min) max += 1;
@@ -5231,7 +5315,7 @@ function computeScoresUncached() {
     // the sum quietly stopped matching the total the moment either existed.
 
     const mPicks = managerPicks(m.id).sort((a, b) =>
-      (SLOT_RANK[a.slot] ?? 9) - (SLOT_RANK[b.slot] ?? 9) || a.pick_number - b.pick_number);
+      (slotRankMap()[a.slot] ?? 9) - (slotRankMap()[b.slot] ?? 9) || a.pick_number - b.pick_number);
     const items = mPicks.map((pk) => {
       if (pk.slot === "TEAM") {
         const stage = stageOf(pk.team);
@@ -5533,7 +5617,7 @@ function managerHistory(mgrId) {
 // Human-readable value for one scoring rule (per-position or flat, + formula).
 function ruleValueText(rule) {
   const pts = rule.perPosition
-    ? GROUPS.slice(0, 4).map((g) => `${g} ${rule.points?.[g] ?? 0}`).join(" / ")
+    ? playGroups().map((g) => `${g} ${rule.points?.[g] ?? 0}`).join(" / ")
     : `${rule.points ?? 0}`;
   const mins = rule.minMinutes ? ` (≥${rule.minMinutes}′)` : "";
   if (rule.mode === "per") return `${pts} per ${rule.per}${mins}`;
@@ -5597,7 +5681,7 @@ function scoringHtml() {
    building a board, and the flat "GK 10 / DEF 6 / MID 5 / FWD 4" string in the
    rules list buried it inside a sentence. */
 function scoringByPositionHtml() {
-  const pos = GROUPS.slice(0, 4);
+  const pos = playGroups();
   const rules = scoringRules();
   const cell = (r, g) => {
     const v = r.perPosition ? (r.points?.[g] ?? 0) : (r.points ?? 0);
@@ -5680,13 +5764,13 @@ function draftFactCards() {
   cards.push(["👕", "Your squad", flex
     ? `Draft any mix you like up to ${cfgOf().squadSize ?? 15} players, as long as you can field a legal XI.`
     : `Pick any position on your turn within your quota: ${
-        GROUPS.filter((g) => q[g] > 0).map((g) => `${q[g]} ${g}`).join(", ")}.`]);
+        posGroups().filter((g) => q[g] > 0).map((g) => `${q[g]} ${g}`).join(", ")}.`]);
 
   cards.push(["⏱", secs ? `${secs} seconds a pick` : "No pick clock", secs
     ? "Run out and auto-pick takes the top name still available on your shortlist — which is why the order of it matters."
     : "Picks wait for you; there's no clock."]);
 
-  const starterLine = ["GK", "DEF", "MID", "FWD"]
+  const starterLine = playGroups()
     .filter((g) => sq[g] > 0).map((g) => `${sq[g]} ${g}`).join(", ");
   cards.push(["⚡", "Starting XI", (flex
     ? `Each round you pick a formation within DEF ${fb.DEF[0]}–${fb.DEF[1]}, MID ${fb.MID[0]}–${fb.MID[1]}, FWD ${fb.FWD[0]}–${fb.FWD[1]} (${fb.starters}-a-side).`
@@ -5732,7 +5816,7 @@ function lobbyRulesHtml() {
   const sq = starterQuota();
   const starters = isFlexFormation()
     ? formationBounds().starters
-    : ["GK", "DEF", "MID", "FWD"].reduce((a, g) => a + (sq[g] || 0), 0) + lineupFlex();
+    : playGroups().reduce((a, g) => a + (sq[g] || 0), 0) + lineupFlex();
   const secs = S.league?.pick_duration_seconds;
   // Rounds and squad size are the same number here (one pick a round), so the
   // fourth slot goes to the league size instead of saying it twice.
@@ -5775,7 +5859,7 @@ function phaseCardsHtml(me) {
     const caps = S.league.keeper_caps || null;
     const sel = new Set(me.keeper_pick_ids || []);
     const mine = managerPicks(me.id).filter((pk) => pk.slot !== "TEAM");
-    const capLine = caps ? " Position caps: " + ["GK", "DEF", "MID", "FWD"]
+    const capLine = caps ? " Position caps: " + playGroups()
       .filter((g) => caps[g] !== undefined).map((g) => `${caps[g]} ${g}`).join(" · ") + "." : "";
     html += `<div class="rounded-xl border border-wcgold bg-wcred/10 p-4 space-y-2">
       <div class="font-semibold text-sm">Redraft coming up — keep up to ${maxK} player${maxK === 1 ? "" : "s"}
@@ -6014,7 +6098,7 @@ function squadBoardHtml(items, mgrId, opts = {}) {
       <summary class="cursor-pointer select-none text-xs uppercase tracking-wide text-slate-400 py-1">
         All ${play.length} players &amp; points</summary>
       <div class="space-y-1 pt-1">${[...play].sort((a, b) =>
-        (SLOT_RANK[a.entry.slot] ?? 9) - (SLOT_RANK[b.entry.slot] ?? 9))
+        (slotRankMap()[a.entry.slot] ?? 9) - (slotRankMap()[b.entry.slot] ?? 9))
         .map((it) => lineupRowHtml(it, mgrId, false, rowOpts)).join("")}</div>
     </details>`;
 }
@@ -7498,7 +7582,7 @@ const NAV_LABEL = { lb: "Table", fixtures: "Fixtures", rosters: "Squads", bracke
 function isCupCompetition() {
   const c = leagueCompetition();
   if (!c) return true;
-  const meta = COMPETITIONS.find((x) => x.apiLeagueId === c.apiLeagueId);
+  const meta = competitionsFor(c.sport).find((x) => x.apiLeagueId === c.apiLeagueId);
   return !meta || meta.kind === "cup";
 }
 function navGroups() {
@@ -9123,7 +9207,7 @@ function dreamTeam(round, per90, worst) {
   }
   const out = { total: 0, FLEX: [] };
   const used = new Set();
-  for (const pos of ["GK", "DEF", "MID", "FWD"]) {
+  for (const pos of playGroups()) {
     out[pos] = byPos[pos].sort(bySort).slice(0, quota[pos] || 0);
     for (const x of out[pos]) used.add(x.p.player_id);
     out.total += out[pos].reduce((s, x) => s + x.pts, 0);
@@ -9168,7 +9252,7 @@ function currentRoundDreamIds() {
   if (_dreamIdsFor === S.stats && _dreamIdsRound === round && _dreamIds) return _dreamIds;
   const dt = dreamTeam(round, false);
   const ids = new Set();
-  for (const pos of ["GK", "DEF", "MID", "FWD"]) for (const x of dt[pos]) ids.add(x.p.player_id);
+  for (const pos of playGroups()) for (const x of dt[pos]) ids.add(x.p.player_id);
   for (const x of dt.FLEX) ids.add(x.p.player_id);
   _dreamIdsFor = S.stats; _dreamIdsRound = round; _dreamIds = ids;
   return ids;
@@ -9204,14 +9288,14 @@ function renderDreamTeam(round, per90, worst) {
       note: x.val, opp: own ? shortName(own.name) : "free",
       badge: flexIds.has(x.p.player_id) ? "F" : "" };
   };
-  for (const pos of ["GK", "DEF", "MID", "FWD"]) {
+  for (const pos of playGroups()) {
     for (const x of dt[pos]) byPos[pos].push(entry(x));
     for (let i = dt[pos].length; i < (quota[pos] || 0); i++)
       byPos[pos].push({ ghost: true, name: pos, id: `${pos}-${i}` });
   }
   for (const x of dt.FLEX) byPos[x.p.position]?.push(entry(x));
 
-  const picked = ["GK", "DEF", "MID", "FWD"].reduce((a, g) => a + dt[g].length, 0) + dt.FLEX.length;
+  const picked = playGroups().reduce((a, g) => a + dt[g].length, 0) + dt.FLEX.length;
   const scope = round ? `Round ${round}` : "Season";
   const title = worst ? "Nightmare XI" : "Dream XI";
   const blurb = worst
@@ -9371,7 +9455,7 @@ function renderStatsTab() {
     renderStatsTab();
   });
 
-  const chips = ["ALL", ...GROUPS.slice(0, 4)];
+  const chips = ["ALL", ...playGroups()];
   $("stats-chips").innerHTML = chips.map((c) =>
     `<button data-chip="${c}" class="rounded-full px-3 py-1 border ${
       S.statsPos === c ? "border-wcgold text-wcgold" : "border-slate-700 text-slate-400"
@@ -9977,7 +10061,7 @@ function pitchRowsHtml(byPos, opts = {}) {
       </button>
     </div>`;
   };
-  return ["GK", "DEF", "MID", "FWD"].map((g) =>
+  return playGroups().map((g) =>
     `<div class="pitch-row">${(byPos[g] || []).map(chip).join("")}</div>`).join("");
 }
 
@@ -10135,7 +10219,7 @@ function renderLineup() {
   const ok = lineupValid(counts);
   const need = isFlexFormation()
     ? formationBounds().starters
-    : ["GK", "DEF", "MID", "FWD"].reduce((a, g) => a + (starterQuota()[g] || 0), 0) + lineupFlex();
+    : playGroups().reduce((a, g) => a + (starterQuota()[g] || 0), 0) + lineupFlex();
   // Outfield shape only — "3-4-3" is how anyone actually describes a formation.
   $("lineup-formation").textContent = `${counts.DEF}-${counts.MID}-${counts.FWD}`;
   $("lineup-formation").className = "text-3xl font-bold scoreboard tracking-tight "
@@ -10258,7 +10342,7 @@ async function saveLineup() {
 
 // Position group of a slot: GK/SUB_GK -> GK, etc. TEAM stays its own group
 // and is excluded from all trading.
-const slotGroup = (slot) => SLOT_POS[slot] || null;
+const slotGroup = (slot) => slotPosMap()[slot] || null;
 
 function openSwap(pick) {
   if (!tradingOpen()) return toast(autoWindowsEnabled() ? tradeWindowMessage() : "Trading window is closed.");
@@ -11148,7 +11232,7 @@ function builderHtml(me) {
             const sq = managerPicks(m.id).filter((pk) => pk.slot !== "TEAM");
             const by = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
             for (const pk of sq) if (by[pk.position] != null) by[pk.position]++;
-            const shape = ["GK", "DEF", "MID", "FWD"].map((g) => `${by[g]}${g}`).join(" · ");
+            const shape = playGroups().map((g) => `${by[g]}${g}`).join(" · ");
             const best = sq.map((pk) => ({ pk, v: playerPoints(pk.player_id, pk.position) }))
               .sort((a, x) => x.v - a.v)[0];
             return `${shape}${best?.v ? ` · best ${esc(shortName(best.pk.player_name))} ${best.v}p` : ""}`;
@@ -11500,7 +11584,7 @@ function shortlistSectionHtml(me) {
     </div>
     ${allIds.length ? `
       <div class="flex gap-1.5 overflow-x-auto whitespace-nowrap pb-0.5">
-        ${["ALL", ...GROUPS.slice(0, 4)].map((g) =>
+        ${["ALL", ...playGroups()].map((g) =>
           `<button data-wlpos="${g}" class="shrink-0 ${chip((S.wlPos || "ALL") === g)}">${g}</button>`).join("")}
         <button data-wlfree="1" class="shrink-0 ${chip(!!S.wlFree)}">🟢 Free only</button>
         <button data-wl90="1" class="shrink-0 ${chip(per90)}">⏱ per 90</button>
@@ -12582,10 +12666,12 @@ async function loadCompetition() {
   const apiKey = $("adm-api-key").value.trim();
   const apiLeagueId = +$("adm-comp-select").value;
   const season = +$("adm-comp-season").value;
-  const comp = COMPETITIONS.find((c) => c.apiLeagueId === apiLeagueId);
+  const sportName = sportOf();
+  const comp = competitionsFor(sportName).find((c) => c.apiLeagueId === apiLeagueId);
   const name = comp?.name || ("League " + apiLeagueId);
-  const compKey = `${apiLeagueId}-${season}`;
-  const competition = { name, apiLeagueId, season };
+  const competition = { name, apiLeagueId, season, sport: sportName };
+  // Built by the one function that knows the format, not by hand a second time.
+  const compKey = compKeyOf(competition);
   const log = (t) => { $("adm-comp-log").textContent = t; };
   if (!apiLeagueId || !season) return toast("Pick a competition and a season.");
   if ((S.stats?.length || 0) &&
@@ -12684,8 +12770,9 @@ async function renderScheduleManager() {
     return;
   }
   box.innerHTML = data.map((r) => {
-    const [lid, season] = r.competition_key.split("-");
-    const name = COMPETITIONS.find((c) => c.apiLeagueId === +lid)?.name || ("League " + lid);
+    const { sport: keySport, apiLeagueId: lid, season } = parseCompKey(r.competition_key);
+    const name = competitionsFor(keySport).find((c) => c.apiLeagueId === lid)?.name
+      || ("League " + lid);
     const on = !!r.scheduled;
     return `<div class="flex items-center justify-between gap-2 rounded-lg bg-slate-800/50 px-3 py-2">
       <span class="text-sm min-w-0 truncate"><span class="font-medium">${esc(name)}</span>
@@ -12927,7 +13014,7 @@ async function toggleKeeperWindow() {
   if (next) {
     payload.keeper_max = Math.max(0, parseInt($("adm-k-max").value, 10) || 0);
     const caps = {};
-    for (const g of ["GK", "DEF", "MID", "FWD"]) {
+    for (const g of playGroups()) {
       const v = $("adm-k-" + g.toLowerCase()).value.trim();
       if (v !== "") caps[g] = Math.max(0, parseInt(v, 10) || 0);
     }
@@ -12948,7 +13035,7 @@ async function startRedraft() {
   if (!size) return toast("Set the squad size first.");
   // Starter minimums can't exceed the position minimum; the flex sits on top
   // of both the squad and the starting XI, so the starter total gets it too.
-  for (const g of ["GK", "DEF", "MID", "FWD"]) {
+  for (const g of playGroups()) {
     if (starters[g] > quota[g])
       return toast(`${g}: starter minimum (${starters[g]}) can't exceed the squad minimum (${quota[g]}).`);
   }
@@ -12958,7 +13045,7 @@ async function startRedraft() {
   const active = activeManagers();
   // Kept players fill quota slots, so the pool only needs to cover the
   // full quota: quota*managers <= players at that position.
-  for (const g of ["GK", "DEF", "MID", "FWD"]) {
+  for (const g of playGroups()) {
     const pool = S.players.filter((p) => p.position === g).length;
     if (quota[g] * active.length > pool)
       return toast(`Not enough ${g}s in the pool: need ${quota[g] * active.length}, have ${pool}.`);
@@ -13097,11 +13184,11 @@ function renderRulesEditor(container, rules, opts = {}) {
   const { locked = false, onChange = () => {} } = opts;
   const dis = locked ? " disabled" : "";
   const inp = "rounded bg-slate-800 border border-slate-700 px-2 py-1 text-sm" + (locked ? " opacity-60" : "");
-  const statOpts = (sel) => STAT_CATALOG.map((s) =>
+  const statOpts = (sel) => sportDef().statCatalog().map((s) =>
     `<option value="${s.key}"${s.key === sel ? " selected" : ""}>${esc(s.label)}</option>`).join("");
   container.innerHTML = rules.map((rule, i) => {
     const pts = rule.perPosition
-      ? `<div class="grid grid-cols-4 gap-1">${["GK", "DEF", "MID", "FWD"].map((g) =>
+      ? `<div class="grid grid-cols-4 gap-1">${playGroups().map((g) =>
           `<label class="text-xs text-slate-400 text-center">${g}<input data-ri="${i}" data-rk="points.${g}" type="number" step="1" value="${rule.points?.[g] ?? 0}"${dis} class="mt-0.5 w-full ${inp}"></label>`).join("")}</div>`
       : `<label class="text-xs text-slate-400">Points <input data-ri="${i}" data-rk="points" type="number" step="1" value="${typeof rule.points === "number" ? rule.points : 0}"${dis} class="ml-1 w-20 ${inp}"></label>`;
     const extra = rule.mode === "per"
@@ -13164,7 +13251,7 @@ function renderRulesEditor(container, rules, opts = {}) {
 function ridgelineSvg(players, perPos, opts) {
   opts = opts || {};
   const big = !!opts.big;
-  const rowsAll = ["GK", "DEF", "MID", "FWD"].filter((p) => perPos[p].n > 0);
+  const rowsAll = playGroups().filter((p) => perPos[p].n > 0);
   if (!rowsAll.length) return "";
   const hist = pointsHistogram(players, big ? 30 : 14);   // finer bins when enlarged → sharper tails
   /* Validated categorical set. Held in JS because the chart writes them into
@@ -13231,7 +13318,7 @@ function renderScoringBalance(container, statRows, posOf, rules, meta) {
     return;
   }
   const fmt = (x) => (Math.round(x * 10) / 10).toFixed(1);
-  const cards = ["GK", "DEF", "MID", "FWD"].map((p) => {
+  const cards = playGroups().map((p) => {
     const s = b.perPos[p];
     return `<div class="rounded-lg border border-slate-700 bg-slate-800/40 px-1.5 py-1.5 text-center">
       <div class="text-xs text-slate-400">${p} <span class="text-slate-500">·${s.n}</span></div>
@@ -13284,9 +13371,9 @@ function closeChartSheet() { $("chart-sheet")?.classList.add("hidden"); }
 function squadFieldsHtml(eff, locked) {
   return `
     <div class="text-xs text-slate-400 font-medium">Squad size per position (draft quota)</div>
-    ${cfgGrid(["GK", "DEF", "MID", "FWD"].map((p) => cfgNum(`quota.${p}`, p, eff.quota[p], locked)))}
+    ${cfgGrid(playGroups().map((p) => cfgNum(`quota.${p}`, p, eff.quota[p], locked)))}
     <div class="text-xs text-slate-400 font-medium">Starters per position (the rest are subs)</div>
-    ${cfgGrid(["GK", "DEF", "MID", "FWD"].map((p) => cfgNum(`starters.${p}`, p, eff.starters[p], locked)))}`;
+    ${cfgGrid(playGroups().map((p) => cfgNum(`starters.${p}`, p, eff.starters[p], locked)))}`;
 }
 
 // Team-pick stage/champion bonuses (no TEAM quota — that's set alongside it).
@@ -13356,7 +13443,7 @@ function renderConfigEditor() {
 
 async function saveConfigEditor() {
   const cfg = readConfigFromFields($("adm-config"));
-  if (JSON.stringify(S._admRules) !== JSON.stringify(DEFAULT_RULES)) cfg.scoring = S._admRules;
+  if (JSON.stringify(S._admRules) !== JSON.stringify(sportDef().rules())) cfg.scoring = S._admRules;
   const { error } = await S.sb.from("leagues").update({ config: cfg }).eq("id", S.league.id);
   if (error) return toast(/config|column|schema cache/.test(error.message)
     ? "Config needs a schema update — run schema.sql." : error.message);
@@ -13425,7 +13512,7 @@ function renderAdmin() {
   renderConfigEditor();
   // Competition selector + current-pool status.
   if (!$("adm-comp-select").options.length)
-    $("adm-comp-select").innerHTML = COMPETITIONS.map((c) =>
+    $("adm-comp-select").innerHTML = competitionsFor().map((c) =>
       `<option value="${c.apiLeagueId}">${esc(c.name)}</option>`).join("");
   if (!$("adm-comp-season").value) $("adm-comp-season").value = new Date().getFullYear();
   const curComp = leagueCompetition();
