@@ -1985,3 +1985,43 @@ test("a rugby league with no pool says so, instead of filling up with footballer
     expect(out.err, "and it should name the sport").toContain("Rugby");
     expect(out.players, "and no football pool should have been substituted").toBe(0);
   });
+
+test("a rugby league in flex formation renders too", async ({ page }) => {
+  /* The second real rugby league died with "cannot read properties of
+     undefined (reading '0')". lineupShape's flex branch, and both flex
+     blurbs, read b.DEF[0] / b.MID[0] / b.FWD[0] off the bounds object by
+     name -- which on a sport with other positions is not a wrong sentence,
+     it is a crash. The fixed branch did not throw; it silently totalled the
+     starting side at zero, which is worse. */
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const out = await page.evaluate(() => {
+    S.league.competition = { apiLeagueId: 2146, season: 2026, sport: "rugby" };
+    const errs = [];
+    const tryIt = (name, fn) => { try { return fn(); } catch (e) { errs.push(`${name}: ${e.message}`); } };
+
+    // Fixed mode first: the total must be the XV, not zero.
+    S.league.config = null;
+    const fixed = tryIt("lineupShape/fixed", () => lineupShape());
+
+    // ...then flex, which is the mode that threw.
+    S.league.config = { formationMode: "flex" };
+    const flex = tryIt("lineupShape/flex", () => lineupShape());
+    const mins = tryIt("formationMinsText", () => formationMinsText(formationBounds()));
+    const range = tryIt("formationRangeText", () => formationRangeText(formationBounds()));
+    tryIt("draftFactCards", () => draftFactCards());
+    tryIt("squadPitchHtml", () => squadPitchHtml([]));
+    S.league.config = null;
+    return { errs, fixedTotal: fixed?.total, flexTotal: flex?.total,
+             flexMinKeys: Object.keys(flex?.mins || {}).join(","), mins, range };
+  });
+
+  expect(out.errs, "no formation code may throw on a rugby league").toEqual([]);
+  expect(out.fixedTotal, "a fixed rugby side is fifteen, not zero").toBe(15);
+  expect(out.flexTotal, "and so is a flex one").toBe(15);
+  expect(out.flexMinKeys, "bounds are keyed by the sport's own groups")
+    .toBe("PR,HK,LK,LF,SH,FH,CE,OB");
+  expect(out.mins, "the minimums are described in rugby positions").toContain("LF");
+  expect(out.mins, "and never in football ones").not.toContain("DEF");
+  expect(out.range, "as are the ranges").toMatch(/PR 2–3/);
+});

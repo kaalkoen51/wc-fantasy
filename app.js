@@ -4341,9 +4341,9 @@ function renderDraft() {
     if (isFlexFormation()) {
       const f = formationBounds();
       banner.innerHTML = `Your pick — draft any mix<br><span class="text-xs font-normal text-slate-300">`
-        + `Squad of ${squadSize()}. You must end with at least ${f.DEF[0]} DEF, ${f.MID[0]} MID, `
-        + `${f.FWD[0]} FWD and a GK; the rest is your call. Each round you'll pick a formation within `
-        + `DEF ${f.DEF[0]}–${f.DEF[1]}, MID ${f.MID[0]}–${f.MID[1]}, FWD ${f.FWD[0]}–${f.FWD[1]} (${f.starters}-a-side).</span>`;
+        + `Squad of ${squadSize()}. You must end with at least ${formationMinsText(f)}; `
+        + `the rest is your call. Each round you'll pick a formation within `
+        + `${formationRangeText(f)} (${f.starters}-a-side).</span>`;
     } else banner.textContent = "Your pick — any position you still need";
   }
   renderDraftQueue(me, myTurn);
@@ -4456,6 +4456,16 @@ const scoringRules = () => {
    order) to cover no-shows only where the resulting formation stays valid. */
 const DEFAULT_FORMATION = { GK: [1, 1], DEF: [3, 5], MID: [2, 5], FWD: [1, 3], starters: 11 };
 const isFlexFormation = () => cfgOf().formationMode === "flex";
+/* The formation bounds, said out loud. Both call sites read DEF/MID/FWD off
+   the bounds object by name, which on a sport with other positions is not a
+   wrong sentence -- it is a crash, because b.DEF is undefined and [0] of that
+   throws. */
+const formationMinsText = (b) => playGroups()
+  .filter((g) => (b[g]?.[0] ?? 0) > 0)
+  .map((g) => `${b[g][0]} ${g}`).join(", ") || "no fixed minimum";
+const formationRangeText = (b) => playGroups()
+  .filter((g) => b[g])
+  .map((g) => `${g} ${b[g][0]}–${b[g][1]}`).join(", ");
 const formationBounds = () => ({ ...sportDef().formation(), ...(cfgOf().formation || {}) });
 
 /* Choose a legal starting XI from a squad, changing as little as possible.
@@ -4508,15 +4518,22 @@ function repairStarters(picks, mins, maxs, total) {
 function lineupShape() {
   if (isFlexFormation()) {
     const b = formationBounds();
-    return { mins: { GK: b.GK[0], DEF: b.DEF[0], MID: b.MID[0], FWD: b.FWD[0] },
-             maxs: { GK: b.GK[1], DEF: b.DEF[1], MID: b.MID[1], FWD: b.FWD[1] },
-             total: b.starters };
+    return {
+      mins: Object.fromEntries(playGroups().map((g) => [g, b[g]?.[0] ?? 0])),
+      maxs: Object.fromEntries(playGroups().map((g) => [g, b[g]?.[1] ?? 0])),
+      total: b.starters,
+    };
   }
   const q = starterQuota(), fx = lineupFlex();
-  const total = (q.GK || 0) + (q.DEF || 0) + (q.MID || 0) + (q.FWD || 0) + fx;
-  // Fixed mode: the quota IS the shape; flex places may go to any outfielder.
-  return { mins: q, maxs: { GK: q.GK || 0, DEF: (q.DEF || 0) + fx,
-                            MID: (q.MID || 0) + fx, FWD: (q.FWD || 0) + fx }, total };
+  const total = sumGroups(q) + fx;
+  /* Fixed mode: the quota IS the shape, and the flex places may go to any
+     group that is not fixed to an exact count -- which is what "outfielder"
+     meant when this named three positions. */
+  const loose = new Set(outfieldGroups());
+  return { mins: q,
+    maxs: Object.fromEntries(playGroups().map((g) =>
+      [g, (q[g] || 0) + (loose.has(g) ? fx : 0)])),
+    total };
 }
 
 // Is a per-position starter count { GK,DEF,MID,FWD } a legal formation?
@@ -6535,7 +6552,7 @@ function draftFactCards() {
   const starterLine = playGroups()
     .filter((g) => sq[g] > 0).map((g) => `${sq[g]} ${g}`).join(", ");
   cards.push(["⚡", "Starting XI", (flex
-    ? `Each round you pick a formation within DEF ${fb.DEF[0]}–${fb.DEF[1]}, MID ${fb.MID[0]}–${fb.MID[1]}, FWD ${fb.FWD[0]}–${fb.FWD[1]} (${fb.starters}-a-side).`
+    ? `Each round you pick a formation within ${formationRangeText(fb)} (${fb.starters}-a-side).`
     : `Name your starters (${starterLine}) before each round — everyone else is a sub.`)
     + (captainEnabled() ? " Your captain scores double, with a vice-captain who takes over if they don't play." : "")
     + (maxSubsCapped() ? ` At most ${maxSubsPerRound()} sub${maxSubsPerRound() === 1 ? "" : "s"} can come on in a round.` : "")]);
