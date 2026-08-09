@@ -1,0 +1,27 @@
+# Supabase CLI project config.
+#
+# This exists so `supabase functions deploy <name>` is reproducible instead of
+# depending on flags someone remembered to type. The project ref is not a
+# secret -- it is already in the CSP in _headers and in every request the app
+# makes.
+
+project_id = "gpdyemrgulhdnsmmadgs"
+
+# api-football deliberately has no entry here, so it keeps the platform default
+# (verify_jwt = true). That function guards a PAID API key, and requiring a
+# token is a real, if modest, brake on someone else spending your quota.
+
+[functions.rugby-feed]
+# The rugby feed needs no key of its own, so this function guards nothing.
+#
+# Requiring a JWT here would buy no security -- the anon key that satisfies it
+# is embedded in the page and public by design -- while adding a failure mode
+# that is genuinely awkward to debug: a browser sends an unauthenticated
+# OPTIONS preflight before any request carrying an Authorization header, and if
+# the platform rejects that preflight the error surfaces as an opaque CORS
+# message rather than as "401".
+#
+# What actually limits abuse here is the function itself: it proxies four exact
+# path shapes, GET only, to one pinned host, and returns nothing a browser
+# could not fetch from that host directly.
+verify_jwt = false
