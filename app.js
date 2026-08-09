@@ -645,6 +645,90 @@ const RUGBY_COMPETITIONS = [
     feedName: "Nations Championship" },
 ];
 
+/* ---------- confirmed matchday squads: the observation ----------
+
+   Rugby names its matchday squads days ahead of kick-off, which football does
+   not, and that is the whole reason to badge a starting XV before a deadline.
+
+   What is NOT known is whether THIS feed carries them. Its guide documents
+   player stats for finished matches and says nothing about an unplayed one,
+   and the search endpoint blanks `players` in every view. So rather than
+   guessing at a shape and building badges on it, this reads real upcoming
+   fixtures and writes down what actually comes back -- including the field
+   NAMES, because "which keys does a pre-match player object have" is exactly
+   the question that cannot be answered from the guide.
+
+   Pure, so the reading of a payload is testable without a network. */
+function summariseLineupSample(detail, nowMs) {
+  const at = Date.parse(detail?.date);
+  const sides = ["homeTeam", "awayTeam"].map((k) => detail?.[k]).filter(Boolean);
+  const players = sides.flatMap((t) => t?.players || []);
+  const posIds = [...new Set(players.map((p) => +p.positionId).filter(Number.isFinite))]
+    .sort((a, b) => a - b);
+  /* Every key seen on any player, merged. A field that only some players carry
+     is exactly the sort of thing to know about before relying on it. */
+  const keys = [...new Set(players.flatMap((p) => Object.keys(p || {})))].sort();
+  return {
+    matchId: detail?.id ?? null,
+    kickoff: detail?.date || null,
+    hoursAhead: isFinite(at) && nowMs != null
+      ? Math.round((at - nowMs) / 36e5) : null,
+    status: detail?.status || null,
+    sides: sides.length,
+    players: players.length,
+    /* 1-15 named, 16-23 on the bench. Both present is a full matchday squad;
+       only 1-15 would mean starters without a bench. */
+    starters: posIds.filter((n) => n >= 1 && n <= 15).length,
+    bench: posIds.filter((n) => n >= 16 && n <= 23).length,
+    positionIds: posIds,
+    playerKeys: keys,
+  };
+}
+
+/* Reads the next few unplayed fixtures and reports what the feed gave for
+   each. Deliberately read-only: it writes nothing and changes no scoring. */
+async function observeRugbyLineups(apiLeagueId, limit = 4, onProgress) {
+  const all = await fetchRugbyMatches(apiLeagueId);
+  const upcoming = usableRugbyMatches(all, { status: "fixture" });
+  const out = { competition: apiLeagueId, upcoming: upcoming.length, samples: [] };
+  const now = Date.now();
+  for (const m of upcoming.slice(0, limit)) {
+    onProgress && onProgress(out.samples.length + 1, Math.min(limit, upcoming.length));
+    try {
+      const detail = await rugbyFeed(`matches/${m.id}`);
+      out.samples.push(summariseLineupSample(detail?.data || detail, now));
+    } catch (e) {
+      out.samples.push({ matchId: m.id, error: String(e.message || e) });
+    }
+  }
+  return out;
+}
+
+/* The report, as text rather than as a widget: this exists to be read once and
+   pasted into a decision about whether the badges can be built at all. */
+function lineupObservationText(obs) {
+  if (!obs) return "";
+  const lines = [`${obs.upcoming} upcoming fixture(s) found; sampled ${obs.samples.length}.`];
+  let any = 0;
+  for (const s of obs.samples) {
+    if (s.error) { lines.push(`· match ${s.matchId}: ERROR ${s.error}`); continue; }
+    const when = s.hoursAhead == null ? "?" : `${s.hoursAhead}h ahead`;
+    if (!s.players) {
+      lines.push(`· match ${s.matchId} (${when}, ${s.status}): no players[] yet`);
+      continue;
+    }
+    any++;
+    lines.push(`· match ${s.matchId} (${when}, ${s.status}): ${s.players} players`
+      + ` — ${s.starters} of shirts 1-15, ${s.bench} of 16-23`);
+    lines.push(`    positionIds: ${s.positionIds.join(", ") || "none"}`);
+    lines.push(`    player fields: ${s.playerKeys.join(", ") || "none"}`);
+  }
+  lines.push(any
+    ? `\n${any} of ${obs.samples.length} sampled fixtures carried a line-up. The badges can be built on this.`
+    : `\nNo sampled fixture carried a line-up. Either they are named closer to kick-off, or this feed does not publish them — re-run nearer a matchday before deciding.`);
+  return lines.join("\n");
+}
+
 /* ---------- the rugby preset ----------
    Eight position groups, in the order a team sheet lists them: the front row
    and the rest of the pack, then the halves and the backs. */
@@ -14014,6 +14098,8 @@ function renderAdmin() {
   $("adm-comp-current").textContent = curComp
     ? `Current: ${curComp.name} ${curComp.season} — ${S.players.length} players`
     : "Current: built-in World Cup 2026 squads";
+  // The line-up probe is a rugby question, so it only appears for a rugby league.
+  $("adm-lineups-wrap")?.classList.toggle("hidden", sportOf() !== "rugby");
   renderScheduleManager();
   admQuotaSizePreview();
   if (!$("adm-home").options.length) {
@@ -14471,6 +14557,20 @@ function wire() {
     $(id).oninput = admQuotaSizePreview);
   $("adm-pull-now").onclick = () => pullStatsNow().catch((e) => toast(e.message));
   $("adm-comp-load").onclick = () => loadCompetition().catch((e) => toast(e.message));
+  $("adm-lineups-check").onclick = async () => {
+    const btn = $("adm-lineups-check"), log = $("adm-lineups-log");
+    const comp = leagueCompetition();
+    if (!comp) return toast("This league has no competition to check.");
+    btn.disabled = true;
+    log.textContent = "Reading upcoming fixtures…";
+    try {
+      const obs = await observeRugbyLineups(comp.apiLeagueId, 4,
+        (n, total) => { log.textContent = `Reading fixture ${n} of ${total}…`; });
+      log.textContent = lineupObservationText(obs);
+    } catch (e) {
+      log.textContent = `Could not read the feed: ${e.message}`;
+    } finally { btn.disabled = false; }
+  };
   $("adm-snapshot").onclick = () => {
     if (confirm("Snapshot every manager's current lineup as the locked state from today?"))
       snapshotRosters().then(() => { toast("Lineups locked."); scheduleRefetch(); })

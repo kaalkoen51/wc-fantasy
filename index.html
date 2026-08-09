@@ -684,6 +684,15 @@
         </div>
         <button id="adm-comp-load" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg px-4 py-2 text-sm font-semibold">Load competition from API</button>
         <pre id="adm-comp-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
+        <!-- Rugby only, and shown only for a rugby league: reads the next few
+             unplayed fixtures and reports whether the feed is publishing
+             matchday squads yet. Read-only -- it writes nothing. -->
+        <div id="adm-lineups-wrap" class="hidden space-y-2 rounded-lg border border-slate-700 bg-slate-800/40 p-3">
+          <p class="text-xs text-slate-400">Rugby squads are named days ahead. This checks whether the
+            feed is actually publishing them yet, before any badges are built on it.</p>
+          <button id="adm-lineups-check" class="w-full rounded-lg border border-wcgold/50 bg-wcred/10 text-wcgold px-3 py-1.5 text-xs font-semibold">🔎 Check upcoming line-ups</button>
+          <pre id="adm-lineups-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
+        </div>
       </div>
 <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">⚙️ Design your draft — scoring &amp; bonuses</h3>

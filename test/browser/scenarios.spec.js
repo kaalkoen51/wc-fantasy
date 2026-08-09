@@ -1694,3 +1694,33 @@ test("choosing rugby re-designs the draft, and football is left alone", async ({
   expect(read.back.firstRule).toBe("goals.total");
   expect(read.back.comps.join(" ")).toContain("World Cup");
 });
+
+test("the line-up probe is offered for rugby and hidden for football", async ({ page }) => {
+  /* It answers a rugby question -- whether this feed publishes matchday squads
+     before kick-off -- so showing it on a football league would be offering an
+     admin a button that cannot tell them anything. */
+  await openLeague(page, { managers: 4, played: 3 });
+  const seen = await page.evaluate(() => {
+    const hidden = () => document.getElementById("adm-lineups-wrap")?.classList.contains("hidden");
+    showView("board"); setBoardTab("admin");
+    /* renderAdmin() rather than setBoardTab() for the second read: switching to
+       a tab you are already on is a no-op, so the panel would never repaint and
+       the check would pass on a stale DOM. */
+    const admin = isAdmin();
+    /* Rendered explicitly here too. Reading it straight after setBoardTab left
+       the football case unable to tell "the rule hid it" from "the panel never
+       painted", since the element ships with `hidden` in the markup -- which a
+       sabotage check caught by passing when the rule was removed entirely. */
+    renderAdmin();
+    const asFootball = hidden();
+    S.league.competition = { apiLeagueId: 1068, season: 2025, sport: "rugby" };
+    renderAdmin();
+    return { admin, asFootball, asRugby: hidden(),
+             exists: !!document.getElementById("adm-lineups-check") };
+  });
+  expect(seen.exists, "the probe button should be in the admin panel").toBe(true);
+  // Without this the football case below could pass simply by never rendering.
+  expect(seen.admin, "the test manager must be an admin for this to mean anything").toBe(true);
+  expect(seen.asFootball, "a football league has no matchday-squad feed to check").toBe(true);
+  expect(seen.asRugby, "a rugby league should be offered the check").toBe(false);
+});
