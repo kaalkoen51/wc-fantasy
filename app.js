@@ -1044,10 +1044,21 @@ function firstArray(body, keys, what) {
   return [];
 }
 
-/* The feed answers 200 with {"status":"error"} rather than an HTTP error, so
-   every caller has to look before it parses. */
+/* The feed has TWO error shapes, and only one of them was handled.
+
+   A bad match id answers 200 with {"status":"error","message":…}. A bad
+   request answers a real HTTP status with a different envelope entirely --
+   {"timestamp":…,"status":400,"error":"Bad Request","path":"/v1/teams/4/players"}
+   -- where `status` is a NUMBER, so the check below waved it through, the
+   list extractor found no array, and the whole thing surfaced as "no players
+   returned" instead of "the feed said 400". */
 function rugbyBody(data) {
-  if (data && data.status === "error") throw new Error(data.message || "Rugby feed error");
+  if (!data) return data;
+  if (data.status === "error") throw new Error(data.message || "Rugby feed error");
+  if (typeof data.status === "number" && data.status >= 400) {
+    throw new Error(`${data.status} ${data.error || "error"}${
+      data.path ? ` for ${data.path}` : ""}${data.message ? ` — ${data.message}` : ""}`);
+  }
   return data;
 }
 
@@ -1076,8 +1087,17 @@ async function rugbyFeed(path, params) {
       if (viaProxy && (resp.status === 404 || resp.status === 401)) {
         _rugbyProxy = false; continue;      // not deployed, or refusing us
       }
-      const data = await resp.json();
       if (viaProxy) _rugbyProxy = true;
+      const text = await resp.text();
+      let data = null;
+      try { data = JSON.parse(text); } catch { /* not JSON; handled below */ }
+      /* An upstream error status is passed through by the proxy, so the
+         response can be a perfectly valid JSON body describing a failure.
+         Reading it as data is how a 400 became an empty squad. */
+      if (!resp.ok && !(data && (data.status === "error" || typeof data.status === "number"))) {
+        throw new Error(`Rugby feed ${resp.status} for ${path}${
+          text ? ` — ${text.slice(0, 200)}` : ""}`);
+      }
       return rugbyBody(data);
     } catch (e) {
       if (viaProxy && _rugbyProxy !== true) { _rugbyProxy = false; continue; }

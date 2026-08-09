@@ -3582,5 +3582,26 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
   check("...the date taken off the timestamp", parsed.date, "2026-11-14");
   check("...and the round numbered", parsed.round, "Round 3");
 
+
+  /* The feed's second error shape, straight from a real response. `status` is
+     a NUMBER here, not the string "error", which is how a 400 slipped past the
+     check and came out the other end as an empty squad. */
+  const badReq = { timestamp: "2026-08-09T15:24:38.310Z", status: 400,
+                   error: "Bad Request", path: "/v1/teams/4/players" };
+  check("an HTTP-shaped error envelope throws", (() => {
+    try { rugbyBody(badReq); return "no throw"; } catch (e) { return e.message; }
+  })().includes("400"), true);
+  check("...and names the path that failed", (() => {
+    try { rugbyBody(badReq); return ""; } catch (e) { return e.message; }
+  })().includes("/v1/teams/4/players"), true);
+  check("the other error shape still throws", (() => {
+    try { rugbyBody({ status: "error", message: "No match exists" }); return "no throw"; }
+    catch { return "threw"; }
+  })(), "threw");
+  check("a success envelope is untouched",
+    rugbyBody({ data: [1], status: "success" }).data.length, 1);
+  check("...and a body with no status at all passes through",
+    rugbyBody({ data: [] }).data.length, 0);
+
   process.exit(fails ? 1 : 0);
 })();
