@@ -597,6 +597,280 @@ async function fetchCompetitionRounds(key, apiLeagueId, season) {
   } catch { return []; }          // optional: order falls back to kickoff sort
 }
 
+/* ---------- rugby union feed ----------
+   A different provider with a different shape, so everything below is the
+   rugby half of what api-football does above. Nothing here registers a sport
+   yet -- SPORTS.rugby arrives with the preset, so that until it does there is
+   no way to select a half-built sport in the app.
+
+   Feed: rugby-union-feeds.incrowdsports.com, provider `rugbyviz`, no key.
+   NOT players.cortextech.io, which is an unrelated editorial CMS.
+
+   Two things about it shape all of this:
+
+   * `season`, `status`, `round` and `sort` are accepted and then IGNORED by
+     the search endpoint. Every filter below is therefore client-side, and the
+     app keeps storing a plain year as the season the way football does -- the
+     feed's own YYYY00 / YYYY01 codes are documentation, not a request
+     parameter, so there is nothing to convert at call time.
+   * `tryAssists` is null across every competition, so there is no assist
+     scoring to be had here. Anything that promises one is promising a zero. */
+
+const RUGBY_COMPETITIONS = [
+  // kind drives the season model, and it already means exactly the right
+  // thing: "cup" is keyed by its own calendar year (the feed writes those
+  // YYYY00), "league" runs across two (YYYY01).
+  { name: "United Rugby Championship", apiLeagueId: 1068, kind: "league",
+    feedName: "United Rugby Championship" },
+  { name: "Investec Champions Cup",    apiLeagueId: 1008, kind: "league",
+    feedName: "Investec Champions Cup" },
+  { name: "Super Rugby Pacific",       apiLeagueId: 1020, kind: "cup",
+    feedName: "Super Rugby Pacific" },
+  { name: "Nations Championship",      apiLeagueId: 2146, kind: "cup",
+    feedName: "Nations Championship" },
+];
+
+/* Shirt number to position group. 1-15 is the starting XV in shirt order and
+   the mapping is not a judgement call -- 1 and 3 are the props, 2 hooks, 4-5
+   lock, 6-8 are the loose forwards, and so on. 16-23 are the bench, whose
+   on-field role the feed does NOT state, which is why a bench player's
+   position has to come from the squad roster instead. */
+const RUGBY_POS = { 1: "PR", 2: "HK", 3: "PR", 4: "LK", 5: "LK", 6: "LF", 7: "LF",
+                    8: "LF", 9: "SH", 10: "FH", 11: "OB", 12: "CE", 13: "CE",
+                    14: "OB", 15: "OB" };
+/* ...and by name, for the squad roster, whose shape is not documented and may
+   name a position rather than number it. Matched on a squashed lower-case
+   form so "Scrum Half", "scrum-half" and "SCRUMHALF" all land. */
+const RUGBY_POS_BY_NAME = {
+  prop: "PR", looseheadprop: "PR", tightheadprop: "PR",
+  hooker: "HK",
+  lock: "LK", secondrow: "LK",
+  flanker: "LF", openside: "LF", blindside: "LF", number8: "LF", no8: "LF",
+  backrow: "LF", looseforward: "LF",
+  scrumhalf: "SH", halfback: "SH",
+  flyhalf: "FH", outhalf: "FH", firstfiveeighth: "FH",
+  centre: "CE", center: "CE", inside: "CE", outside: "CE", secondfiveeighth: "CE",
+  wing: "OB", winger: "OB", fullback: "OB", backthree: "OB", utilityback: "OB",
+};
+const rugbyPosCode = (positionId, positionName) => {
+  const byId = RUGBY_POS[+positionId];
+  if (byId) return byId;
+  const k = String(positionName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  return RUGBY_POS_BY_NAME[k] || null;
+};
+// 16-23 are "sub 1".."sub 8" -- in the squad, not in the starting XV.
+const isRugbyBenchSlot = (positionId) => +positionId >= 16 && +positionId <= 23;
+
+/* The 29 fields the feed actually populates. Everything else in its schema is
+   present and permanently null, and building a scoring rule on one of those
+   would award every player zero for ever without erroring once. */
+const RUGBY_STAT_KEYS = [
+  "tries", "conversionGoals", "penaltyGoals", "dropGoalsConverted",
+  "carries", "carriesCrossedGainLine", "metres", "cleanBreaks", "defendersBeaten",
+  "offload", "passes", "tackles", "missedTackles", "tackleSuccess",
+  "turnoverWon", "turnoversConceded", "lineoutsWon", "lineoutSteals",
+  "kicksFromHand", "kickFromHandMetres", "kickMetres", "retainedKicks", "tryKicks",
+  "penaltiesConceded", "yellowCards", "redCards",
+  "missedConversionGoals", "minutesPlayedTotal", "points",
+];
+
+/* A player's stats may sit on the player object or under a `stats` key -- the
+   feed's own guide shows the fields without saying which, and being wrong
+   about it silently scores everyone zero. Reading both costs nothing. */
+const rugbyStatsOf = (p) => (p && (p.stats || p.statistics)) || p || {};
+
+/* One squad-roster entry -> the app's player record. `known` is the feed's
+   resolved display name ("Rieko Ioane"); first+last is the fallback, not the
+   default, because nicknames are already settled in `known`. */
+function parseRugbyPlayer(rp, teamName, teamCode, teamId) {
+  const name = rp.known || [rp.firstName, rp.lastName].filter(Boolean).join(" ").trim();
+  return {
+    player_id: "rug_" + rp.id, api_id: rp.id,
+    name,
+    position: rugbyPosCode(rp.positionId, rp.position) || "OB",
+    team: teamName, team_code: teamCode,
+    number: rp.number ?? rp.positionId ?? null,
+    photo: rp.imageUrl || rp.photo || null,
+    team_logo: teamId ?? null,
+  };
+}
+
+/* A match's round, named and numbered from one place so the label and the
+   number can never disagree.
+
+   Note what is NOT done here: mwNo() is left alone. It reads a trailing
+   "- <n>", which is how football spells a matchweek, and broadening it to any
+   trailing number would make "Round of 16" parse as matchweek 16 -- a
+   knockout tie silently filed as a league round. The feed hands us an actual
+   number, so there is nothing to parse. */
+const rugbyRoundLabel = (m) => m.round != null && m.round !== "" ? `Round ${m.round}`
+  : (m.title != null && m.title !== "" ? String(m.title) : null);
+const rugbyRoundNo = (m) =>
+  m.round != null && m.round !== "" && isFinite(+m.round) ? +m.round : null;
+
+/* One match summary -> the app's fixture record, same shape as fixtures.json.
+   The feed says "result" or "fixture"; the app's round and settlement code
+   keys off FINAL_STATUS, so a played match has to arrive as "FT". */
+function parseRugbyMatch(m) {
+  const done = String(m.status || "").toLowerCase() === "result";
+  return {
+    fixture_id: m.id ?? null,
+    home: m.homeTeam?.name || "", away: m.awayTeam?.name || "",
+    kickoff_utc: m.date || null, date: String(m.date || "").slice(0, 10),
+    status: done ? "FT" : "NS",
+    round: rugbyRoundLabel(m),
+    home_score: m.homeTeam?.score ?? null, away_score: m.awayTeam?.score ?? null,
+  };
+}
+
+/* The client-side filter the feed forces on us. `sort` does nothing, so the
+   list is always date-descending with future TBC placeholders sorted ABOVE
+   real results -- which is how the data you want ends up buried. Pure, so the
+   cases that matter are pinned by tests rather than by a live pull. */
+function usableRugbyMatches(list, opts = {}) {
+  const want = opts.status || "result";
+  const since = opts.sinceMs, until = opts.untilMs;
+  return (list || [])
+    .filter((m) => String(m.status || "").toLowerCase() === want)
+    // tbc:1 means the teams or venue are not settled yet -- a playoff slot
+    // waiting on the table. Treat only an explicit 1 as unusable.
+    .filter((m) => +m.tbc !== 1)
+    .filter((m) => {
+      if (since == null && until == null) return true;
+      const t = Date.parse(m.date);
+      if (!isFinite(t)) return false;
+      return (since == null || t >= since) && (until == null || t <= until);
+    })
+    .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+}
+
+/* One match detail -> stat rows, one per player who took the field.
+   `keyField` is {competition_key} exactly as the football path passes it, and
+   the football-shaped columns are simply left off: every one of them is
+   nullable with a default, so a rugby row needs no schema of its own and the
+   scoring engine reads `raw` regardless. */
+function rugbyStatRows(m, keyField, pidOf, skipped) {
+  const label = `${m.homeTeam?.name || "?"} vs ${m.awayTeam?.name || "?"} (${
+    String(m.date || "").slice(0, 10)})`;
+  const rows = [];
+  for (const side of ["homeTeam", "awayTeam"]) {
+    const tb = m[side];
+    if (!tb) continue;
+    const team = tb.name || "";
+    for (const p of (tb.players || [])) {
+      const st = rugbyStatsOf(p);
+      const minutes = +st.minutesPlayedTotal || 0;
+      const raw = {};
+      let any = 0;
+      for (const k of RUGBY_STAT_KEYS) {
+        const v = +st[k] || 0;
+        raw[k] = v;
+        if (v) any++;
+      }
+      // Someone who never came on has no minutes and no contribution. Keep
+      // anyone with either, so a bench try is never dropped for want of a
+      // minutes figure.
+      if (!minutes && !any) continue;
+      const pid = pidOf(team, p);
+      if (!pid) { skipped && skipped.push(`${p.known || p.id} (${team})`); continue; }
+      rows.push({
+        ...keyField, player_id: pid, match_label: label, appeared: true, team,
+        round: rugbyRoundNo(m), round_key: rugbyRoundLabel(m),
+        fixture_id: m.id ?? null,
+        minutes,
+        home_score: +m.homeTeam?.score || 0, away_score: +m.awayTeam?.score || 0,
+        raw: { ...raw, minutes },
+      });
+    }
+  }
+  return rows;
+}
+
+/* The feed answers 200 with {"status":"error"} rather than an HTTP error, so
+   every caller has to look before it parses. */
+function rugbyBody(data) {
+  if (data && data.status === "error") throw new Error(data.message || "Rugby feed error");
+  return data;
+}
+
+let _rugbyProxy = null;          // null = untried, true/false = settled
+async function rugbyFeed(path, params) {
+  const base = rugbyProxyUrl();
+  const bases = [];
+  if (base && _rugbyProxy !== false) bases.push(base);
+  // Direct only as a fallback: the feed needs no key, but going straight there
+  // requires the host in connect-src, which the deployed CSP does not grant.
+  bases.push("https://rugby-union-feeds.incrowdsports.com/v1/" + path);
+  for (let i = 0; i < bases.length; i++) {
+    const viaProxy = i === 0 && bases.length > 1;
+    const u = new URL(bases[i]);
+    if (viaProxy) u.searchParams.set("path", path);
+    for (const k in params) u.searchParams.set(k, params[k]);
+    u.searchParams.set("provider", "rugbyviz");
+    try {
+      const resp = await fetch(u, { cache: "no-store" });
+      if (viaProxy && resp.status === 404) { _rugbyProxy = false; continue; }
+      const data = await resp.json();
+      if (viaProxy) _rugbyProxy = true;
+      return rugbyBody(data);
+    } catch (e) {
+      if (viaProxy && _rugbyProxy !== true) { _rugbyProxy = false; continue; }
+      throw e;
+    }
+  }
+  throw new Error("Rugby feed unreachable");
+}
+
+/* A competition's pool, from the squad roster of each of its teams. Team ids
+   are constants because the feed cannot list a competition's teams -- they are
+   only discoverable by reading them off match summaries, which is a worse
+   thing to do on every pull than to write them down once. */
+const RUGBY_TEAM_IDS = {
+  1068: { "Leinster": 5356, "Munster": 4377, "DHL Stormers": 3994, "Ulster": 2129,
+          "Connacht": 5483, "Vodacom Bulls": 5586, "Zebre Parma": 4474,
+          "Scarlets": 3514, "Benetton": 2019, "Edinburgh": 1641,
+          "Dragons RFC": 3533, "Cardiff": 4471, "Fidelity SecureDrive Lions": 5092,
+          "Ospreys": 5057, "Hollywoodbets Sharks": 1527, "Glasgow Warriors": 3098 },
+  2146: { "England": 1, "Scotland": 2, "Wales": 3, "Ireland": 4, "France": 5,
+          "Italy": 6, "New Zealand": 7, "South Africa": 8, "Australia": 9,
+          "Argentina": 10, "Japan": 103, "Fiji": 243 },
+  1020: { "Crusaders": 2982, "Chiefs": 3999, "Blues": 2907, "Hurricanes": 4125 },
+};
+
+async function fetchRugbyPool(apiLeagueId, onProgress) {
+  const teams = RUGBY_TEAM_IDS[apiLeagueId];
+  if (!teams) throw new Error("No team list for that rugby competition yet.");
+  const names = Object.keys(teams);
+  const byId = {};
+  let done = 0;
+  for (const teamName of names) {
+    const id = teams[teamName];
+    onProgress && onProgress(++done, names.length, teamName);
+    const body = await rugbyFeed(`teams/${id}/players`);
+    const list = body?.data?.players || body?.players || body?.data || [];
+    const code = teamCodeFrom(teamName);
+    for (const rp of list) {
+      const p = parseRugbyPlayer(rp, teamName, code, id);
+      if (!byId[p.player_id]) byId[p.player_id] = p;
+    }
+  }
+  return { players: Object.values(byId), teams: names.slice().sort() };
+}
+
+/* Every match the feed will admit to for a competition, as app fixtures.
+   `size` is deliberately generous: with no working season filter the only way
+   to be sure a season is covered is to ask for more than it can contain. */
+async function fetchRugbyMatches(apiLeagueId, size = 80) {
+  const comp = RUGBY_COMPETITIONS.find((c) => c.apiLeagueId === apiLeagueId);
+  if (!comp) throw new Error("Unknown rugby competition.");
+  const body = await rugbyFeed("matches/search",
+    { competitionName: comp.feedName, size });
+  return body?.data || body?.matches || body || [];
+}
+async function fetchRugbyFixtures(apiLeagueId) {
+  return (await fetchRugbyMatches(apiLeagueId)).map(parseRugbyMatch);
+}
+
 // The league's competition key, resolving it from the DB when S.league isn't
 // populated yet (loadPlayers runs before refetchAll sets S.league).
 async function resolveCompetitionKey() {
@@ -12521,6 +12795,12 @@ let _apiProxy = null;
 const apiProxyUrl = () => {
   const u = getConfig()?.url;
   return u ? `${u}/functions/v1/api-football` : null;
+};
+// Its rugby sibling. Spelled out rather than derived from the line above by
+// string surgery, which would follow that URL somewhere wrong without saying so.
+const rugbyProxyUrl = () => {
+  const u = getConfig()?.url;
+  return u ? `${u}/functions/v1/rugby-feed` : null;
 };
 const apiKeyOptional = () => _apiProxy === true;
 

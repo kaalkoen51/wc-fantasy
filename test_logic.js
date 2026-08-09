@@ -35,7 +35,7 @@ const lsStub = {
 globalThis.appended = appended;
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, scoringRules, parseCompKey, competitionsFor, SPORTS, sportOf, sportDef, posGroups, playGroups, slotPosMap, slotRankMap, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid, pitchHtml, pitchFacingHtml, pitchRowsHtml, squadBoardHtml, historyViewHtml, benchInOrder, moveBench, orderedRoster, flipRows, wireLineupControls, markQueueMoved, matchdayCtaAct, matchdayCardHtml, renderLineup, renderHomeTab, openH2HPreview, openH2HFixture, lineupRowHtml, dugoutHtml, renderFixturesTab, h2hRoundFixtures, h2hTotalRounds, h2hFormOf, h2hStandingsHtml, seasonChartHtml, renderScoutList, renderStatsTab, renderPredraftShortlist, preDraftBrowsing, shortlistCoverage, coverageHint, scoringByPositionHtml, openScoringSheet, animateReorder, applyLocalOverrides, queueManagerWrite, wireStars, starHtml, draftFactCards, draftRulesHtml, lobbyRulesHtml, scoringHtml, applyVisibleOrder, makeReorderable, refetchAll, markConnection, enterLeagueWithFeedback, route, showView, dragActive, afterDrag, overrideStillWins, queueManagerWrite, applyLocalOverrides, keepLocalPick, autoPickStale, makePick, autoPick, tickTimer, mergeOptimisticPicks, pickKey, queueFieldWrite, OVERRIDE_TABLES, setPlanner, saveLineup, toggleKeeper, setFinalPick, txWindowStarts, txWhen, txShell, txAvatar, txMgrChip, tradeTxCard, swapTxCard, transactionsLogHtml, renderTrades, builderHtml, faClaimsSectionHtml, waiverOrderHtml, shortlistSectionHtml, plannerSectionHtml, plannerMoveHtml, squadChooserHtml, tradeSectionHtml, setClaimOrder, reorderClaim, tradeForShortlisted, submitTrade, TRADE_TABS, tradeTabBodyHtml, faClaimRowHtml, faClaimRowsHtml, renderClaimList, wireClaimControls, ROW_ATTRS, plannerMoveChoice, plannerSetChoiceOrder, plannerPickPool, renderPlannerPick, setWindowMode, toggleLineups, squadPitchHtml, squadShape, renderDreamTeam, dreamTeam, renderChat, chatThreads, interacting, markInteracting, scheduleDeferredFlush, INTERACT_MS, animateReorder, flipRows, flushDeferredRender, currentSeasonFor, seasonOptions, seasonLabel, backtestSeason, createCompKind, createPreviewSeason, loadScoringPreviewData, pullCreateHistory, renderCreateBalance, updateCreatePullStatus, renderCreateForm, pickReconciliation, reconcilePicksToPool, mapApiPlayer, loadCompetition, roundResolvers, roundIndex, mwNo, FINAL_STATUS, draftOrderMode, lobbyOrderManagers, shuffled, setDraftOrder, renderLobbyOrder, lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow, nextLockMs, lockAfterWindow, snapshotAt, snapshotForNextLock, rosterAtFor, setSession, getSession, repairStarters, lineupShape, repairLineupFor, faWindowKey, roundToSettle, closedWindowRound, closedWindowRounds, closedTradeWindows, roundsOwedSettlement, isRoundSettled, matchFixture, matchTimeFor, computeScoresUncached, bustScores, roundKeyLockedAt, roundKeyOfLabel, roundLabelShort, roundIndex, rosterAtFor, snapshotsByManager, advanceRound, maybeAdvanceRounds };"
+  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, scoringRules, rugbyPosCode, isRugbyBenchSlot, parseRugbyPlayer, parseRugbyMatch, usableRugbyMatches, rugbyStatRows, rugbyStatsOf, RUGBY_STAT_KEYS, RUGBY_COMPETITIONS, rugbyBody, parseCompKey, competitionsFor, SPORTS, sportOf, sportDef, posGroups, playGroups, slotPosMap, slotRankMap, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid, pitchHtml, pitchFacingHtml, pitchRowsHtml, squadBoardHtml, historyViewHtml, benchInOrder, moveBench, orderedRoster, flipRows, wireLineupControls, markQueueMoved, matchdayCtaAct, matchdayCardHtml, renderLineup, renderHomeTab, openH2HPreview, openH2HFixture, lineupRowHtml, dugoutHtml, renderFixturesTab, h2hRoundFixtures, h2hTotalRounds, h2hFormOf, h2hStandingsHtml, seasonChartHtml, renderScoutList, renderStatsTab, renderPredraftShortlist, preDraftBrowsing, shortlistCoverage, coverageHint, scoringByPositionHtml, openScoringSheet, animateReorder, applyLocalOverrides, queueManagerWrite, wireStars, starHtml, draftFactCards, draftRulesHtml, lobbyRulesHtml, scoringHtml, applyVisibleOrder, makeReorderable, refetchAll, markConnection, enterLeagueWithFeedback, route, showView, dragActive, afterDrag, overrideStillWins, queueManagerWrite, applyLocalOverrides, keepLocalPick, autoPickStale, makePick, autoPick, tickTimer, mergeOptimisticPicks, pickKey, queueFieldWrite, OVERRIDE_TABLES, setPlanner, saveLineup, toggleKeeper, setFinalPick, txWindowStarts, txWhen, txShell, txAvatar, txMgrChip, tradeTxCard, swapTxCard, transactionsLogHtml, renderTrades, builderHtml, faClaimsSectionHtml, waiverOrderHtml, shortlistSectionHtml, plannerSectionHtml, plannerMoveHtml, squadChooserHtml, tradeSectionHtml, setClaimOrder, reorderClaim, tradeForShortlisted, submitTrade, TRADE_TABS, tradeTabBodyHtml, faClaimRowHtml, faClaimRowsHtml, renderClaimList, wireClaimControls, ROW_ATTRS, plannerMoveChoice, plannerSetChoiceOrder, plannerPickPool, renderPlannerPick, setWindowMode, toggleLineups, squadPitchHtml, squadShape, renderDreamTeam, dreamTeam, renderChat, chatThreads, interacting, markInteracting, scheduleDeferredFlush, INTERACT_MS, animateReorder, flipRows, flushDeferredRender, currentSeasonFor, seasonOptions, seasonLabel, backtestSeason, createCompKind, createPreviewSeason, loadScoringPreviewData, pullCreateHistory, renderCreateBalance, updateCreatePullStatus, renderCreateForm, pickReconciliation, reconcilePicksToPool, mapApiPlayer, loadCompetition, roundResolvers, roundIndex, mwNo, FINAL_STATUS, draftOrderMode, lobbyOrderManagers, shuffled, setDraftOrder, renderLobbyOrder, lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow, nextLockMs, lockAfterWindow, snapshotAt, snapshotForNextLock, rosterAtFor, setSession, getSession, repairStarters, lineupShape, repairLineupFor, faWindowKey, roundToSettle, closedWindowRound, closedWindowRounds, closedTradeWindows, roundsOwedSettlement, isRoundSettled, matchFixture, matchTimeFor, computeScoresUncached, bustScores, roundKeyLockedAt, roundKeyOfLabel, roundLabelShort, roundIndex, rosterAtFor, snapshotsByManager, advanceRound, maybeAdvanceRounds };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -51,6 +51,7 @@ const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcT
         maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs,
         apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture,
         fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey,
+        rugbyPosCode, isRugbyBenchSlot, parseRugbyPlayer, parseRugbyMatch, usableRugbyMatches, rugbyStatRows, rugbyStatsOf, RUGBY_STAT_KEYS, RUGBY_COMPETITIONS, rugbyBody, 
         parseCompKey, competitionsFor, SPORTS, sportOf, sportDef, posGroups, playGroups, slotPosMap, slotRankMap, scoringRules, 
         slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick,
         posQuota, picksPerManager, totalPicks,
@@ -66,7 +67,7 @@ const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcT
         currentRoundNo, currentRoundDreamIds,
         chatThreads, messagesForThread, threadUnread, markThreadSeen,
         koRoundOf, knockoutBracket, needsSummary, lineupValid,
-        roundResolvers, roundIndex, draftOrderMode, lobbyOrderManagers,
+        roundResolvers, roundIndex, mwNo, draftOrderMode, lobbyOrderManagers,
         shuffled, setDraftOrder, renderLobbyOrder, draftFactCards,
         lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow,
         nextLockMs, lockAfterWindow, snapshotAt, snapshotForNextLock,
@@ -3168,6 +3169,151 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
     sportDef("nonesuch").playGroups().join(","), "GK,DEF,MID,FWD");
   delete SPORTS.__probe;
   S.league = null;
+
+
+  /* ---------- the rugby feed ---------- */
+
+  // Shirt number IS the position. 1 and 3 are both props; 11, 14 and 15 are
+  // all outside backs. This is the mapping the whole preset rests on.
+  check("a loosehead is a prop", rugbyPosCode(1), "PR");
+  check("...and so is a tighthead", rugbyPosCode(3), "PR");
+  check("2 hooks", rugbyPosCode(2), "HK");
+  check("4 and 5 lock", rugbyPosCode(4) + rugbyPosCode(5), "LKLK");
+  check("6, 7 and 8 are the loose forwards",
+    rugbyPosCode(6) + rugbyPosCode(7) + rugbyPosCode(8), "LFLFLF");
+  check("9 and 10 are the halves", rugbyPosCode(9) + rugbyPosCode(10), "SHFH");
+  check("12 and 13 are the centres", rugbyPosCode(12) + rugbyPosCode(13), "CECE");
+  check("the wings and the fullback are all outside backs",
+    rugbyPosCode(11) + rugbyPosCode(14) + rugbyPosCode(15), "OBOBOB");
+  check("a starting XV is fifteen shirts",
+    [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15].map((n) => rugbyPosCode(n)).filter(Boolean).length, 15);
+  check("...covering every one of the eight groups",
+    new Set([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15].map((n) => rugbyPosCode(n))).size, 8);
+
+  /* The bench is 16-23 and the feed does NOT say what a substitute plays, so
+     the number must resolve to nothing rather than to a guess. */
+  check("a bench slot has no position of its own", rugbyPosCode(16), null);
+  check("...and is recognised as bench", isRugbyBenchSlot(16), true);
+  check("...to the end of the bench", isRugbyBenchSlot(23), true);
+  check("a starter is not bench", isRugbyBenchSlot(7), false);
+
+  // The squad roster's shape is undocumented, so a named position resolves too.
+  check("a named position still resolves", rugbyPosCode(null, "Scrum Half"), "SH");
+  check("...however it is punctuated", rugbyPosCode(null, "scrum-half"), "SH");
+  check("...including a No. 8", rugbyPosCode(null, "Number 8"), "LF");
+  check("...and a fullback", rugbyPosCode(null, "Full Back"), "OB");
+  check("an unknown position is null, not a guess", rugbyPosCode(null, "Water Carrier"), null);
+
+  // `known` is the feed's resolved display name; first+last is the fallback.
+  check("a player uses the name the feed has already resolved",
+    parseRugbyPlayer({ id: 77, known: "Rieko Ioane", firstName: "Rieko",
+      lastName: "Ioane", positionId: 13 }, "Blues", "BLU", 2907).name, "Rieko Ioane");
+  check("...falling back to first + last when it has none",
+    parseRugbyPlayer({ id: 78, firstName: "Jordie", lastName: "Barrett",
+      positionId: 12 }, "Blues", "BLU", 2907).name, "Jordie Barrett");
+  check("a rugby player id cannot collide with a football one",
+    parseRugbyPlayer({ id: 153, positionId: 10 }, "Leinster", "LEI", 5356).player_id, "rug_153");
+
+  /* status "result" has to arrive as FT: the app's round and settlement code
+     keys off FINAL_STATUS, and a played match that says "result" would be
+     treated as unplayed for ever. */
+  const rm = { id: 9, status: "result", date: "2026-05-31T17:00:00Z", round: 18,
+    homeTeam: { name: "Leinster", score: 36 }, awayTeam: { name: "Vodacom Bulls", score: 7 } };
+  check("a played match arrives as FT", parseRugbyMatch(rm).status, "FT");
+  check("...with the score", parseRugbyMatch(rm).home_score, 36);
+  check("...and a round label the app can read", parseRugbyMatch(rm).round, "Round 18");
+  check("an unplayed match is NS",
+    parseRugbyMatch({ ...rm, status: "fixture" }).status, "NS");
+  check("a knockout uses its title, having no round number",
+    parseRugbyMatch({ ...rm, round: null, title: "Grand Final" }).round, "Grand Final");
+
+  /* The search endpoint ignores season, status, round and sort, so this filter
+     is the only thing standing between the app and a list of TBC placeholders
+     sorted above the real results. */
+  const feedList = [
+    { id: 1, status: "fixture", tbc: 1, date: "2027-06-01T00:00:00Z" },   // placeholder
+    { id: 2, status: "result",  tbc: 0, date: "2026-05-31T17:00:00Z" },
+    { id: 3, status: "result",  tbc: 0, date: "2026-05-24T17:00:00Z" },
+    { id: 4, status: "fixture", tbc: 0, date: "2026-06-07T17:00:00Z" },
+    { id: 5, status: "result",  tbc: 1, date: "2026-05-30T17:00:00Z" },   // unsettled
+  ];
+  check("only completed matches come back",
+    usableRugbyMatches(feedList).map((m) => m.id).join(","), "3,2");
+  check("...oldest first, because the feed's own order is the reverse",
+    usableRugbyMatches(feedList)[0].id, 3);
+  check("a tbc match is never usable, even with a result",
+    usableRugbyMatches(feedList).some((m) => m.id === 5), false);
+  check("upcoming fixtures can be asked for by name",
+    usableRugbyMatches(feedList, { status: "fixture" }).map((m) => m.id).join(","), "4");
+  check("...and the tbc placeholder is still refused",
+    usableRugbyMatches(feedList, { status: "fixture" }).some((m) => m.id === 1), false);
+  check("a date window keeps only the round just finished",
+    usableRugbyMatches(feedList, { sinceMs: Date.parse("2026-05-28T00:00:00Z") })
+      .map((m) => m.id).join(","), "2");
+
+  /* Stat rows. The football-shaped columns are deliberately absent -- every
+     one is nullable with a default -- and the scoring engine reads `raw`. */
+  const detail = {
+    id: 9, date: "2026-05-31T17:00:00Z", round: 18,
+    homeTeam: { name: "Leinster", score: 36, players: [
+      { id: 101, known: "A Starter", positionId: 10,
+        stats: { minutesPlayedTotal: 80, tries: 1, conversionGoals: 4, tackles: 7 } },
+      { id: 102, known: "A Sub", positionId: 19,
+        stats: { minutesPlayedTotal: 12, tries: 1 } },
+      { id: 103, known: "Unused Sub", positionId: 23, stats: { minutesPlayedTotal: 0 } },
+    ] },
+    awayTeam: { name: "Vodacom Bulls", score: 7, players: [
+      { id: 201, known: "Away Player", positionId: 8,
+        stats: { minutesPlayedTotal: 80, tackles: 14 } },
+    ] },
+  };
+  const pidOf = (team, p) => "rug_" + p.id;
+  const rrows = rugbyStatRows(detail, { competition_key: "rugby-1068-202501" }, pidOf, []);
+  check("both sides are scored", rrows.length, 3);
+  check("a player who never came on is left out",
+    rrows.some((r) => r.player_id === "rug_103"), false);
+  check("a bench player who scored is kept",
+    rrows.some((r) => r.player_id === "rug_102"), true);
+  check("the competition key is carried through", rrows[0].competition_key, "rugby-1068-202501");
+  check("the match is labelled the way every other row is",
+    rrows[0].match_label, "Leinster vs Vodacom Bulls (2026-05-31)");
+  check("the round key is stamped", rrows[0].round_key, "Round 18");
+  check("...and the round number parsed from it", rrows[0].round, 18);
+  check("the stats land in raw, where the scoring engine reads them",
+    rrows[0].raw.tries, 1);
+  check("...with every populated field present even at zero",
+    RUGBY_STAT_KEYS.every((k) => rrows[0].raw[k] != null), true);
+  check("minutes are set for the minutes gate", rrows[0].minutes, 80);
+
+  /* Stats might sit on the player or under `stats`; the guide does not say
+     which, and reading only one of them scores everybody zero in silence. */
+  check("stats nested under `stats` are found", rugbyStatsOf({ stats: { tries: 2 } }).tries, 2);
+  check("...and stats sitting on the player are too", rugbyStatsOf({ tries: 3 }).tries, 3);
+  const flat = { ...detail, homeTeam: { ...detail.homeTeam,
+    players: [{ id: 301, known: "Flat", positionId: 9, minutesPlayedTotal: 80, tries: 2 }] } };
+  check("a flat player object still scores",
+    rugbyStatRows(flat, {}, pidOf, [])[0].raw.tries, 2);
+
+  // The feed answers 200 with {"status":"error"} rather than an HTTP error.
+  check("a feed error is thrown, not parsed", (() => {
+    try { rugbyBody({ message: "No match exists with the id [X]", status: "error" }); return "no throw"; }
+    catch (e) { return "threw"; }
+  })(), "threw");
+  check("...and a good body passes through", rugbyBody({ data: [1, 2] }).data.length, 2);
+
+  /* Rugby's round number arrives from the feed already numeric, so mwNo()
+     must not be broadened to read one off the end of any label. If it were,
+     football's "Round of 16" would parse as matchweek 16 and file a knockout
+     tie as a league round. This is the guard on that temptation. */
+  check("a knockout label is not a matchweek number", mwNo("Round of 16"), null);
+  check("...nor is a bare rugby round label", mwNo("Round 18"), null);
+  check("a real matchweek still parses", mwNo("Regular Season - 18"), "18");
+
+  // Split-year competitions must be the ones that actually run across two.
+  check("the URC is a split-year season",
+    RUGBY_COMPETITIONS.find((c) => c.apiLeagueId === 1068).kind, "league");
+  check("Super Rugby is a calendar-year one",
+    RUGBY_COMPETITIONS.find((c) => c.apiLeagueId === 1020).kind, "cup");
 
   process.exit(fails ? 1 : 0);
 })();
