@@ -1870,3 +1870,118 @@ test("the rugby proxy is authenticated, and the feed is not given the key", asyn
   expect(toFeed.every((h) => !h.auth),
     "the Supabase key must never be sent to the third-party feed").toBe(true);
 });
+
+test("every squad screen renders for a sport with eight positions", async ({ page }) => {
+  /* The first real rugby league died on load with "s.byPos[g] is not
+     iterable": eleven functions seeded a per-position map as the object
+     literal { GK: [], DEF: [], MID: [], FWD: [] }, so a rugby position read
+     undefined and `for (const x of undefined)` threw. The counter-shaped
+     version of this bug was found in Phase 3; the list-shaped one was not,
+     because it is spelled with [] rather than 0.
+
+     This walks the renderers that build one, with a real rugby squad. */
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const out = await page.evaluate(() => {
+    S.league.competition = { apiLeagueId: 2146, season: 2026, sport: "rugby" };
+    // A full XV plus the club pick, at rugby positions.
+    const squad = [];
+    let n = 0;
+    for (const g of RUGBY_PLAY_GROUPS)
+      for (let i = 0; i < RUGBY_STARTERS[g]; i++)
+        squad.push({ id: "pk" + (++n), player_id: "rug_" + n, player_name: `${g} Player ${i}`,
+                     position: g, slot: g, team: "Ireland", is_sub: false, manager_id: "m1",
+                     pick_number: n });
+
+    const errs = [];
+    const tryIt = (name, fn) => { try { fn(); } catch (e) { errs.push(`${name}: ${e.message}`); } };
+    let shape = null;
+    tryIt("squadShape", () => { shape = squadShape(squad); });
+    tryIt("squadPitchHtml", () => squadPitchHtml(squad));
+    tryIt("pitchHtml", () => pitchHtml(listsByGroup(), {}));
+    tryIt("dreamTeam", () => dreamTeam());
+    tryIt("lineupShape", () => lineupShape());
+    return { errs, byPosKeys: Object.keys(shape?.byPos || {}).join(","),
+             placed: Object.values(shape?.byPos || {}).reduce((a, l) => a + l.length, 0) };
+  });
+
+  expect(out.errs, "no squad renderer may throw on a rugby squad").toEqual([]);
+  expect(out.byPosKeys, "the per-position map is keyed by the sport's own groups")
+    .toBe("PR,HK,LK,LF,SH,FH,CE,OB");
+  expect(out.placed, "and all fifteen players land in it").toBe(15);
+});
+
+test("a rugby draft can actually find someone to pick", async ({ page }) => {
+  /* The second thing the first real rugby league said: "No available players
+     fit the open quota." A pool full of PR/HK/LK/… against a quota that opens
+     GK/DEF/MID/FWD produces exactly that, and it is silent -- the draft simply
+     never offers anyone. */
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const out = await page.evaluate(() => {
+    S.league.competition = { apiLeagueId: 2146, season: 2026, sport: "rugby" };
+    S.league.config = null;                 // the preset alone, as a new league has
+    // A pool shaped like the one the feed builds: rugby positions, real teams.
+    S.players = [];
+    let n = 0;
+    for (const team of ["Ireland", "France", "England", "Wales"])
+      for (const g of RUGBY_PLAY_GROUPS)
+        for (let i = 0; i < 4; i++)
+          S.players.push({ player_id: `rug_${++n}`, name: `${g}${i} ${team}`,
+                           position: g, team, team_code: team.slice(0, 3).toUpperCase() });
+    S.teams = [...new Set(S.players.map((p) => p.team))].sort();
+    S.playerById = Object.fromEntries(S.players.map((p) => [p.player_id, p]));
+    S.picks = [];
+    bustScores();
+
+    const me = S.managers[0];
+    const quota = posQuota();
+    const open = posGroups().filter((g) => quotaLeft([], g) > 0);
+    const cands = autoPickCandidates(me);
+    const preview = autoPickPreview(me);
+    return {
+      quotaKeys: Object.keys(quota).join(","),
+      open: open.join(","),
+      poolSize: cands.pool.length,
+      picked: preview?.entry?.position || null,
+      perManager: picksPerManager(),
+      groupsWithPlayers: RUGBY_PLAY_GROUPS.filter((g) => availableForGroup(g).length).length,
+    };
+  });
+
+  expect(out.quotaKeys, "the quota is the rugby preset's")
+    .toBe("PR,HK,LK,LF,SH,FH,CE,OB,TEAM");
+  expect(out.groupsWithPlayers, "the pool covers all eight positions").toBe(8);
+  expect(out.open, "every rugby position starts open, plus the club pick")
+    .toBe("PR,HK,LK,LF,SH,FH,CE,OB,TEAM");
+  expect(out.poolSize, "so there are candidates to draft").toBeGreaterThan(0);
+  expect(out.picked, "and auto-pick finds one").not.toBeNull();
+  expect("PR HK LK LF SH FH CE OB TEAM".split(" ")).toContain(out.picked);
+  expect(out.perManager, "a rugby squad is nineteen players plus the club").toBe(20);
+});
+
+test("a rugby league with no pool says so, instead of filling up with footballers",
+  async ({ page }) => {
+    /* players.json is the built-in WORLD CUP squad list. Falling back to it
+       when a competition pool is missing does not fail, it substitutes: the
+       league fills with footballers at GK/DEF/MID/FWD, no rugby position
+       matches the quota, and the only symptom is the draft saying "no
+       available players fit the open quota" -- which points at the quota, and
+       the quota is fine. */
+    await openLeague(page, { managers: 4, played: 3 });
+    const out = await page.evaluate(async () => {
+      S.league.competition = { name: "Nations Championship", apiLeagueId: 2146,
+                               season: 2026, sport: "rugby" };
+      S._compPool = null;              // resolves, but holds no players
+      S.players = [];
+      let err = null;
+      try { await loadPlayers(); } catch (e) { err = e.message; }
+      return { err, players: S.players.length,
+               positions: [...new Set(S.players.map((p) => p.position))].join(",") };
+    });
+
+    expect(out.err, "the failure should be reported, not papered over").toBeTruthy();
+    expect(out.err).toContain("no player pool");
+    expect(out.err, "and it should name the sport").toContain("Rugby");
+    expect(out.players, "and no football pool should have been substituted").toBe(0);
+  });

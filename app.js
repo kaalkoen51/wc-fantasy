@@ -1221,17 +1221,18 @@ async function fetchRugbyFixtures(apiLeagueId) {
 
 // The league's competition key, resolving it from the DB when S.league isn't
 // populated yet (loadPlayers runs before refetchAll sets S.league).
+async function resolveCompetition() {
+  const comp = leagueCompetition();
+  if (comp) return comp;
+  const id = S.league?.id || getSession()?.leagueId;
+  if (!id || !S.sb) return null;
+  try {
+    const { data } = await S.sb.from("leagues").select("competition").eq("id", id).maybeSingle();
+    return data?.competition || null;
+  } catch { return null; }
+}
 async function resolveCompetitionKey() {
-  let comp = leagueCompetition();
-  if (!comp) {
-    const id = S.league?.id || getSession()?.leagueId;
-    if (!id || !S.sb) return null;
-    try {
-      const { data } = await S.sb.from("leagues").select("competition").eq("id", id).maybeSingle();
-      comp = data?.competition || null;
-    } catch { return null; }
-  }
-  return compKeyOf(comp);
+  return compKeyOf(await resolveCompetition());
 }
 
 // The SHARED competition pool (one row in competition_pools), fetched once per
@@ -1255,6 +1256,19 @@ async function loadPlayers() {
   if (pool?.players?.length) {
     S.players = pool.players;                       // API competition pool
   } else {
+    /* players.json is a FOOTBALL squad list -- the built-in World Cup pool.
+       Falling back to it in a rugby league does not fail, it substitutes: the
+       league quietly fills with footballers at GK/DEF/MID/FWD, no rugby
+       position matches the quota, and the only thing anyone sees is the draft
+       saying "no available players fit the open quota". Better to say what is
+       actually wrong. */
+    const comp = await resolveCompetition();
+    const sportName = comp?.sport || DEFAULT_SPORT;
+    if (sportName !== DEFAULT_SPORT) {
+      throw new Error(`This ${sportDef(sportName).label} league has no player pool `
+        + `loaded yet (${compKeyOf(comp)}). Load the competition from the admin `
+        + `panel before drafting.`);
+    }
     try {
       const resp = await fetch("players.json");     // legacy static WC pool
       S.players = await resp.json();
@@ -1494,7 +1508,8 @@ const activeManagers = () => S.managers.filter((m) => !m.eliminated);
 // rest of the squad is fluid (draft any mix), so it reuses the flex-slot model.
 const flexFormationMins = () => {
   const f = formationBounds();
-  return { GK: f.GK[0], DEF: f.DEF[0], MID: f.MID[0], FWD: f.FWD[0], TEAM: phaseOneQuota().TEAM || 0 };
+  return { ...Object.fromEntries(playGroups().map((g) => [g, f[g]?.[0] ?? 0])),
+           TEAM: phaseOneQuota().TEAM || 0 };
 };
 const posQuota = () => {
   if (isFlexFormation()) return flexFormationMins();
@@ -1524,6 +1539,12 @@ const outfieldGroups = () => {
    and NaN compares false against every threshold -- so the count silently
    stops working rather than throwing. */
 const zeroByGroup = () => Object.fromEntries(playGroups().map((g) => [g, 0]));
+/* The same thing holding lists rather than counts, which eleven more places
+   wrote out by hand. This one bites harder than the counter did: an unlisted
+   key reads undefined, and `for (const x of undefined)` throws "is not
+   iterable" -- which is exactly how the first rugby league died on load. */
+const listsByGroup = (extra) => Object.fromEntries(
+  [...playGroups(), ...(extra || [])].map((g) => [g, []]));
 // Adding up a per-position map, which four places did as a literal four-term sum.
 const sumGroups = (o) => playGroups().reduce((n, g) => n + (o?.[g] || 0), 0);
 const leagueFlex = () => {
@@ -3216,7 +3237,7 @@ function squadShape(mgrPicks) {
   const counts = posCounts(mgrPicks);
   const mins = posQuota();
   const groups = playGroups();
-  const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+  const byPos = listsByGroup();
   for (const pk of mgrPicks) if (byPos[pk.position]) byPos[pk.position].push(pk);
   let flexLeft = groups.reduce((a, g) => a + (mins[g] || 0), 0) + leagueFlex()
     - groups.reduce((a, g) => a + (counts[g] || 0), 0);
@@ -3231,7 +3252,7 @@ function squadShape(mgrPicks) {
 
 function squadPitchHtml(mgrPicks, opts = {}) {
   const s = squadShape(mgrPicks);
-  const pitch = { GK: [], DEF: [], MID: [], FWD: [] };
+  const pitch = listsByGroup();
   for (const g of playGroups()) {
     for (const pk of s.byPos[g]) pitch[g].push({
       id: pk.player_id, player_id: pk.player_id, name: pk.player_name,
@@ -4428,7 +4449,7 @@ function repairStarters(picks, mins, maxs, total) {
   const squad = (picks || []).filter((pk) => pk.position !== "TEAM" && pk.slot !== "TEAM");
   if (squad.length < total) return null;
   const GROUPS4 = playGroups();
-  const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+  const byPos = listsByGroup();
   // Current starters first, then the bench in its own order.
   squad.forEach((pk, i) => { if (byPos[pk.position]) byPos[pk.position].push({ pk, i }); });
   for (const g of GROUPS4)
@@ -6736,7 +6757,7 @@ function squadBoardHtml(items, mgrId, opts = {}) {
   const nameOf = (pid) => play.find((it) => it.entry.player_id === pid)?.entry.player_name || "";
   const onPitch = (it) => offFor.has(it.entry.player_id)
     || (!it.entry.is_sub && !onFor.has(it.entry.player_id));
-  const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+  const byPos = listsByGroup();
   for (const it of play) {
     const e = it.entry;
     if (!onPitch(it) || !byPos[e.position]) continue;
@@ -7074,7 +7095,7 @@ function openH2HFixture(rnd, botId, topId) {
   // Prefer the locked round's roster (with points); fall back to the live XI.
   const sideFor = (m) => {
     const round = (managerHistory(m.id).rounds || []).find((r) => r.n === rnd);
-    const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+    const byPos = listsByGroup();
     const bench = [];
     let total = 0, bonus = 0;
     const add = (e, pts, extra) => {
@@ -7354,7 +7375,7 @@ function openReveal() {
   const me = myManager(), body = $("reveal-body");
   if (!me || !body) return;
   const mine = managerPicks(me.id);
-  const byPos = { GK: [], DEF: [], MID: [], FWD: [], TEAM: [] };
+  const byPos = listsByGroup(["TEAM"]);
   for (const pk of mine) (byPos[pk.position] || byPos.TEAM).push(pk);
   const counts = outfieldGroups().map((g) => `${(byPos[g] || []).length}`).join("-");
   const foil = revealFoilPick(mine);
@@ -9906,7 +9927,7 @@ function dreamTeam(round, per90, worst) {
   const bySort = worst
     ? (a, b) => a.val - b.val || a.pts - b.pts || a.p.name.localeCompare(b.p.name)
     : (a, b) => b.val - a.val || b.pts - a.pts || a.p.name.localeCompare(b.p.name);
-  const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+  const byPos = listsByGroup();
   for (const id of new Set((S.stats || []).map((r) => r.player_id))) {
     const p = S.playerById[id];
     if (!p || !byPos[p.position]) continue;
@@ -9996,7 +10017,7 @@ function renderDreamTeam(round, per90, worst) {
 
   const flexN = leagueFlex();
   const flexIds = new Set(dt.FLEX.map((x) => x.p.player_id));
-  const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+  const byPos = listsByGroup();
   const entry = (x) => {
     const own = ownerOfP(x.p);
     return { id: x.p.player_id, player_id: x.p.player_id, name: x.p.name, team: x.p.team,
@@ -10873,7 +10894,7 @@ function renderLineup() {
   const editing = !!S.lineupEdit;
   const starters = mine.filter((pk) => S.lineupDraft.has(pk.id));
   const bench = benchInOrder(mine.filter((pk) => !S.lineupDraft.has(pk.id)));
-  const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+  const byPos = listsByGroup();
   for (const pk of starters) {
     (byPos[pk.position] ||= []).push({
       id: pk.player_id, removeId: pk.id,
@@ -11864,7 +11885,7 @@ function squadChooserHtml(mgrId, opts = {}) {
   const picks = orderedRoster(S.managers.find((m) => m.id === mgrId) || { id: mgrId })
     .filter((pk) => pk.slot !== "TEAM");
   const ok = opts.eligible || (() => true);
-  const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+  const byPos = listsByGroup();
   const bench = [];
   for (const pk of picks) {
     const usable = ok(pk);
@@ -12383,7 +12404,7 @@ function plannerSectionHtml(me) {
     return pid ? S.playerById[pid] : null;
   };
   const picks = orderedRoster(me).filter((pk) => pk.slot !== "TEAM");
-  const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+  const byPos = listsByGroup();
   const bench = [];
   for (const pk of picks) {
     const inc = firstChoice(pk);
