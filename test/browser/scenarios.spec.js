@@ -1742,15 +1742,51 @@ test("loading a rugby competition reads the rugby feed, not API-Football", async
     if (url.includes("api-sports.io") || url.includes("incrowdsports.com")
         || url.includes("/functions/v1/")) {
       hits.push(url);
-      if (url.includes("teams/") && url.includes("/players")) {
-        return route.fulfill({ contentType: "application/json", body: JSON.stringify({
-          data: [{ id: 5001, known: "A Prop", positionId: 1 },
-                 { id: 5002, known: "A Wing", positionId: 14 }] }) });
-      }
+      /* Shaped like the feed's real answers. teams/{id}/players is NOT stubbed
+         because it does not exist -- it answers 400 for every id, clubs and
+         countries alike, which is why the pool comes from match detail. */
       if (url.includes("matches/search")) {
-        return route.fulfill({ contentType: "application/json", body: JSON.stringify({ data: [
-          { id: 900, status: "result", tbc: 0, date: "2026-05-31T17:00:00Z", round: 18,
-            homeTeam: { name: "Ireland", score: 21 }, awayTeam: { name: "France", score: 17 } }] }) });
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify({
+          data: [
+            // Two played rounds, so a player can be seen twice.
+            { id: 900, status: "result", tbc: 0, date: "2026-05-24T17:00:00Z", round: 17,
+              homeTeam: { id: 4, name: "Ireland", score: 20 },
+              awayTeam: { id: 5, name: "France", score: 15 } },
+            { id: 902, status: "result", tbc: 0, date: "2026-05-31T17:00:00Z", round: 18,
+              homeTeam: { id: 4, name: "Ireland", score: 36 },
+              awayTeam: { id: 5, name: "France", score: 7 } },
+            // The shape that fooled the old filter: tbc:0, and nobody in it.
+            { id: 901, status: "fixture", tbc: 0, date: "2026-11-29T16:40:00Z", round: 7,
+              title: "TF", homeTeam: { id: 0, name: "TBC" }, awayTeam: { id: 0, name: "TBC" } },
+          ], metadata: { totalItems: 3 }, status: "success" }) });
+      }
+      const mid = (url.match(/matches\/(\d+)/) || [])[1];
+      if (mid) {
+        /* Round 17 benches the hooker; round 18 starts him. That is the case
+           that decides whether an observed start beats the shirt convention,
+           and it needs TWO matches to exist at all. */
+        const benched = mid === "900";
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify({
+          data: { id: +mid, date: "2026-05-31T17:00:00Z", round: benched ? 17 : 18,
+            homeTeam: { id: 4, name: "Ireland", score: 36, players: [
+              { id: 240452, known: "A Flanker", positionId: 7, position: "flanker",
+                stats: { minutesPlayedTotal: 80, tackles: 9 } },
+              benched
+                ? { id: 240453, known: "A Hooker", positionId: 21, position: "sub 6",
+                    stats: { minutesPlayedTotal: 20 } }
+                : { id: 240453, known: "A Hooker", positionId: 2, position: "hooker",
+                    stats: { minutesPlayedTotal: 60 } },
+              // Never once starts: the shirt convention is all there is.
+              { id: 240454, known: "A Reserve", positionId: 21, position: "sub 6",
+                stats: { minutesPlayedTotal: 12 } },
+              // Neither a known shirt nor a known name: dropped, not guessed.
+              { id: 240470, known: "A Mystery", positionId: 99, position: "water carrier",
+                stats: { minutesPlayedTotal: 5 } },
+            ] },
+            awayTeam: { id: 5, name: "France", score: 7, players: [
+              { id: 240460, known: "A Fullback", positionId: 15, position: "fullback",
+                stats: { minutesPlayedTotal: 80 } },
+            ] } }, status: "success" }) });
       }
       return route.fulfill({ contentType: "application/json", body: "{}" });
     }
@@ -1761,18 +1797,27 @@ test("loading a rugby competition reads the rugby feed, not API-Football", async
     const competition = { name: "Nations Championship", apiLeagueId: 2146,
                           season: 2026, sport: "rugby" };
     const built = await fetchPoolFor(competition, "", () => {});
+    const byId = Object.fromEntries(built.players.map((p) => [p.player_id, p]));
     return { players: built.players.length, teams: built.teams.length,
              fixtures: built.fixtures.length,
-             firstPos: built.players[0]?.position,
+             startedPos: byId["rug_240452"]?.position,
+             seenBothWays: byId["rug_240453"]?.position,
+             benchOnly: byId["rug_240454"]?.position,
+             mystery: byId["rug_240470"],
              firstId: built.players[0]?.player_id,
              key: compKeyOf(competition) };
   });
 
-  expect(out.players, "the rugby squad endpoint should have produced players")
-    .toBeGreaterThan(0);
-  expect(out.teams, "every national side in the competition is asked for").toBe(12);
-  expect(out.fixtures, "and its matches become fixtures").toBe(1);
-  expect(out.firstPos, "shirt 1 is a prop").toBe("PR");
+  expect(out.players, "four placeable players, and the unplaceable one dropped").toBe(4);
+  expect(out.teams, "only the sides that actually played").toBe(2);
+  expect(out.fixtures, "and the TBC placeholder is not a fixture").toBe(2);
+  expect(out.startedPos, "shirt 7 is a loose forward").toBe("LF");
+  expect(out.seenBothWays, "an observed start beats the bench convention, which would say SH")
+    .toBe("HK");
+  expect(out.benchOnly, "a player never seen starting falls back to the shirt convention")
+    .toBe("SH");
+  expect(out.mystery, "a position that cannot be resolved is dropped, not invented")
+    .toBeUndefined();
   expect(out.firstId, "rugby ids are namespaced").toMatch(/^rug_/);
   expect(out.key, "and the pool row is keyed apart from football's")
     .toBe("rugby-2146-2026");

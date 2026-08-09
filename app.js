@@ -814,6 +814,7 @@ const RUGBY_STAT_CATALOG = [
   { key: "redCards", label: "Red card" },
   { key: "minutesPlayedTotal", label: "Minute played" },
   { key: "points", label: "Match points scored" },
+  { key: "motm", label: "Man of the match" },
 ];
 
 /* A starting point, not a considered scoring system. It is position-neutral
@@ -843,6 +844,7 @@ const RUGBY_RULES = [
   { stat: "turnoversConceded", mode: "each", perPosition: false, points: -1 },
   { stat: "yellowCards", mode: "each", perPosition: false, points: -3 },
   { stat: "redCards", mode: "each", perPosition: false, points: -8 },
+  { stat: "motm", mode: "each", perPosition: false, points: 5 },
 ];
 
 SPORTS.rugby = {
@@ -904,6 +906,8 @@ const RUGBY_STAT_KEYS = [
   "kicksFromHand", "kickFromHandMetres", "kickMetres", "retainedKicks", "tryKicks",
   "penaltiesConceded", "yellowCards", "redCards",
   "missedConversionGoals", "minutesPlayedTotal", "points",
+  // On the player object rather than inside stats, so it is lifted in below.
+  "motm",
 ];
 
 /* A player's stats may sit on the player object or under a `stats` key -- the
@@ -919,7 +923,9 @@ function parseRugbyPlayer(rp, teamName, teamCode, teamId) {
   return {
     player_id: "rug_" + rp.id, api_id: rp.id,
     name,
-    position: rugbyPosCode(rp.positionId, rp.position) || "OB",
+    // null when unresolvable. Defaulting here would have made every bench
+    // player an outside back without saying so.
+    position: rugbyPosCode(rp.positionId, rp.position),
     team: teamName, team_code: teamCode,
     number: rp.number ?? rp.positionId ?? null,
     photo: rp.imageUrl || rp.photo || null,
@@ -1001,7 +1007,9 @@ function rugbyStatRows(m, keyField, pidOf, skipped) {
     if (!tb) continue;
     const team = tb.name || "";
     for (const p of (tb.players || [])) {
-      const st = rugbyStatsOf(p);
+      /* motm and captain are on the player, not in its stats block, so the
+         stats view has to be widened or a rule on them scores nothing. */
+      const st = { ...rugbyStatsOf(p), motm: p.motm ? 1 : 0 };
       const minutes = +st.minutesPlayedTotal || 0;
       const raw = {};
       let any = 0;
@@ -1107,54 +1115,108 @@ async function rugbyFeed(path, params) {
   throw new Error("Rugby feed unreachable");
 }
 
-/* A competition's pool, from the squad roster of each of its teams. Team ids
-   are constants because the feed cannot list a competition's teams -- they are
-   only discoverable by reading them off match summaries, which is a worse
-   thing to do on every pull than to write them down once. */
-const RUGBY_TEAM_IDS = {
-  1068: { "Leinster": 5356, "Munster": 4377, "DHL Stormers": 3994, "Ulster": 2129,
-          "Connacht": 5483, "Vodacom Bulls": 5586, "Zebre Parma": 4474,
-          "Scarlets": 3514, "Benetton": 2019, "Edinburgh": 1641,
-          "Dragons RFC": 3533, "Cardiff": 4471, "Fidelity SecureDrive Lions": 5092,
-          "Ospreys": 5057, "Hollywoodbets Sharks": 1527, "Glasgow Warriors": 3098 },
-  2146: { "England": 1, "Scotland": 2, "Wales": 3, "Ireland": 4, "France": 5,
-          "Italy": 6, "New Zealand": 7, "South Africa": 8, "Australia": 9,
-          "Argentina": 10, "Japan": 103, "Fiji": 243 },
-  1020: { "Crusaders": 2982, "Chiefs": 3999, "Blues": 2907, "Hurricanes": 4125 },
-};
+/* The draft pool, built from the matches themselves.
+
+   There is no squad-roster endpoint on this feed. teams/{id}/players answers
+   400 for clubs and countries alike, with and without compId/season -- the
+   "Get Team Players" endpoint documented elsewhere is a different product on
+   a different host. teams/{id} exists but returns team-season AGGREGATE STATS,
+   not a roster.
+
+   So the pool is everyone who actually took the field, gathered from each
+   played match's detail. For a fantasy draft that is arguably the better list
+   anyway: it contains the players who play, and nobody who never featured.
+
+   The cost is one request per match -- eighteen for a Nations Championship
+   season, more for a league -- which is why the proxy spaces them and this
+   reports progress. It happens once per competition and is shared by every
+   league on it. */
+
+/* Where a bench shirt sits when a player was NEVER seen starting.
+
+   Shirts 1-15 are a fact: the feed states positionId and the mapping is not a
+   judgement call. Shirts 16-23 are not -- the feed calls them "sub 1".."sub 8"
+   and says nothing about the role. This is the conventional bench order, which
+   most sides follow and none are obliged to, so it is used ONLY as a last
+   resort for a player who never once appeared in the starting XV, and never in
+   preference to an observed start. */
+const RUGBY_BENCH_POS = { 16: "HK", 17: "PR", 18: "PR", 19: "LK",
+                          20: "LF", 21: "SH", 22: "FH", 23: "OB" };
 
 async function fetchRugbyPool(apiLeagueId, onProgress) {
-  const teams = RUGBY_TEAM_IDS[apiLeagueId];
-  if (!teams) throw new Error("No team list for that rugby competition yet.");
-  const names = Object.keys(teams);
-  const byId = {};
+  const played = usableRugbyMatches(await fetchRugbyMatches(apiLeagueId));
+  if (!played.length) {
+    throw new Error("That competition has no completed matches yet, so there is "
+      + "nobody to draft. Pick a season that has been played.");
+  }
+  const byId = {}, teams = new Set();
   let done = 0;
-  for (const teamName of names) {
-    const id = teams[teamName];
-    onProgress && onProgress(++done, names.length, teamName);
-    const body = await rugbyFeed(`teams/${id}/players`);
-    const list = firstArray(body?.data ?? body, ["players"], `teams/${id}/players`);
-    const code = teamCodeFrom(teamName);
-    for (const rp of list) {
-      const p = parseRugbyPlayer(rp, teamName, code, id);
-      if (!byId[p.player_id]) byId[p.player_id] = p;
+  for (const m of played) {
+    onProgress && onProgress(++done, played.length,
+      `${m.homeTeam?.name} v ${m.awayTeam?.name}`);
+    let detail;
+    try {
+      detail = await rugbyFeed(`matches/${m.id}`);
+    } catch (e) {
+      console.warn(`rugby pool: match ${m.id} could not be read — ${e.message}`);
+      continue;                       // one bad match must not lose the season
+    }
+    const d = detail?.data || detail;
+    for (const side of ["homeTeam", "awayTeam"]) {
+      const t = d?.[side];
+      if (!rugbyTeamKnown(t)) continue;
+      teams.add(t.name);
+      for (const rp of (t.players || [])) {
+        if (rp?.id == null) continue;
+        const p = parseRugbyPlayer(rp, t.name, teamCodeFrom(t.name), t.id);
+        const started = rugbyPosCode(rp.positionId, rp.position);   // 1-15 only
+        const prev = byId[p.player_id];
+        if (!prev) {
+          byId[p.player_id] = { ...p, position: started || null,
+                                _bench: RUGBY_BENCH_POS[+rp.positionId] || null };
+        } else {
+          // A start always beats a guess, and the LAST club seen wins, so a
+          // player who moved mid-season lands where they finished.
+          if (started && !prev.position) prev.position = started;
+          prev._bench = prev._bench || RUGBY_BENCH_POS[+rp.positionId] || null;
+          prev.team = t.name; prev.team_code = teamCodeFrom(t.name);
+        }
+      }
     }
   }
-  return { players: Object.values(byId), teams: names.slice().sort() };
+  /* Anyone never seen starting falls back to the bench convention, and anyone
+     with neither is dropped rather than given an invented position -- a wrong
+     position silently corrupts every quota they are drafted into. */
+  const players = [], unplaced = [];
+  for (const p of Object.values(byId)) {
+    const pos = p.position || p._bench;
+    delete p._bench;
+    if (!pos) { unplaced.push(p.name); continue; }
+    players.push({ ...p, position: pos });
+  }
+  if (unplaced.length) {
+    console.warn(`rugby pool: ${unplaced.length} player(s) had no resolvable `
+      + `position and were left out — ${unplaced.slice(0, 5).join(", ")}`);
+  }
+  return { players, teams: [...teams].sort() };
 }
 
-/* Every match the feed will admit to for a competition, as app fixtures.
+/* Every match the feed will admit to for a competition, as raw summaries.
    `size` is deliberately generous: with no working season filter the only way
-   to be sure a season is covered is to ask for more than it can contain. */
-async function fetchRugbyMatches(apiLeagueId, size = 80) {
+   to be sure a season is covered is to ask for more than it can hold. A whole
+   Nations Championship is 42 matches. */
+async function fetchRugbyMatches(apiLeagueId, size = 100) {
   const comp = RUGBY_COMPETITIONS.find((c) => c.apiLeagueId === apiLeagueId);
   if (!comp) throw new Error("Unknown rugby competition.");
   const body = await rugbyFeed("matches/search",
     { competitionName: comp.feedName, size });
   return firstArray(body, ["data", "matches"], "matches/search");
 }
+
 async function fetchRugbyFixtures(apiLeagueId) {
-  return (await fetchRugbyMatches(apiLeagueId)).map(parseRugbyMatch);
+  return (await fetchRugbyMatches(apiLeagueId))
+    .filter(rugbyMatchSettled)          // no "TBC v TBC" in the schedule
+    .map(parseRugbyMatch);
 }
 
 // The league's competition key, resolving it from the DB when S.league isn't
