@@ -1724,3 +1724,62 @@ test("the line-up probe is offered for rugby and hidden for football", async ({ 
   expect(seen.asFootball, "a football league has no matchday-squad feed to check").toBe(true);
   expect(seen.asRugby, "a rugby league should be offered the check").toBe(false);
 });
+
+test("loading a rugby competition reads the rugby feed, not API-Football", async ({ page }) => {
+  /* The bug this pins: the rugby fetchers existed but nothing called them.
+     Both pool loaders asked API-Football regardless of sport, so a rugby
+     league could be designed in the create form and then never loaded --
+     which is exactly what it looked like from the outside, a competition
+     that "has no season loaded yet". */
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const hits = [];
+  // Every outbound host the loader might reach, answered locally.
+  await page.route("**/*", async (route) => {
+    /* Decoded: the proxy passes the feed path as a query parameter, so a URL
+       reads `?path=matches%2Fsearch` and a naive substring match misses it. */
+    const url = decodeURIComponent(route.request().url());
+    if (url.includes("api-sports.io") || url.includes("incrowdsports.com")
+        || url.includes("/functions/v1/")) {
+      hits.push(url);
+      if (url.includes("teams/") && url.includes("/players")) {
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify({
+          data: [{ id: 5001, known: "A Prop", positionId: 1 },
+                 { id: 5002, known: "A Wing", positionId: 14 }] }) });
+      }
+      if (url.includes("matches/search")) {
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify({ data: [
+          { id: 900, status: "result", tbc: 0, date: "2026-05-31T17:00:00Z", round: 18,
+            homeTeam: { name: "Ireland", score: 21 }, awayTeam: { name: "France", score: 17 } }] }) });
+      }
+      return route.fulfill({ contentType: "application/json", body: "{}" });
+    }
+    return route.continue();
+  });
+
+  const out = await page.evaluate(async () => {
+    const competition = { name: "Nations Championship", apiLeagueId: 2146,
+                          season: 2026, sport: "rugby" };
+    const built = await fetchPoolFor(competition, "", () => {});
+    return { players: built.players.length, teams: built.teams.length,
+             fixtures: built.fixtures.length,
+             firstPos: built.players[0]?.position,
+             firstId: built.players[0]?.player_id,
+             key: compKeyOf(competition) };
+  });
+
+  expect(out.players, "the rugby squad endpoint should have produced players")
+    .toBeGreaterThan(0);
+  expect(out.teams, "every national side in the competition is asked for").toBe(12);
+  expect(out.fixtures, "and its matches become fixtures").toBe(1);
+  expect(out.firstPos, "shirt 1 is a prop").toBe("PR");
+  expect(out.firstId, "rugby ids are namespaced").toMatch(/^rug_/);
+  expect(out.key, "and the pool row is keyed apart from football's")
+    .toBe("rugby-2146-2026");
+
+  // The point of the test: nothing went to the football provider.
+  expect(hits.some((u) => u.includes("api-sports.io")),
+    "a rugby pull must not reach API-Football").toBe(false);
+  expect(hits.some((u) => u.includes("rugby-feed") || u.includes("incrowdsports.com")),
+    "a rugby pull must reach the rugby feed").toBe(true);
+});

@@ -1018,6 +1018,21 @@ function rugbyStatRows(m, keyField, pidOf, skipped) {
   return rows;
 }
 
+/* The list inside a response, wherever this feed decided to put it.
+
+   Written as `body.data || body.matches || body` before, which returned the
+   BODY when it held neither -- so a `{}` passed for a list and the caller blew
+   up on .map with nothing saying which request had misbehaved. An
+   unauthenticated, undocumented feed is exactly the wrong place to assume a
+   shape, so an unrecognised one names itself and returns nothing. */
+function firstArray(body, keys, what) {
+  if (Array.isArray(body)) return body;
+  for (const k of keys) if (Array.isArray(body?.[k])) return body[k];
+  if (body && typeof body === "object" && !Object.keys(body).length) return [];
+  console.warn(`rugby feed: ${what} returned no list`, body);
+  return [];
+}
+
 /* The feed answers 200 with {"status":"error"} rather than an HTTP error, so
    every caller has to look before it parses. */
 function rugbyBody(data) {
@@ -1079,7 +1094,7 @@ async function fetchRugbyPool(apiLeagueId, onProgress) {
     const id = teams[teamName];
     onProgress && onProgress(++done, names.length, teamName);
     const body = await rugbyFeed(`teams/${id}/players`);
-    const list = body?.data?.players || body?.players || body?.data || [];
+    const list = firstArray(body?.data ?? body, ["players"], `teams/${id}/players`);
     const code = teamCodeFrom(teamName);
     for (const rp of list) {
       const p = parseRugbyPlayer(rp, teamName, code, id);
@@ -1097,7 +1112,7 @@ async function fetchRugbyMatches(apiLeagueId, size = 80) {
   if (!comp) throw new Error("Unknown rugby competition.");
   const body = await rugbyFeed("matches/search",
     { competitionName: comp.feedName, size });
-  return body?.data || body?.matches || body || [];
+  return firstArray(body, ["data", "matches"], "matches/search");
 }
 async function fetchRugbyFixtures(apiLeagueId) {
   return (await fetchRugbyMatches(apiLeagueId)).map(parseRugbyMatch);
@@ -2146,21 +2161,54 @@ function renderCreateForm() {
 }
 
 // Pull (or reuse) a competition's shared pool during league creation.
+/* A competition's squads, fixtures and round order, from whichever provider
+   its sport uses.
+
+   This is the seam the rugby fetchers were written for and were not plugged
+   into: both loaders below called the API-Football pair unconditionally, so a
+   rugby league could be designed in the create form and then not loaded --
+   the pull either asked for a key the feed does not use or came back empty. */
+async function fetchPoolFor(competition, apiKey, onProgress) {
+  if (competition.sport === "rugby") {
+    const built = await fetchRugbyPool(competition.apiLeagueId, onProgress);
+    return {
+      players: built.players, teams: built.teams,
+      fixtures: await fetchRugbyFixtures(competition.apiLeagueId),
+      /* The feed has no round-order endpoint. Empty means the app orders
+         rounds by earliest kick-off, which for numbered rugby rounds is the
+         same answer. */
+      roundOrder: [],
+    };
+  }
+  const { apiLeagueId, season } = competition;
+  const built = await fetchCompetitionPool(apiKey, apiLeagueId, season, onProgress);
+  return {
+    players: built.players, teams: built.teams,
+    fixtures: await fetchCompetitionFixtures(apiKey, apiLeagueId, season),
+    roundOrder: await fetchCompetitionRounds(apiKey, apiLeagueId, season),
+  };
+}
+// Only API-Football needs a key; the rugby feed is unauthenticated.
+const sportNeedsApiKey = (competition) => (competition?.sport || DEFAULT_SPORT) === "football";
+
 async function ensureCompetitionPool(competition, apiKey, log) {
-  const compKey = `${competition.apiLeagueId}-${competition.season}`;
+  // Built by the one function that knows the format. Spelling it out here as
+  // well is how a rugby league would have written to football's row.
+  const compKey = compKeyOf(competition);
   const existing = await S.sb.from("competition_pools").select("competition_key")
     .eq("competition_key", compKey).maybeSingle();
   if (existing.error) throw new Error(existing.error.message);
   if (existing.data) { log(`Reusing shared ${competition.name} pool.`); return; }
-  if (!apiKey) throw new Error(`${competition.name} isn't loaded yet — enter an API-Football key.`);
+  if (!apiKey && sportNeedsApiKey(competition))
+    throw new Error(`${competition.name} isn't loaded yet — enter an API-Football key.`);
   log("Fetching teams & squads…");
-  const built = await fetchCompetitionPool(apiKey, competition.apiLeagueId, competition.season,
+  const built = await fetchPoolFor(competition, apiKey,
     (d, t, tm) => log(`Loading squads ${d}/${t} — ${tm}`));
   if (!built.players.length) throw new Error("No players returned — check the season.");
   log(`${built.players.length} players. Fetching fixtures…`);
-  const fixtures = await fetchCompetitionFixtures(apiKey, competition.apiLeagueId, competition.season);
   const up = await S.sb.from("competition_pools").upsert(
-    { competition_key: compKey, players: built.players, fixtures, updated_at: new Date().toISOString() });
+    { competition_key: compKey, players: built.players, fixtures: built.fixtures,
+      round_order: built.roundOrder, updated_at: new Date().toISOString() });
   if (up.error) throw new Error(up.error.message);
   localStorage.setItem("wcf_apikey", apiKey);
 }
@@ -2174,10 +2222,8 @@ function readCreateConfig() {
     const g = (k) => Number(document.querySelector(`#create-squad [data-cfg="${k}"]`)?.value);
     cfg.formationMode = "flex";
     cfg.formation = {
-      GK: [g("formation.GK.0"), g("formation.GK.1")],
-      DEF: [g("formation.DEF.0"), g("formation.DEF.1")],
-      MID: [g("formation.MID.0"), g("formation.MID.1")],
-      FWD: [g("formation.FWD.0"), g("formation.FWD.1")],
+      ...Object.fromEntries(playGroups().map((p) =>
+        [p, [g(`formation.${p}.0`), g(`formation.${p}.1`)]])),
       starters: g("formation.starters"),
     };
     cfg.squadSize = g("squadSize");
@@ -13275,13 +13321,13 @@ async function loadCompetition() {
       
       localStorage.setItem("wcf_apikey", apiKey);
       log("Fetching teams…");
-      const built = await fetchCompetitionPool(apiKey, apiLeagueId, season,
+      const built = await fetchPoolFor(competition, apiKey,
         (d, t, tm) => log(`Loading squads ${d}/${t} — ${tm}`));
       players = built.players;
       if (!players.length) throw new Error("No players returned — check the season for this competition.");
       log(`${players.length} players across ${built.teams.length} teams. Fetching fixtures…`);
-      fixtures = await fetchCompetitionFixtures(apiKey, apiLeagueId, season);
-      roundOrder = await fetchCompetitionRounds(apiKey, apiLeagueId, season);
+      fixtures = built.fixtures;
+      roundOrder = built.roundOrder;
       const up = await S.sb.from("competition_pools").upsert(
         { competition_key: compKey, players, fixtures, round_order: roundOrder,
           updated_at: new Date().toISOString() });
