@@ -2025,3 +2025,61 @@ test("a rugby league in flex formation renders too", async ({ page }) => {
   expect(out.mins, "and never in football ones").not.toContain("DEF");
   expect(out.range, "as are the ranges").toMatch(/PR 2–3/);
 });
+
+test("a rugby league looks like rugby, not like football with different words",
+  async ({ page }) => {
+    /* Five things reported from the first playable rugby league, all of them
+       the app showing football where it should have shown the sport it is on. */
+    await openLeague(page, { managers: 4, played: 3 });
+
+    const out = await page.evaluate(() => {
+      S.league.competition = { apiLeagueId: 2146, season: 2026, sport: "rugby" };
+      // photos.json is loaded whatever the sport: this is the map that was
+      // drawing football federation badges beside rugby players.
+      (S.photos ||= {}).teams = { Ireland: 4, France: 5, Japan: 12, Brazil: 6 };
+
+      const byPos = {};
+      RUGBY_PLAY_GROUPS.forEach((g) => {
+        byPos[g] = [];
+        for (let i = 0; i < RUGBY_STARTERS[g]; i++)
+          byPos[g].push({ player_id: `rug_${g}${i}`, name: `${g}er ${i}`, team: "Ireland" });
+      });
+      const html = pitchHtml(byPos, {});
+      const emptyAvatar = avatarHtml("nobody", "Ireland", "w-10 h-10");
+      return {
+        rugbyPitch: html.includes("pitch-rugby"),
+        tryLine: html.includes("pitch-try"),
+        twentyTwo: html.includes("pitch-22"),
+        posts: html.includes("pitch-posts"),
+        penaltyBox: html.includes("pitch-box"),
+        pips: (html.match(/pp-pos/g) || []).length,
+        pipShown: showPosPips(),
+        crest: crestIdFor("Ireland"),
+        emptyIsFlex: emptyAvatar.includes("inline-flex"),
+      };
+    });
+
+    expect(out.rugbyPitch, "the pitch should know it is a rugby field").toBe(true);
+    expect(out.tryLine && out.twentyTwo && out.posts,
+      "with try lines, 22s and posts").toBe(true);
+    expect(out.penaltyBox, "and no penalty boxes").toBe(false);
+    expect(out.pipShown, "eight groups in four bands need a position pip").toBe(true);
+    expect(out.pips, "one on every player in the XV").toBe(15);
+    expect(out.crest, "no football crest may be resolved for a rugby team").toBeNull();
+    expect(out.emptyIsFlex,
+      "a photoless avatar must still take up its box, or the sticker collapses").toBe(true);
+
+    // ...and football keeps its own pitch, boxes and no pips.
+    const fb = await page.evaluate(() => {
+      S.league.competition = null;
+      const html = pitchHtml({ GK: [{ player_id: "a", name: "Keeper", team: "Brazil" }] }, {});
+      return { rugby: html.includes("pitch-rugby"), box: html.includes("pitch-box"),
+               pips: (html.match(/pp-pos/g) || []).length, pipShown: showPosPips(),
+               crest: crestIdFor("Brazil") };
+    });
+    expect(fb.rugby, "football keeps its own pitch").toBe(false);
+    expect(fb.box, "with its penalty boxes").toBe(true);
+    expect(fb.pipShown, "one group per row needs no pip").toBe(false);
+    expect(fb.pips, "so football draws none").toBe(0);
+    expect(fb.crest, "and football crests still resolve").not.toBeNull();
+  });

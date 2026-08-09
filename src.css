@@ -721,6 +721,47 @@ html[data-theme="sticker"] .pick-stamp {
     border: 2px solid rgba(255,255,255,.16); pointer-events: none; }
   .pitch-box.b { bottom: 6px; border-bottom: none; }
   .pitch-box.t { top: 6px; border-top: none; }
+
+  /* ---- a rugby field ----
+     Try lines with in-goal beyond them, the 22s, the 10m dashes and H posts.
+     Percentages are of the drawn box, with ~12% given to each in-goal, so the
+     lines sit where they do on a real field: the 22 is 22% of the way from the
+     try line to the far one, the 10m dashes flank halfway. */
+  .pitch-rugby::after { display: none; }        /* no centre circle in rugby */
+  .pitch-rugby .pitch-ingoal { position: absolute; left: 6px; right: 6px;
+    height: 12%; background: rgba(0,0,0,.14); pointer-events: none; }
+  .pitch-rugby .pitch-ingoal.t { top: 6px; }
+  .pitch-rugby .pitch-ingoal.b { bottom: 6px; }
+  .pitch-rugby .pitch-try,
+  .pitch-rugby .pitch-22 { position: absolute; left: 6px; right: 6px;
+    border-top: 2px solid rgba(255,255,255,.20); pointer-events: none; }
+  .pitch-rugby .pitch-try.t { top: 12%; }
+  .pitch-rugby .pitch-try.b { bottom: 12%; }
+  .pitch-rugby .pitch-22.t { top: 29%; }
+  .pitch-rugby .pitch-22.b { bottom: 29%; }
+  /* The 10m lines are dashed on a real field, and that is the one marking that
+     makes it unmistakably rugby rather than a pitch with the boxes rubbed out. */
+  .pitch-rugby .pitch-ten { position: absolute; left: 6px; right: 6px;
+    border-top: 2px dashed rgba(255,255,255,.16); pointer-events: none; }
+  .pitch-rugby .pitch-ten.t { top: 42%; }
+  .pitch-rugby .pitch-ten.b { bottom: 42%; }
+  /* H posts, standing on the try line. */
+  .pitch-rugby .pitch-posts { position: absolute; left: 50%; width: 30px; height: 22px;
+    transform: translateX(-50%); pointer-events: none;
+    border-left: 2px solid rgba(255,255,255,.26);
+    border-right: 2px solid rgba(255,255,255,.26); }
+  .pitch-rugby .pitch-posts::after { content: ""; position: absolute;
+    left: -2px; right: -2px; top: 58%;
+    border-top: 2px solid rgba(255,255,255,.26); }
+  .pitch-rugby .pitch-posts.t { top: calc(12% - 15px); }
+  .pitch-rugby .pitch-posts.b { bottom: calc(12% - 15px); }
+
+  /* The position a chip is filling, for a sport whose rows hold more than one
+     group. Sits opposite the points bubble so the two never collide. */
+  .pp-pos { position: absolute; top: -3px; left: -5px; z-index: 2;
+    font-size: 8px; font-weight: 800; line-height: 1; letter-spacing: .02em;
+    padding: 2px 3px; border-radius: 3px;
+    box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
   /* column-reverse so the keeper sits at the bottom and attackers at the top. */
   /* Height follows the rows rather than a fixed aspect ratio: with a fixed
      ratio a narrow (half-width) pitch clipped its own keeper row. */

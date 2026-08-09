@@ -9686,7 +9686,7 @@ function avatarHtml(playerId, team, size = "w-7 h-7") {
   const isTeam = String(playerId).startsWith("team:");
   let url = null;
   if (isTeam) {
-    const id = S.photos?.teams?.[team] ?? teamLogoId(team);
+    const id = crestIdFor(team);
     if (id) url = `https://media.api-sports.io/football/teams/${id}.png`;
   } else if (String(playerId).startsWith("api_")) {
     // API competition player: stored photo URL, else derived from the api id.
@@ -9704,7 +9704,12 @@ function avatarHtml(playerId, team, size = "w-7 h-7") {
      a distinction the caller already makes ("team:" prefix) and the markup
      previously threw away. */
   const kind = isTeam ? "avatar-team" : "avatar-player";
-  if (!url) return `<span class="avatar ${kind} ${size} rounded-full bg-slate-800 shrink-0"></span>`;
+  /* inline-flex even when empty. A bare <span> is display:inline, so it takes
+     no height of its own and `aspect-ratio` does nothing to it -- which is
+     invisible while every player has a photo, and collapses the moment one
+     does not. Rugby has no photo source at all, so its whole album page fell
+     in on itself. */
+  if (!url) return `<span class="avatar ${kind} ${size} rounded-full bg-slate-800 shrink-0 inline-flex"></span>`;
   return `<span class="avatar ${kind} ${size} rounded-full bg-slate-800 overflow-hidden shrink-0 inline-flex items-center justify-center">
     <img src="${esc(url)}" loading="lazy" data-avatar
          class="w-full h-full ${isTeam ? "object-contain p-0.5" : "object-cover"}" alt=""></span>`;
@@ -10697,6 +10702,22 @@ function lineupValid(counts) {
   return flexComplete(counts, starterQuota(), lineupFlex());
 }
 
+/* The crest id for a team, or null when there isn't one.
+
+   photos.json is the FOOTBALL World Cup crest map, and it is loaded whatever
+   sport the league is on -- so a rugby league drafting Ireland, France and
+   Japan matched it by NAME and drew football federation badges next to rugby
+   players. Worse where the names only nearly matched, which is how a Fijian
+   winger ended up under a Brazilian flag.
+
+   The images all live on media.api-sports.io/football, so there is nothing
+   here that is right for another sport: no crest at all is the honest answer,
+   and teamCrestHtml already falls back to the three-letter code. */
+const crestIdFor = (team) => {
+  if (sportOf() !== DEFAULT_SPORT) return null;
+  return S.photos?.teams?.[team] ?? teamLogoId(team);
+};
+
 /* Club crest for a team. API competitions carry the id on every player; the
    legacy WC pool has it in photos.json. Empty string when unknown, so callers
    can drop it in without guarding. */
@@ -10705,7 +10726,7 @@ function lineupValid(counts) {
    rather than the club disappearing. Omit it where a club name sits alongside
    and the crest is decoration. */
 function teamCrestHtml(team, size = "w-4 h-4", code) {
-  const id = S.photos?.teams?.[team] ?? teamLogoId(team);
+  const id = crestIdFor(team);
   if (!id) return code ? `<span data-crest-fallback class="shrink-0 font-mono text-xs" title="${esc(team)}">${esc(code)}</span>` : "";
   return `<img src="https://media.api-sports.io/football/teams/${id}.png" loading="lazy" data-avatar${
     code ? ` data-crest-code="${esc(code)}"` : ""}
@@ -10750,8 +10771,8 @@ const nameFit = (n) => {
      byPos : { GK:[e], DEF:[e], MID:[e], FWD:[e] }
      e     : { id, player_id, name, team, badge?, note?, dim? }              */
 function pitchHtml(byPos, opts = {}) {
-  return `<div class="pitch">
-    ${PITCH_MARKS}
+  return `<div class="pitch${pitchClass()}">
+    ${pitchMarks()}
     <div class="pitch-rows">${pitchRowsHtml(byPos, opts)}</div>
   </div>`;
 }
@@ -10767,8 +10788,8 @@ function pitchFacingHtml(topByPos, botByPos, opts = {}) {
   // work out which end is yours.
   const wash = (c, dir) => c
     ? ` style="background:linear-gradient(${dir},${c}2e,transparent 70%)"` : "";
-  return `<div class="pitch pitch-vs">
-    ${PITCH_MARKS}
+  return `<div class="pitch pitch-vs${pitchClass()}">
+    ${pitchMarks()}
     <div class="pitch-rows pitch-rows-down"${wash(opts.topColor, "180deg")}>${pitchRowsHtml(topByPos, opts)}</div>
     <div class="pitch-rows"${wash(opts.botColor, "0deg")}>${pitchRowsHtml(botByPos, opts)}</div>
   </div>`;
@@ -10776,6 +10797,27 @@ function pitchFacingHtml(topByPos, botByPos, opts = {}) {
 
 const PITCH_MARKS =
   '<div class="pitch-half"></div><div class="pitch-box b"></div><div class="pitch-box t"></div>';
+/* Rugby is not played on a football pitch, and drawing one under fifteen
+   forwards and backs is the sort of detail that quietly says the app does not
+   know what sport it is showing. Try lines with in-goal beyond them, the 22s,
+   the 10m dashes and H posts -- no penalty boxes, no centre circle. */
+const RUGBY_PITCH_MARKS =
+  '<div class="pitch-ingoal t"></div><div class="pitch-ingoal b"></div>'
+  + '<div class="pitch-try t"></div><div class="pitch-try b"></div>'
+  + '<div class="pitch-22 t"></div><div class="pitch-22 b"></div>'
+  + '<div class="pitch-ten t"></div><div class="pitch-ten b"></div>'
+  + '<div class="pitch-half"></div>'
+  + '<div class="pitch-posts t"></div><div class="pitch-posts b"></div>';
+const pitchMarks = () => sportOf() === "rugby" ? RUGBY_PITCH_MARKS : PITCH_MARKS;
+const pitchClass = () => sportOf() === "rugby" ? " pitch-rugby" : "";
+
+/* Whether a chip has to say its own position.
+
+   On a football pitch the row IS the position -- four groups, four rows, and
+   a pip on every player would be noise. Rugby packs eight groups into four
+   bands, so the row only narrows it to two and the chip has to say which. The
+   rule is that: pips appear when a band holds more than one group. */
+const showPosPips = () => sportDef().pitchBands().some((b) => b.length > 1);
 
 /* The bench, drawn as a bench. A stack of full-width rows said "list of spare
    players"; a row of faces under the pitch, numbered left to right, says the
@@ -10811,6 +10853,7 @@ function dugoutHtml(subs, opts = {}) {
 
 function pitchRowsHtml(byPos, opts = {}) {
   const av = opts.small ? "w-8 h-8" : "w-10 h-10";
+  const pips = showPosPips();
   const chip = (e) => {
     // An empty slot: a dashed shirt where a player still has to go.
     if (e.ghost) return `<div class="pp opacity-70">
@@ -10837,6 +10880,7 @@ function pitchRowsHtml(byPos, opts = {}) {
           ${e.swapFor ? `<span class="absolute -bottom-1 -right-2 inline-flex items-center rounded-full bg-slate-900/95 ring-1 ring-wcgold/70 p-0.5"
              title="replacing">${avatarHtml(e.swapFor, "", "w-4 h-4")}</span>` : ""}
         </span>
+        ${pips && e.position ? `<span class="pp-pos pos-${e.position}">${esc(e.position)}</span>` : ""}
         <span class="pp-name${nameFit(shortName(e.name))}">${esc(shortName(e.name))}</span>
         ${e.opp ? `<span class="pp-opp">${esc(e.opp)}</span>` : ""}
       </button>
@@ -10847,7 +10891,9 @@ function pitchRowsHtml(byPos, opts = {}) {
      groups into four rows the way a side actually lines up. */
   return sportDef().pitchBands().map((band) =>
     `<div class="pitch-row">${
-      band.flatMap((g) => byPos[g] || []).map(chip).join("")}</div>`).join("");
+      band.flatMap((g) => (byPos[g] || []).map((e) =>
+        // The group is the row's, so a chip never has to carry it itself.
+        e.position ? e : { ...e, position: g })).map(chip).join("")}</div>`).join("");
 }
 
 // While a full-screen sheet is open the page behind it must not scroll, or a
@@ -11000,19 +11046,28 @@ function renderLineup() {
   });
 
   const counts = lineupCounts();
-  const total = counts.GK + counts.DEF + counts.MID + counts.FWD;
+  const total = sumGroups(counts);
   const ok = lineupValid(counts);
   const need = isFlexFormation()
     ? formationBounds().starters
     : playGroups().reduce((a, g) => a + (starterQuota()[g] || 0), 0) + lineupFlex();
-  // Outfield shape only — "3-4-3" is how anyone actually describes a formation.
-  $("lineup-formation").textContent = `${counts.DEF}-${counts.MID}-${counts.FWD}`;
+  /* "4-4-2" is how a football side is described, and the three positions it
+     names are the outfield ones. On a sport with other groups those keys do
+     not exist, so this read "undefined-undefined-undefined". */
+  $("lineup-formation").textContent =
+    outfieldGroups().map((g) => counts[g] || 0).join("-");
   $("lineup-formation").className = "text-3xl font-bold scoreboard tracking-tight "
     + (ok ? "text-wcgold" : "text-danger");
   /* Spelled out, because "11/9 picked" read as a broken fraction — eleven out
      of nine — and never said what the nine counted. All three cases are real:
      a league's starter quota can be under the squad you have named. */
-  const keeper = counts.GK !== 1 ? " · needs a keeper" : "";
+  /* Football wants exactly one keeper. A sport with no such position wants
+     nothing said about it at all -- "needs a keeper" in a rugby league is
+     both wrong and impossible to satisfy. */
+  const missing = sportDef().exactGroups()
+    .filter((g) => (counts[g] || 0) !== (starterQuota()[g] || 0));
+  const keeper = missing.length
+    ? ` · needs exactly ${missing.map((g) => `${starterQuota()[g] || 0} ${g}`).join(", ")}` : "";
   $("lineup-count").textContent = (total === need ? `${total} picked`
     : total > need ? `${total} picked · ${need} needed`
     : `${total} of ${need} picked`) + keeper;
@@ -13662,6 +13717,47 @@ function buildFixtureStatRows(f, teamBlocks, keyField, fixName, pidOf, skipped) 
   return { rows, label, maxMin, cs };
 }
 
+/* The rugby half of "pull stats now".
+
+   Same contract as the football path -- read a date's completed matches,
+   build one row per player who took the field, upsert into the shared
+   competition_stats -- but nothing else is shared, because the feed has no
+   fixtures-by-date endpoint. There is only the season list, filtered here.
+
+   Sweeps the previous UTC day as well, for the same reason football does: a
+   match kicking off at 20:00Z belongs to that UTC date, and a pull the
+   morning after would otherwise step straight over it. */
+async function pullRugbyStats(date, log, keyField, statsTable, onConflict) {
+  const comp = leagueCompetition();
+  const from = Date.parse(date + "T00:00:00Z") - 24 * 3600e3;
+  const to = Date.parse(date + "T23:59:59Z");
+  log("Reading the competition's matches…");
+  const all = await fetchRugbyMatches(comp.apiLeagueId);
+  const played = usableRugbyMatches(all, { sinceMs: from, untilMs: to });
+  if (!played.length) {
+    const anyDone = usableRugbyMatches(all).length;
+    log(`No completed matches on ${new Date(from).toISOString().slice(0, 10)} or ${date}.`
+      + (anyDone ? `\nThe competition has ${anyDone} completed match(es) on other dates —`
+        + ` pick one of those dates to pull them.` : ""));
+    return;
+  }
+  const skipped = [], summary = [];
+  let total = 0;
+  for (const m of played) {
+    log(`Pulling ${m.homeTeam?.name} v ${m.awayTeam?.name}…`);
+    const detail = await rugbyFeed(`matches/${m.id}`);
+    const rows = rugbyStatRows(detail?.data || detail, keyField,
+      (team, pl) => "rug_" + pl.id, skipped);
+    if (rows.length) await resilientWrite(statsTable, rows, { upsert: true, onConflict });
+    total += rows.length;
+    summary.push(`${m.homeTeam?.name} v ${m.awayTeam?.name}: ${rows.length} rows`);
+  }
+  log(`Done — ${total} player rows from ${played.length} match(es).`
+    + "\n" + summary.join("\n")
+    + (skipped.length ? `\nCould not map: ${[...new Set(skipped)].join(", ")}` : ""));
+  scheduleRefetch();
+}
+
 async function pullStatsNow() {
   const key = $("adm-api-key").value.trim();
   const date = $("adm-pull-date").value;
@@ -13691,6 +13787,10 @@ async function pullStatsNow() {
     const statsTable = compKey ? "competition_stats" : "match_stats";
     const keyField = compKey ? { competition_key: compKey } : { league_id: S.league.id };
     const onConflict = (compKey ? "competition_key" : "league_id") + ",player_id,match_label";
+    // Another sport, another provider. Everything above is shared; nothing below is.
+    if (sportOf() === "rugby") {
+      return await pullRugbyStats(date, log, keyField, statsTable, onConflict);
+    }
     const all = [
       ...await apiFootball(key, "fixtures", { date, league: comp.apiLeagueId, season: comp.season }),
       ...await apiFootball(key, "fixtures", { date: prevDate, league: comp.apiLeagueId, season: comp.season }),
