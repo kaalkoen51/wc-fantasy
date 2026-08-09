@@ -1042,7 +1042,7 @@ function rugbyBody(data) {
 
 let _rugbyProxy = null;          // null = untried, true/false = settled
 async function rugbyFeed(path, params) {
-  const base = rugbyProxyUrl();
+  const base = rugbyProxyUrl(), cfg = getConfig();
   const bases = [];
   if (base && _rugbyProxy !== false) bases.push(base);
   // Direct only as a fallback: the feed needs no key, but going straight there
@@ -1054,9 +1054,17 @@ async function rugbyFeed(path, params) {
     if (viaProxy) u.searchParams.set("path", path);
     for (const k in params) u.searchParams.set(k, params[k]);
     u.searchParams.set("provider", "rugbyviz");
+    /* The Supabase key goes ONLY to Supabase. Edge functions verify a JWT by
+       default, so a call without it is a 401 before the function even runs --
+       but sending the project's anon key to a third-party feed would hand it
+       to someone who has no business holding it. */
+    const headers = viaProxy && cfg?.key
+      ? { Authorization: "Bearer " + cfg.key, apikey: cfg.key } : undefined;
     try {
-      const resp = await fetch(u, { cache: "no-store" });
-      if (viaProxy && resp.status === 404) { _rugbyProxy = false; continue; }
+      const resp = await fetch(u, { cache: "no-store", headers });
+      if (viaProxy && (resp.status === 404 || resp.status === 401)) {
+        _rugbyProxy = false; continue;      // not deployed, or refusing us
+      }
       const data = await resp.json();
       if (viaProxy) _rugbyProxy = true;
       return rugbyBody(data);

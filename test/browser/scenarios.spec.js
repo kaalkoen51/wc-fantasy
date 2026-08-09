@@ -1783,3 +1783,45 @@ test("loading a rugby competition reads the rugby feed, not API-Football", async
   expect(hits.some((u) => u.includes("rugby-feed") || u.includes("incrowdsports.com")),
     "a rugby pull must reach the rugby feed").toBe(true);
 });
+
+test("the rugby proxy is authenticated, and the feed is not given the key", async ({ page }) => {
+  /* Edge functions verify a JWT by default, so a call with no Authorization
+     header 401s before the function runs. The football proxy has always sent
+     the anon key; the rugby one sent nothing, which would have failed on the
+     first real request after deploying. The other half matters just as much:
+     the key must NOT travel to a third-party feed. */
+  await openLeague(page, { managers: 4, played: 3 });
+  const seen = [];
+  /* The proxy answers 404 — "not deployed" — which is what pushes the client
+     onto its direct fallback. Without this the direct path is never taken and
+     the second assertion below passes on an empty list, which is exactly how
+     it passed with the rule deliberately broken. */
+  await page.route("**/*", async (route) => {
+    const url = decodeURIComponent(route.request().url());
+    const auth = route.request().headers()["authorization"] || null;
+    if (url.includes("/functions/v1/rugby-feed")) {
+      seen.push({ to: "supabase", auth });
+      return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+    }
+    if (url.includes("incrowdsports.com")) {
+      seen.push({ to: "feed", auth });
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify({ data: [] }) });
+    }
+    return route.continue();
+  });
+
+  const env = await page.evaluate(async () => {
+    await fetchRugbyMatches(1068).catch(() => {});
+    return { hasKey: !!getConfig()?.key };
+  });
+
+  expect(env.hasKey, "the harness should have a Supabase key configured").toBe(true);
+  const toSupabase = seen.filter((h) => h.to === "supabase");
+  const toFeed = seen.filter((h) => h.to === "feed");
+  expect(toSupabase.length, "the proxy should be tried first").toBeGreaterThan(0);
+  expect(toFeed.length, "and a 404 should fall through to the feed itself").toBeGreaterThan(0);
+  expect(toSupabase.every((h) => (h.auth || "").startsWith("Bearer ")),
+    "every proxy call carries the anon key, or the function 401s").toBe(true);
+  expect(toFeed.every((h) => !h.auth),
+    "the Supabase key must never be sent to the third-party feed").toBe(true);
+});
