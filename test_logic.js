@@ -35,7 +35,7 @@ const lsStub = {
 globalThis.appended = appended;
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, scoringRules, sportNeedsApiKey, summariseLineupSample, lineupObservationText, RUGBY_QUOTA, RUGBY_STARTERS, RUGBY_PLAY_GROUPS, RUGBY_PITCH_BANDS, RUGBY_RULES, RUGBY_STAT_CATALOG, RUGBY_SLOTS, slotMapsFor, sumGroups, zeroByGroup, outfieldGroups, squadSize, flexComplete, flexLeft, fixedRoundSubs, SLOT_POS, SLOT_RANK, rugbyPosCode, isRugbyBenchSlot, parseRugbyPlayer, parseRugbyMatch, usableRugbyMatches, rugbyStatRows, rugbyStatsOf, RUGBY_STAT_KEYS, RUGBY_COMPETITIONS, rugbyBody, parseCompKey, competitionsFor, SPORTS, sportOf, sportDef, posGroups, playGroups, slotPosMap, slotRankMap, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid, pitchHtml, pitchFacingHtml, pitchRowsHtml, squadBoardHtml, historyViewHtml, benchInOrder, moveBench, orderedRoster, flipRows, wireLineupControls, markQueueMoved, matchdayCtaAct, matchdayCardHtml, renderLineup, renderHomeTab, openH2HPreview, openH2HFixture, lineupRowHtml, dugoutHtml, renderFixturesTab, h2hRoundFixtures, h2hTotalRounds, h2hFormOf, h2hStandingsHtml, seasonChartHtml, renderScoutList, renderStatsTab, renderPredraftShortlist, preDraftBrowsing, shortlistCoverage, coverageHint, scoringByPositionHtml, openScoringSheet, animateReorder, applyLocalOverrides, queueManagerWrite, wireStars, starHtml, draftFactCards, draftRulesHtml, lobbyRulesHtml, scoringHtml, applyVisibleOrder, makeReorderable, refetchAll, markConnection, enterLeagueWithFeedback, route, showView, dragActive, afterDrag, overrideStillWins, queueManagerWrite, applyLocalOverrides, keepLocalPick, autoPickStale, makePick, autoPick, tickTimer, mergeOptimisticPicks, pickKey, queueFieldWrite, OVERRIDE_TABLES, setPlanner, saveLineup, toggleKeeper, setFinalPick, txWindowStarts, txWhen, txShell, txAvatar, txMgrChip, tradeTxCard, swapTxCard, transactionsLogHtml, renderTrades, builderHtml, faClaimsSectionHtml, waiverOrderHtml, shortlistSectionHtml, plannerSectionHtml, plannerMoveHtml, squadChooserHtml, tradeSectionHtml, setClaimOrder, reorderClaim, tradeForShortlisted, submitTrade, TRADE_TABS, tradeTabBodyHtml, faClaimRowHtml, faClaimRowsHtml, renderClaimList, wireClaimControls, ROW_ATTRS, plannerMoveChoice, plannerSetChoiceOrder, plannerPickPool, renderPlannerPick, setWindowMode, toggleLineups, squadPitchHtml, squadShape, renderDreamTeam, dreamTeam, renderChat, chatThreads, interacting, markInteracting, scheduleDeferredFlush, INTERACT_MS, animateReorder, flipRows, flushDeferredRender, currentSeasonFor, seasonOptions, seasonLabel, backtestSeason, createCompKind, createPreviewSeason, loadScoringPreviewData, pullCreateHistory, renderCreateBalance, updateCreatePullStatus, renderCreateForm, pickReconciliation, reconcilePicksToPool, mapApiPlayer, loadCompetition, roundResolvers, roundIndex, mwNo, FINAL_STATUS, draftOrderMode, lobbyOrderManagers, shuffled, setDraftOrder, renderLobbyOrder, lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow, nextLockMs, lockAfterWindow, snapshotAt, snapshotForNextLock, rosterAtFor, setSession, getSession, repairStarters, lineupShape, repairLineupFor, faWindowKey, roundToSettle, closedWindowRound, closedWindowRounds, closedTradeWindows, roundsOwedSettlement, isRoundSettled, matchFixture, matchTimeFor, computeScoresUncached, bustScores, roundKeyLockedAt, roundKeyOfLabel, roundLabelShort, roundIndex, rosterAtFor, snapshotsByManager, advanceRound, maybeAdvanceRounds };"
+  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, scoringRules, rugbyMatchSettled, rugbyTeamKnown, firstArray, sportNeedsApiKey, summariseLineupSample, lineupObservationText, RUGBY_QUOTA, RUGBY_STARTERS, RUGBY_PLAY_GROUPS, RUGBY_PITCH_BANDS, RUGBY_RULES, RUGBY_STAT_CATALOG, RUGBY_SLOTS, slotMapsFor, sumGroups, zeroByGroup, outfieldGroups, squadSize, flexComplete, flexLeft, fixedRoundSubs, SLOT_POS, SLOT_RANK, rugbyPosCode, isRugbyBenchSlot, parseRugbyPlayer, parseRugbyMatch, usableRugbyMatches, rugbyStatRows, rugbyStatsOf, RUGBY_STAT_KEYS, RUGBY_COMPETITIONS, rugbyBody, parseCompKey, competitionsFor, SPORTS, sportOf, sportDef, posGroups, playGroups, slotPosMap, slotRankMap, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid, pitchHtml, pitchFacingHtml, pitchRowsHtml, squadBoardHtml, historyViewHtml, benchInOrder, moveBench, orderedRoster, flipRows, wireLineupControls, markQueueMoved, matchdayCtaAct, matchdayCardHtml, renderLineup, renderHomeTab, openH2HPreview, openH2HFixture, lineupRowHtml, dugoutHtml, renderFixturesTab, h2hRoundFixtures, h2hTotalRounds, h2hFormOf, h2hStandingsHtml, seasonChartHtml, renderScoutList, renderStatsTab, renderPredraftShortlist, preDraftBrowsing, shortlistCoverage, coverageHint, scoringByPositionHtml, openScoringSheet, animateReorder, applyLocalOverrides, queueManagerWrite, wireStars, starHtml, draftFactCards, draftRulesHtml, lobbyRulesHtml, scoringHtml, applyVisibleOrder, makeReorderable, refetchAll, markConnection, enterLeagueWithFeedback, route, showView, dragActive, afterDrag, overrideStillWins, queueManagerWrite, applyLocalOverrides, keepLocalPick, autoPickStale, makePick, autoPick, tickTimer, mergeOptimisticPicks, pickKey, queueFieldWrite, OVERRIDE_TABLES, setPlanner, saveLineup, toggleKeeper, setFinalPick, txWindowStarts, txWhen, txShell, txAvatar, txMgrChip, tradeTxCard, swapTxCard, transactionsLogHtml, renderTrades, builderHtml, faClaimsSectionHtml, waiverOrderHtml, shortlistSectionHtml, plannerSectionHtml, plannerMoveHtml, squadChooserHtml, tradeSectionHtml, setClaimOrder, reorderClaim, tradeForShortlisted, submitTrade, TRADE_TABS, tradeTabBodyHtml, faClaimRowHtml, faClaimRowsHtml, renderClaimList, wireClaimControls, ROW_ATTRS, plannerMoveChoice, plannerSetChoiceOrder, plannerPickPool, renderPlannerPick, setWindowMode, toggleLineups, squadPitchHtml, squadShape, renderDreamTeam, dreamTeam, renderChat, chatThreads, interacting, markInteracting, scheduleDeferredFlush, INTERACT_MS, animateReorder, flipRows, flushDeferredRender, currentSeasonFor, seasonOptions, seasonLabel, backtestSeason, createCompKind, createPreviewSeason, loadScoringPreviewData, pullCreateHistory, renderCreateBalance, updateCreatePullStatus, renderCreateForm, pickReconciliation, reconcilePicksToPool, mapApiPlayer, loadCompetition, roundResolvers, roundIndex, mwNo, FINAL_STATUS, draftOrderMode, lobbyOrderManagers, shuffled, setDraftOrder, renderLobbyOrder, lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow, nextLockMs, lockAfterWindow, snapshotAt, snapshotForNextLock, rosterAtFor, setSession, getSession, repairStarters, lineupShape, repairLineupFor, faWindowKey, roundToSettle, closedWindowRound, closedWindowRounds, closedTradeWindows, roundsOwedSettlement, isRoundSettled, matchFixture, matchTimeFor, computeScoresUncached, bustScores, roundKeyLockedAt, roundKeyOfLabel, roundLabelShort, roundIndex, rosterAtFor, snapshotsByManager, advanceRound, maybeAdvanceRounds };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -53,7 +53,7 @@ const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcT
         fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey,
         rugbyPosCode, isRugbyBenchSlot, parseRugbyPlayer, parseRugbyMatch, usableRugbyMatches, rugbyStatRows, rugbyStatsOf, RUGBY_STAT_KEYS, RUGBY_COMPETITIONS, rugbyBody, 
         parseCompKey, competitionsFor, SPORTS, sportOf, sportDef, posGroups, playGroups, slotPosMap, slotRankMap, scoringRules, pitchRowsHtml, 
-        sportNeedsApiKey, summariseLineupSample, lineupObservationText,
+        rugbyMatchSettled, rugbyTeamKnown, firstArray, sportNeedsApiKey, summariseLineupSample, lineupObservationText,
         RUGBY_QUOTA, RUGBY_STARTERS, RUGBY_PLAY_GROUPS, RUGBY_PITCH_BANDS, RUGBY_RULES, RUGBY_STAT_CATALOG, RUGBY_SLOTS, slotMapsFor, sumGroups, zeroByGroup, outfieldGroups, squadSize, flexComplete, flexLeft, fixedRoundSubs, SLOT_POS, SLOT_RANK, 
         slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick,
         posQuota, picksPerManager, totalPicks,
@@ -3232,12 +3232,20 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
   /* The search endpoint ignores season, status, round and sort, so this filter
      is the only thing standing between the app and a list of TBC placeholders
      sorted above the real results. */
+  /* Every entry carries real sides, because the feed's own placeholders are
+     recognised by their TEAMS rather than by the tbc flag -- so a fixture with
+     no teams at all is not a case this filter should be judged on. */
+  const sides = { homeTeam: { id: 5356, name: "Leinster" },
+                  awayTeam: { id: 4377, name: "Munster" } };
   const feedList = [
-    { id: 1, status: "fixture", tbc: 1, date: "2027-06-01T00:00:00Z" },   // placeholder
-    { id: 2, status: "result",  tbc: 0, date: "2026-05-31T17:00:00Z" },
-    { id: 3, status: "result",  tbc: 0, date: "2026-05-24T17:00:00Z" },
-    { id: 4, status: "fixture", tbc: 0, date: "2026-06-07T17:00:00Z" },
-    { id: 5, status: "result",  tbc: 1, date: "2026-05-30T17:00:00Z" },   // unsettled
+    { id: 1, status: "fixture", tbc: 1, date: "2027-06-01T00:00:00Z", ...sides },
+    { id: 2, status: "result",  tbc: 0, date: "2026-05-31T17:00:00Z", ...sides },
+    { id: 3, status: "result",  tbc: 0, date: "2026-05-24T17:00:00Z", ...sides },
+    { id: 4, status: "fixture", tbc: 0, date: "2026-06-07T17:00:00Z", ...sides },
+    { id: 5, status: "result",  tbc: 1, date: "2026-05-30T17:00:00Z", ...sides },
+    // ...and the shape the feed really uses for an undecided tie.
+    { id: 6, status: "fixture", tbc: 0, date: "2026-06-14T17:00:00Z",
+      homeTeam: { id: 0, name: "TBC" }, awayTeam: { id: 0, name: "TBC" } },
   ];
   check("only completed matches come back",
     usableRugbyMatches(feedList).map((m) => m.id).join(","), "3,2");
@@ -3249,6 +3257,8 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
     usableRugbyMatches(feedList, { status: "fixture" }).map((m) => m.id).join(","), "4");
   check("...and the tbc placeholder is still refused",
     usableRugbyMatches(feedList, { status: "fixture" }).some((m) => m.id === 1), false);
+  check("...as is an undecided tie the flag calls settled",
+    usableRugbyMatches(feedList, { status: "fixture" }).some((m) => m.id === 6), false);
   check("a date window keeps only the round just finished",
     usableRugbyMatches(feedList, { sinceMs: Date.parse("2026-05-28T00:00:00Z") })
       .map((m) => m.id).join(","), "2");
@@ -3516,6 +3526,61 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
   check("a rugby pool is keyed apart from a football one with the same id",
     compKeyOf({ apiLeagueId: 1068, season: 2025, sport: "rugby" })
       !== compKeyOf({ apiLeagueId: 1068, season: 2025 }), true);
+
+
+  /* ---------- what the feed actually sent ----------
+     Trimmed from the first real response this app ever got back, so these
+     assertions are pinned to observed behaviour rather than to the written
+     guide -- which was wrong about the one that mattered. */
+  const REAL = {
+    id: 291618, compId: 2146, compName: "Nations Championship",
+    date: "2026-11-29T16:40:00.000Z", round: 7, roundTypeId: 2, title: "TF",
+    season: 202600, status: "fixture",
+    tbc: 0,                                  // ...and yet:
+    homeTeam: { id: 0, name: "TBC", shortName: "TBC", players: null, score: null },
+    awayTeam: { id: 0, name: "TBC", shortName: "TBC", players: null, score: null },
+    venue: { id: 3320, name: "Allianz Stadium" },
+  };
+  const REAL_PLAYED = {
+    ...REAL, id: 291600, status: "result", round: 3, title: null,
+    date: "2026-11-14T15:00:00.000Z",
+    homeTeam: { id: 4, name: "Ireland", score: 21 },
+    awayTeam: { id: 5, name: "France", score: 17 },
+  };
+
+  /* The guide said tbc:1 marks an undetermined tie. The feed says otherwise:
+     a placement match carries tbc:0 and two teams called TBC with id 0,
+     because who plays in it depends on a table nobody has finished. Believing
+     the flag would have put a club called TBC into a draft pool. */
+  check("a placement match says tbc:0 even though nobody is in it", REAL.tbc, 0);
+  check("...so the teams are what decide it", rugbyMatchSettled(REAL), false);
+  check("a real fixture between two named sides is settled",
+    rugbyMatchSettled({ ...REAL, homeTeam: { id: 4, name: "Ireland" },
+                                 awayTeam: { id: 5, name: "France" } }), true);
+  check("a TBC side is not a known team", rugbyTeamKnown({ id: 0, name: "TBC" }), false);
+  check("...nor is one with a name but no id", rugbyTeamKnown({ id: 0, name: "Ireland" }), false);
+  check("...and the flag still counts when it IS set",
+    rugbyMatchSettled({ ...REAL_PLAYED, tbc: 1 }), false);
+
+  check("an undetermined fixture never reaches the app",
+    usableRugbyMatches([REAL], { status: "fixture" }).length, 0);
+  check("...while a played match between named sides does",
+    usableRugbyMatches([REAL_PLAYED]).length, 1);
+
+  // The envelope: { data, metadata, status:"success" }.
+  check("the real response envelope yields its list",
+    firstArray({ data: [REAL], metadata: { totalItems: 42 }, status: "success" },
+      ["data", "matches"], "probe").length, 1);
+  check("...and `status: success` is not mistaken for an error", (() => {
+    try { rugbyBody({ data: [], status: "success" }); return "fine"; } catch { return "threw"; }
+  })(), "fine");
+
+  // Parsing a real played match.
+  const parsed = parseRugbyMatch(REAL_PLAYED);
+  check("a real result parses as FT", parsed.status, "FT");
+  check("...with both sides named", `${parsed.home} v ${parsed.away}`, "Ireland v France");
+  check("...the date taken off the timestamp", parsed.date, "2026-11-14");
+  check("...and the round numbered", parsed.round, "Round 3");
 
   process.exit(fails ? 1 : 0);
 })();

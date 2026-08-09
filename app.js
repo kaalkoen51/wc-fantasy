@@ -959,14 +959,25 @@ function parseRugbyMatch(m) {
    list is always date-descending with future TBC placeholders sorted ABOVE
    real results -- which is how the data you want ends up buried. Pure, so the
    cases that matter are pinned by tests rather than by a live pull. */
+/* Is this a match between two known sides?
+
+   `tbc` does NOT answer that, which the feed's first real response made
+   plain: the Nations Championship's placement matches ("TF", "7-8", "3-4")
+   come back with `tbc: 0` and BOTH teams as `{ id: 0, name: "TBC" }`, because
+   who plays in them depends on a table that has not been decided. Trusting the
+   flag would have drafted a pool containing a club called TBC and filed real
+   results against it. The teams themselves are the fact; the flag is a hint. */
+const rugbyTeamKnown = (t) => !!t && +t.id > 0
+  && !!t.name && t.name.toUpperCase() !== "TBC";
+const rugbyMatchSettled = (m) =>
+  +m?.tbc !== 1 && rugbyTeamKnown(m?.homeTeam) && rugbyTeamKnown(m?.awayTeam);
+
 function usableRugbyMatches(list, opts = {}) {
   const want = opts.status || "result";
   const since = opts.sinceMs, until = opts.untilMs;
   return (list || [])
     .filter((m) => String(m.status || "").toLowerCase() === want)
-    // tbc:1 means the teams or venue are not settled yet -- a playoff slot
-    // waiting on the table. Treat only an explicit 1 as unusable.
-    .filter((m) => +m.tbc !== 1)
+    .filter(rugbyMatchSettled)
     .filter((m) => {
       if (since == null && until == null) return true;
       const t = Date.parse(m.date);
