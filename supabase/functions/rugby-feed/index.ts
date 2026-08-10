@@ -25,16 +25,25 @@
 
 const HOST = "https://rugby-union-feeds.incrowdsports.com";
 
-/* Only the shapes the app actually asks for, so a leaked anon key cannot turn
-   this into an open relay for someone else's feed. `matches/{id}` and
-   `teams/{id}/players` carry an id, so they are matched as patterns rather
-   than by set membership -- and the id is required to be digits, which is what
-   stops `matches/../../whatever` from being a path at all. */
+/* What may be asked for. The host is pinned above and the method is GET, so
+   the job here is to stop this becoming a general-purpose relay and to make a
+   path traversal impossible -- not to enumerate endpoints.
+
+   It started as four exact shapes. That turned out to be the wrong trade: this
+   feed is undocumented, its published guide is wrong about it in at least
+   three places already, and finding out what an endpoint really returns is the
+   only way to build against it. With a fixed list, every guess costs a
+   redeploy, so the list itself became the obstacle.
+
+   So: lower-case words and digits, separated by slashes, at most four deep.
+   No dots and no percent signs are in the character class, which is what makes
+   `../` unrepresentable -- the same defence the digit-only ids gave, applied
+   once instead of per rule. Everything on this host is unauthenticated public
+   data, so the worst a widened path buys anyone is a slower way to read what
+   they could read directly. */
+const SEG = "[a-z][a-z-]{1,24}";
 const ALLOWED: RegExp[] = [
-  /^matches\/search$/,
-  /^matches\/\d+$/,
-  /^teams\/\d+\/players$/,
-  /^teams\/\d+$/,
+  new RegExp(`^${SEG}(\\/(\\d+|${SEG})){0,3}$`),
 ];
 
 const CORS: Record<string, string> = {
