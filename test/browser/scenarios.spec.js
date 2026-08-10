@@ -1829,6 +1829,113 @@ test("loading a rugby competition reads the rugby feed, not API-Football", async
     "a rugby pull must reach the rugby feed").toBe(true);
 });
 
+test("rugby club crests come off the feed, in the right theme's variant", async ({ page }) => {
+  /* Rugby leagues were drawing football badges matched by NAME -- Ireland the
+     football side next to Ireland the rugby side -- and then, once that was
+     stopped, no badge at all. The feed has them; they arrive in three places
+     depending on the call, so all three are read. */
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const hits = [];
+  await page.route("**/*", async (route) => {
+    const url = decodeURIComponent(route.request().url());
+    if (!(url.includes("incrowdsports.com") || url.includes("/functions/v1/")))
+      return route.continue();
+    hits.push(url);
+    const json = (body) => route.fulfill({ contentType: "application/json",
+                                           body: JSON.stringify(body) });
+    if (url.includes("matches/search")) {
+      return json({ status: "success", data: [
+        { id: 910, status: "result", tbc: 0, date: "2026-01-10T17:00:00Z", round: 1,
+          homeTeam: { id: 4, name: "Leinster", score: 30 },
+          awayTeam: { id: 5, name: "Munster", score: 12 } },
+        { id: 911, status: "result", tbc: 0, date: "2026-01-17T17:00:00Z", round: 2,
+          homeTeam: { id: 6, name: "Ulster", score: 8 },
+          awayTeam: { id: 5, name: "Munster", score: 9 } },
+      ] });
+    }
+    // The direct look-up, and the ONLY place Ulster's crest exists. Shaped
+    // like the real answer: season aggregate rows, images on the row.
+    if (/teams\/6(?!\d)/.test(url)) {
+      return json({ status: "success", data: [
+        { teamId: 6, imageUrl: "https://images.incrowdsports.com/ulster.png" }] });
+    }
+    const mid = (url.match(/matches\/(\d+)/) || [])[1];
+    if (mid === "910") {
+      return json({ status: "success", data: { id: 910, round: 1,
+        // On the side itself: no extra call needed.
+        homeTeam: { id: 4, name: "Leinster", score: 30,
+          imageUrls: { DEFAULT: "https://images.incrowdsports.com/lein.png",
+                       ON_DARK: "https://images.incrowdsports.com/lein-dark.png" },
+          players: [{ id: 1, known: "A Prop", positionId: 1, position: "prop",
+                      stats: { minutesPlayedTotal: 80 } }] },
+        // On the players, which is where the squad response puts it. Note the
+        // player's OWN imageUrl sitting right beside it.
+        awayTeam: { id: 5, name: "Munster", score: 12,
+          players: [{ id: 2, known: "A Lock", positionId: 4, position: "lock",
+                      imageUrl: "https://images.incrowdsports.com/face-2.png",
+                      teamImageUrls: { DEFAULT: "https://images.incrowdsports.com/mun.png",
+                                       ON_DARK: "https://images.incrowdsports.com/mun-dark.png" },
+                      stats: { minutesPlayedTotal: 80 } }] } } });
+    }
+    if (mid === "911") {
+      return json({ status: "success", data: { id: 911, round: 2,
+        // Nowhere at all: this is the side that needs teams/{id}.
+        homeTeam: { id: 6, name: "Ulster", score: 8,
+          players: [{ id: 3, known: "A Hooker", positionId: 2, position: "hooker",
+                      stats: { minutesPlayedTotal: 80 } }] },
+        awayTeam: { id: 5, name: "Munster", score: 9, players: [] } } });
+    }
+    return json({});
+  });
+
+  const out = await page.evaluate(async () => {
+    const competition = { name: "United Rugby Championship", apiLeagueId: 1068,
+                          season: 2026, sport: "rugby" };
+    const built = await fetchPoolFor(competition, "", () => {});
+    const byId = Object.fromEntries(built.players.map((p) => [p.player_id, p]));
+    // Now render as the app would, from the pool it just built.
+    S.league.competition = competition;
+    S.players = built.players;
+    const at = (theme) => {
+      if (theme === "dark") delete document.documentElement.dataset.theme;
+      else document.documentElement.dataset.theme = theme;
+      return { lein: crestUrlFor("Leinster"), ulster: crestUrlFor("Ulster"),
+               html: teamCrestHtml("Leinster", "w-4 h-4", "LEI") };
+    };
+    const dark = at("dark"), sticker = at("sticker");
+    delete document.documentElement.dataset.theme;
+    return { stored: byId, dark, sticker };
+  });
+
+  expect(out.stored["rug_1"].team_crest, "a crest on the side itself is read")
+    .toBe("https://images.incrowdsports.com/lein.png");
+  expect(out.stored["rug_2"].team_crest, "a crest carried on the players is read")
+    .toBe("https://images.incrowdsports.com/mun.png");
+  expect(out.stored["rug_2"].photo, "and the player's own face is still their face")
+    .toBe("https://images.incrowdsports.com/face-2.png");
+  expect(out.stored["rug_2"].team_crest, "which is never mistaken for the club's badge")
+    .not.toBe(out.stored["rug_2"].photo);
+  expect(out.stored["rug_3"].team_crest, "a side with neither is looked up directly")
+    .toBe("https://images.incrowdsports.com/ulster.png");
+
+  // The look-up is the fallback, not the route: sides that already had a
+  // crest must not cost an extra call each.
+  expect(hits.filter((u) => /teams\/\d/.test(u)).length,
+    "only the one side that needed it was looked up").toBe(1);
+
+  expect(out.dark.lein, "dark draws the on-dark badge")
+    .toBe("https://images.incrowdsports.com/lein-dark.png");
+  expect(out.sticker.lein, "a light theme draws the default badge")
+    .toBe("https://images.incrowdsports.com/lein.png");
+  expect(out.dark.ulster, "one variant serves both themes")
+    .toBe("https://images.incrowdsports.com/ulster.png");
+  expect(out.dark.html, "and it reaches the page as an image, not a code")
+    .toContain("images.incrowdsports.com/lein-dark.png");
+  expect(out.dark.html, "a football crest never appears in a rugby league")
+    .not.toContain("api-sports.io");
+});
+
 test("the rugby proxy is authenticated, and the feed is not given the key", async ({ page }) => {
   /* Edge functions verify a JWT by default, so a call with no Authorization
      header 401s before the function runs. The football proxy has always sent

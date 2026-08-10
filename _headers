@@ -11,7 +11,7 @@
 # from a stolen-account bug into a blocked console error.
 
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://media.api-sports.io data:; font-src 'self'; connect-src 'self' https://gpdyemrgulhdnsmmadgs.supabase.co wss://gpdyemrgulhdnsmmadgs.supabase.co https://v3.football.api-sports.io; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://media.api-sports.io https://*.incrowdsports.com data:; font-src 'self'; connect-src 'self' https://gpdyemrgulhdnsmmadgs.supabase.co wss://gpdyemrgulhdnsmmadgs.supabase.co https://v3.football.api-sports.io; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
@@ -27,6 +27,15 @@
 /*.json
   Cache-Control: public, max-age=300
 
+# On the image hosts:
+#   media.api-sports.io    — football player photos and club crests.
+#   *.incrowdsports.com    — the rugby feed's own domain, which is where it
+#     serves club crests and player photos from. A wildcard over the vendor we
+#     already trust for the data itself, rather than a guessed subdomain: the
+#     feed hands out absolute URLs and does not promise which host they sit on.
+#     If a crest is ever refused, the console names the host it wanted and the
+#     app falls back to the club's three-letter code rather than breaking.
+#
 # Notes on the two deliberate relaxations:
 #   style-src 'unsafe-inline'  — the app sets style attributes (the matchday
 #     ticker duration, the header rule). Inline *style* cannot execute script,

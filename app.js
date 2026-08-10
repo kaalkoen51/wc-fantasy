@@ -862,6 +862,7 @@ SPORTS.rugby = {
   rules:        () => RUGBY_RULES,
   competitions: () => RUGBY_COMPETITIONS,
   squadSize:    () => RUGBY_SQUAD_SIZE,
+  crestUrl:     rugbyCrestUrl,
 };
 
 /* Shirt number to position group. 1-15 is the starting XV in shirt order and
@@ -914,6 +915,33 @@ const RUGBY_STAT_KEYS = [
    feed's own guide shows the fields without saying which, and being wrong
    about it silently scores everyone zero. Reading both costs nothing. */
 const rugbyStatsOf = (p) => (p && (p.stats || p.statistics)) || p || {};
+
+/* Club crests, straight off the feed.
+
+   The feed hands them out in two shapes: a single `…ImageUrl`, and an
+   `…ImageUrls` object with a DEFAULT and an ON_DARK variant -- a badge drawn
+   for a light background and one drawn for a dark one. That maps exactly onto
+   the app's two themes, so both are kept and the right one is chosen at
+   render time rather than one being picked here and regretted later.
+
+   Two readers rather than one, because the SAME field name means different
+   things on the two objects: on a team, `imageUrl` is the crest; on a player,
+   `imageUrl` is the player's own face. One permissive reader would have
+   badged every club in the league with a photograph of one of its players. */
+function crestPair(many, one) {
+  const light = many?.DEFAULT || many?.default || one || null;
+  if (!light) return null;
+  return { light, dark: many?.ON_DARK || many?.onDark || light };
+}
+// A team object: matches/{id}.homeTeam, or a teams/{id} row.
+const rugbyTeamCrest = (t) => crestPair(t?.imageUrls, t?.imageUrl);
+// A player object, which carries its club's crest -- and NEVER its own
+// imageUrl, see above.
+const rugbyPlayerCrest = (p) => crestPair(p?.teamImageUrls, p?.teamImageUrl);
+// The two fields a crest occupies on a stored player, or nothing at all, so
+// a pool built before crests existed stays valid rather than half-populated.
+const crestFields = (pair) => pair
+  ? { team_crest: pair.light, team_crest_dark: pair.dark } : {};
 
 /* One squad-roster entry -> the app's player record. `known` is the feed's
    resolved display name ("Rieko Ioane"); first+last is the fallback, not the
@@ -1149,7 +1177,7 @@ async function fetchRugbyPool(apiLeagueId, onProgress) {
     throw new Error("That competition has no completed matches yet, so there is "
       + "nobody to draft. Pick a season that has been played.");
   }
-  const byId = {}, teams = new Set();
+  const byId = {}, teams = new Set(), crests = {}, teamIds = {};
   let done = 0;
   for (const m of played) {
     onProgress && onProgress(++done, played.length,
@@ -1166,8 +1194,12 @@ async function fetchRugbyPool(apiLeagueId, onProgress) {
       const t = d?.[side];
       if (!rugbyTeamKnown(t)) continue;
       teams.add(t.name);
+      teamIds[t.name] = t.id;
+      crests[t.name] = crests[t.name] || rugbyTeamCrest(t);
       for (const rp of (t.players || [])) {
         if (rp?.id == null) continue;
+        // The crest can ride on the players rather than on the side.
+        crests[t.name] = crests[t.name] || rugbyPlayerCrest(rp);
         const p = parseRugbyPlayer(rp, t.name, teamCodeFrom(t.name), t.id);
         const started = rugbyPosCode(rp.positionId, rp.position);   // 1-15 only
         const prev = byId[p.player_id];
@@ -1184,6 +1216,16 @@ async function fetchRugbyPool(apiLeagueId, onProgress) {
       }
     }
   }
+  /* Any side whose crest was on neither the match nor its players gets one
+     direct look-up. teams/{id} answers with season aggregates, but it carries
+     the club's images too, and this is at most one call per side, once per
+     competition -- cheap enough that it is not worth being clever about, and
+     the only way a missing crest turns into a badge rather than a shrug. */
+  for (const name of teams) {
+    if (crests[name] || teamIds[name] == null) continue;
+    crests[name] = await fetchRugbyTeamCrest(teamIds[name]);
+  }
+
   /* Anyone never seen starting falls back to the bench convention, and anyone
      with neither is dropped rather than given an invented position -- a wrong
      position silently corrupts every quota they are drafted into. */
@@ -1192,7 +1234,9 @@ async function fetchRugbyPool(apiLeagueId, onProgress) {
     const pos = p.position || p._bench;
     delete p._bench;
     if (!pos) { unplaced.push(p.name); continue; }
-    players.push({ ...p, position: pos });
+    // Stored per player, the way football stores team_logo: the pool's `teams`
+    // is a list of names with nowhere to hang a URL.
+    players.push({ ...p, position: pos, ...crestFields(crests[p.team]) });
   }
   if (unplaced.length) {
     console.warn(`rugby pool: ${unplaced.length} player(s) had no resolvable `
@@ -1211,6 +1255,21 @@ async function fetchRugbyMatches(apiLeagueId, size = 100) {
   const body = await rugbyFeed("matches/search",
     { competitionName: comp.feedName, size });
   return firstArray(body, ["data", "matches"], "matches/search");
+}
+
+/* One club's crest. teams/{id} returns that team's season aggregate rows, so
+   the images may sit on the row or on a `team` inside it; both are read. Never
+   fatal -- a competition without crests still drafts perfectly well. */
+async function fetchRugbyTeamCrest(teamId) {
+  try {
+    const body = await rugbyFeed(`teams/${teamId}`);
+    const d = body?.data ?? body;
+    const row = Array.isArray(d) ? d[0] : d;
+    return rugbyTeamCrest(row) || rugbyTeamCrest(row?.team) || null;
+  } catch (e) {
+    console.warn(`rugby pool: no crest for team ${teamId} — ${e.message}`);
+    return null;
+  }
 }
 
 async function fetchRugbyFixtures(apiLeagueId) {
@@ -9678,6 +9737,33 @@ function teamLogoId(team) {
   return _logoMap[team] ?? null;
 }
 
+/* Team name → the crest URLs the rugby feed gave us, memoized the same way.
+   Kept per player rather than per pool because that is where the feed puts it
+   and where the pool row has somewhere to store it. */
+let _crestMap = null, _crestMapFor = null;
+function teamCrestPair(team) {
+  if (_crestMapFor !== S.players) {
+    _crestMapFor = S.players;
+    _crestMap = {};
+    for (const p of S.players || []) {
+      if (p.team_crest && !_crestMap[p.team]) {
+        _crestMap[p.team] = { light: p.team_crest, dark: p.team_crest_dark || p.team_crest };
+      }
+    }
+  }
+  return _crestMap[team] || null;
+}
+
+/* Which variant of a club's badge to draw. The feed publishes two -- one
+   drawn for a light background, one for a dark one -- and the app has exactly
+   those two themes, so this is a straight match rather than a guess. Falls
+   back to the other variant when only one exists. */
+function rugbyCrestUrl(team) {
+  const pair = teamCrestPair(team);
+  if (!pair) return null;
+  return currentTheme() === "dark" ? pair.dark : pair.light;
+}
+
 // Player faces / team crests. API-Football competitions carry each player's
 // photo URL (and an api_<id> id) in the shared pool, so use that directly;
 // legacy WC-2026 players resolve via the optional static photos.json
@@ -10741,10 +10827,11 @@ const crestIdFor = (team) => {
    needs its own answer, and until it has one the honest result is nothing --
    teamCrestHtml then shows the three-letter code rather than a wrong badge.
 
-   To add rugby crests: give SPORTS.rugby a `crestUrl(team)` returning a URL,
-   add that host to img-src in _headers, and nothing else changes. The team
-   NAME is passed rather than an id, because a second source is unlikely to
-   share API-Football's numbering. */
+   Rugby has one now: SPORTS.rugby.crestUrl reads the URL the feed stored on
+   each pooled player. The team NAME is passed rather than an id, because a
+   second source is unlikely to share API-Football's numbering -- and rugby's
+   does not. Adding a third sport is the same shape: a crestUrl on its sport
+   definition, and its image host allowed in img-src in _headers. */
 function crestUrlFor(team) {
   const own = sportDef().crestUrl;
   if (own) return own(team) || null;
