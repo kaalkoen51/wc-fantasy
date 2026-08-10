@@ -1832,8 +1832,12 @@ test("loading a rugby competition reads the rugby feed, not API-Football", async
 test("rugby club crests come off the feed, in the right theme's variant", async ({ page }) => {
   /* Rugby leagues were drawing football badges matched by NAME -- Ireland the
      football side next to Ireland the rugby side -- and then, once that was
-     stopped, no badge at all. The feed has them; they arrive in three places
-     depending on the call, so all three are read. */
+     stopped, no badge at all.
+
+     The feed does not carry one TODAY -- a dump of every string in every
+     endpoint it has contains no URL of any kind. This test is what says the
+     app is ready the day it does, on either object that could plausibly carry
+     it, and without a second call to go and look. */
   await openLeague(page, { managers: 4, played: 3 });
 
   const hits = [];
@@ -1854,24 +1858,18 @@ test("rugby club crests come off the feed, in the right theme's variant", async 
           awayTeam: { id: 5, name: "Munster", score: 9 } },
       ] });
     }
-    // The direct look-up, and the ONLY place Ulster's crest exists. Shaped
-    // like the real answer: season aggregate rows, images on the row.
-    if (/teams\/6(?!\d)/.test(url)) {
-      return json({ status: "success", data: [
-        { teamId: 6, imageUrl: "https://images.incrowdsports.com/ulster.png" }] });
-    }
     const mid = (url.match(/matches\/(\d+)/) || [])[1];
     if (mid === "910") {
       return json({ status: "success", data: { id: 910, round: 1,
         // On the side itself: no extra call needed.
-        homeTeam: { id: 4, name: "Leinster", score: 30,
+        homeTeam: { id: 4, name: "Leinster", score: 30, shortName: "LEI",
           imageUrls: { DEFAULT: "https://images.incrowdsports.com/lein.png",
                        ON_DARK: "https://images.incrowdsports.com/lein-dark.png" },
           players: [{ id: 1, known: "A Prop", positionId: 1, position: "prop",
                       stats: { minutesPlayedTotal: 80 } }] },
         // On the players, which is where the squad response puts it. Note the
         // player's OWN imageUrl sitting right beside it.
-        awayTeam: { id: 5, name: "Munster", score: 12,
+        awayTeam: { id: 5, name: "Munster", score: 12, shortName: "Munster Rugby",
           players: [{ id: 2, known: "A Lock", positionId: 4, position: "lock",
                       imageUrl: "https://images.incrowdsports.com/face-2.png",
                       teamImageUrls: { DEFAULT: "https://images.incrowdsports.com/mun.png",
@@ -1880,8 +1878,8 @@ test("rugby club crests come off the feed, in the right theme's variant", async 
     }
     if (mid === "911") {
       return json({ status: "success", data: { id: 911, round: 2,
-        // Nowhere at all: this is the side that needs teams/{id}.
-        homeTeam: { id: 6, name: "Ulster", score: 8,
+        // Nowhere at all -- which is every side in the real feed today.
+        homeTeam: { id: 6, name: "Ulster", score: 8, shortName: "ULS",
           players: [{ id: 3, known: "A Hooker", positionId: 2, position: "hooker",
                       stats: { minutesPlayedTotal: 80 } }] },
         awayTeam: { id: 5, name: "Munster", score: 9, players: [] } } });
@@ -1916,23 +1914,29 @@ test("rugby club crests come off the feed, in the right theme's variant", async 
     .toBe("https://images.incrowdsports.com/face-2.png");
   expect(out.stored["rug_2"].team_crest, "which is never mistaken for the club's badge")
     .not.toBe(out.stored["rug_2"].photo);
-  expect(out.stored["rug_3"].team_crest, "a side with neither is looked up directly")
-    .toBe("https://images.incrowdsports.com/ulster.png");
+  expect(out.stored["rug_3"].team_crest, "a side with no crest anywhere gets none")
+    .toBeUndefined();
 
-  // The look-up is the fallback, not the route: sides that already had a
-  // crest must not cost an extra call each.
+  /* And costs nothing to find that out. There WAS a per-club teams/{id}
+     look-up here; the live feed has no images on that endpoint either, so it
+     was sixteen requests a pool build that could only ever return null. */
   expect(hits.filter((u) => /teams\/\d/.test(u)).length,
-    "only the one side that needed it was looked up").toBe(1);
+    "no club is looked up individually").toBe(0);
+
+  // The code is the badge wherever a crest is missing, so it comes from the
+  // feed's own shortName -- unless that is really a name.
+  expect(out.stored["rug_3"].team_code, "the feed's own short code is used").toBe("ULS");
+  expect(out.stored["rug_2"].team_code, "a long shortName is a name, not a code").toBe("MUN");
 
   expect(out.dark.lein, "dark draws the on-dark badge")
     .toBe("https://images.incrowdsports.com/lein-dark.png");
   expect(out.sticker.lein, "a light theme draws the default badge")
     .toBe("https://images.incrowdsports.com/lein.png");
-  expect(out.dark.ulster, "one variant serves both themes")
-    .toBe("https://images.incrowdsports.com/ulster.png");
-  expect(out.dark.html, "and it reaches the page as an image, not a code")
+  expect(out.dark.ulster, "and a club with no crest gets none, not a football one")
+    .toBeNull();
+  expect(out.dark.html, "a crest reaches the page as an image, not a code")
     .toContain("images.incrowdsports.com/lein-dark.png");
-  expect(out.dark.html, "a football crest never appears in a rugby league")
+  expect(out.dark.html, "and a football crest never appears in a rugby league")
     .not.toContain("api-sports.io");
 });
 
