@@ -2083,3 +2083,64 @@ test("a rugby league looks like rugby, not like football with different words",
     expect(fb.pips, "so football draws none").toBe(0);
     expect(fb.crest, "and football crests still resolve").not.toBeNull();
   });
+
+test("editing a lineup is a swap, not an add and a remove", async ({ page }) => {
+  /* The old editor gave every player a + or a −, so filling one hole could put
+     three players into a row before you noticed -- and on a fifteen-a-side
+     pitch that row ran off the screen. Now a tap picks a player up, everyone
+     they can legally trade with stays lit, and a second tap exchanges the two. */
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const out = await page.evaluate(() => {
+    closeReveal();
+    const me = myManager();
+    const mine = managerPicks(me.id).filter((pk) => pk.slot !== "TEAM");
+    // Start from a legal side, which is the state the swap flow is for.
+    const want = starterQuota(), got = {};
+    S.lineupDraft = new Set();
+    for (const pk of mine)
+      if ((got[pk.position] || 0) < (want[pk.position] || 0)) {
+        S.lineupDraft.add(pk.id); got[pk.position] = (got[pk.position] || 0) + 1;
+      }
+    S.lineupEdit = true; S.lineupPick = null;
+    renderLineup();
+    const before = sumGroups(lineupCounts());
+
+    const held = mine.find((pk) => S.lineupDraft.has(pk.id) && pk.position === "MID");
+    const sameOnBench = mine.find((pk) => !S.lineupDraft.has(pk.id) && pk.position === "MID");
+    const otherOnBench = mine.find((pk) => !S.lineupDraft.has(pk.id) && pk.position === "GK");
+    const tap = (id) => document.querySelector(`[data-hold="${id}"]`)?.click();
+
+    tap(held.id);
+    const heldState = {
+      selected: !!document.querySelector(".pp-sel"),
+      eligibleLit: !document.querySelector(`[data-brow="${sameOnBench.id}"]`)
+        ?.className.includes("opacity-40"),
+      ineligibleDim: !!document.querySelector(`[data-brow="${otherOnBench.id}"]`)
+        ?.className.includes("opacity-40"),
+    };
+
+    // Trading with a position the formation cannot take must change nothing.
+    tap(otherOnBench.id);
+    const refused = S.lineupDraft.has(held.id) && !S.lineupDraft.has(otherOnBench.id);
+
+    // ...and with a like-for-like it goes through.
+    tap(sameOnBench.id);
+    const swapped = !S.lineupDraft.has(held.id) && S.lineupDraft.has(sameOnBench.id);
+
+    const after = sumGroups(lineupCounts());
+    const stillLegal = lineupValid(lineupCounts());
+    S.lineupEdit = false; S.lineupPick = null;
+    return { before, after, heldState, refused, swapped, stillLegal,
+             plusButtons: document.querySelectorAll("[data-lineup]").length };
+  });
+
+  expect(out.heldState.selected, "the held player is marked on the pitch").toBe(true);
+  expect(out.heldState.eligibleLit, "a like-for-like partner stays lit").toBe(true);
+  expect(out.heldState.ineligibleDim, "one the formation cannot take is dimmed").toBe(true);
+  expect(out.refused, "and tapping the dimmed one changes nothing").toBe(true);
+  expect(out.swapped, "while the eligible one trades places").toBe(true);
+  expect(out.after, "a swap never changes the size of the side").toBe(out.before);
+  expect(out.stillLegal, "and never leaves it illegal").toBe(true);
+  expect(out.plusButtons, "the + and − controls are gone").toBe(0);
+});

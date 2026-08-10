@@ -9686,8 +9686,7 @@ function avatarHtml(playerId, team, size = "w-7 h-7") {
   const isTeam = String(playerId).startsWith("team:");
   let url = null;
   if (isTeam) {
-    const id = crestIdFor(team);
-    if (id) url = `https://media.api-sports.io/football/teams/${id}.png`;
+    url = crestUrlFor(team);
   } else if (String(playerId).startsWith("api_")) {
     // API competition player: stored photo URL, else derived from the api id.
     url = S.playerById?.[playerId]?.photo
@@ -10650,6 +10649,7 @@ function enterLineupEdit() {
     bench: (S.benchDraft || me?.bench_order || []).slice(),
   };
   S.lineupEdit = true;
+  S.lineupPick = null;
   renderLineup();
 }
 
@@ -10663,6 +10663,7 @@ function discardLineupEdit() {
     S.benchDraft = snap.bench.slice();
   }
   S.lineupEdit = false;
+  S.lineupPick = null;
   renderLineup();
 }
 
@@ -10696,6 +10697,22 @@ function lineupCounts() {
   return counts;
 }
 
+/* Would swapping a starter at `outPos` for a bench player at `inPos` leave a
+   legal side?
+
+   Asked of the resulting COUNTS rather than of the positions, so it needs no
+   opinion of its own about which sport is being played or whether the league
+   runs fixed or flex: in a fixed league it comes out true only for a
+   like-for-like swap, and in a flex one it allows anything the bounds allow.
+   Pure. */
+function lineupSwapValid(counts, outPos, inPos) {
+  if (outPos === inPos) return true;
+  const next = { ...counts };
+  next[outPos] = (next[outPos] || 0) - 1;
+  next[inPos] = (next[inPos] || 0) + 1;
+  return lineupValid(next);
+}
+
 function lineupValid(counts) {
   // Flex formation: the starting XI must be within the min–max bounds and total.
   if (isFlexFormation()) return formationValid(counts, formationBounds());
@@ -10718,6 +10735,23 @@ const crestIdFor = (team) => {
   return S.photos?.teams?.[team] ?? teamLogoId(team);
 };
 
+/* Where a crest image comes from.
+
+   Football's live on API-Football's CDN, keyed by its team ids. Another sport
+   needs its own answer, and until it has one the honest result is nothing --
+   teamCrestHtml then shows the three-letter code rather than a wrong badge.
+
+   To add rugby crests: give SPORTS.rugby a `crestUrl(team)` returning a URL,
+   add that host to img-src in _headers, and nothing else changes. The team
+   NAME is passed rather than an id, because a second source is unlikely to
+   share API-Football's numbering. */
+function crestUrlFor(team) {
+  const own = sportDef().crestUrl;
+  if (own) return own(team) || null;
+  const id = crestIdFor(team);
+  return id ? `https://media.api-sports.io/football/teams/${id}.png` : null;
+}
+
 /* Club crest for a team. API competitions carry the id on every player; the
    legacy WC pool has it in photos.json. Empty string when unknown, so callers
    can drop it in without guarding. */
@@ -10726,9 +10760,9 @@ const crestIdFor = (team) => {
    rather than the club disappearing. Omit it where a club name sits alongside
    and the crest is decoration. */
 function teamCrestHtml(team, size = "w-4 h-4", code) {
-  const id = crestIdFor(team);
-  if (!id) return code ? `<span data-crest-fallback class="shrink-0 font-mono text-xs" title="${esc(team)}">${esc(code)}</span>` : "";
-  return `<img src="https://media.api-sports.io/football/teams/${id}.png" loading="lazy" data-avatar${
+  const url = crestUrlFor(team);
+  if (!url) return code ? `<span data-crest-fallback class="shrink-0 font-mono text-xs" title="${esc(team)}">${esc(code)}</span>` : "";
+  return `<img src="${esc(url)}" loading="lazy" data-avatar${
     code ? ` data-crest-code="${esc(code)}"` : ""}
     class="${size} inline-block object-contain shrink-0 align-[-2px]" alt="${
     code ? esc(team) : ""}" title="${esc(team)}">`;
@@ -10871,7 +10905,7 @@ function pitchRowsHtml(byPos, opts = {}) {
            ><span class="rounded-full bg-wcred text-white text-sm font-bold w-5 h-5 inline-flex items-center justify-center leading-none shadow ring-2 ring-slate-900/60">−</span></button>` : "";
     return `<div class="relative flex justify-center">
       ${rm}
-      <button type="button" ${tap}${e.title ? ` title="${esc(e.title)}"` : ""} class="pp ${e.dim ? "pp-dim" : ""} ${e.planned ? "pp-planned" : ""} ${e.foil ? "pp-foil" : ""}">
+      <button type="button" ${tap}${e.title ? ` title="${esc(e.title)}"` : ""} class="pp ${e.dim ? "pp-dim" : ""} ${e.sel ? "pp-sel" : ""} ${e.planned ? "pp-planned" : ""} ${e.foil ? "pp-foil" : ""}">
         <span class="relative inline-flex">
           ${avatarHtml(e.player_id, e.team, av)}
           ${opts.crests && teamCrestHtml(e.team) ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${teamCrestHtml(e.team, "w-3.5 h-3.5")}</span>` : ""}
@@ -10926,10 +10960,38 @@ function wireLineupControls(root) {
     moveBench(b.dataset.bup, -1));
   root.querySelectorAll("[data-bdn]").forEach((b) => b.onclick = () =>
     moveBench(b.dataset.bdn, 1));
-  root.querySelectorAll("[data-lineup]").forEach((b) => b.onclick = () => {
-    const id = b.dataset.lineup;
-    if (S.lineupDraft.has(id)) S.lineupDraft.delete(id);
-    else S.lineupDraft.add(id);
+  /* One tap does everything the + and − used to, and one thing they could
+     not: hold a player, see who they can trade with, and exchange the two. */
+  root.querySelectorAll("[data-hold]").forEach((b) => b.onclick = () => {
+    const id = b.dataset.hold;
+    const me = myManager();
+    const mine = managerPicks(me.id).filter((pk) => pk.slot !== "TEAM");
+    const pk = mine.find((x) => x.id === id);
+    if (!pk) return;
+    const isStarter = S.lineupDraft.has(id);
+    const counts = lineupCounts(), total = sumGroups(counts);
+    const need = isFlexFormation() ? formationBounds().starters
+      : sumGroups(starterQuota()) + lineupFlex();
+
+    // A hole to fill, or one too many: no partner needed.
+    if (!isStarter && total < need) { S.lineupDraft.add(id); S.lineupPick = null; return renderLineup(); }
+    if (isStarter && total > need) { S.lineupDraft.delete(id); S.lineupPick = null; return renderLineup(); }
+
+    if (!S.lineupPick) { S.lineupPick = id; return renderLineup(); }
+    if (S.lineupPick === id) { S.lineupPick = null; return renderLineup(); }
+
+    const held = mine.find((x) => x.id === S.lineupPick);
+    const heldIsStarter = held && S.lineupDraft.has(held.id);
+    // Tapping the same side again moves the selection rather than refusing it.
+    if (!held || heldIsStarter === isStarter) { S.lineupPick = id; return renderLineup(); }
+    const [out, inn] = heldIsStarter ? [held, pk] : [pk, held];
+    if (!lineupSwapValid(counts, out.position, inn.position)) {
+      toast(`${inn.position} cannot take a ${out.position} slot in this formation.`);
+      return;
+    }
+    S.lineupDraft.delete(out.id);
+    S.lineupDraft.add(inn.id);
+    S.lineupPick = null;
     renderLineup();
   });
 }
@@ -10977,28 +11039,67 @@ function moveBench(pickId, dir) {
 function renderLineup() {
   const me = myManager();
   const mine = managerPicks(me.id).filter((pk) => pk.slot !== "TEAM");
-  const order = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
-  mine.sort((a, b) => order[a.position] - order[b.position] || a.pick_number - b.pick_number);
+  // Squad order follows the sport's own position order; a literal here sorted
+  // every rugby player by `undefined - undefined` and left the list arbitrary.
+  const order = Object.fromEntries(playGroups().map((g, i) => [g, i]));
+  mine.sort((a, b) => (order[a.position] ?? 99) - (order[b.position] ?? 99)
+    || a.pick_number - b.pick_number);
   // Starters go on the pitch; everyone else sits on the bench beneath it.
   // Tapping a player ALWAYS opens their card, in either mode — moving them in
   // or out is the − and + controls' job, so a tap can't cost you your XI.
   const editing = !!S.lineupEdit;
   const starters = mine.filter((pk) => S.lineupDraft.has(pk.id));
   const bench = benchInOrder(mine.filter((pk) => !S.lineupDraft.has(pk.id)));
+
+  /* Editing is a SWAP, not an add and a remove.
+
+     The old editor gave every player a + or a −, so a manager filling a hole
+     could add three players to one row before noticing, and on a fifteen-a-side
+     pitch the row simply ran off the screen. Now: tap anyone to pick them up,
+     and everyone they could legally trade places with stays lit while everyone
+     else dims. Tap one of those and the two exchange.
+
+     Adding is still possible while the side is short -- there is a hole to
+     fill, so a tap fills it -- and removing while it is over-full, for the same
+     reason. The selection only appears when the side is exactly full, which is
+     the case the old controls handled worst. */
+  const counts0 = lineupCounts();
+  const total0 = sumGroups(counts0);
+  const need0 = isFlexFormation() ? formationBounds().starters
+    : sumGroups(starterQuota()) + lineupFlex();
+  const shortOfXI = total0 < need0, overFull = total0 > need0;
+  const sel = S.lineupPick ? mine.find((pk) => pk.id === S.lineupPick) : null;
+  const selIsStarter = sel ? S.lineupDraft.has(sel.id) : false;
+  /* Whether `pk` can trade places with the held player. Only ever asked of the
+     opposite side -- a starter for a bench player -- because two starters
+     swapping changes nothing. */
+  const canTrade = (pk) => {
+    if (!sel || pk.id === sel.id) return false;
+    if (S.lineupDraft.has(pk.id) === selIsStarter) return false;
+    return selIsStarter
+      ? lineupSwapValid(counts0, sel.position, pk.position)
+      : lineupSwapValid(counts0, pk.position, sel.position);
+  };
+  const dimmed = (pk) => !!sel && pk.id !== sel.id && !canTrade(pk);
+
   const byPos = listsByGroup();
   for (const pk of starters) {
     (byPos[pk.position] ||= []).push({
-      id: pk.player_id, removeId: pk.id,
+      id: editing ? pk.id : pk.player_id, removeId: pk.id,
       player_id: pk.player_id, name: pk.player_name, team: pk.team,
       opp: oppShort(pk.team),
-      remove: editing,
+      sel: editing && sel?.id === pk.id,
+      dim: editing && dimmed(pk),
       badge: captainEnabled() && S.captainDraft === pk.player_id ? "C"
            : captainEnabled() && S.viceDraft === pk.player_id ? "V" : "",
     });
   }
-  const benchRow = (pk, i, arr) => `<div data-brow="${esc(pk.id)}" class="flex items-center gap-1.5 rounded-lg px-2 py-1.5 border border-slate-700 bg-slate-800/60">
+  const benchRow = (pk, i, arr) => `<div data-brow="${esc(pk.id)}" class="flex items-center gap-1.5 rounded-lg px-2 py-1.5 border ${
+      editing && sel?.id === pk.id ? "border-wcgold bg-wcgold/10"
+        : editing && dimmed(pk) ? "border-slate-700 bg-slate-800/60 opacity-40"
+        : "border-slate-700 bg-slate-800/60"}">
       ${editing ? `<span class="w-4 shrink-0 text-xs font-mono text-slate-400">${i + 1}</span>` : ""}
-      <button data-peek="${esc(pk.player_id)}" class="min-w-0 flex-1 flex items-center gap-2 text-left">
+      <button ${editing ? `data-hold="${esc(pk.id)}"` : `data-peek="${esc(pk.player_id)}"`} class="min-w-0 flex-1 flex items-center gap-2 text-left">
         ${avatarHtml(pk.player_id, pk.team, "w-7 h-7")}
         <span class="min-w-0 flex-1 leading-tight">
           <span class="flex items-center gap-1 min-w-0">
@@ -11016,13 +11117,22 @@ function renderLineup() {
           <button data-bup="${esc(pk.id)}" class="nudge text-slate-400 ${i === 0 ? "opacity-30" : ""}" ${i === 0 ? "disabled" : ""} aria-label="Higher sub priority">▲</button>
           <button data-bdn="${esc(pk.id)}" class="nudge text-slate-400 ${i === arr.length - 1 ? "opacity-30" : ""}" ${i === arr.length - 1 ? "disabled" : ""} aria-label="Lower sub priority">▼</button>
         </span>
-        <button data-lineup="${esc(pk.id)}" aria-label="Add to lineup"
-          class="shrink-0 inline-flex items-center justify-center w-9 h-9"
-          ><span class="rounded-full bg-wcgold text-slate-900 text-sm font-bold w-6 h-6 inline-flex items-center justify-center leading-none">+</span></button>` : ""}
+` : ""}
     </div>`;
 
+  /* One line, and only while editing. It changes with the state because
+     "tap two players to swap" is wrong advice when the side is a man short. */
+  const swapHint = !editing ? ""
+    : shortOfXI ? `Tap a bench player to fill the empty ${
+        outfieldGroups().concat(sportDef().exactGroups()).find((g) =>
+          (counts0[g] || 0) < (starterQuota()[g] || 0)) || ""} slot.`.replace("  ", " ")
+    : overFull ? "Tap a starter to take them out."
+    : sel ? "Now tap anyone still lit to trade places — or tap them again to put them down."
+    : "Tap a player to pick them up, then tap who they swap with.";
+
   $("lineup-list").innerHTML = `
-    ${pitchHtml(byPos, { tapAttr: "data-peek", removeAttr: "data-lineup", crests: true })}
+    ${editing ? `<p class="text-xs text-slate-400 mb-1.5 px-0.5">${esc(swapHint)}</p>` : ""}
+    ${pitchHtml(byPos, { tapAttr: editing ? "data-hold" : "data-peek", crests: true })}
     <div class="mt-2">
       <div class="flex items-baseline justify-between gap-2 mb-1">
         <span class="eyebrow">Bench · ${bench.length}</span>
@@ -11037,6 +11147,17 @@ function renderLineup() {
     benchInOrder(mine.filter((pk) => !S.lineupDraft.has(pk.id))).map(benchRow).join("");
 
   wireLineupControls($("lineup-list"));
+  /* Holding a player is no use if the only person they can trade with is below
+     the fold -- which on a fifteen-man squad with a four-man bench it usually
+     is. The bench ORDER is sub priority and must not be reshuffled to suit a
+     selection, so the list scrolls instead of sorting. */
+  if (editing && sel) {
+    const first = bench.find((pk) => canTrade(pk));
+    if (first) {
+      $("lineup-list").querySelector(`[data-brow="${CSS.escape(first.id)}"]`)
+        ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }
   if (editing) makeReorderable($("lineup-bench"), "data-brow", (order, moved) => {
     S.benchDraft = order;
     animateReorder("lineup-bench", "data-brow", () => {
@@ -11172,7 +11293,7 @@ async function saveLineup() {
     }
   }
   toast(changes.length ? "Lineup saved." : "Lineup unchanged.");
-  S.lineupEdit = false;      // back to the read-only view, sheet stays open
+  S.lineupEdit = false; S.lineupPick = null;   // back to read-only; sheet stays open
   S._lineupSaved = null;
   renderLineup();
   scheduleRefetch();

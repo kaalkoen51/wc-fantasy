@@ -756,6 +756,12 @@ html[data-theme="sticker"] .pick-stamp {
   .pitch-rugby .pitch-posts.t { top: calc(12% - 15px); }
   .pitch-rugby .pitch-posts.b { bottom: calc(12% - 15px); }
 
+  /* The player currently held, waiting for someone to trade with. A ring
+     rather than a fill: the chip still has to read as itself, and a filled
+     highlight on a pitch of fifteen is a lot of colour. */
+  .pp-sel .avatar { box-shadow: 0 0 0 3px var(--focus-ring), 0 0 0 6px rgba(0,0,0,.35); }
+  .pp-sel .pp-name { background: var(--focus-ring); color: #0B1220; }
+
   /* The position a chip is filling, for a sport whose rows hold more than one
      group. Sits opposite the points bubble so the two never collide. */
   .pp-pos { position: absolute; top: -3px; left: -5px; z-index: 2;
