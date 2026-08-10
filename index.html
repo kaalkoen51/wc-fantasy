@@ -698,6 +698,31 @@
           <pre id="adm-lineups-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
         </div>
       </div>
+<!-- Positions come from what the feed saw a player wear. That is right for
+     most of a squad and wrong for anyone who covered a shirt, or who only
+     ever came off the bench, where the position is a convention rather than
+     an observation. Pre-draft only: after the first pick a position change
+     would move a player out of the quota slot he was drafted into. -->
+<div id="adm-pos-card" class="hidden rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
+        <h3 class="font-semibold text-sm">🧭 Player positions</h3>
+        <p id="adm-pos-intro" class="text-xs text-slate-400"></p>
+        <div class="flex gap-2">
+          <input id="adm-pos-q" placeholder="Search name or club" class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+          <button id="adm-pos-guess" class="shrink-0 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold">Unconfirmed</button>
+        </div>
+        <div id="adm-pos-list" class="space-y-1 max-h-96 overflow-y-auto"></div>
+        <div id="adm-pos-more" class="text-xs text-slate-500"></div>
+        <div class="flex items-center gap-2 border-t border-slate-800 pt-2">
+          <button id="adm-pos-save" class="flex-1 btn-primary rounded-lg px-4 py-2 text-sm font-semibold">Save positions</button>
+          <button id="adm-pos-revert" class="shrink-0 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold">Undo edits</button>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="adm-pos-down" class="flex-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold">⬇ Download CSV</button>
+          <button id="adm-pos-up" class="flex-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold">⬆ Upload CSV</button>
+          <input id="adm-pos-file" type="file" accept=".csv,text/csv" class="hidden">
+        </div>
+        <pre id="adm-pos-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
+      </div>
 <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">⚙️ Design your draft — scoring &amp; bonuses</h3>
         <p class="text-xs text-slate-400">Customise how points are scored for this league. Editable until

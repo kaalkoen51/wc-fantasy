@@ -35,7 +35,7 @@ const lsStub = {
 globalThis.appended = appended;
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, scoringRules, rugbyMatchSettled, rugbyTeamKnown, firstArray, RUGBY_BENCH_POS, noCandidatesReason, lineupSwapValid, crestUrlFor, rugbyTeamCrest, rugbyPlayerCrest, crestFields, rugbyCrestUrl, rugbyTeamCode, clubHue, initialsOf, markSvg, teamCodeOf, teamCrestHtml, avatarHtml, loadedCompetitions, practiceCompetition, practiceNote, PHASE1_STARTERS, sportNeedsApiKey, summariseLineupSample, lineupObservationText, RUGBY_QUOTA, RUGBY_STARTERS, RUGBY_PLAY_GROUPS, RUGBY_PITCH_BANDS, RUGBY_RULES, RUGBY_STAT_CATALOG, RUGBY_SLOTS, slotMapsFor, sumGroups, zeroByGroup, outfieldGroups, squadSize, flexComplete, flexLeft, fixedRoundSubs, SLOT_POS, SLOT_RANK, rugbyPosCode, isRugbyBenchSlot, parseRugbyPlayer, parseRugbyMatch, usableRugbyMatches, rugbyStatRows, rugbyStatsOf, RUGBY_STAT_KEYS, RUGBY_COMPETITIONS, rugbyBody, parseCompKey, competitionsFor, SPORTS, sportOf, sportDef, posGroups, playGroups, slotPosMap, slotRankMap, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid, pitchHtml, pitchFacingHtml, pitchRowsHtml, squadBoardHtml, historyViewHtml, benchInOrder, moveBench, orderedRoster, flipRows, wireLineupControls, markQueueMoved, matchdayCtaAct, matchdayCardHtml, renderLineup, renderHomeTab, openH2HPreview, openH2HFixture, lineupRowHtml, dugoutHtml, renderFixturesTab, h2hRoundFixtures, h2hTotalRounds, h2hFormOf, h2hStandingsHtml, seasonChartHtml, renderScoutList, renderStatsTab, renderPredraftShortlist, preDraftBrowsing, shortlistCoverage, coverageHint, scoringByPositionHtml, openScoringSheet, animateReorder, applyLocalOverrides, queueManagerWrite, wireStars, starHtml, draftFactCards, draftRulesHtml, lobbyRulesHtml, scoringHtml, applyVisibleOrder, makeReorderable, refetchAll, markConnection, enterLeagueWithFeedback, route, showView, dragActive, afterDrag, overrideStillWins, queueManagerWrite, applyLocalOverrides, keepLocalPick, autoPickStale, makePick, autoPick, tickTimer, mergeOptimisticPicks, pickKey, queueFieldWrite, OVERRIDE_TABLES, setPlanner, saveLineup, toggleKeeper, setFinalPick, txWindowStarts, txWhen, txShell, txAvatar, txMgrChip, tradeTxCard, swapTxCard, transactionsLogHtml, renderTrades, builderHtml, faClaimsSectionHtml, waiverOrderHtml, shortlistSectionHtml, plannerSectionHtml, plannerMoveHtml, squadChooserHtml, tradeSectionHtml, setClaimOrder, reorderClaim, tradeForShortlisted, submitTrade, TRADE_TABS, tradeTabBodyHtml, faClaimRowHtml, faClaimRowsHtml, renderClaimList, wireClaimControls, ROW_ATTRS, plannerMoveChoice, plannerSetChoiceOrder, plannerPickPool, renderPlannerPick, setWindowMode, toggleLineups, squadPitchHtml, squadShape, renderDreamTeam, dreamTeam, renderChat, chatThreads, interacting, markInteracting, scheduleDeferredFlush, INTERACT_MS, animateReorder, flipRows, flushDeferredRender, currentSeasonFor, seasonOptions, seasonLabel, backtestSeason, createCompKind, createPreviewSeason, loadScoringPreviewData, pullCreateHistory, renderCreateBalance, updateCreatePullStatus, renderCreateForm, pickReconciliation, reconcilePicksToPool, mapApiPlayer, loadCompetition, roundResolvers, roundIndex, mwNo, FINAL_STATUS, draftOrderMode, lobbyOrderManagers, shuffled, setDraftOrder, renderLobbyOrder, lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow, nextLockMs, lockAfterWindow, snapshotAt, snapshotForNextLock, rosterAtFor, setSession, getSession, repairStarters, lineupShape, repairLineupFor, faWindowKey, roundToSettle, closedWindowRound, closedWindowRounds, closedTradeWindows, roundsOwedSettlement, isRoundSettled, matchFixture, matchTimeFor, computeScoresUncached, bustScores, roundKeyLockedAt, roundKeyOfLabel, roundLabelShort, roundIndex, rosterAtFor, snapshotsByManager, advanceRound, maybeAdvanceRounds };"
+  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, scoringRules, rugbyMatchSettled, rugbyTeamKnown, firstArray, RUGBY_BENCH_POS, noCandidatesReason, lineupSwapValid, crestUrlFor, rugbyTeamCrest, rugbyPlayerCrest, crestFields, rugbyCrestUrl, rugbyTeamCode, clubHue, initialsOf, markSvg, teamCodeOf, teamCrestHtml, avatarHtml, loadedCompetitions, practiceCompetition, practiceNote, resolveRugbyPosition, positionsCsv, parsePositionsCsv, csvSplit, positionRows, positionEvidence, applyPositionFixes, PHASE1_STARTERS, sportNeedsApiKey, summariseLineupSample, lineupObservationText, RUGBY_QUOTA, RUGBY_STARTERS, RUGBY_PLAY_GROUPS, RUGBY_PITCH_BANDS, RUGBY_RULES, RUGBY_STAT_CATALOG, RUGBY_SLOTS, slotMapsFor, sumGroups, zeroByGroup, outfieldGroups, squadSize, flexComplete, flexLeft, fixedRoundSubs, SLOT_POS, SLOT_RANK, rugbyPosCode, isRugbyBenchSlot, parseRugbyPlayer, parseRugbyMatch, usableRugbyMatches, rugbyStatRows, rugbyStatsOf, RUGBY_STAT_KEYS, RUGBY_COMPETITIONS, rugbyBody, parseCompKey, competitionsFor, SPORTS, sportOf, sportDef, posGroups, playGroups, slotPosMap, slotRankMap, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, suspendedNext, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid, pitchHtml, pitchFacingHtml, pitchRowsHtml, squadBoardHtml, historyViewHtml, benchInOrder, moveBench, orderedRoster, flipRows, wireLineupControls, markQueueMoved, matchdayCtaAct, matchdayCardHtml, renderLineup, renderHomeTab, openH2HPreview, openH2HFixture, lineupRowHtml, dugoutHtml, renderFixturesTab, h2hRoundFixtures, h2hTotalRounds, h2hFormOf, h2hStandingsHtml, seasonChartHtml, renderScoutList, renderStatsTab, renderPredraftShortlist, preDraftBrowsing, shortlistCoverage, coverageHint, scoringByPositionHtml, openScoringSheet, animateReorder, applyLocalOverrides, queueManagerWrite, wireStars, starHtml, draftFactCards, draftRulesHtml, lobbyRulesHtml, scoringHtml, applyVisibleOrder, makeReorderable, refetchAll, markConnection, enterLeagueWithFeedback, route, showView, dragActive, afterDrag, overrideStillWins, queueManagerWrite, applyLocalOverrides, keepLocalPick, autoPickStale, makePick, autoPick, tickTimer, mergeOptimisticPicks, pickKey, queueFieldWrite, OVERRIDE_TABLES, setPlanner, saveLineup, toggleKeeper, setFinalPick, txWindowStarts, txWhen, txShell, txAvatar, txMgrChip, tradeTxCard, swapTxCard, transactionsLogHtml, renderTrades, builderHtml, faClaimsSectionHtml, waiverOrderHtml, shortlistSectionHtml, plannerSectionHtml, plannerMoveHtml, squadChooserHtml, tradeSectionHtml, setClaimOrder, reorderClaim, tradeForShortlisted, submitTrade, TRADE_TABS, tradeTabBodyHtml, faClaimRowHtml, faClaimRowsHtml, renderClaimList, wireClaimControls, ROW_ATTRS, plannerMoveChoice, plannerSetChoiceOrder, plannerPickPool, renderPlannerPick, setWindowMode, toggleLineups, squadPitchHtml, squadShape, renderDreamTeam, dreamTeam, renderChat, chatThreads, interacting, markInteracting, scheduleDeferredFlush, INTERACT_MS, animateReorder, flipRows, flushDeferredRender, currentSeasonFor, seasonOptions, seasonLabel, backtestSeason, createCompKind, createPreviewSeason, loadScoringPreviewData, pullCreateHistory, renderCreateBalance, updateCreatePullStatus, renderCreateForm, pickReconciliation, reconcilePicksToPool, mapApiPlayer, loadCompetition, roundResolvers, roundIndex, mwNo, FINAL_STATUS, draftOrderMode, lobbyOrderManagers, shuffled, setDraftOrder, renderLobbyOrder, lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow, nextLockMs, lockAfterWindow, snapshotAt, snapshotForNextLock, rosterAtFor, setSession, getSession, repairStarters, lineupShape, repairLineupFor, faWindowKey, roundToSettle, closedWindowRound, closedWindowRounds, closedTradeWindows, roundsOwedSettlement, isRoundSettled, matchFixture, matchTimeFor, computeScoresUncached, bustScores, roundKeyLockedAt, roundKeyOfLabel, roundLabelShort, roundIndex, rosterAtFor, snapshotsByManager, advanceRound, maybeAdvanceRounds };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -53,7 +53,7 @@ const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcT
         fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey,
         rugbyPosCode, isRugbyBenchSlot, parseRugbyPlayer, parseRugbyMatch, usableRugbyMatches, rugbyStatRows, rugbyStatsOf, RUGBY_STAT_KEYS, RUGBY_COMPETITIONS, rugbyBody, 
         parseCompKey, competitionsFor, SPORTS, sportOf, sportDef, posGroups, playGroups, slotPosMap, slotRankMap, scoringRules, pitchRowsHtml, 
-        rugbyMatchSettled, rugbyTeamKnown, firstArray, RUGBY_BENCH_POS, noCandidatesReason, lineupSwapValid, crestUrlFor, rugbyTeamCrest, rugbyPlayerCrest, crestFields, rugbyCrestUrl, rugbyTeamCode, clubHue, initialsOf, markSvg, teamCodeOf, teamCrestHtml, avatarHtml, loadedCompetitions, practiceCompetition, practiceNote, PHASE1_STARTERS, sportNeedsApiKey, summariseLineupSample, lineupObservationText,
+        rugbyMatchSettled, rugbyTeamKnown, firstArray, RUGBY_BENCH_POS, noCandidatesReason, lineupSwapValid, crestUrlFor, rugbyTeamCrest, rugbyPlayerCrest, crestFields, rugbyCrestUrl, rugbyTeamCode, clubHue, initialsOf, markSvg, teamCodeOf, teamCrestHtml, avatarHtml, loadedCompetitions, practiceCompetition, practiceNote, resolveRugbyPosition, positionsCsv, parsePositionsCsv, csvSplit, positionRows, positionEvidence, applyPositionFixes, PHASE1_STARTERS, sportNeedsApiKey, summariseLineupSample, lineupObservationText,
         RUGBY_QUOTA, RUGBY_STARTERS, RUGBY_PLAY_GROUPS, RUGBY_PITCH_BANDS, RUGBY_RULES, RUGBY_STAT_CATALOG, RUGBY_SLOTS, slotMapsFor, sumGroups, zeroByGroup, outfieldGroups, squadSize, flexComplete, flexLeft, fixedRoundSubs, SLOT_POS, SLOT_RANK, 
         slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick,
         posQuota, picksPerManager, totalPicks,
@@ -3845,6 +3845,111 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
     practiceNote(null), "Football · 14 picks each, 9 to field.");
   check("...and a rugby one differently",
     practiceNote({ sport: "rugby" }), "Rugby union · 20 picks each, 15 to field.");
+
+  /* Where a rugby position comes from. The first version kept the EARLIEST
+     start forever, so a lock who covered flanker in round 1 was a Loose
+     forward all season no matter how many times he packed down at 4. */
+  check("the most-started shirt wins",
+    resolveRugbyPosition({ LF: 1, LK: 6 }, null), { position: "LK", starts: 6 });
+  check("...however the season began",
+    resolveRugbyPosition({ LK: 6, LF: 1 }, null), { position: "LK", starts: 6 });
+  /* Matches are walked oldest-first, so the LAST to reach a tied count is the
+     most recent -- a player who genuinely moved ends up where he finished. */
+  check("a tie goes to the later shirt",
+    resolveRugbyPosition({ LF: 3, LK: 3 }, null), { position: "LK", starts: 3 });
+  check("never started falls back to the bench convention",
+    resolveRugbyPosition({}, "SH"), { position: "SH", starts: 0 });
+  check("...and says so with zero starts",
+    resolveRugbyPosition(null, "SH").starts, 0);
+  check("neither one nor the other is nobody",
+    resolveRugbyPosition({}, null), { position: null, starts: 0 });
+
+  check("evidence for a guess says it is one",
+    positionEvidence({ pos_starts: 0 }), "never started · bench shirt");
+  check("...and for an observation, how much",
+    positionEvidence({ pos_starts: 1, position: "LK" }), "1 start at LK");
+  check("...counted properly", positionEvidence({ pos_starts: 9, pos_feed: "LF" }), "9 starts at LF");
+  check("a pool that records none says nothing", positionEvidence({ name: "x" }), "");
+
+  /* The CSV round trip. A club really can contain a comma, which is why this
+     is not split(","). */
+  check("a quoted field survives the trip",
+    csvSplit('rug_1,"Bath, England",LK'), ["rug_1", "Bath, England", "LK"]);
+  check("...and a doubled quote is one quote",
+    csvSplit('a,"say ""hi""",b'), ["a", 'say "hi"', "b"]);
+
+  const csvPool = [
+    { player_id: "rug_1", name: "A Lock", team: "Bath, England", position: "LK", pos_starts: 6 },
+    { player_id: "rug_2", name: "A Sub", team: "Ulster", position: "SH", pos_starts: 0 },
+  ];
+  const sheet = positionsCsv(csvPool);
+  check("the sheet has a header and a row each", sheet.trim().split("\n").length, 3);
+  check("...and quotes what would break it", sheet.includes('"Bath, England"'), true);
+  check("...and carries the evidence column", sheet.includes("player_id,name,team,position,starts"), true);
+
+  const round = parsePositionsCsv(sheet, csvPool, RUGBY_PLAY_GROUPS);
+  check("a sheet that changes nothing changes nothing", round.fixes, {});
+  check("...and reports no problems", round.errors, []);
+
+  const edited = parsePositionsCsv(
+    'player_id,position\nrug_1,LF\nrug_2,SH\n', csvPool, RUGBY_PLAY_GROUPS);
+  check("an edited row becomes a fix", edited.fixes, { rug_1: "LF" });
+  /* Back to the feed's own value is a DELETION, not a no-op: otherwise a
+     correction could never be undone by editing the sheet. */
+  check("...and a row back at the feed's value clears one", edited.cleared, ["rug_2"]);
+
+  const messy = parsePositionsCsv(
+    'name,team,position\n"A Lock","Bath, England",lf\nA Sub,Ulster,GK\nNobody,Nowhere,LK\n',
+    csvPool, RUGBY_PLAY_GROUPS);
+  check("a sheet with no ids matches on name and club", messy.fixes, { rug_1: "LF" });
+  check("...case-insensitively", parsePositionsCsv(
+    "player_id,position\nrug_1,lk\n", csvPool, RUGBY_PLAY_GROUPS).cleared, ["rug_1"]);
+  check("a position from another sport is refused, with a reason",
+    messy.errors[0], 'Line 3: A Sub — "GK" is not a position');
+  check("...and so is a player who is not in the pool",
+    messy.errors[1], "Line 4: no such player (Nobody)");
+  check("a file with no position column is refused whole",
+    parsePositionsCsv("player_id,name\nrug_1,x\n", csvPool, RUGBY_PLAY_GROUPS).errors.length, 1);
+  check("an empty file says so",
+    parsePositionsCsv("", csvPool, RUGBY_PLAY_GROUPS).errors.length, 1);
+  check("a blank cell means leave it alone",
+    parsePositionsCsv("player_id,position\nrug_1,\n", csvPool, RUGBY_PLAY_GROUPS).fixes, {});
+
+  /* The editor's list: least confident first, because those are the ones
+     worth a human's attention. */
+  const rowsPool = [
+    { player_id: "a", name: "Zed Certain", team: "Ulster", position: "LK", pos_starts: 9 },
+    { player_id: "b", name: "Al Guessed", team: "Leinster", position: "SH", pos_starts: 0 },
+    { player_id: "c", name: "Bo Guessed", team: "Ulster", position: "FH", pos_starts: 0 },
+    { player_id: "d", name: "A Club", team: "Ulster", position: "TEAM" },
+  ];
+  check("guesses come first, then by name",
+    positionRows(rowsPool).map((p) => p.player_id), ["b", "c", "a"]);
+  check("the club pick is not a player", positionRows(rowsPool).length, 3);
+  check("search reads the club too",
+    positionRows(rowsPool, { q: "leinster" }).map((p) => p.player_id), ["b"]);
+  check("...and the name", positionRows(rowsPool, { q: "zed" }).map((p) => p.player_id), ["a"]);
+  check("unconfirmed means zero starts, not 'no number'",
+    positionRows(rowsPool, { guessOnly: true }).map((p) => p.player_id), ["b", "c"]);
+  check("a pool that records no starts has no unconfirmed rows",
+    positionRows([{ player_id: "f", name: "Footballer", team: "X", position: "MID" }],
+      { guessOnly: true }).length, 0);
+
+  /* The overrides themselves: laid over the pool on every load, and reversible,
+     which is why the feed's own value is kept beside them. */
+  S.players = [{ player_id: "rug_1", name: "A Lock", team: "Ulster", position: "LF" }];
+  S.league = { id: "L1", config: { positions: { rug_1: "LK" } },
+               competition: { apiLeagueId: 1068, season: 2025, sport: "rugby" } };
+  applyPositionFixes();
+  check("a correction is applied", S.players[0].position, "LK");
+  check("...and what the feed said is kept", S.players[0].pos_feed, "LF");
+  check("...and the index agrees", S.playerById.rug_1.position, "LK");
+  applyPositionFixes();
+  check("applying twice changes nothing more", S.players[0].pos_feed, "LF");
+  S.league.config = {};
+  applyPositionFixes();
+  check("and removing it puts the feed's own back", S.players[0].position, "LF");
+  S.players = []; S.playerById = {}; S.league = null;
   stubDoc.documentElement.dataset.theme = "";
   S.players = []; S.league = null;
 

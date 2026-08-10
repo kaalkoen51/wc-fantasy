@@ -1198,6 +1198,23 @@ async function rugbyFeed(path, params) {
 const RUGBY_BENCH_POS = { 16: "HK", 17: "PR", 18: "PR", 19: "LK",
                           20: "LF", 21: "SH", 22: "FH", 23: "OB" };
 
+/* The position a player actually plays, from every shirt they were seen in.
+
+   The most-started one wins. Ties go to the LATER shirt -- matches are walked
+   oldest-first, so the last one to reach a given count is the most recent, and
+   a player who genuinely moved (a flanker converted to lock in February) ends
+   up where the season left them rather than where it started.
+
+   Nobody who never started has a position in this feed at all; `benchGuess` is
+   the shirt convention (16 is a hooker, 21 a scrum-half) and is a convention,
+   not a fact -- a 6-2 bench breaks it, and so does any utility back. That is
+   exactly why it is reported as zero starts rather than silently. */
+function resolveRugbyPosition(starts, benchGuess) {
+  let best = null, n = 0;
+  for (const code in starts || {}) if (starts[code] >= n) { best = code; n = starts[code]; }
+  return best ? { position: best, starts: n } : { position: benchGuess || null, starts: 0 };
+}
+
 async function fetchRugbyPool(apiLeagueId, onProgress) {
   const played = usableRugbyMatches(await fetchRugbyMatches(apiLeagueId));
   if (!played.length) {
@@ -1229,17 +1246,17 @@ async function fetchRugbyPool(apiLeagueId, onProgress) {
         crests[t.name] = crests[t.name] || rugbyPlayerCrest(rp);
         const p = parseRugbyPlayer(rp, t.name, rugbyTeamCode(t), t.id);
         const started = rugbyPosCode(rp.positionId, rp.position);   // 1-15 only
-        const prev = byId[p.player_id];
-        if (!prev) {
-          byId[p.player_id] = { ...p, position: started || null,
-                                _bench: RUGBY_BENCH_POS[+rp.positionId] || null };
-        } else {
-          // A start always beats a guess, and the LAST club seen wins, so a
-          // player who moved mid-season lands where they finished.
-          if (started && !prev.position) prev.position = started;
-          prev._bench = prev._bench || RUGBY_BENCH_POS[+rp.positionId] || null;
-          prev.team = t.name; prev.team_code = rugbyTeamCode(t);
-        }
+        const prev = byId[p.player_id]
+          || (byId[p.player_id] = { ...p, position: null, _starts: {}, _bench: null });
+        /* Every shirt they were seen in, counted -- not just the first one.
+           The first version took the earliest start and kept it forever, so a
+           lock who covered flanker in round 1 was a Loose forward for the rest
+           of the season no matter how many times he packed down at 4. */
+        if (started) prev._starts[started] = (prev._starts[started] || 0) + 1;
+        else prev._bench = prev._bench || RUGBY_BENCH_POS[+rp.positionId] || null;
+        // The LAST club seen wins, so a player who moved mid-season lands
+        // where they finished.
+        prev.team = t.name; prev.team_code = rugbyTeamCode(t);
       }
     }
   }
@@ -1248,12 +1265,16 @@ async function fetchRugbyPool(apiLeagueId, onProgress) {
      position silently corrupts every quota they are drafted into. */
   const players = [], unplaced = [];
   for (const p of Object.values(byId)) {
-    const pos = p.position || p._bench;
-    delete p._bench;
-    if (!pos) { unplaced.push(p.name); continue; }
-    // Stored per player, the way football stores team_logo: the pool's `teams`
-    // is a list of names with nowhere to hang a URL.
-    players.push({ ...p, position: pos, ...crestFields(crests[p.team]) });
+    const { position, starts } = resolveRugbyPosition(p._starts, p._bench);
+    delete p._starts; delete p._bench;
+    if (!position) { unplaced.push(p.name); continue; }
+    /* pos_starts is how confident that is: 0 means nobody ever saw them start
+       and the shirt convention guessed. The admin's position editor sorts on
+       it, because those are the ones actually worth a human's attention. */
+    players.push({ ...p, position, pos_starts: starts,
+                   // Stored per player, the way football stores team_logo: the
+                   // pool's `teams` is a list of names with nowhere to hang a URL.
+                   ...crestFields(crests[p.team]) });
   }
   if (unplaced.length) {
     console.warn(`rugby pool: ${unplaced.length} player(s) had no resolvable `
@@ -1339,6 +1360,111 @@ async function loadPlayers() {
     }
   }
   S.teams = [...new Set(S.players.map((p) => p.team))].sort();
+  applyPositionFixes();
+}
+
+/* ---------- positions: the CSV round trip ----------
+
+   A spreadsheet is the right tool for six hundred rows, and it is the only one
+   that lets someone fix a whole competition on a laptop and hand the result to
+   the next league. Both directions are pure so the parsing can be tested
+   without a browser, a file input, or a pool. */
+
+// Quote only when a field could otherwise break the row. Rugby names carry
+// apostrophes and hyphens freely, and clubs carry commas ("Bath, England").
+const csvCell = (v) => {
+  const s = String(v ?? "");
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+const csvRow = (cells) => cells.map(csvCell).join(",");
+
+/* One line of CSV -> its fields, honouring quotes and doubled quotes.
+   Written out rather than split(",") because the club column really does
+   contain commas, and a naive split silently shifts every later column. */
+function csvSplit(line) {
+  const out = [];
+  let cur = "", q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) {
+      if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+      else if (c === '"') q = false;
+      else cur += c;
+    } else if (c === '"') q = true;
+    else if (c === ",") { out.push(cur); cur = ""; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out.map((s) => s.trim());
+}
+
+// The pool as a sheet. `starts` is the evidence column: 0 means the position
+// was guessed from a bench shirt and is the one worth looking at.
+function positionsCsv(players) {
+  const rows = [csvRow(["player_id", "name", "team", "position", "starts"])];
+  for (const p of players || []) {
+    rows.push(csvRow([p.player_id, p.name, p.team, p.position, p.pos_starts ?? ""]));
+  }
+  return rows.join("\n") + "\n";
+}
+
+/* A sheet back into corrections. Deliberately forgiving about the file and
+   strict about the data: column order is read from the header, unknown columns
+   are ignored, and a row is rejected -- with a reason -- rather than dropped
+   silently, because a CSV that half-applied is worse than one that did not. */
+function parsePositionsCsv(text, players, groups) {
+  const lines = String(text || "").split(/\r?\n/).filter((l) => l.trim());
+  if (!lines.length) return { fixes: {}, cleared: [], errors: ["The file is empty."] };
+  const head = csvSplit(lines[0]).map((h) => h.toLowerCase());
+  const iId = head.indexOf("player_id"), iPos = head.indexOf("position");
+  const iName = head.indexOf("name"), iTeam = head.indexOf("team");
+  if (iPos < 0 || (iId < 0 && iName < 0)) {
+    return { fixes: {}, cleared: [],
+             errors: ["Needs a `position` column and either `player_id` or `name`."] };
+  }
+  const byId = new Map((players || []).map((p) => [p.player_id, p]));
+  // Fallback match, for a sheet someone retyped without the ids.
+  const byName = new Map();
+  for (const p of players || []) byName.set(`${p.name}|${p.team}`.toLowerCase(), p);
+  const ok = new Set(groups || []);
+  const fixes = {}, cleared = [], errors = [];
+  for (let n = 1; n < lines.length; n++) {
+    const f = csvSplit(lines[n]);
+    const id = iId >= 0 ? f[iId] : "";
+    const p = byId.get(id)
+      || (iName >= 0 ? byName.get(`${f[iName]}|${iTeam >= 0 ? f[iTeam] : ""}`.toLowerCase()) : null);
+    const pos = String(f[iPos] || "").toUpperCase();
+    if (!p) { errors.push(`Line ${n + 1}: no such player (${id || f[iName] || "?"})`); continue; }
+    if (!pos) continue;                        // a blank cell is "leave it"
+    if (!ok.has(pos)) { errors.push(`Line ${n + 1}: ${p.name} — "${pos}" is not a position`); continue; }
+    /* Back to what the feed said is a DELETION, not a no-op. Otherwise an
+       admin could never undo a correction by editing the sheet -- the row
+       would simply be ignored and the old override would survive the upload
+       that was meant to remove it. */
+    if (pos === (p.pos_feed ?? p.position)) cleared.push(p.player_id);
+    else fixes[p.player_id] = pos;
+  }
+  /* Merged by the caller, not replaced: a five-row sheet fixing five players
+     must not silently drop every other correction the league already had. */
+  return { fixes, cleared, errors };
+}
+
+/* The admin's position corrections, laid over the pool.
+
+   League-scoped on purpose. A pool row is SHARED by every league on that
+   competition, and rewriting a position there would move a player under a
+   league that has already drafted him into a quota slot he no longer fits.
+   The CSV is how a correction travels between leagues instead.
+
+   `pos_feed` keeps what the feed said, so this is idempotent -- it runs again
+   on every refresh, and clearing a fix has to put the original back. It also
+   never mutates the pool array itself, which S._compPool still points at. */
+function applyPositionFixes() {
+  const fixes = S.league?.config?.positions || {};
+  S.players = (S.players || []).map((p) => {
+    const feed = p.pos_feed ?? p.position;
+    return { ...p, pos_feed: feed, position: fixes[p.player_id] || feed };
+  });
   S.playerById = Object.fromEntries(S.players.map((p) => [p.player_id, p]));
 }
 
@@ -1377,6 +1503,9 @@ async function refetchAll({ initial = false } = {}) {
   }
   forcePickResync = false;
   S.league = l.data;
+  /* Now, not in loadPlayers: the pool is loaded before the league row on the
+     first entry, so this is the first moment the corrections are even known. */
+  applyPositionFixes();
   const compKey = competitionKey();
   // Stats outgrow Supabase's 1000-row request cap, so page through them.
   // Competition leagues read the SHARED competition_stats (one pull serves every
@@ -14665,6 +14794,134 @@ function renderConfigEditor() {
   $("adm-config-reset").onclick = resetConfigEditor;
 }
 
+/* ---------- the position editor ----------
+
+   Six hundred rows is too many to scroll and far too many to render as six
+   hundred <select>s, so the list is the smallest useful slice of them: least
+   confident first, filtered by a search, capped. Everything else is the CSV. */
+
+// Rows worth showing, in the order worth showing them.
+function positionRows(players, opts = {}) {
+  const q = String(opts.q || "").trim().toLowerCase();
+  let rows = (players || []).filter((p) => p.position !== "TEAM");
+  if (q) rows = rows.filter((p) =>
+    `${p.name} ${p.team} ${p.team_code || ""}`.toLowerCase().includes(q));
+  // "Unconfirmed" is a fact, not a heuristic: zero observed starts. A pool
+  // that does not record starts at all (football's) has none of these.
+  if (opts.guessOnly) rows = rows.filter((p) => p.pos_starts === 0);
+  return rows.slice().sort((a, b) =>
+    (a.pos_starts ?? 99) - (b.pos_starts ?? 99) || String(a.name).localeCompare(b.name));
+}
+
+// What the evidence for one player's position actually is.
+const positionEvidence = (p) => p.pos_starts == null ? ""
+  : p.pos_starts === 0 ? "never started · bench shirt"
+  : `${p.pos_starts} start${p.pos_starts === 1 ? "" : "s"} at ${p.pos_feed ?? p.position}`;
+
+const POS_ROW_CAP = 80;
+
+function renderPositionEditor() {
+  const card = $("adm-pos-card");
+  if (!card) return;
+  /* Pre-draft only. After the first pick a position change moves a player out
+     of the quota slot he was drafted into, and there is no honest way to
+     reconcile that inside someone else's squad. */
+  const open = isAdmin() && !S.league?.current_pick && (S.players || []).length > 0;
+  card.classList.toggle("hidden", !open);
+  if (!open) return;
+  if (!S._posFixes) S._posFixes = { ...(S.league?.config?.positions || {}) };
+
+  const guessed = (S.players || []).filter((p) => p.pos_starts === 0).length;
+  const edits = Object.keys(S._posFixes).length;
+  $("adm-pos-intro").textContent =
+    `A position is the shirt the feed saw a player wear. ${
+      guessed ? `${guessed} of ${S.players.length} were never seen starting, so theirs is a guess from the bench convention. `
+              : ""}Corrections apply to this league only — use the CSV to carry them to another.${
+      edits ? ` ${edits} edited, unsaved.` : ""}`;
+
+  const gq = $("adm-pos-guess");
+  gq.classList.toggle("hidden", !guessed);
+  gq.classList.toggle("border-wcgold", !!S._posGuessOnly);
+  gq.classList.toggle("text-wcgold", !!S._posGuessOnly);
+
+  const all = positionRows(S.players, { q: S._posQ, guessOnly: S._posGuessOnly });
+  const shown = all.slice(0, POS_ROW_CAP);
+  const groups = playGroups();
+  $("adm-pos-list").innerHTML = shown.map((p) => {
+    const cur = S._posFixes[p.player_id] || p.pos_feed || p.position;
+    const edited = !!S._posFixes[p.player_id];
+    return `<div class="flex items-center gap-2 rounded-lg border ${
+      edited ? "border-wcgold/60" : "border-slate-800"} bg-slate-800/40 px-2 py-1.5">
+      <span class="flex-1 min-w-0">
+        <span class="block truncate text-sm">${esc(p.name)}</span>
+        <span class="block truncate text-xs text-slate-400">${esc(p.team)}${
+          positionEvidence(p) ? " · " + esc(positionEvidence(p)) : ""}</span>
+      </span>
+      <select data-pos-fix="${esc(p.player_id)}" class="shrink-0 rounded bg-slate-800 border border-slate-700 px-1.5 py-1 text-xs">
+        ${groups.map((g) => `<option value="${g}"${g === cur ? " selected" : ""}>${g}</option>`).join("")}
+      </select></div>`;
+  }).join("") || `<div class="text-xs text-slate-400 py-2">Nobody matches that.</div>`;
+  $("adm-pos-more").textContent = all.length > shown.length
+    ? `${all.length - shown.length} more — search to narrow it down, or use the CSV.` : "";
+
+  $("adm-pos-list").querySelectorAll("[data-pos-fix]").forEach((sel) => {
+    sel.onchange = () => {
+      const id = sel.dataset.posFix;
+      const p = S.playerById[id];
+      // Back to what the feed said is an undo, not another override.
+      if (sel.value === (p?.pos_feed ?? p?.position)) delete S._posFixes[id];
+      else S._posFixes[id] = sel.value;
+      renderPositionEditor();
+    };
+  });
+}
+
+async function savePositionFixes() {
+  const fixes = S._posFixes || {};
+  const cfg = { ...(S.league.config || {}) };
+  if (Object.keys(fixes).length) cfg.positions = fixes;
+  else delete cfg.positions;
+  const { error } = await S.sb.from("leagues").update({ config: cfg }).eq("id", S.league.id);
+  if (error) return toast(/config|column|schema cache/.test(error.message)
+    ? "Config needs a schema update — run schema.sql." : error.message);
+  S.league.config = cfg;
+  applyPositionFixes();
+  toast(Object.keys(fixes).length
+    ? `${Object.keys(fixes).length} position${Object.keys(fixes).length === 1 ? "" : "s"} saved.`
+    : "Positions back to the feed's own.");
+  renderAdmin(); renderBoard();
+}
+
+// A file the admin can open in a spreadsheet, fix in bulk, and send back.
+function downloadPositionsCsv() {
+  const name = `positions-${(competitionKey() || "wc").replace(/[^\w-]/g, "")}.csv`;
+  const url = URL.createObjectURL(
+    new Blob([positionsCsv(S.players)], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function applyPositionsCsvText(text) {
+  const { fixes, cleared, errors } = parsePositionsCsv(text, S.players, playGroups());
+  const next = { ...(S._posFixes || {}) };
+  for (const id of cleared) delete next[id];
+  Object.assign(next, fixes);
+  S._posFixes = next;
+  const log = $("adm-pos-log");
+  const n = Object.keys(fixes).length;
+  /* Says what it did AND what it refused, because a CSV that half-applied in
+     silence is worse than one that did not apply at all. */
+  log.textContent = [
+    `${n} change${n === 1 ? "" : "s"} staged${cleared.length ? `, ${cleared.length} back to the feed's own` : ""}.`,
+    n || cleared.length ? "Nothing is saved until you press Save positions." : "",
+    ...errors.slice(0, 8),
+    errors.length > 8 ? `…and ${errors.length - 8} more problems.` : "",
+  ].filter(Boolean).join("\n");
+  renderPositionEditor();
+}
+
 async function saveConfigEditor() {
   const cfg = readConfigFromFields($("adm-config"));
   if (JSON.stringify(S._admRules) !== JSON.stringify(sportDef().rules())) cfg.scoring = S._admRules;
@@ -14734,6 +14991,7 @@ function renderAdmin() {
     ? "Trading opens and closes itself around each matchweek, and line-ups lock before the first kick-off. The button below is ignored."
     : "You open and close the window yourself with the button below. Line-ups stay editable until you close it — including during matches, so close it before kick-off.";
   renderConfigEditor();
+  renderPositionEditor();
   // Competition selector + current-pool status.
   if (!$("adm-comp-select").options.length)
     $("adm-comp-select").innerHTML = competitionsFor().map((c) =>
@@ -15253,6 +15511,23 @@ function wire() {
     $(id).oninput = admQuotaSizePreview);
   $("adm-pull-now").onclick = () => pullStatsNow().catch((e) => toast(e.message));
   $("adm-comp-load").onclick = () => loadCompetition().catch((e) => toast(e.message));
+  $("adm-pos-q").oninput = () => { S._posQ = $("adm-pos-q").value; renderPositionEditor(); };
+  $("adm-pos-guess").onclick = () => { S._posGuessOnly = !S._posGuessOnly; renderPositionEditor(); };
+  $("adm-pos-save").onclick = () => savePositionFixes().catch((e) => toast(e.message));
+  $("adm-pos-revert").onclick = () => {
+    S._posFixes = { ...(S.league?.config?.positions || {}) };
+    $("adm-pos-log").textContent = "";
+    renderPositionEditor();
+  };
+  $("adm-pos-down").onclick = downloadPositionsCsv;
+  $("adm-pos-up").onclick = () => $("adm-pos-file").click();
+  $("adm-pos-file").onchange = async () => {
+    const f = $("adm-pos-file").files?.[0];
+    if (!f) return;
+    try { applyPositionsCsvText(await f.text()); }
+    catch (e) { toast("Could not read that file: " + e.message); }
+    $("adm-pos-file").value = "";        // so the same file can be re-uploaded
+  };
   $("adm-lineups-check").onclick = async () => {
     const btn = $("adm-lineups-check"), log = $("adm-lineups-log");
     const comp = leagueCompetition();

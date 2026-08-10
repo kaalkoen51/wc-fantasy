@@ -804,6 +804,86 @@ test("a practice draft can be run on any pool that is loaded", async ({ page }) 
   expect(out.aPlayer, "not from the built-in football one").toMatch(/^rug_/);
 });
 
+test("an admin can correct a position before the draft, by hand or by CSV", async ({ page }) => {
+  /* Rugby positions are whatever shirt the feed saw a player wear, which is
+     right for most of a squad and a guess for anyone who only ever came off
+     the bench -- the bench convention is a convention, and a 6-2 bench breaks
+     it. The fix has to be league-scoped: the pool row is SHARED, and rewriting
+     a position there would move a player under a league that has already
+     drafted him into a quota slot he no longer fits. */
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const out = await page.evaluate(async () => {
+    S.league.competition = { name: "Nations Championship", apiLeagueId: 2146,
+                             season: 2026, sport: "rugby" };
+    S.league.current_pick = 0;                       // pre-draft
+    S.league.config = null;
+    S.players = [
+      { player_id: "rug_1", name: "Cert Ain", team: "Ulster", position: "LK", pos_starts: 9 },
+      { player_id: "rug_2", name: "Ben Ched", team: "Leinster", position: "SH", pos_starts: 0 },
+      { player_id: "rug_3", name: "Mid Field", team: "Ulster", position: "CE", pos_starts: 3 },
+    ];
+    applyPositionFixes();
+    showView("board"); setBoardTab("admin"); renderAdmin();
+
+    const card = document.getElementById("adm-pos-card");
+    const shown = !card.classList.contains("hidden");
+    const order = [...card.querySelectorAll("[data-pos-fix]")].map((s) => s.dataset.posFix);
+    const evidence = card.textContent.includes("never started");
+
+    const sel = card.querySelector('[data-pos-fix="rug_2"]');
+    sel.value = "LK"; sel.dispatchEvent(new Event("change"));
+    const staged = { ...S._posFixes };
+    await savePositionFixes();
+    /* Snapshot now: the stub hands back a live row, and there is a second save
+       below -- read at the end, this reports that one and the assertion about
+       the first passes or fails for the wrong reason. */
+    const afterHand = JSON.parse(JSON.stringify({
+      saved: window.__db.tables.leagues.find((l) => l.id === S.league.id)?.config?.positions,
+      applied: S.playerById.rug_2.position, feed: S.playerById.rug_2.pos_feed }));
+
+    // The sheet, and a sheet coming back with one change and one undo.
+    const sheet = positionsCsv(S.players);
+    applyPositionsCsvText("player_id,position\nrug_1,FH\nrug_2,SH\n");
+    const afterCsv = { ...S._posFixes };
+    await savePositionFixes();
+
+    // ...and once the draft starts it is no longer anybody's to change.
+    S.league.current_pick = 1;
+    renderAdmin();
+    const shownMidDraft = !document.getElementById("adm-pos-card").classList.contains("hidden");
+
+    return { shown, order, evidence, staged, shownMidDraft, afterCsv, afterHand,
+             sheetHasStarts: sheet.split("\n")[0],
+             finalPositions: S.league.config.positions,
+             rug1Now: S.playerById.rug_1.position,
+             rug2Back: S.playerById.rug_2.position };
+  });
+
+  expect(out.shown, "the card is offered before the draft").toBe(true);
+  expect(out.order, "least confident first — those are the ones worth a human")
+    .toEqual(["rug_2", "rug_3", "rug_1"]);
+  expect(out.evidence, "and each row says what the position is based on").toBe(true);
+
+  expect(out.staged, "an edit stages a correction").toEqual({ rug_2: "LK" });
+  expect(out.afterHand.saved, "saving writes it to this league, not to the pool")
+    .toEqual({ rug_2: "LK" });
+  expect(out.afterHand.applied, "and it takes effect immediately").toBe("LK");
+  expect(out.afterHand.feed, "with the feed's own value kept, so it can be undone").toBe("SH");
+
+  expect(out.sheetHasStarts, "the CSV carries the evidence column")
+    .toBe("player_id,name,team,position,starts");
+  expect(out.afterCsv, "an uploaded sheet edits one and undoes the other")
+    .toEqual({ rug_1: "FH" });
+  expect(out.rug1Now, "so the changed one moves").toBe("FH");
+  expect(out.rug2Back, "and the undone one goes back to what the feed said").toBe("SH");
+  expect(out.finalPositions, "leaving exactly the corrections that are still wanted")
+    .toEqual({ rug_1: "FH" });
+
+  expect(out.shownMidDraft, "once picks exist a position change would break a squad")
+    .toBe(false);
+});
+
 test("a player is a sticker everywhere, and a club is still a badge", async ({ page }) => {
   /* The theme's one idea has to carry the whole app, not just the pitch --
      otherwise it reads as decoration bolted to one screen. And the distinction
@@ -1902,6 +1982,13 @@ test("loading a rugby competition reads the rugby feed, not API-Football", async
               // Never once starts: the shirt convention is all there is.
               { id: 240454, known: "A Reserve", positionId: 21, position: "sub 6",
                 stats: { minutesPlayedTotal: 12 } },
+              /* Covered at 6 in the earlier match and packed down at 4 in the
+                 later one. One each, so the LATER shirt wins -- a player who
+                 moved should end up where the season left him, and the first
+                 version of this kept the earliest start forever. */
+              { id: 240455, known: "A Mover", positionId: benched ? 6 : 4,
+                position: benched ? "flanker" : "lock",
+                stats: { minutesPlayedTotal: 80 } },
               // Neither a known shirt nor a known name: dropped, not guessed.
               { id: 240470, known: "A Mystery", positionId: 99, position: "water carrier",
                 stats: { minutesPlayedTotal: 5 } },
@@ -1927,11 +2014,15 @@ test("loading a rugby competition reads the rugby feed, not API-Football", async
              seenBothWays: byId["rug_240453"]?.position,
              benchOnly: byId["rug_240454"]?.position,
              mystery: byId["rug_240470"],
+             moved: byId["rug_240455"]?.position,
+             movedStarts: byId["rug_240455"]?.pos_starts,
+             benchStarts: byId["rug_240454"]?.pos_starts,
+             surestStarts: byId["rug_240452"]?.pos_starts,
              firstId: built.players[0]?.player_id,
              key: compKeyOf(competition) };
   });
 
-  expect(out.players, "four placeable players, and the unplaceable one dropped").toBe(4);
+  expect(out.players, "five placeable players, and the unplaceable one dropped").toBe(5);
   expect(out.teams, "only the sides that actually played").toBe(2);
   expect(out.fixtures, "and the TBC placeholder is not a fixture").toBe(2);
   expect(out.startedPos, "shirt 7 is a loose forward").toBe("LF");
@@ -1941,6 +2032,10 @@ test("loading a rugby competition reads the rugby feed, not API-Football", async
     .toBe("SH");
   expect(out.mystery, "a position that cannot be resolved is dropped, not invented")
     .toBeUndefined();
+  expect(out.moved, "a tie between two shirts goes to the later one").toBe("LK");
+  expect(out.movedStarts, "and the evidence for it is recorded").toBe(1);
+  expect(out.benchStarts, "a bench-convention guess records zero starts").toBe(0);
+  expect(out.surestStarts, "someone seen starting twice records two").toBe(2);
   expect(out.firstId, "rugby ids are namespaced").toMatch(/^rug_/);
   expect(out.key, "and the pool row is keyed apart from football's")
     .toBe("rugby-2146-2026");
