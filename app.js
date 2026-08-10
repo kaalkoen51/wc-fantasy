@@ -9858,7 +9858,7 @@ function avatarHtml(playerId, team, size = "w-7 h-7") {
   if (!url) {
     const label = isTeam ? teamCodeOf(team) : initialsOf(S.playerById?.[playerId]?.name);
     if (!label) return `<span class="avatar ${kind} ${size} rounded-full bg-slate-800 shrink-0 inline-flex"></span>`;
-    return `<span class="avatar ${kind} ${size} club-tint rounded-full shrink-0 inline-flex items-center justify-center"
+    return `<span class="avatar ${kind} ${size} club-tint rounded-full overflow-hidden shrink-0 inline-flex items-center justify-center"
       style="--club-h:${clubHue(team)}" title="${esc(team || "")}">${markSvg(label)}</span>`;
   }
   return `<span class="avatar ${kind} ${size} rounded-full bg-slate-800 overflow-hidden shrink-0 inline-flex items-center justify-center">
@@ -11071,7 +11071,14 @@ function pitchRowsHtml(byPos, opts = {}) {
       <button type="button" ${tap}${e.title ? ` title="${esc(e.title)}"` : ""} class="pp ${e.dim ? "pp-dim" : ""} ${e.sel ? "pp-sel" : ""} ${e.planned ? "pp-planned" : ""} ${e.foil ? "pp-foil" : ""}">
         <span class="relative inline-flex">
           ${avatarHtml(e.player_id, e.team, av)}
-          ${opts.crests && teamCrestHtml(e.team) ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${teamCrestHtml(e.team, "w-3.5 h-3.5")}</span>` : ""}
+          ${/* A 14px badge tucked into the corner of a 40px avatar. It holds an
+                IMAGE and only an image: the code fallback is type, it is sized
+                by its text rather than by the 3.5 asked for, and it landed
+                across the bottom half of the face with the points bubble over
+                the top -- initials sliced in two on every chip on the pitch.
+                A club with no crest says so with the avatar's own colour. */
+            opts.crests && crestUrlFor(e.team)
+            ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${teamCrestHtml(e.team, "w-3.5 h-3.5")}</span>` : ""}
           ${e.badge ? `<span class="absolute -top-1 -right-1 rounded-full bg-wcgold text-slate-900 text-[10px] font-bold w-4 h-4 inline-flex items-center justify-center">${e.badge}</span>` : ""}
           ${e.note != null ? `<span class="pp-pts">${e.note}</span>` : ""}
           ${e.swapFor ? `<span class="absolute -bottom-1 -right-2 inline-flex items-center rounded-full bg-slate-900/95 ring-1 ring-wcgold/70 p-0.5"

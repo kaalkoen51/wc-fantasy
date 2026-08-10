@@ -2220,7 +2220,7 @@ test("a rugby league looks like rugby, not like football with different words",
         for (let i = 0; i < RUGBY_STARTERS[g]; i++)
           byPos[g].push({ player_id: `rug_${g}${i}`, name: `${g}er ${i}`, team: "Ireland" });
       });
-      const html = pitchHtml(byPos, {});
+      const html = pitchHtml(byPos, { crests: true });
       const emptyAvatar = avatarHtml("nobody", "Ireland", "w-10 h-10");
       return {
         rugbyPitch: html.includes("pitch-rugby"),
@@ -2232,6 +2232,11 @@ test("a rugby league looks like rugby, not like football with different words",
         pipShown: showPosPips(),
         crest: crestIdFor("Ireland"),
         emptyIsFlex: emptyAvatar.includes("inline-flex"),
+        // The corner badge holds an IMAGE. It is 14px on a 40px avatar, and
+        // the code fallback is type -- sized by its text, not by the 3.5 it
+        // was asked for -- so it landed across the bottom half of the face
+        // with the points bubble over the top, slicing the initials in two.
+        crestBadge: html.includes("-bottom-0.5 -left-1"),
       };
     });
 
@@ -2242,22 +2247,27 @@ test("a rugby league looks like rugby, not like football with different words",
     expect(out.pipShown, "eight groups in four bands need a position pip").toBe(true);
     expect(out.pips, "one on every player in the XV").toBe(15);
     expect(out.crest, "no football crest may be resolved for a rugby team").toBeNull();
+    expect(out.crestBadge, "and with no crest image there is no corner badge to draw")
+      .toBe(false);
     expect(out.emptyIsFlex,
       "a photoless avatar must still take up its box, or the sticker collapses").toBe(true);
 
     // ...and football keeps its own pitch, boxes and no pips.
     const fb = await page.evaluate(() => {
       S.league.competition = null;
-      const html = pitchHtml({ GK: [{ player_id: "a", name: "Keeper", team: "Brazil" }] }, {});
+      const html = pitchHtml({ GK: [{ player_id: "a", name: "Keeper", team: "Brazil" }] },
+                             { crests: true });
       return { rugby: html.includes("pitch-rugby"), box: html.includes("pitch-box"),
                pips: (html.match(/pp-pos/g) || []).length, pipShown: showPosPips(),
-               crest: crestIdFor("Brazil") };
+               crest: crestIdFor("Brazil"),
+               crestBadge: html.includes("-bottom-0.5 -left-1") };
     });
     expect(fb.rugby, "football keeps its own pitch").toBe(false);
     expect(fb.box, "with its penalty boxes").toBe(true);
     expect(fb.pipShown, "one group per row needs no pip").toBe(false);
     expect(fb.pips, "so football draws none").toBe(0);
     expect(fb.crest, "and football crests still resolve").not.toBeNull();
+    expect(fb.crestBadge, "so football still tucks one into the corner").toBe(true);
   });
 
 test("editing a lineup is a swap, not an add and a remove", async ({ page }) => {
