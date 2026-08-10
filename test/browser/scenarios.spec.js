@@ -746,6 +746,64 @@ for (const theme of ["dark", "sticker"]) {
   });
 }
 
+test("a practice draft can be run on any pool that is loaded", async ({ page }) => {
+  /* It was hard-locked to the built-in World Cup squads: the league row it
+     created carried no competition at all, which is the app's way of saying
+     "read players.json". So there was no way to rehearse a rugby draft --
+     nineteen picks and a fifteen to field is a different room entirely. */
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const out = await page.evaluate(async () => {
+    window.__db.tables.competition_pools = [
+      { competition_key: "rugby-2146-2026", round_order: [], fixtures: [],
+        players: ["PR", "HK", "LK", "SH", "FH", "CE", "OB", "LF"].flatMap((g, i) =>
+          [0, 1, 2].map((n) => ({ player_id: `rug_${i}${n}`, name: `${g} Player ${n}`,
+                                  position: g, team: "Ireland", team_code: "IRE" }))) },
+      { competition_key: "39-2024", players: [], fixtures: [], round_order: [] },
+    ];
+    // Leave the league we are in, so the home screen is the thing under test.
+    leaveLeague();
+    _practicePools = null;        // the menu was read once before this seed
+    await renderPracticeOptions();
+    const sel = document.getElementById("practice-comp");
+    const options = [...sel.options].map((o) => o.text);
+    const groups = [...sel.querySelectorAll("optgroup")].map((g) => g.label);
+    const builtIn = { value: sel.value, note: document.getElementById("practice-note").textContent };
+
+    sel.value = "rugby-2146-2026";
+    sel.dispatchEvent(new Event("change"));
+    const picked = { note: document.getElementById("practice-note").textContent,
+                     comp: practiceChoice() };
+
+    await startPracticeDraft(1, practiceChoice());
+    return { options, groups, builtIn, picked,
+             leagueComp: S.league?.competition,
+             stored: window.__db.tables.leagues.find((l) => l.name === "Practice draft")?.competition,
+             sport: sportOf(), squad: squadSize(),
+             pool: S.players.length, aPlayer: S.players[0]?.player_id };
+  });
+
+  expect(out.options[0], "the built-in squads stay the default").toMatch(/World Cup/);
+  expect(out.options, "and every loaded pool is offered, named and dated")
+    .toContain("Nations Championship 2026");
+  expect(out.options).toContain("Premier League 2024/25");
+  /* Grouped rather than prefixed: a phone's select is about 20 characters
+     wide, and "Rugby union · Nations Championship 2026" loses the year. */
+  expect(out.groups, "grouped by sport").toEqual(["Football", "Rugby union"]);
+  expect(out.builtIn.value, "with no competition selected to begin with").toBe("");
+  expect(out.builtIn.note, "the note says what the button would deal")
+    .toBe("Football · 14 picks each, 9 to field.");
+  expect(out.picked.note, "...and changes with the pool")
+    .toBe("Rugby union · 20 picks each, 15 to field.");
+
+  expect(out.leagueComp?.sport, "the practice league is on the chosen sport").toBe("rugby");
+  expect(out.stored?.apiLeagueId, "and that reached the row, not just the page").toBe(2146);
+  expect(out.sport, "so everything downstream resolves as rugby").toBe("rugby");
+  expect(out.squad, "including the squad it will ask you to draft").toBe(19);
+  expect(out.pool, "and the players come from that pool").toBe(24);
+  expect(out.aPlayer, "not from the built-in football one").toMatch(/^rug_/);
+});
+
 test("a player is a sticker everywhere, and a club is still a badge", async ({ page }) => {
   /* The theme's one idea has to carry the whole app, not just the pitch --
      otherwise it reads as decoration bolted to one screen. And the distinction

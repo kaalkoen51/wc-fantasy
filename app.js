@@ -2393,6 +2393,9 @@ async function ensureCompetitionPool(competition, apiKey, log) {
     { competition_key: compKey, players: built.players, fixtures: built.fixtures,
       round_order: built.roundOrder, updated_at: new Date().toISOString() });
   if (up.error) throw new Error(up.error.message);
+  // A newly loaded pool is a new practice-draft option; the home screen reads
+  // that list once per session, so drop it rather than show a stale menu.
+  _practicePools = null;
   localStorage.setItem("wcf_apikey", apiKey);
 }
 
@@ -2694,14 +2697,52 @@ async function addBots(n) {
   scheduleRefetch();
 }
 
+/* Which pools a practice draft can be run on: whatever has already been loaded
+   into competition_pools, whichever sport it belongs to.
+
+   competition_pools stores nothing but the key, so the NAME comes back from the
+   sport's own catalogue. A key for a competition the catalogue no longer lists
+   still resolves -- to "League 1068" -- rather than disappearing from the menu,
+   because the pool is real whether or not the list moved on.
+
+   Pure, and separate from the query, because the interesting part is the
+   parsing: football's keys have two segments and everything else has three. */
+function loadedCompetitions(keys) {
+  const out = [];
+  for (const key of keys || []) {
+    const { sport, apiLeagueId, season } = parseCompKey(key);
+    if (!apiLeagueId || !season) continue;
+    const def = (SPORTS[sport] ? competitionsFor(sport) : []).find((c) => c.apiLeagueId === apiLeagueId);
+    const name = def?.name || ("League " + apiLeagueId);
+    out.push({ key, name, apiLeagueId, season, sport,
+               /* Only a competition we still list has a known season model.
+                  For anything else the plain year is the honest label -- the
+                  alternative is inventing a "2026/27" span for something that
+                  may well be a single-year cup. */
+               label: `${name} ${def ? seasonLabel(def.kind, season) : season}`,
+               sportLabel: SPORTS[sport]?.label || sport });
+  }
+  // Sport, then competition, then newest season first.
+  return out.sort((a, b) => a.sportLabel.localeCompare(b.sportLabel)
+    || a.name.localeCompare(b.name) || b.season - a.season);
+}
+
+// The league row's competition object — the four fields, and only those, since
+// this is what every later sportOf() and compKeyOf() reads.
+const practiceCompetition = (c) => c
+  ? { name: c.name, apiLeagueId: c.apiLeagueId, season: c.season, sport: c.sport } : null;
+
 // One tap from the home screen: a throwaway league against bots, so you can
 // rehearse a draft (and your shortlist) before the real one.
-async function startPracticeDraft(bots) {
+async function startPracticeDraft(bots, competition) {
   if (!requireAccount("a practice league")) return;
   const row = {
     name: "Practice draft", num_managers: bots + 1, pick_duration_seconds: 30,
     invite_code: genInviteCode(), admin_token: crypto.randomUUID(), current_pick: 0,
   };
+  /* Left off entirely for the built-in pool, because a league with no
+     competition is exactly what says "read players.json" everywhere else. */
+  if (competition) row.competition = competition;
   row.owner_id = authUid();
   const { data: league, error } = await insertLeagueRow(row);
   if (error) throw new Error(error.message);
@@ -13845,6 +13886,7 @@ async function loadCompetition() {
         { competition_key: compKey, players, fixtures, round_order: roundOrder,
           updated_at: new Date().toISOString() });
       if (up.error) throw new Error(up.error.message);
+      _practicePools = null;                    // see ensureCompetitionPool
     }
     const upd = await S.sb.from("leagues").update({ competition }).eq("id", S.league.id);
     if (upd.error) throw new Error(upd.error.message);
@@ -14864,7 +14906,56 @@ function renderHome() {
   if (has) $("home-resume-name").textContent = "Tap to rejoin your league";
   $("home-hero").classList.toggle("hidden", !!authUser());
   renderAccount();
+  renderPracticeOptions();
 }
+
+/* What a practice draft on this pool would actually be. The button used to say
+   nothing about it and always dealt World Cup footballers, which is a poor way
+   to rehearse a rugby draft with a 19-man squad and a fifteen to field. */
+function practiceNote(competition) {
+  const def = sportDef(competition?.sport || DEFAULT_SPORT);
+  const sum = (o) => Object.values(o).reduce((n, v) => n + (v || 0), 0);
+  return `${def.label} · ${sum(def.quota())} picks each, ${sum(def.starters())} to field.`;
+}
+
+/* The pools a practice draft can use: everything already in competition_pools,
+   plus the built-in World Cup squads that need no database at all. Read once
+   per session -- it is a list of keys, and it does not change while the home
+   screen is open. */
+let _practicePools = null;
+async function renderPracticeOptions() {
+  const sel = $("practice-comp"), note = $("practice-note");
+  if (!sel) return;
+  /* Signed in only. A practice draft needs an account anyway (requireAccount
+     below), so reading the pool list before there is one buys nothing and puts
+     a request on the very first paint of a page nobody has touched yet. The
+     auth listener re-renders home, so the menu fills in on sign-in. */
+  if (_practicePools === null && S.sb && authUser()) {
+    _practicePools = [];        // set first: a failed read must not retry forever
+    try {
+      const { data } = await S.sb.from("competition_pools").select("competition_key");
+      _practicePools = loadedCompetitions((data || []).map((r) => r.competition_key));
+    } catch (e) { console.warn("practice pools:", e.message); }
+  }
+  const chosen = sel.value;
+  /* Grouped by sport rather than prefixed with it: a phone's select is about
+     20 characters wide, and "Rugby union · Nations Championship 2026" loses
+     the year -- the one part that says which of two loaded seasons this is. */
+  const bySport = {};
+  for (const c of _practicePools || []) (bySport[c.sportLabel] ||= []).push(c);
+  sel.innerHTML = `<option value="">World Cup 2026 — the built-in squads</option>`
+    + Object.keys(bySport).map((s) => `<optgroup label="${esc(s)}">${
+        bySport[s].map((c) =>
+          `<option value="${esc(c.key)}">${esc(c.label)}</option>`).join("")}</optgroup>`).join("");
+  sel.value = chosen && [...sel.options].some((o) => o.value === chosen) ? chosen : "";
+  const paint = () => { if (note) note.textContent = practiceNote(practiceChoice()); };
+  sel.onchange = paint;
+  paint();
+}
+
+// The selected pool as a league-row competition, or null for the built-in one.
+const practiceChoice = () =>
+  practiceCompetition((_practicePools || []).find((c) => c.key === $("practice-comp")?.value));
 
 // Toggle the account card between signed-in and signed-out states.
 /* The signed-out panel does three jobs: sign in, sign up, and ask for a reset
@@ -15084,7 +15175,8 @@ function wire() {
   };
   $("home-practice").onclick = () => {
     const n = Math.max(1, Math.min(13, Number($("practice-bots").value) || 7));
-    startPracticeDraft(n).catch((e) => toast("Practice draft failed: " + e.message));
+    startPracticeDraft(n, practiceChoice())
+      .catch((e) => toast("Practice draft failed: " + e.message));
   };
   $("lobby-num-set").onclick = async () => {
     if (!isAdmin()) return;
