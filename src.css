@@ -369,6 +369,20 @@ html[data-theme="sticker"] .pp .avatar-player {
 html[data-theme="sticker"] .pitch-row > *:nth-child(even) .pp .avatar-player { transform: rotate(2.2deg); }
 html[data-theme="sticker"] .pitch-row > *:nth-child(3n) .pp .avatar-player { transform: rotate(-.8deg); }
 
+/* A club mark on paper: same hues, but darker ink on a lighter fill, because
+   the ground it sits on is cream rather than navy. Scanned the same way. */
+html[data-theme="sticker"] .club-tint {
+  background-color: hsl(var(--club-h) 65% 40% / .35);
+  color: hsl(var(--club-h) 72% 16%);
+}
+/* A player with no photo is still a sticker -- album card stock, tinted to
+   their club. Without this the theme's own gradient wins and every unphotographed
+   player is the same beige, which is the look the tint exists to fix. */
+html[data-theme="sticker"] .avatar-player.club-tint {
+  background: linear-gradient(165deg,
+    hsl(var(--club-h) 45% 84%), hsl(var(--club-h) 40% 72%));
+}
+
 /* The points bubble is the foil corner number, printed ON the sticker. */
 html[data-theme="sticker"] .pp-pts {
   border-radius: 2px;
@@ -517,6 +531,20 @@ html[data-theme="sticker"] .pick-stamp {
   .pos-FH  { background:var(--pos-fh-bg); color:var(--pos-fh-fg); }
   .pos-CE  { background:var(--pos-ce-bg); color:var(--pos-ce-fg); }
   .pos-OB  { background:var(--pos-ob-bg); color:var(--pos-ob-fg); }
+  /* A CLUB MARK — what a club looks like when the sport's feed ships no crest,
+     which is every rugby club, because that feed carries no imagery at all.
+
+     Only the HUE comes from the JS, on --club-h, derived from the club's name
+     so it is stable and needs no table. Everything else is fixed right here,
+     per theme, at values chosen by scanning all 360 hues: the worst of them
+     (yellow, always yellow) still clears 4.5:1 against its own fill. A JS
+     function returning a whole colour would have had to be right about that
+     360 times over, and the obvious version is wrong for about 40 of them. */
+  .club-tint {
+    background-color: hsl(var(--club-h) 55% 55% / .35);
+    color: hsl(var(--club-h) 80% 84%);
+  }
+  .club-chip { border-radius: .25rem; padding: 0 .3rem; }
   /* Knockout bracket tree: columns per round; each pair wrapper's right border
      is the connector joining the two feeder matches into their next-round tie. */
   .kb { display: inline-flex; align-items: stretch; }

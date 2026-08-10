@@ -13,7 +13,10 @@ document.addEventListener("error", (e) => {
   const code = t.dataset.crestCode;
   if (!code) return t.remove();
   const span = document.createElement("span");
-  span.className = "shrink-0 font-mono text-xs";
+  // The same badge the server-rendered fallback draws, down to the club's
+  // hue, so a crest that 404s does not look different from one we never had.
+  span.className = "club-tint club-chip shrink-0 font-mono text-xs";
+  if (t.dataset.clubH) span.style.setProperty("--club-h", t.dataset.clubH);
   // Same hook the server-rendered fallback carries, so a test looking for
   // "the club as a code" finds both routes to it rather than only one.
   span.setAttribute("data-crest-fallback", "");
@@ -9736,6 +9739,61 @@ function teamLogoId(team) {
   return _logoMap[team] ?? null;
 }
 
+/* Team name → its three-or-four letter code, from the pool. Same memoization
+   as the crest map, and the derived code as a floor so this always answers. */
+let _codeMap = null, _codeMapFor = null;
+function teamCodeOf(team) {
+  if (!team) return "";
+  if (_codeMapFor !== S.players) {
+    _codeMapFor = S.players;
+    _codeMap = {};
+    for (const p of S.players || []) if (p.team_code && !_codeMap[p.team]) _codeMap[p.team] = p.team_code;
+  }
+  return _codeMap[team] || teamCodeFrom(team);
+}
+
+/* ---------- club marks: what a club looks like when there is no crest ----------
+
+   The rugby feed carries no imagery of any kind, and inventing a badge for a
+   real club would be worse than having none. So a club is drawn as the thing
+   we do have -- its code -- in a colour that is its own.
+
+   The hue is derived from the name, which makes it stable without a table to
+   maintain and gives a new competition its colours for free. Only the hue: the
+   saturations and lightnesses are fixed in the stylesheet, per theme, at values
+   chosen so that EVERY hue clears 4.5:1 against its own fill. A hue-to-colour
+   function that returned a whole colour would have had to be right about that
+   360 times, and would have been wrong around yellow, which is the hue that
+   fails every naive version of this. */
+function clubHue(team) {
+  const s = String(team || "");
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
+  return h;
+}
+
+/* Drawn as SVG text in a 100x100 box rather than as HTML with a font-size,
+   because these boxes run from 16px in a table row to 56px on the player
+   sheet. An SVG scales to its box on its own; a font-size would need a rule
+   per size, and the app has six. */
+function markSvg(text) {
+  const t = String(text || "").slice(0, 4).toUpperCase();
+  if (!t) return "";
+  const size = [0, 58, 48, 36, 27][t.length];
+  return `<svg viewBox="0 0 100 100" class="w-full h-full" aria-hidden="true"
+    ><text x="50" y="52" text-anchor="middle" dominant-baseline="central"
+     font-size="${size}" font-weight="800" fill="currentColor"
+     >${esc(t)}</text></svg>`;
+}
+
+// "Cameron Hanekom" → "CH". First and last, so two players called Cameron
+// still differ.
+function initialsOf(name) {
+  const w = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (!w.length) return "";
+  return (w[0][0] + (w.length > 1 ? w[w.length - 1][0] : "")).toUpperCase();
+}
+
 /* Team name → the crest URLs the rugby feed gave us, memoized the same way.
    Kept per player rather than per pool because that is where the feed puts it
    and where the pool row has somewhere to store it. */
@@ -9793,7 +9851,16 @@ function avatarHtml(playerId, team, size = "w-7 h-7") {
      invisible while every player has a photo, and collapses the moment one
      does not. Rugby has no photo source at all, so its whole album page fell
      in on itself. */
-  if (!url) return `<span class="avatar ${kind} ${size} rounded-full bg-slate-800 shrink-0 inline-flex"></span>`;
+  /* No picture. Rather than an empty disc, draw what we do know: a club's
+     code, a player's initials, tinted to their club so a squad reads as a mix
+     of clubs at a glance. The blank disc remains for the one case with nothing
+     to say -- a player the pool has never heard of. */
+  if (!url) {
+    const label = isTeam ? teamCodeOf(team) : initialsOf(S.playerById?.[playerId]?.name);
+    if (!label) return `<span class="avatar ${kind} ${size} rounded-full bg-slate-800 shrink-0 inline-flex"></span>`;
+    return `<span class="avatar ${kind} ${size} club-tint rounded-full shrink-0 inline-flex items-center justify-center"
+      style="--club-h:${clubHue(team)}" title="${esc(team || "")}">${markSvg(label)}</span>`;
+  }
   return `<span class="avatar ${kind} ${size} rounded-full bg-slate-800 overflow-hidden shrink-0 inline-flex items-center justify-center">
     <img src="${esc(url)}" loading="lazy" data-avatar
          class="w-full h-full ${isTeam ? "object-contain p-0.5" : "object-cover"}" alt=""></span>`;
@@ -10847,9 +10914,19 @@ function crestUrlFor(team) {
    and the crest is decoration. */
 function teamCrestHtml(team, size = "w-4 h-4", code) {
   const url = crestUrlFor(team);
-  if (!url) return code ? `<span data-crest-fallback class="shrink-0 font-mono text-xs" title="${esc(team)}">${esc(code)}</span>` : "";
+  if (!url) {
+    /* The code, but as a badge rather than as loose type -- with no crest in
+       the feed this IS the club's mark, and it appears beside a manager's
+       colour and a row of form dots where plain grey mono simply disappeared.
+       Derived when the caller did not supply one, because a club with a name
+       beside it still deserves its colours. */
+    const c = code || teamCodeOf(team);
+    if (!c) return "";
+    return `<span data-crest-fallback class="club-tint club-chip shrink-0 font-mono text-xs"
+      style="--club-h:${clubHue(team)}" title="${esc(team)}">${esc(c)}</span>`;
+  }
   return `<img src="${esc(url)}" loading="lazy" data-avatar${
-    code ? ` data-crest-code="${esc(code)}"` : ""}
+    code ? ` data-crest-code="${esc(code)}" data-club-h="${clubHue(team)}"` : ""}
     class="${size} inline-block object-contain shrink-0 align-[-2px]" alt="${
     code ? esc(team) : ""}" title="${esc(team)}">`;
 }

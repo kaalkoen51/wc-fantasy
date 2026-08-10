@@ -681,6 +681,71 @@ for (const [theme, floor] of [["sticker", 4.5], ["dark", 2.1]]) {
   });
 }
 
+for (const theme of ["dark", "sticker"]) {
+  test(`a club mark is legible at every hue in the ${theme} theme`, async ({ page }) => {
+    /* The mark takes only a HUE from the JS -- 360 of them, one per club name
+       -- and gets its saturation and lightness from the stylesheet. That is
+       the whole reason it is split that way: a function returning a finished
+       colour would have to be right 360 times, and the obvious versions are
+       wrong for about forty of them, all around yellow.
+
+       The theme-wide contrast sweep cannot see these. It only measures what is
+       on screen, the seeded league is football, and football's crests resolve
+       to real images -- so no mark is ever drawn there. And the sticker
+       variant paints a GRADIENT, which the sweep skips by design because a
+       gradient has no single honest colour. Both gaps are covered here. */
+    await openLeague(page, { managers: 4, played: 3 });
+    await page.evaluate((t) => setTheme(t), theme);
+    await page.waitForTimeout(300);            // let the colour transition end
+
+    const bad = await page.evaluate(() => {
+      const rgb = (c) => (String(c).match(/[\d.]+/g) || []).map(Number);
+      const lum = (p) => p.slice(0, 3).map((v) => { const x = v / 255;
+          return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); })
+        .reduce((a, v, i) => a + v * [0.2126, 0.7152, 0.0722][i], 0);
+      const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+        return (hi + 0.05) / (lo + 0.05); };
+      // Composite a translucent fill onto the ground it is actually painted on.
+      const over = (f, g) => f.length > 3 && f[3] < 1
+        ? f.slice(0, 3).map((v, i) => v * f[3] + g[i] * (1 - f[3])) : f;
+
+      const host = document.createElement("div");
+      host.className = "rounded-xl border border-slate-700 bg-slate-900 p-4";
+      // Every 5 degrees: fine enough to land on the bad hues, cheap enough to
+      // stay a unit-test-shaped check rather than a screenshot.
+      host.innerHTML = Array.from({ length: 72 }, (_, i) =>
+        `<span class="club-tint club-chip font-mono text-xs" style="--club-h:${i * 5}">ABC</span>`
+        + `<span class="avatar avatar-player club-tint w-9 h-9 rounded-full inline-flex"
+             style="--club-h:${i * 5}">AB</span>`).join("");
+      document.body.appendChild(host);
+
+      const ground = rgb(getComputedStyle(host).backgroundColor);
+      const out = [];
+      for (const el of host.children) {
+        const cs = getComputedStyle(el);
+        const ink = rgb(cs.color);
+        const fills = [];
+        const flat = rgb(cs.backgroundColor);
+        if (flat.length && !(flat.length > 3 && flat[3] === 0)) fills.push(over(flat, ground));
+        /* The sticker player's mark is album card stock, tinted -- a gradient.
+           Both ends of it have to hold, not just whichever one a screenshot
+           happened to sample. */
+        for (const m of (cs.backgroundImage || "").matchAll(/rgba?\(([^)]+)\)/g))
+          fills.push(over(m[1].split(",").map(Number), ground));
+        for (const f of fills) {
+          const r = ratio(ink, f);
+          if (r < 4.5) out.push(`h${el.style.getPropertyValue("--club-h")} `
+            + `${el.className.includes("avatar") ? "disc" : "chip"} ${r.toFixed(2)}:1`);
+        }
+      }
+      host.remove();
+      return [...new Set(out)].slice(0, 10);
+    });
+
+    expect(bad, "a club mark below 4.5:1 against its own fill").toEqual([]);
+  });
+}
+
 test("a player is a sticker everywhere, and a club is still a badge", async ({ page }) => {
   /* The theme's one idea has to carry the whole app, not just the pitch --
      otherwise it reads as decoration bolted to one screen. And the distinction
