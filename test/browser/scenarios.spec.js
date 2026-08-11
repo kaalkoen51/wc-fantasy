@@ -2094,8 +2094,16 @@ test("loading a rugby competition reads the rugby feed, not API-Football", async
          because it does not exist -- it answers 400 for every id, clubs and
          countries alike, which is why the pool comes from match detail. */
       if (url.includes("matches/search")) {
-        return route.fulfill({ contentType: "application/json", body: JSON.stringify({
-          data: [
+        const size = +(url.match(/size=(\d+)/) || [])[1] || 100;
+        /* A hundred rows of a real season are a hundred of the LATEST rows,
+           which is why the fixture list used to start in December. These are
+           TBC placeholders so they are never fixtures themselves -- they are
+           here only to fill the page and push September off the end of it. */
+        const filler = Array.from({ length: 100 }, (_, i) => ({
+          id: 2000 + i, status: "fixture", tbc: 0, round: 20,
+          date: `2026-12-${String((i % 28) + 1).padStart(2, "0")}T17:00:00Z`,
+          homeTeam: { id: 0, name: "TBC" }, awayTeam: { id: 0, name: "TBC" } }));
+        const rows = [
             // Two played rounds, so a player can be seen twice.
             { id: 900, status: "result", tbc: 0, date: "2026-05-24T17:00:00Z", round: 17,
               homeTeam: { id: 4, name: "Ireland", score: 20 },
@@ -2106,9 +2114,33 @@ test("loading a rugby competition reads the rugby feed, not API-Football", async
             // The shape that fooled the old filter: tbc:0, and nobody in it.
             { id: 901, status: "fixture", tbc: 0, date: "2026-11-29T16:40:00Z", round: 7,
               title: "TF", homeTeam: { id: 0, name: "TBC" }, awayTeam: { id: 0, name: "TBC" } },
-          ], metadata: { totalItems: 3 }, status: "success" }) });
+            /* September, which is where a URC season starts and where the
+               fixture list used to stop: the feed answers newest-first and a
+               hundred rows reached only as far back as December. */
+            { id: 903, status: "result", tbc: 0, date: "2026-09-20T17:00:00Z", round: 1,
+              homeTeam: { id: 4, name: "Ireland", score: 10 },
+              awayTeam: { id: 5, name: "France", score: 9 } },
+            // ...and last season, which asking for more must NOT drag in.
+            { id: 890, status: "result", tbc: 0, date: "2025-04-12T17:00:00Z", round: 14,
+              homeTeam: { id: 4, name: "Ireland", score: 3 },
+              awayTeam: { id: 5, name: "France", score: 0 } },
+          ...filler];
+        // The feed answers newest-first, and `size` truncates that list.
+        rows.sort((x, y) => Date.parse(y.date) - Date.parse(x.date));
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify({
+          data: rows.slice(0, size),
+          metadata: { totalItems: rows.length }, status: "success" }) });
       }
       const mid = (url.match(/matches\/(\d+)/) || [])[1];
+      /* The September and last-season matches exist to test the fixture
+         WINDOW, so they field nobody -- otherwise they also feed the position
+         counts and this test starts measuring two things at once. */
+      if (mid === "903" || mid === "890") {
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify({
+          status: "success", data: { id: +mid,
+            homeTeam: { id: 4, name: "Ireland", players: [] },
+            awayTeam: { id: 5, name: "France", players: [] } } }) });
+      }
       if (mid) {
         /* Round 17 benches the hooker; round 18 starts him. That is the case
            that decides whether an observed start beats the shirt convention,
@@ -2171,7 +2203,10 @@ test("loading a rugby competition reads the rugby feed, not API-Football", async
              firstId: built.players[0]?.player_id,
              teamNames: built.teams,
              ireland: byId["rug_240452"]?.team,
-             key: compKeyOf(competition) };
+             key: compKeyOf(competition),
+             rounds: built.fixtures.map((f) => f.round),
+             roundOrder: built.roundOrder,
+             dates: built.fixtures.map((f) => f.date) };
   });
 
   expect(out.players, "five placeable players, and the unplaceable one dropped").toBe(5);
@@ -2179,7 +2214,13 @@ test("loading a rugby competition reads the rugby feed, not API-Football", async
   expect(out.teamNames, "one club under two names is still one club")
     .toEqual(["France", "Ireland"]);
   expect(out.ireland, "with the spelling the feed used most").toBe("Ireland");
-  expect(out.fixtures, "and the TBC placeholder is not a fixture").toBe(2);
+  expect(out.fixtures, "and the TBC placeholder is not a fixture").toBe(3);
+  expect(out.dates, "a September fixture is reachable, not cut off by the page size")
+    .toContain("2026-09-20");
+  expect(out.dates.some((d) => d.startsWith("2025")),
+    "while last season's matches are not this season's fixtures").toBe(false);
+  expect(out.roundOrder, "and rounds are ordered by the feed's own numbers")
+    .toEqual(["Round 1", "Round 17", "Round 18"]);
   expect(out.startedPos, "shirt 7 is a loose forward").toBe("LF");
   expect(out.seenBothWays, "an observed start beats the bench convention, which would say SH")
     .toBe("HK");

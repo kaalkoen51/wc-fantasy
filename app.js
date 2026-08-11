@@ -218,7 +218,17 @@ function lineupOpen() {
    dash separator ("Regular Season - 21", "Group Stage - 1"): a bare trailing
    number is NOT a week -- "Round of 16" is a knockout tie, and stamping it as
    matchweek 16 would scatter cup scoring. Caught by test before shipping. */
-const mwNo = (round) => { const m = String(round || "").match(/-\s*(\d+)\s*$/); return m ? m[1] : null; };
+/* A round's matchweek NUMBER, or null for anything that is not one.
+
+   Two spellings, and no third: football writes "Regular Season - 7", and the
+   rugby adapter writes "Round 7" from the number the feed gives it. Anchored
+   at both ends on purpose -- a loose "trailing digits" rule would read "Round
+   of 16" as matchweek 16 and file a knockout tie as a league round. */
+const mwNo = (round) => {
+  const s = String(round || "");
+  const m = s.match(/-\s*(\d+)\s*$/) || s.match(/^Round\s+(\d+)$/);
+  return m ? m[1] : null;
+};
 const fmtWhen = (ms) => ms == null ? "" : new Date(ms).toLocaleString([], {
   weekday: "short", hour: "2-digit", minute: "2-digit", month: "short", day: "numeric" });
 function lineupLockMessage() {
@@ -1352,10 +1362,78 @@ async function fetchRugbyMatches(apiLeagueId, size = 100) {
   return firstArray(body, ["data", "matches"], "matches/search");
 }
 
-async function fetchRugbyFixtures(apiLeagueId) {
-  return (await fetchRugbyMatches(apiLeagueId))
-    .filter(rugbyMatchSettled)          // no "TBC v TBC" in the schedule
-    .map(parseRugbyMatch);
+/* Which matches belong to the season this league is playing.
+
+   The feed accepts a season parameter and ignores it, so every filter is ours.
+   That matters more here than anywhere else: a URC season is 144 league
+   matches plus play-offs, the feed answers newest-first, and a hundred rows
+   reaches only as far back as December -- which is exactly where the fixture
+   list started. Asking for enough to reach September also drags in the whole
+   of the previous campaign, so the window is what keeps the two apart.
+
+   A cup is keyed to one calendar year; a league runs July to July, which is
+   the same split `kind` already makes for the season LABEL. */
+function rugbySeasonWindow(competition, kind) {
+  const y = +competition?.season;
+  if (!isFinite(y)) return null;
+  return kind === "cup"
+    ? { from: Date.UTC(y, 0, 1), to: Date.UTC(y + 1, 0, 1) }
+    : { from: Date.UTC(y, 6, 1), to: Date.UTC(y + 1, 6, 1) };
+}
+
+/* The window the DATA actually covers, anchored on its newest match.
+
+   The fallback for a season year that does not match what the feed holds --
+   an admin off by one, or a competition the feed dates differently. An empty
+   fixture list is worse than a slightly wrong one: no rounds, no trade
+   windows, no lock times, and nothing on screen saying why. */
+function rugbyDataWindow(matches) {
+  const ts = (matches || []).map((m) => Date.parse(m.date)).filter(isFinite);
+  if (!ts.length) return null;
+  const newest = Math.max(...ts);
+  return { from: newest - 340 * 86400e3, to: newest + 86400e3 };
+}
+
+const inWindow = (m, w) => {
+  if (!w) return true;
+  const t = Date.parse(m.date);
+  return isFinite(t) && t >= w.from && t < w.to;
+};
+
+/* Round order, from the feed's own round numbers rather than from kickoff
+   times. Ordering by kickoff means one rescheduled tie reorders the season,
+   and the trade window between two rounds is arithmetic on "consecutive"
+   ones -- so a flipped pair silently moves a deadline. Play-offs have a title
+   instead of a number and follow the numbered rounds, in date order. */
+function rugbyRoundOrder(fixtures) {
+  const first = {};
+  for (const f of fixtures || []) {
+    if (!f.round) continue;
+    const t = Date.parse(f.kickoff_utc || f.date);
+    if (!isFinite(t)) continue;
+    if (first[f.round] == null || t < first[f.round]) first[f.round] = t;
+  }
+  const num = (r) => { const m = String(r).match(/^Round (\d+)$/); return m ? +m[1] : null; };
+  return Object.keys(first).sort((a, b) => {
+    const na = num(a), nb = num(b);
+    if (na != null && nb != null) return na - nb;
+    if (na != null) return -1;
+    if (nb != null) return 1;
+    return first[a] - first[b];
+  });
+}
+
+async function fetchRugbyFixtures(competition) {
+  const kind = RUGBY_COMPETITIONS.find(
+    (c) => c.apiLeagueId === +competition?.apiLeagueId)?.kind;
+  // 400, because a season is more than a hundred matches and the hundred we
+  // used to ask for were the last hundred.
+  const all = (await fetchRugbyMatches(competition?.apiLeagueId, 400))
+    .filter(rugbyMatchSettled);         // no "TBC v TBC" in the schedule
+  const stated = rugbySeasonWindow(competition, kind);
+  let out = all.filter((m) => inWindow(m, stated));
+  if (!out.length) out = all.filter((m) => inWindow(m, rugbyDataWindow(all)));
+  return out.map(parseRugbyMatch);
 }
 
 // The league's competition key, resolving it from the DB when S.league isn't
@@ -2681,13 +2759,13 @@ function renderCreateForm() {
 async function fetchPoolFor(competition, apiKey, onProgress) {
   if (competition.sport === "rugby") {
     const built = await fetchRugbyPool(competition.apiLeagueId, onProgress);
+    const fixtures = await fetchRugbyFixtures(competition);
     return {
-      players: built.players, teams: built.teams,
-      fixtures: await fetchRugbyFixtures(competition.apiLeagueId),
-      /* The feed has no round-order endpoint. Empty means the app orders
-         rounds by earliest kick-off, which for numbered rugby rounds is the
-         same answer. */
-      roundOrder: [],
+      players: built.players, teams: built.teams, fixtures,
+      /* The feed has no round-order endpoint, but every match carries its own
+         round NUMBER, which is better than the kickoff order the app falls
+         back to when this is empty. */
+      roundOrder: rugbyRoundOrder(fixtures),
     };
   }
   const { apiLeagueId, season } = competition;
