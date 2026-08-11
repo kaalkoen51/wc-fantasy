@@ -1241,6 +1241,29 @@ async function rugbyPlayedMatches(apiLeagueId) {
    since left. */
 const RUGBY_POOL_MATCH_CAP = 150;
 
+/* One club, one name.
+
+   The feed sends the sponsored name in some matches and the bare one in
+   others -- "Fidelity Secure Drive Lions" here, "Lions" there -- and they
+   arrive as two clubs, one of which has three players in it and no fixtures
+   that make sense. Nothing about the names says they are the same side.
+
+   Their team ID does, and it is on every match, so this is a fact rather than
+   a guess about sponsors. The most-seen spelling wins; a tie goes to the
+   shorter, which is the one without the sponsor on the front of it. */
+function canonicalTeamNames(counts) {
+  const out = {};
+  for (const id in counts || {}) {
+    let best = null, n = -1;
+    for (const name in counts[id]) {
+      const c = counts[id][name];
+      if (c > n || (c === n && name.length < best.length)) { best = name; n = c; }
+    }
+    if (best) out[id] = best;
+  }
+  return out;
+}
+
 async function fetchRugbyPool(apiLeagueId, onProgress) {
   const found = await rugbyPlayedMatches(apiLeagueId);
   const played = found.slice(-RUGBY_POOL_MATCH_CAP);       // ascending: newest last
@@ -1248,7 +1271,9 @@ async function fetchRugbyPool(apiLeagueId, onProgress) {
     throw new Error("That competition has no completed matches at all, in this "
       + "season or any earlier one, so there is nobody to draft yet.");
   }
-  const byId = {}, teams = new Set(), crests = {}, teamIds = {};
+  /* Keyed by the club's ID, not its name -- see canonicalTeamNames. The feed
+     sends one club under two names and they arrive as two clubs. */
+  const byId = {}, crests = {}, codes = {}, names = {};
   let done = 0;
   for (const m of played) {
     onProgress && onProgress(++done, played.length,
@@ -1264,13 +1289,13 @@ async function fetchRugbyPool(apiLeagueId, onProgress) {
     for (const side of ["homeTeam", "awayTeam"]) {
       const t = d?.[side];
       if (!rugbyTeamKnown(t)) continue;
-      teams.add(t.name);
-      teamIds[t.name] = t.id;
-      crests[t.name] = crests[t.name] || rugbyTeamCrest(t);
+      (names[t.id] ||= {})[t.name] = (names[t.id][t.name] || 0) + 1;
+      codes[t.id] = rugbyTeamCode(t);
+      crests[t.id] = crests[t.id] || rugbyTeamCrest(t);
       for (const rp of (t.players || [])) {
         if (rp?.id == null) continue;
         // The crest can ride on the players rather than on the side.
-        crests[t.name] = crests[t.name] || rugbyPlayerCrest(rp);
+        crests[t.id] = crests[t.id] || rugbyPlayerCrest(rp);
         const p = parseRugbyPlayer(rp, t.name, rugbyTeamCode(t), t.id);
         const started = rugbyPosCode(rp.positionId, rp.position);   // 1-15 only
         const prev = byId[p.player_id]
@@ -1282,26 +1307,31 @@ async function fetchRugbyPool(apiLeagueId, onProgress) {
         if (started) prev._starts[started] = (prev._starts[started] || 0) + 1;
         else prev._bench = prev._bench || RUGBY_BENCH_POS[+rp.positionId] || null;
         // The LAST club seen wins, so a player who moved mid-season lands
-        // where they finished.
-        prev.team = t.name; prev.team_code = rugbyTeamCode(t);
+        // where they finished. The NAME is settled below, once every spelling
+        // of every club has been counted.
+        prev.team_logo = t.id;
       }
     }
   }
   /* Anyone never seen starting falls back to the bench convention, and anyone
      with neither is dropped rather than given an invented position -- a wrong
      position silently corrupts every quota they are drafted into. */
-  const players = [], unplaced = [];
+  const canon = canonicalTeamNames(names);
+  const players = [], unplaced = [], teams = new Set();
   for (const p of Object.values(byId)) {
     const { position, starts } = resolveRugbyPosition(p._starts, p._bench);
     delete p._starts; delete p._bench;
     if (!position) { unplaced.push(p.name); continue; }
+    const team = canon[p.team_logo] || p.team;
+    teams.add(team);
     /* pos_starts is how confident that is: 0 means nobody ever saw them start
        and the shirt convention guessed. The admin's position editor sorts on
        it, because those are the ones actually worth a human's attention. */
     players.push({ ...p, position, pos_starts: starts,
+                   team, team_code: codes[p.team_logo] || p.team_code,
                    // Stored per player, the way football stores team_logo: the
                    // pool's `teams` is a list of names with nowhere to hang a URL.
-                   ...crestFields(crests[p.team]) });
+                   ...crestFields(crests[p.team_logo]) });
   }
   if (unplaced.length) {
     console.warn(`rugby pool: ${unplaced.length} player(s) had no resolvable `
@@ -11257,6 +11287,29 @@ function crestUrlFor(team) {
   return id ? `https://media.api-sports.io/football/teams/${id}.png` : null;
 }
 
+/* The little badge tucked into the corner of a player.
+
+   An image when the feed has one, the club's own mark when it does not, and
+   never nothing -- a club with no crest was simply absent from the corner,
+   which reads as a rendering fault rather than as missing data.
+
+   What it must NOT contain is type that sizes itself. This box is 14px on a
+   40px avatar; the text fallback was sized by its own content, so it spread
+   across the bottom half of the face with the points bubble over the top. A
+   fixed disc with an SVG mark inside scales to whatever box it is given. */
+function crestBadgeHtml(team, size = "w-3.5 h-3.5") {
+  const url = crestUrlFor(team);
+  if (url) {
+    return `<img src="${esc(url)}" loading="lazy" data-avatar title="${esc(team)}"
+      class="${size} inline-block object-contain shrink-0" alt="">`;
+  }
+  const code = teamCodeOf(team);
+  if (!code) return "";
+  return `<span class="club-tint ${size} rounded-full shrink-0 inline-flex items-center
+    justify-center overflow-hidden" style="--club-h:${clubHue(team)}"
+    title="${esc(team)}">${markSvg(code)}</span>`;
+}
+
 /* Club crest for a team. API competitions carry the id on every player; the
    legacy WC pool has it in photos.json. Empty string when unknown, so callers
    can drop it in without guarding. */
@@ -11391,11 +11444,11 @@ function dugoutHtml(subs, opts = {}) {
       <span class="sub-no${markCls}">${e.mark ? esc(e.mark) : i + 1}</span>
       <span class="relative inline-flex">
         ${avatarHtml(e.player_id, e.team, "w-9 h-9")}
-        ${/* An IMAGE, never the code fallback -- see pitchRowsHtml. This is
-              the same 14px corner badge and it was missed there: the bench
-              kept drawing a text pill across the bottom of every face. */
-          crestUrlFor(e.team)
-          ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${teamCrestHtml(e.team, "w-3 h-3")}</span>` : ""}
+        ${/* The same corner badge the pitch draws, from the same function --
+              these two had drifted apart once already, and the bench kept
+              painting a text pill across every face after the pitch stopped. */
+          crestBadgeHtml(e.team, "w-3 h-3")
+          ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${crestBadgeHtml(e.team, "w-3 h-3")}</span>` : ""}
         ${e.note != null ? `<span class="pp-pts">${e.note}</span>` : ""}
       </span>
       <span class="sub-name${nameFit(shortName(e.name))}">${esc(shortName(e.name))}</span>
@@ -11427,14 +11480,11 @@ function pitchRowsHtml(byPos, opts = {}) {
       <button type="button" ${tap}${e.title ? ` title="${esc(e.title)}"` : ""} class="pp ${e.dim ? "pp-dim" : ""} ${e.sel ? "pp-sel" : ""} ${e.planned ? "pp-planned" : ""} ${e.foil ? "pp-foil" : ""}">
         <span class="relative inline-flex">
           ${avatarHtml(e.player_id, e.team, av)}
-          ${/* A 14px badge tucked into the corner of a 40px avatar. It holds an
-                IMAGE and only an image: the code fallback is type, it is sized
-                by its text rather than by the 3.5 asked for, and it landed
-                across the bottom half of the face with the points bubble over
-                the top -- initials sliced in two on every chip on the pitch.
-                A club with no crest says so with the avatar's own colour. */
-            opts.crests && crestUrlFor(e.team)
-            ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${teamCrestHtml(e.team, "w-3.5 h-3.5")}</span>` : ""}
+          ${/* A 14px badge on a 40px avatar, holding an image or the club's
+                own mark -- never type that sizes itself, which is what put a
+                pill across the bottom half of every face here once. */
+            opts.crests && crestBadgeHtml(e.team)
+            ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${crestBadgeHtml(e.team)}</span>` : ""}
           ${e.badge ? `<span class="absolute -top-1 -right-1 rounded-full bg-wcgold text-slate-900 text-[10px] font-bold w-4 h-4 inline-flex items-center justify-center">${e.badge}</span>` : ""}
           ${e.note != null ? `<span class="pp-pts">${e.note}</span>` : ""}
           ${e.swapFor ? `<span class="absolute -bottom-1 -right-2 inline-flex items-center rounded-full bg-slate-900/95 ring-1 ring-wcgold/70 p-0.5"

@@ -2116,7 +2116,12 @@ test("loading a rugby competition reads the rugby feed, not API-Football", async
         const benched = mid === "900";
         return route.fulfill({ contentType: "application/json", body: JSON.stringify({
           data: { id: +mid, date: "2026-05-31T17:00:00Z", round: benched ? 17 : 18,
-            homeTeam: { id: 4, name: "Ireland", score: 36, players: [
+            /* Round 17 calls them by the sponsored name, round 18 by the bare
+               one. Same club, same id -- and nothing about the NAMES says so,
+               which is how one side ends up in the pool twice with three
+               players in the smaller of them. */
+            homeTeam: { id: 4, name: benched ? "Fidelity Ireland" : "Ireland",
+                        score: 36, players: [
               { id: 240452, known: "A Flanker", positionId: 7, position: "flanker",
                 stats: { minutesPlayedTotal: 80, tackles: 9 } },
               benched
@@ -2164,11 +2169,16 @@ test("loading a rugby competition reads the rugby feed, not API-Football", async
              benchStarts: byId["rug_240454"]?.pos_starts,
              surestStarts: byId["rug_240452"]?.pos_starts,
              firstId: built.players[0]?.player_id,
+             teamNames: built.teams,
+             ireland: byId["rug_240452"]?.team,
              key: compKeyOf(competition) };
   });
 
   expect(out.players, "five placeable players, and the unplaceable one dropped").toBe(5);
   expect(out.teams, "only the sides that actually played").toBe(2);
+  expect(out.teamNames, "one club under two names is still one club")
+    .toEqual(["France", "Ireland"]);
+  expect(out.ireland, "with the spelling the feed used most").toBe("Ireland");
   expect(out.fixtures, "and the TBC placeholder is not a fixture").toBe(2);
   expect(out.startedPos, "shirt 7 is a loose forward").toBe("LF");
   expect(out.seenBothWays, "an observed start beats the bench convention, which would say SH")
@@ -2535,8 +2545,10 @@ test("a rugby league looks like rugby, not like football with different words",
         // was asked for -- so it landed across the bottom half of the face
         // with the points bubble over the top, slicing the initials in two.
         crestBadge: html.includes("-bottom-0.5 -left-1"),
-        // The bench draws the same 14px corner badge from its own code, and
-        // was missed when the pitch was fixed.
+        crestBadgeIsMark: html.includes("club-tint") && html.includes("w-3.5 h-3.5"),
+        crestBadgeIsPill: html.includes("club-chip"),
+        // The bench draws the same corner badge, and was missed once already
+        // when the pitch was fixed.
         benchBadge: dugoutHtml([{ player_id: "rug_b", name: "A Sub", team: "Ireland",
                                   position: "LF" }]).includes("-bottom-0.5 -left-1"),
       };
@@ -2549,10 +2561,15 @@ test("a rugby league looks like rugby, not like football with different words",
     expect(out.pipShown, "eight groups in four bands need a position pip").toBe(true);
     expect(out.pips, "one on every player in the XV").toBe(15);
     expect(out.crest, "no football crest may be resolved for a rugby team").toBeNull();
-    expect(out.crestBadge, "and with no crest image there is no corner badge to draw")
-      .toBe(false);
-    expect(out.benchBadge, "on the bench either — it is the same badge, twice over")
-      .toBe(false);
+    /* A club with no crest is not nothing: it draws its own mark. What that
+       corner must never hold is type sized by its own content -- that is what
+       spread a pill across the bottom half of every face. */
+    expect(out.crestBadge, "a club with no crest still gets a badge").toBe(true);
+    expect(out.crestBadgeIsMark, "drawn as the club's own mark, at a fixed size")
+      .toBe(true);
+    expect(out.crestBadgeIsPill, "never as a text pill that sizes itself").toBe(false);
+    expect(out.benchBadge, "and the bench draws the same one — it is one function now")
+      .toBe(true);
     expect(out.emptyIsFlex,
       "a photoless avatar must still take up its box, or the sticker collapses").toBe(true);
 
