@@ -1386,8 +1386,9 @@ async function loadPlayers() {
       throw e;
     }
   }
-  S.teams = [...new Set(S.players.map((p) => p.team))].sort();
-  applyPositionFixes();
+  // A fresh pool is a fresh base for the overrides to be rebuilt from.
+  S._poolBase = S.players;
+  applyPoolOverrides();
 }
 
 /* ---------- positions: the CSV round trip ----------
@@ -1583,15 +1584,56 @@ function mergePoolCsv(players, { added, updated, removed }) {
 
    `pos_feed` keeps what the feed said, so this is idempotent -- it runs again
    on every refresh, and clearing a fix has to put the original back. It also
-   never mutates the pool array itself, which S._compPool still points at. */
-function applyPositionFixes() {
-  const fixes = S.league?.config?.positions || {};
-  S.players = (S.players || []).map((p) => {
+   never mutates the pool array itself, which S._compPool still points at.
+
+   Additions and removals work the same way, and for the same reason: a pool
+   row is shared, so one league's admin uploading a sheet must not be able to
+   empty another league's pool. Everything here is one league's opinion of a
+   shared list, held in that league's own config. */
+const poolEditsOf = () => {
+  const cfg = S.league?.config || {};
+  const out = { ...(cfg.poolEdit || {}) };
+  /* An earlier build kept positions in a map of their own. Read it as a
+     fallback so a league that used it does not silently lose its corrections;
+     the first save through the editor folds it into poolEdit and drops it. */
+  for (const id in cfg.positions || {}) out[id] = { position: cfg.positions[id], ...(out[id] || {}) };
+  return out;
+};
+
+/* The pool as this league sees it: the shared list, minus what it dropped,
+   plus what it added, with its own corrections laid over the top.
+
+   Rebuilt from `_poolBase` rather than from S.players, because a removal
+   cannot be undone by re-running a function over a list it has already been
+   removed from. */
+function applyPoolOverrides() {
+  const cfg = S.league?.config || {};
+  const base = (S._poolBase = S._poolBase || S.players || []);
+  const drop = new Set(cfg.poolDrop || []);
+  const edits = poolEditsOf();
+  const out = [];
+  const put = (p, added) => {
+    if (drop.has(p.player_id)) return;
+    const e = edits[p.player_id] || {};
     const feed = p.pos_feed ?? p.position;
-    return { ...p, pos_feed: feed, position: fixes[p.player_id] || feed };
-  });
-  S.playerById = Object.fromEntries(S.players.map((p) => [p.player_id, p]));
+    out.push({ ...p, ...e, added: added || undefined,
+               pos_feed: feed, position: e.position || feed });
+  };
+  for (const p of base) put(p, false);
+  for (const p of (cfg.poolAdd || [])) put({ ...p, pos_starts: null }, true);
+  S.players = out;
+  S.teams = [...new Set(out.map((p) => p.team))].sort();
+  S.playerById = Object.fromEntries(out.map((p) => [p.player_id, p]));
 }
+
+/* How many already-scored matches a position change would be re-read against.
+
+   Not cosmetic. Per-position scoring rules and the automatic-substitution
+   pass both read the position a player holds NOW, not the one he held when
+   the round was played, so moving someone with games behind them changes what
+   those games are worth. */
+const scoredMatchCount = (pid) =>
+  (S.stats || []).filter((r) => r.player_id === pid && r.appeared).length;
 
 /* Reload everything.
 
@@ -1630,7 +1672,7 @@ async function refetchAll({ initial = false } = {}) {
   S.league = l.data;
   /* Now, not in loadPlayers: the pool is loaded before the league row on the
      first entry, so this is the first moment the corrections are even known. */
-  applyPositionFixes();
+  applyPoolOverrides();
   const compKey = competitionKey();
   // Stats outgrow Supabase's 1000-row request cap, so page through them.
   // Competition leagues read the SHARED competition_stats (one pull serves every
@@ -1805,6 +1847,7 @@ function leaveLeague() {
   localOverrides.clear();   // pending edits belong to the league we just left
   // Pool is per-competition now — clear it so the next league loads its own.
   S.players = []; S.teams = []; S.playerById = {}; S.fixtures = null; S._compPool = undefined;
+  S._poolBase = null; S._posFixes = null;
   S.messages = []; S.chatThread = "league"; S._chatSeenLoaded = false;
   $("hdr-league").textContent = "";
   renderHome();
@@ -14166,9 +14209,9 @@ async function loadCompetition() {
     S.league.competition = competition;
     S._compPool = { players, fixtures, round_order: roundOrder };
     S.roundOrder = roundOrder;
-    S.players = players;
-    S.teams = [...new Set(players.map((p) => p.team))].sort();
-    S.playerById = Object.fromEntries(players.map((p) => [p.player_id, p]));
+    // A new shared pool is a new base for this league's overrides to sit on.
+    S.players = players; S._poolBase = players;
+    applyPoolOverrides();
     S.fixtures = fixtures;
     let note = "";
     if (sameComp && S.picks.length) {
@@ -14972,15 +15015,19 @@ function renderPositionEditor() {
   const open = isAdmin() && !S.league?.current_pick && (S.players || []).length > 0;
   card.classList.toggle("hidden", !open);
   if (!open) return;
-  if (!S._posFixes) S._posFixes = { ...(S.league?.config?.positions || {}) };
+  if (!S._posFixes) {
+    S._posFixes = {};
+    const e = poolEditsOf();
+    for (const id in e) if (e[id].position) S._posFixes[id] = e[id].position;
+  }
 
   const guessed = (S.players || []).filter((p) => p.pos_starts === 0).length;
   const edits = Object.keys(S._posFixes).length;
   $("adm-pos-intro").textContent =
     `A position is the shirt the feed saw a player wear. ${
       guessed ? `${guessed} of ${S.players.length} were never seen starting, so theirs is a guess from the bench convention. `
-              : ""}Corrections apply to this league only — use the CSV to carry them to another.${
-      edits ? ` ${edits} edited, unsaved.` : ""}`;
+              : ""}Corrections apply to this league only — use the CSV to carry them to another. `
+    + `Finalise them before the draft starts.${edits ? ` ${edits} edited, unsaved.` : ""}`;
 
   const gq = $("adm-pos-guess");
   gq.classList.toggle("hidden", !guessed);
@@ -14998,7 +15045,15 @@ function renderPositionEditor() {
       <span class="flex-1 min-w-0">
         <span class="block truncate text-sm">${esc(p.name)}</span>
         <span class="block truncate text-xs text-slate-400">${esc(p.team)}${
-          positionEvidence(p) ? " · " + esc(positionEvidence(p)) : ""}</span>
+          positionEvidence(p) ? " · " + esc(positionEvidence(p)) : ""}</span>${
+        /* Loud, and per row, because this is the one change here that reaches
+           BACKWARDS: per-position scoring and the automatic-substitution pass
+           both read the position a player holds now, not the one he held when
+           the round was played. */
+        scoredMatchCount(p.player_id)
+          ? `<span class="block truncate text-xs text-amber-300">⚠ ${
+              scoredMatchCount(p.player_id)} match${scoredMatchCount(p.player_id) === 1 ? "" : "es"
+              } already scored — changing this re-scores them</span>` : ""}
       </span>
       <select data-pos-fix="${esc(p.player_id)}" class="shrink-0 rounded bg-slate-800 border border-slate-700 px-1.5 py-1 text-xs">
         ${groups.map((g) => `<option value="${g}"${g === cur ? " selected" : ""}>${g}</option>`).join("")}
@@ -15060,41 +15115,83 @@ async function savePoolCsvText(text) {
     log.textContent = ["Nothing to change.", ...errors.slice(0, 8)].filter(Boolean).join("\n");
     return;
   }
+  /* Named out loud, because the two are not the same risk. A change to
+     somebody with games behind them is re-read against those games. */
+  const scored = [...added, ...updated].filter((p) => scoredMatchCount(p.player_id));
   if (!confirm(`${added.length} added, ${updated.length} changed, ${removed.length} removed.`
-      + `\n\nThis pool is shared by every league on this competition. Continue?`)) return;
-  const players = mergePoolCsv(S.players.map((p) =>
-    // Store what the feed said, not a league's override of it.
-    ({ ...p, position: p.pos_feed ?? p.position })), parsed);
-  for (const p of players) delete p.pos_feed;
-  const key = competitionKey();
-  if (!key) return toast("This league has no shared competition pool to edit.");
-  const up = await S.sb.from("competition_pools")
-    .update({ players, updated_at: new Date().toISOString() })
-    .eq("competition_key", key);
-  if (up.error) return toast(up.error.message);
-  if (S._compPool) S._compPool.players = players;
-  S.players = players;
-  S.teams = [...new Set(players.map((p) => p.team))].sort();
-  applyPositionFixes();
-  log.textContent = [`Saved. ${added.length} added, ${updated.length} changed, `
+      + (scored.length
+        ? `\n\n⚠ ${scored.length} of them have already played scored matches. `
+          + `Per-position scoring and automatic substitutions are worked out from a `
+          + `player's position NOW, so changing one changes what past rounds were worth.`
+        : "")
+      + `\n\nThis applies to THIS league only. Continue?`)) return;
+
+  /* League-scoped, like every other correction. A pool row is shared by every
+     league on the competition, so an upload that wrote there would let one
+     league's admin empty another league's pool -- accidentally or otherwise.
+     Three lists, held in this league's own config: what it added, what it
+     dropped, and what it corrected. */
+  const cfg = { ...(S.league.config || {}) };
+  const addBy = new Map((cfg.poolAdd || []).map((p) => [p.player_id, p]));
+  const edits = { ...poolEditsOf() };
+  const drops = new Set(cfg.poolDrop || []);
+  const baseIds = new Set((S._poolBase || []).map((p) => p.player_id));
+  for (const p of added) addBy.set(p.player_id, p);
+  for (const p of updated) {
+    // Correcting something this league added is an edit to the row itself;
+    // correcting a feed player is an override laid over it.
+    if (addBy.has(p.player_id)) addBy.set(p.player_id, { ...addBy.get(p.player_id), ...p });
+    else edits[p.player_id] = { ...(edits[p.player_id] || {}), ...p };
+  }
+  for (const id of removed) {
+    // Dropping something this league added removes it outright; dropping a
+    // feed player is a drop laid over the shared list.
+    if (addBy.has(id) && !baseIds.has(id)) addBy.delete(id);
+    else drops.add(id);
+    delete edits[id];
+  }
+  const setOrDrop = (k, v) => { if (v && (Array.isArray(v) ? v.length : Object.keys(v).length)) cfg[k] = v; else delete cfg[k]; };
+  setOrDrop("poolAdd", [...addBy.values()]);
+  setOrDrop("poolDrop", [...drops]);
+  setOrDrop("poolEdit", edits);
+  delete cfg.positions;                    // folded into poolEdit above
+  const up = await S.sb.from("leagues").update({ config: cfg }).eq("id", S.league.id);
+  if (up.error) return toast(/config|column|schema cache/.test(up.error.message)
+    ? "Config needs a schema update — run schema.sql." : up.error.message);
+  S.league.config = cfg;
+  applyPoolOverrides();
+  bustScores();
+  log.textContent = [`Saved to this league. ${added.length} added, ${updated.length} changed, `
     + `${removed.length} removed.`, ...errors.slice(0, 8)].filter(Boolean).join("\n");
-  toast("Pool updated.");
+  toast("Pool updated for this league.");
   renderAdmin(); renderBoard();
 }
 
 async function savePositionFixes() {
   const fixes = S._posFixes || {};
+  const n = Object.keys(fixes).length;
+  const scored = Object.keys(fixes).filter((id) => scoredMatchCount(id));
+  if (scored.length && !confirm(
+      `${scored.length} of these players have already played scored matches.\n\n`
+      + `Per-position scoring and automatic substitutions are worked out from a `
+      + `player's position NOW, not the one they held at the time, so changing `
+      + `one changes what those past rounds were worth. Continue?`)) return;
+  // One store for every correction, so a position and a club change to the
+  // same player cannot end up in two places that disagree.
   const cfg = { ...(S.league.config || {}) };
-  if (Object.keys(fixes).length) cfg.positions = fixes;
-  else delete cfg.positions;
+  const edits = { ...poolEditsOf() };
+  for (const id of Object.keys(edits)) delete edits[id].position;
+  for (const id in fixes) edits[id] = { ...(edits[id] || {}), position: fixes[id] };
+  for (const id of Object.keys(edits)) if (!Object.keys(edits[id]).length) delete edits[id];
+  if (Object.keys(edits).length) cfg.poolEdit = edits; else delete cfg.poolEdit;
+  delete cfg.positions;                    // folded in, so it cannot disagree
   const { error } = await S.sb.from("leagues").update({ config: cfg }).eq("id", S.league.id);
   if (error) return toast(/config|column|schema cache/.test(error.message)
     ? "Config needs a schema update — run schema.sql." : error.message);
   S.league.config = cfg;
-  applyPositionFixes();
-  toast(Object.keys(fixes).length
-    ? `${Object.keys(fixes).length} position${Object.keys(fixes).length === 1 ? "" : "s"} saved.`
-    : "Positions back to the feed's own.");
+  applyPoolOverrides();
+  bustScores();                            // past rounds may read differently
+  toast(n ? `${n} position${n === 1 ? "" : "s"} saved.` : "Positions back to the feed's own.");
   renderAdmin(); renderBoard();
 }
 
@@ -15722,7 +15819,7 @@ function wire() {
   $("adm-pos-guess").onclick = () => { S._posGuessOnly = !S._posGuessOnly; renderPositionEditor(); };
   $("adm-pos-save").onclick = () => savePositionFixes().catch((e) => toast(e.message));
   $("adm-pos-revert").onclick = () => {
-    S._posFixes = { ...(S.league?.config?.positions || {}) };
+    S._posFixes = null;                    // rebuilt from the saved edits
     $("adm-pos-log").textContent = "";
     renderPositionEditor();
   };

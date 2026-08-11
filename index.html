@@ -708,6 +708,9 @@
 <div id="adm-pos-card" class="hidden rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">🧭 Player positions</h3>
         <p id="adm-pos-intro" class="text-xs text-slate-400"></p>
+        <p class="text-xs text-amber-300">⚠ Changing the position of a player who has already played
+          re-scores those matches: per-position scoring and automatic substitutions are worked out from
+          the position a player holds now, not the one they held at the time.</p>
         <div class="flex gap-2">
           <input id="adm-pos-q" placeholder="Search name or club" class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
           <button id="adm-pos-guess" class="shrink-0 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold">Unconfirmed</button>
@@ -739,8 +742,13 @@
         </div>
         <p class="text-xs text-slate-500">Edit <b>name</b>, <b>club</b> or <b>position</b> to correct a row; add
           rows for players the feed has not seen yet; put an <b>x</b> in the <b>remove</b> column for anyone
-          who has left. A player you add by hand scores nothing until the feed has seen them play and the
-          competition is re-pulled — the pool is shared, so this changes it for every league on it.</p>
+          who has left. Changes apply to <b>this league only</b> — the shared pool is never rewritten, so
+          nothing you upload here can reach anybody else's draft. Carry a sheet to another league by
+          uploading it there too.</p>
+        <p class="text-xs text-amber-300">⚠ A player added by hand scores nothing until the feed has seen
+          them play and the competition is re-pulled. And changing the position of anyone with matches
+          already played re-scores those matches — per-position scoring and automatic substitutions read
+          the position a player holds now, not the one they held at the time.</p>
         <pre id="adm-pool-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
       </div>
 <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">

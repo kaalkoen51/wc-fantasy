@@ -823,13 +823,25 @@ test("an admin can correct a position before the draft, by hand or by CSV", asyn
       { player_id: "rug_2", name: "Ben Ched", team: "Leinster", position: "SH", pos_starts: 0 },
       { player_id: "rug_3", name: "Mid Field", team: "Ulster", position: "CE", pos_starts: 3 },
     ];
-    applyPositionFixes();
+    S._poolBase = S.players;          // a new pool is a new base for the overrides
+    applyPoolOverrides();
     showView("board"); setBoardTab("admin"); renderAdmin();
 
     const card = document.getElementById("adm-pos-card");
     const shown = !card.classList.contains("hidden");
     const order = [...card.querySelectorAll("[data-pos-fix]")].map((s) => s.dataset.posFix);
     const evidence = card.textContent.includes("never started");
+
+    /* The one change here that reaches BACKWARDS, so it is flagged per row
+       and confirmed on save rather than left to be discovered in a total. */
+    S.stats = [{ player_id: "rug_3", appeared: true, minutes: 80 },
+               { player_id: "rug_3", appeared: true, minutes: 60 }];
+    renderPositionEditor();
+    const scoredWarning = card.textContent.includes("2 matches already scored");
+    const cleanRowQuiet = !card.querySelector('[data-pos-fix="rug_2"]')
+      .closest("div").textContent.includes("already scored");
+    S.stats = [];
+    renderPositionEditor();
 
     const sel = card.querySelector('[data-pos-fix="rug_2"]');
     sel.value = "LK"; sel.dispatchEvent(new Event("change"));
@@ -839,7 +851,7 @@ test("an admin can correct a position before the draft, by hand or by CSV", asyn
        below -- read at the end, this reports that one and the assertion about
        the first passes or fails for the wrong reason. */
     const afterHand = JSON.parse(JSON.stringify({
-      saved: window.__db.tables.leagues.find((l) => l.id === S.league.id)?.config?.positions,
+      saved: window.__db.tables.leagues.find((l) => l.id === S.league.id)?.config?.poolEdit,
       applied: S.playerById.rug_2.position, feed: S.playerById.rug_2.pos_feed }));
 
     // The sheet, and a sheet coming back with one change and one undo.
@@ -854,8 +866,9 @@ test("an admin can correct a position before the draft, by hand or by CSV", asyn
     const shownMidDraft = !document.getElementById("adm-pos-card").classList.contains("hidden");
 
     return { shown, order, evidence, staged, shownMidDraft, afterCsv, afterHand,
+             scoredWarning, cleanRowQuiet,
              sheetHasStarts: sheet.split("\n")[0],
-             finalPositions: S.league.config.positions,
+             finalPositions: S.league.config.poolEdit,
              rug1Now: S.playerById.rug_1.position,
              rug2Back: S.playerById.rug_2.position };
   });
@@ -864,10 +877,16 @@ test("an admin can correct a position before the draft, by hand or by CSV", asyn
   expect(out.order, "least confident first — those are the ones worth a human")
     .toEqual(["rug_2", "rug_3", "rug_1"]);
   expect(out.evidence, "and each row says what the position is based on").toBe(true);
+  expect(out.scoredWarning, "a player with games behind them is flagged: this re-scores them")
+    .toBe(true);
+  expect(out.cleanRowQuiet, "and one with none is not, or the flag stops meaning anything")
+    .toBe(true);
 
   expect(out.staged, "an edit stages a correction").toEqual({ rug_2: "LK" });
+  /* One store for every correction, so a position and a club change to the
+     same player cannot end up in two places that disagree. */
   expect(out.afterHand.saved, "saving writes it to this league, not to the pool")
-    .toEqual({ rug_2: "LK" });
+    .toEqual({ rug_2: { position: "LK" } });
   expect(out.afterHand.applied, "and it takes effect immediately").toBe("LK");
   expect(out.afterHand.feed, "with the feed's own value kept, so it can be undone").toBe("SH");
 
@@ -878,7 +897,7 @@ test("an admin can correct a position before the draft, by hand or by CSV", asyn
   expect(out.rug1Now, "so the changed one moves").toBe("FH");
   expect(out.rug2Back, "and the undone one goes back to what the feed said").toBe("SH");
   expect(out.finalPositions, "leaving exactly the corrections that are still wanted")
-    .toEqual({ rug_1: "FH" });
+    .toEqual({ rug_1: { position: "FH" } });
 
   expect(out.shownMidDraft, "once picks exist a position change would break a squad")
     .toBe(false);
@@ -965,8 +984,8 @@ test("the admin can add and drop pool players with a CSV", async ({ page }) => {
     window.__db.tables.competition_pools = [
       { competition_key: "rugby-1068-2026", players, fixtures: [], round_order: [] }];
     S._compPool = { players, fixtures: [], round_order: [] };
-    S.players = players;
-    applyPositionFixes();
+    S.players = players; S._poolBase = players;
+    applyPoolOverrides();
     showView("admin"); renderAdmin();
     const shown = !document.getElementById("adm-pool-card").classList.contains("hidden");
 
@@ -976,12 +995,14 @@ test("the admin can add and drop pool players with a CSV", async ({ page }) => {
       + "rug_2,A Leaver,Ulster,ULS,SH,x\n"
       + ",A Debutant,Ulster,ULS,FH,\n");
 
-    const stored = window.__db.tables.competition_pools[0].players;
+    const shared = window.__db.tables.competition_pools[0].players;
+    const cfg = window.__db.tables.leagues.find((l) => l.id === S.league.id).config;
     return { shown,
              names: S.players.map((p) => p.name).sort(),
              moved: S.playerById.rug_1.team,
-             storedNames: stored.map((p) => p.name).sort(),
-             addedId: stored.find((p) => p.name === "A Debutant")?.player_id,
+             sharedNames: shared.map((p) => p.name).sort(),
+             cfg: JSON.parse(JSON.stringify(cfg)),
+             addedId: cfg.poolAdd?.[0]?.player_id,
              note: preDraftPoolNote(S.players),
              sheet: poolCsv(S.players).split("\n")[0] };
   });
@@ -990,8 +1011,14 @@ test("the admin can add and drop pool players with a CSV", async ({ page }) => {
   expect(out.names, "the debutant is draftable and the leaver is gone")
     .toEqual(["A Debutant", "A Lock"]);
   expect(out.moved, "and the transfer moved club").toBe("Leinster");
-  expect(out.storedNames, "written to the shared pool, so every league on it agrees")
-    .toEqual(["A Debutant", "A Lock"]);
+  /* The one thing this must NOT do. A pool row is shared by every league on
+     the competition, so an upload that wrote there would let one league's
+     admin empty another league's draft -- accidentally or otherwise. */
+  expect(out.sharedNames, "the shared pool is left exactly as it was")
+    .toEqual(["A Leaver", "A Lock"]);
+  expect(out.cfg.poolDrop, "the removal is this league's own").toEqual(["rug_2"]);
+  expect(out.cfg.poolEdit, "and so is the correction").toEqual({ rug_1: expect.objectContaining({ team: "Leinster" }) });
+  expect(out.cfg.poolAdd?.length, "and the addition").toBe(1);
   /* Namespaced apart from the feed's ids, which is also the warning: stats
      arrive keyed by the feed's id, so a hand-added player scores nothing until
      the competition is re-pulled after their debut. */
