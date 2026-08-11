@@ -1215,11 +1215,38 @@ function resolveRugbyPosition(starts, benchGuess) {
   return best ? { position: best, starts: n } : { position: benchGuess || null, starts: 0 };
 }
 
+/* Enough completed matches to build a squad list from.
+
+   A new season is nothing but fixtures. The feed answers date-DESC with no
+   working season filter, so the first hundred rows of a fresh URC season are a
+   hundred games nobody has played and the search comes back with nothing
+   usable at all -- which is exactly what "a URC league cannot be played for the
+   new season" looks like from the outside. Ask for more until something
+   completed appears, which for a new season means last season's results, and
+   last season's squads are the only honest starting point there is. */
+async function rugbyPlayedMatches(apiLeagueId) {
+  let all = [], played = [];
+  for (const size of [100, 400, 1000]) {
+    all = await fetchRugbyMatches(apiLeagueId, size);
+    played = usableRugbyMatches(all);
+    // Enough to have seen every squad, or the feed has no more to give.
+    if (played.length >= 20 || all.length < size) break;
+  }
+  return played;
+}
+
+/* One detail call per match at a 250ms floor, so a whole competition's history
+   is minutes rather than seconds. The most recent matches are the ones that
+   describe the CURRENT squads anyway; older ones mostly add players who have
+   since left. */
+const RUGBY_POOL_MATCH_CAP = 150;
+
 async function fetchRugbyPool(apiLeagueId, onProgress) {
-  const played = usableRugbyMatches(await fetchRugbyMatches(apiLeagueId));
+  const found = await rugbyPlayedMatches(apiLeagueId);
+  const played = found.slice(-RUGBY_POOL_MATCH_CAP);       // ascending: newest last
   if (!played.length) {
-    throw new Error("That competition has no completed matches yet, so there is "
-      + "nobody to draft. Pick a season that has been played.");
+    throw new Error("That competition has no completed matches at all, in this "
+      + "season or any earlier one, so there is nobody to draft yet.");
   }
   const byId = {}, teams = new Set(), crests = {}, teamIds = {};
   let done = 0;
@@ -1447,6 +1474,104 @@ function parsePositionsCsv(text, players, groups) {
   /* Merged by the caller, not replaced: a five-row sheet fixing five players
      must not silently drop every other correction the league already had. */
   return { fixes, cleared, errors };
+}
+
+/* ---------- the pool itself, as a sheet ----------
+
+   Two things the feed cannot do for us:
+
+   * A NEW SEASON has no completed matches, so the pool is last season's squads
+     and every transfer, retirement and academy debut since is missing.
+   * MID-SEASON, a player who has not appeared yet does not exist in the feed
+     at all, so a January signing or a first-cap teenager cannot be drafted or
+     claimed until they have already played -- by which time they have scored
+     points for nobody.
+
+   Both are the same job: hand the admin the list, let them fix it in a
+   spreadsheet, take it back. */
+
+// The pool as a sheet, including the empty `remove` column that makes deleting
+// a row an explicit act rather than an accident of a partial upload.
+function poolCsv(players) {
+  const rows = [csvRow(["player_id", "name", "team", "team_code", "position", "starts", "remove"])];
+  for (const p of players || []) {
+    rows.push(csvRow([p.player_id, p.name, p.team, p.team_code || "",
+                      p.pos_feed ?? p.position, p.pos_starts ?? "", ""]));
+  }
+  return rows.join("\n") + "\n";
+}
+
+/* A stable id for someone the feed has never heard of.
+
+   Derived from the name and club rather than random, so re-uploading the same
+   sheet updates that player instead of adding a second copy of them.
+
+   It also carries a warning in its own prefix: `man_` is not `rug_`, and stats
+   arrive keyed by the feed's id. A manually added player therefore scores
+   nothing until the pool is re-pulled after their debut, at which point the
+   feed's own record of them appears alongside. That is a real limitation and
+   the UI says so rather than leaving it to be discovered in round three. */
+const manualPlayerId = (name, team) =>
+  "man_" + `${name}-${team}`.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+/* A sheet back into pool changes. Same posture as the positions parser: loose
+   about the file, strict about the data, and loud about anything it refused. */
+function parsePoolCsv(text, players, groups) {
+  const empty = { added: [], updated: [], removed: [], errors: [] };
+  const lines = String(text || "").split(/\r?\n/).filter((l) => l.trim());
+  if (!lines.length) return { ...empty, errors: ["The file is empty."] };
+  const head = csvSplit(lines[0]).map((h) => h.toLowerCase());
+  const col = (n) => head.indexOf(n);
+  const iId = col("player_id"), iName = col("name"), iTeam = col("team");
+  const iPos = col("position"), iCode = col("team_code"), iRm = col("remove");
+  if (iName < 0 || iTeam < 0 || iPos < 0) {
+    return { ...empty, errors: ["Needs `name`, `team` and `position` columns."] };
+  }
+  const byId = new Map((players || []).map((p) => [p.player_id, p]));
+  const ok = new Set(groups || []);
+  const added = [], updated = [], removed = [], errors = [];
+  const seen = new Set();
+  for (let n = 1; n < lines.length; n++) {
+    const f = csvSplit(lines[n]);
+    const name = f[iName] || "", team = f[iTeam] || "";
+    const pos = String(f[iPos] || "").toUpperCase();
+    const id = (iId >= 0 && f[iId]) || manualPlayerId(name, team);
+    const existing = byId.get(id);
+    if (iRm >= 0 && /^(1|y|yes|true|x|remove)$/i.test(f[iRm] || "")) {
+      if (existing) removed.push(id);
+      continue;
+    }
+    if (!name || !team) { errors.push(`Line ${n + 1}: needs a name and a club`); continue; }
+    if (!ok.has(pos)) { errors.push(`Line ${n + 1}: ${name} — "${pos}" is not a position`); continue; }
+    // A sheet that lists someone twice is a mistake worth naming, not a race.
+    if (seen.has(id)) { errors.push(`Line ${n + 1}: ${name} appears twice`); continue; }
+    seen.add(id);
+    const row = { player_id: id, name, team, position: pos,
+                  team_code: (iCode >= 0 && f[iCode]) || teamCodeFrom(team) };
+    if (!existing) { added.push(row); continue; }
+    const changed = ["name", "team", "team_code", "position"].some((k) =>
+      row[k] !== (k === "position" ? (existing.pos_feed ?? existing.position) : existing[k]));
+    if (changed) updated.push(row);
+  }
+  return { added, updated, removed, errors };
+}
+
+/* Applied to the pool array. Kept separate from the parsing AND from the write
+   so the merge can be tested on its own -- it is the part that decides whether
+   an upload edits a player or quietly duplicates them. */
+function mergePoolCsv(players, { added, updated, removed }) {
+  const drop = new Set(removed || []);
+  const edits = new Map((updated || []).map((p) => [p.player_id, p]));
+  const out = [];
+  for (const p of players || []) {
+    if (drop.has(p.player_id)) continue;
+    const e = edits.get(p.player_id);
+    /* pos_feed goes with it: the edited position IS what the pool now says,
+       so a league override that matched the old value must not keep winning. */
+    out.push(e ? { ...p, ...e, pos_feed: e.position } : p);
+  }
+  for (const p of added || []) out.push({ ...p, pos_starts: null });
+  return out;
 }
 
 /* The admin's position corrections, laid over the pool.
@@ -2782,6 +2907,12 @@ function renderLobby() {
   if (admin && document.activeElement !== $("lobby-num-input"))
     $("lobby-num-input").value = L.num_managers;
   const ready = S.managers.length === L.num_managers;
+  const poolNote = $("lobby-pool-note");
+  if (poolNote) {
+    const txt = admin ? preDraftPoolNote(S.players) : "";
+    poolNote.textContent = txt;
+    poolNote.classList.toggle("hidden", !txt);
+  }
   $("lobby-start").disabled = !ready;
   $("lobby-start").textContent = ready
     ? "Start draft" : `Start draft (waiting for ${L.num_managers - S.managers.length} more)`;
@@ -2992,6 +3123,14 @@ function renderLobbyOrder() {
 async function startDraft() {
   if (!isAdmin()) return;
   if (S.managers.length !== S.league.num_managers) return;
+  /* Only when there is something to warn ABOUT. A pool whose positions were
+     all observed asks nothing, and a dialog nobody needs is a dialog nobody
+     reads the next time. */
+  const guessed = (S.players || []).filter((p) => p.pos_starts === 0).length;
+  if (guessed && !confirm(
+      `${guessed} player${guessed === 1 ? " has" : "s have"} a guessed position — `
+      + `the feed never saw them start, so it is going by the bench shirt.\n\n`
+      + `Positions and the pool are fixed once the draft begins. Start anyway?`)) return;
   // Manual: keep the order the admin arranged (anyone still unplaced falls in
   // behind, so a late joiner can never silently take pick one).
   const order = draftOrderMode() === "manual"
@@ -11209,7 +11348,11 @@ function dugoutHtml(subs, opts = {}) {
       <span class="sub-no${markCls}">${e.mark ? esc(e.mark) : i + 1}</span>
       <span class="relative inline-flex">
         ${avatarHtml(e.player_id, e.team, "w-9 h-9")}
-        ${teamCrestHtml(e.team) ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${teamCrestHtml(e.team, "w-3 h-3")}</span>` : ""}
+        ${/* An IMAGE, never the code fallback -- see pitchRowsHtml. This is
+              the same 14px corner badge and it was missed there: the bench
+              kept drawing a text pill across the bottom of every face. */
+          crestUrlFor(e.team)
+          ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${teamCrestHtml(e.team, "w-3 h-3")}</span>` : ""}
         ${e.note != null ? `<span class="pp-pts">${e.note}</span>` : ""}
       </span>
       <span class="sub-name${nameFit(shortName(e.name))}">${esc(shortName(e.name))}</span>
@@ -14876,6 +15019,69 @@ function renderPositionEditor() {
   });
 }
 
+/* The last call before the room locks.
+
+   Positions and the pool are both editable only until the first pick, and the
+   reason is the same in both cases: a squad is drafted INTO quota slots, so
+   moving a player between positions afterwards -- or removing one outright --
+   breaks a team that is already picked. Said in the lobby, where the decision
+   is actually taken, rather than only in the admin panel someone may never
+   have opened. */
+function preDraftPoolNote(players) {
+  const n = (players || []).length;
+  if (!n) return "";
+  const guessed = players.filter((p) => p.pos_starts === 0).length;
+  const manual = players.filter((p) => String(p.player_id).startsWith("man_")).length;
+  return `The pool is fixed when the draft starts: ${n} players`
+    + (guessed ? `, ${guessed} with a guessed position` : "")
+    + (manual ? `, ${manual} added by hand` : "")
+    + `. Positions and pool changes are only possible until the first pick — `
+    + `finalise them in the admin panel first.`;
+}
+
+function renderPoolEditor() {
+  const card = $("adm-pool-card");
+  if (!card) return;
+  const open = isAdmin() && !S.league?.current_pick && (S.players || []).length > 0;
+  card.classList.toggle("hidden", !open);
+  if (!open) return;
+  const manual = S.players.filter((p) => String(p.player_id).startsWith("man_")).length;
+  $("adm-pool-intro").textContent =
+    `${S.players.length} players${manual ? `, ${manual} of them added by hand` : ""}. `
+    + `A new season starts from last season's squads — the feed has no way to name a `
+    + `squad before a game is played — so transfers, retirements and debutants are yours to fix.`;
+}
+
+async function savePoolCsvText(text) {
+  const parsed = parsePoolCsv(text, S.players, playGroups());
+  const log = $("adm-pool-log");
+  const { added, updated, removed, errors } = parsed;
+  if (!added.length && !updated.length && !removed.length) {
+    log.textContent = ["Nothing to change.", ...errors.slice(0, 8)].filter(Boolean).join("\n");
+    return;
+  }
+  if (!confirm(`${added.length} added, ${updated.length} changed, ${removed.length} removed.`
+      + `\n\nThis pool is shared by every league on this competition. Continue?`)) return;
+  const players = mergePoolCsv(S.players.map((p) =>
+    // Store what the feed said, not a league's override of it.
+    ({ ...p, position: p.pos_feed ?? p.position })), parsed);
+  for (const p of players) delete p.pos_feed;
+  const key = competitionKey();
+  if (!key) return toast("This league has no shared competition pool to edit.");
+  const up = await S.sb.from("competition_pools")
+    .update({ players, updated_at: new Date().toISOString() })
+    .eq("competition_key", key);
+  if (up.error) return toast(up.error.message);
+  if (S._compPool) S._compPool.players = players;
+  S.players = players;
+  S.teams = [...new Set(players.map((p) => p.team))].sort();
+  applyPositionFixes();
+  log.textContent = [`Saved. ${added.length} added, ${updated.length} changed, `
+    + `${removed.length} removed.`, ...errors.slice(0, 8)].filter(Boolean).join("\n");
+  toast("Pool updated.");
+  renderAdmin(); renderBoard();
+}
+
 async function savePositionFixes() {
   const fixes = S._posFixes || {};
   const cfg = { ...(S.league.config || {}) };
@@ -14893,15 +15099,15 @@ async function savePositionFixes() {
 }
 
 // A file the admin can open in a spreadsheet, fix in bulk, and send back.
-function downloadPositionsCsv() {
-  const name = `positions-${(competitionKey() || "wc").replace(/[^\w-]/g, "")}.csv`;
-  const url = URL.createObjectURL(
-    new Blob([positionsCsv(S.players)], { type: "text/csv;charset=utf-8" }));
+function downloadCsv(what, text) {
+  const name = `${what}-${(competitionKey() || "wc").replace(/[^\w-]/g, "")}.csv`;
+  const url = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }));
   const a = document.createElement("a");
   a.href = url; a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+const downloadPositionsCsv = () => downloadCsv("positions", positionsCsv(S.players));
 
 function applyPositionsCsvText(text) {
   const { fixes, cleared, errors } = parsePositionsCsv(text, S.players, playGroups());
@@ -14992,6 +15198,7 @@ function renderAdmin() {
     : "You open and close the window yourself with the button below. Line-ups stay editable until you close it — including during matches, so close it before kick-off.";
   renderConfigEditor();
   renderPositionEditor();
+  renderPoolEditor();
   // Competition selector + current-pool status.
   if (!$("adm-comp-select").options.length)
     $("adm-comp-select").innerHTML = competitionsFor().map((c) =>
@@ -15520,6 +15727,15 @@ function wire() {
     renderPositionEditor();
   };
   $("adm-pos-down").onclick = downloadPositionsCsv;
+  $("adm-pool-down").onclick = () => downloadCsv("pool", poolCsv(S.players));
+  $("adm-pool-up").onclick = () => $("adm-pool-file").click();
+  $("adm-pool-file").onchange = async () => {
+    const f = $("adm-pool-file").files?.[0];
+    if (!f) return;
+    try { await savePoolCsvText(await f.text()); }
+    catch (e) { toast("Could not read that file: " + e.message); }
+    $("adm-pool-file").value = "";
+  };
   $("adm-pos-up").onclick = () => $("adm-pos-file").click();
   $("adm-pos-file").onchange = async () => {
     const f = $("adm-pos-file").files?.[0];

@@ -884,6 +884,124 @@ test("an admin can correct a position before the draft, by hand or by CSV", asyn
     .toBe(false);
 });
 
+test("a season nobody has played yet still builds a pool", async ({ page }) => {
+  /* The feed answers date-DESC with no working season filter, so the first
+     hundred rows of a fresh URC season are a hundred games nobody has played
+     and the search comes back with nothing usable at all. That is what "a URC
+     league cannot be played for the new season" looked like from the outside.
+     Last season's squads are the only honest starting point there is. */
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const sizes = [];
+  await page.route("**/*", async (route) => {
+    const url = decodeURIComponent(route.request().url());
+    if (!(url.includes("incrowdsports.com") || url.includes("/functions/v1/")))
+      return route.continue();
+    const json = (b) => route.fulfill({ contentType: "application/json", body: JSON.stringify(b) });
+    if (url.includes("matches/search")) {
+      const size = +(url.match(/size=(\d+)/) || [])[1];
+      sizes.push(size);
+      // The new season: `size` rows of fixtures, all of them unplayed.
+      const rows = Array.from({ length: Math.min(size, 120) }, (_, i) => ({
+        id: 1000 + i, status: "fixture", tbc: 0, round: i + 1,
+        date: `2026-1${i % 2}-01T17:00:00Z`,
+        homeTeam: { id: 4, name: "Leinster" }, awayTeam: { id: 5, name: "Munster" } }));
+      // Last season's results only start appearing once you ask for more.
+      if (size > 100) {
+        for (let i = 0; i < 25; i++) rows.push({
+          id: 900 + i, status: "result", tbc: 0, round: i + 1,
+          date: `2025-05-0${(i % 9) + 1}T17:00:00Z`,
+          homeTeam: { id: 4, name: "Leinster", score: 20 },
+          awayTeam: { id: 5, name: "Munster", score: 15 } });
+      }
+      return json({ status: "success", data: rows });
+    }
+    if (/matches\/9\d\d/.test(url)) {
+      return json({ status: "success", data: { id: 900, round: 1,
+        homeTeam: { id: 4, name: "Leinster", score: 20, shortName: "LEI", players: [
+          { id: 1, known: "A Prop", positionId: 1, position: "prop",
+            stats: { minutesPlayedTotal: 80 } }] },
+        awayTeam: { id: 5, name: "Munster", score: 15, shortName: "MUN", players: [
+          { id: 2, known: "A Lock", positionId: 4, position: "lock",
+            stats: { minutesPlayedTotal: 80 } }] } } });
+    }
+    return json({});
+  });
+
+  const out = await page.evaluate(async () => {
+    const competition = { name: "United Rugby Championship", apiLeagueId: 1068,
+                          season: 2026, sport: "rugby" };
+    const built = await fetchPoolFor(competition, "", () => {});
+    return { players: built.players.length, teams: built.teams.length,
+             names: built.players.map((p) => p.name).sort() };
+  });
+
+  expect(sizes[0], "it asks for a normal page first").toBe(100);
+  expect(sizes.some((s) => s > 100), "and asks for more when nothing has been played")
+    .toBe(true);
+  expect(out.players, "so last season's squads become the pool").toBe(2);
+  expect(out.names).toEqual(["A Lock", "A Prop"]);
+  expect(out.teams, "with the clubs that played them").toBe(2);
+});
+
+test("the admin can add and drop pool players with a CSV", async ({ page }) => {
+  /* Mid-season, a player who has not appeared does not exist in the feed at
+     all, so a January signing or a first-cap teenager cannot be drafted until
+     they have already played -- by which time they have scored for nobody. */
+  page.on("dialog", (d) => d.accept());
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const out = await page.evaluate(async () => {
+    S.league.competition = { name: "United Rugby Championship", apiLeagueId: 1068,
+                             season: 2026, sport: "rugby" };
+    S.league.current_pick = 0;
+    S.league.config = null;
+    const players = [
+      { player_id: "rug_1", name: "A Lock", team: "Ulster", team_code: "ULS",
+        position: "LK", pos_starts: 6 },
+      { player_id: "rug_2", name: "A Leaver", team: "Ulster", team_code: "ULS",
+        position: "SH", pos_starts: 2 },
+    ];
+    window.__db.tables.competition_pools = [
+      { competition_key: "rugby-1068-2026", players, fixtures: [], round_order: [] }];
+    S._compPool = { players, fixtures: [], round_order: [] };
+    S.players = players;
+    applyPositionFixes();
+    showView("admin"); renderAdmin();
+    const shown = !document.getElementById("adm-pool-card").classList.contains("hidden");
+
+    await savePoolCsvText(
+      "player_id,name,team,team_code,position,remove\n"
+      + "rug_1,A Lock,Leinster,LEI,LK,\n"
+      + "rug_2,A Leaver,Ulster,ULS,SH,x\n"
+      + ",A Debutant,Ulster,ULS,FH,\n");
+
+    const stored = window.__db.tables.competition_pools[0].players;
+    return { shown,
+             names: S.players.map((p) => p.name).sort(),
+             moved: S.playerById.rug_1.team,
+             storedNames: stored.map((p) => p.name).sort(),
+             addedId: stored.find((p) => p.name === "A Debutant")?.player_id,
+             note: preDraftPoolNote(S.players),
+             sheet: poolCsv(S.players).split("\n")[0] };
+  });
+
+  expect(out.shown, "the card is offered before the draft").toBe(true);
+  expect(out.names, "the debutant is draftable and the leaver is gone")
+    .toEqual(["A Debutant", "A Lock"]);
+  expect(out.moved, "and the transfer moved club").toBe("Leinster");
+  expect(out.storedNames, "written to the shared pool, so every league on it agrees")
+    .toEqual(["A Debutant", "A Lock"]);
+  /* Namespaced apart from the feed's ids, which is also the warning: stats
+     arrive keyed by the feed's id, so a hand-added player scores nothing until
+     the competition is re-pulled after their debut. */
+  expect(out.addedId, "with an id that is visibly not the feed's").toMatch(/^man_/);
+  expect(out.note, "and the lobby says what is about to be frozen")
+    .toContain("1 added by hand");
+  expect(out.sheet, "the sheet carries the column that removes a row")
+    .toContain("remove");
+});
+
 test("a player is a sticker everywhere, and a club is still a badge", async ({ page }) => {
   /* The theme's one idea has to carry the whole app, not just the pitch --
      otherwise it reads as decoration bolted to one screen. And the distinction
@@ -2390,6 +2508,10 @@ test("a rugby league looks like rugby, not like football with different words",
         // was asked for -- so it landed across the bottom half of the face
         // with the points bubble over the top, slicing the initials in two.
         crestBadge: html.includes("-bottom-0.5 -left-1"),
+        // The bench draws the same 14px corner badge from its own code, and
+        // was missed when the pitch was fixed.
+        benchBadge: dugoutHtml([{ player_id: "rug_b", name: "A Sub", team: "Ireland",
+                                  position: "LF" }]).includes("-bottom-0.5 -left-1"),
       };
     });
 
@@ -2401,6 +2523,8 @@ test("a rugby league looks like rugby, not like football with different words",
     expect(out.pips, "one on every player in the XV").toBe(15);
     expect(out.crest, "no football crest may be resolved for a rugby team").toBeNull();
     expect(out.crestBadge, "and with no crest image there is no corner badge to draw")
+      .toBe(false);
+    expect(out.benchBadge, "on the bench either — it is the same badge, twice over")
       .toBe(false);
     expect(out.emptyIsFlex,
       "a photoless avatar must still take up its box, or the sticker collapses").toBe(true);

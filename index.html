@@ -474,6 +474,8 @@
         <p class="text-xs text-slate-400">Round one runs top to bottom, then reverses each round.</p>
       </div>
       <p id="lobby-order-note" class="text-xs text-slate-400 text-center"></p>
+      <!-- The last moment anything about the pool can change. -->
+      <p id="lobby-pool-note" class="hidden rounded-lg border border-wcgold/50 bg-wcgold/10 px-3 py-2 text-xs text-slate-300"></p>
       <button id="lobby-start" class="w-full bg-wcred hover:bg-wcred-hov disabled:bg-slate-800 disabled:text-slate-400 rounded-xl py-3 font-semibold">Start draft</button>
     </div>
     <p id="lobby-wait" class="text-center text-sm text-slate-400">Waiting for the admin to start the draft…</p>
@@ -722,6 +724,24 @@
           <input id="adm-pos-file" type="file" accept=".csv,text/csv" class="hidden">
         </div>
         <pre id="adm-pos-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
+      </div>
+<!-- The pool itself. Two cases the feed cannot cover: a new season, whose
+     squads are last season's until someone fixes them, and a mid-season
+     signing or debutant, who does not exist in the feed until they have
+     already played. -->
+<div id="adm-pool-card" class="hidden rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
+        <h3 class="font-semibold text-sm">📋 The draft pool</h3>
+        <p id="adm-pool-intro" class="text-xs text-slate-400"></p>
+        <div class="flex items-center gap-2">
+          <button id="adm-pool-down" class="flex-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold">⬇ Download pool CSV</button>
+          <button id="adm-pool-up" class="flex-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold">⬆ Upload pool CSV</button>
+          <input id="adm-pool-file" type="file" accept=".csv,text/csv" class="hidden">
+        </div>
+        <p class="text-xs text-slate-500">Edit <b>name</b>, <b>club</b> or <b>position</b> to correct a row; add
+          rows for players the feed has not seen yet; put an <b>x</b> in the <b>remove</b> column for anyone
+          who has left. A player you add by hand scores nothing until the feed has seen them play and the
+          competition is re-pulled — the pool is shared, so this changes it for every league on it.</p>
+        <pre id="adm-pool-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
       </div>
 <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">⚙️ Design your draft — scoring &amp; bonuses</h3>
