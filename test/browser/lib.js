@@ -17,6 +17,17 @@ const { expect } = require("@playwright/test");
 const STUB = fs.readFileSync(path.join(__dirname, "supabase-stub.js"), "utf8");
 const POOL = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "players.json"), "utf8"));
 
+/* The instant every scenario is seeded around, and the instant the browser is
+   told it is. It used to be Date.now(), which meant the whole fixture calendar
+   slid forward in real time -- and one of the pixel baselines eventually
+   crossed a threshold and started rendering a lock countdown that was not
+   there when it was recorded. Nothing about that was a code change, and it
+   would have looked exactly like one to whoever hit it next.
+
+   Fixtures are seeded at offsets from here, so every relative relationship the
+   scenarios assert on is unchanged; only the drift is gone. */
+const SEED_NOW = Date.UTC(2026, 4, 6, 12, 0, 0);   // Wed 6 May 2026, 12:00 UTC
+
 const LEAGUE = "55555555-5555-4555-8555-555555555555";
 const OWNER = "00000000-0000-4000-8000-000000000001";
 const DAY = 86400000;
@@ -61,7 +72,7 @@ function seedLeague({ managers = 2, played = 3, quirk = null,
                       h2h = false, knockout = false, claims = 0,
                       predraft = false, benchSub = false,
                       missingStarters = 0 } = {}) {
-  const now = Date.now();
+  const now = SEED_NOW;
   const tables = {
     leagues: [{
       id: LEAGUE, name: "Scenario", invite_code: "SCEN", current_pick: 9999,
@@ -197,6 +208,8 @@ function seedLeague({ managers = 2, played = 3, quirk = null,
 
 async function openLeague(page, opts = {}) {
   const seed = seedLeague(opts);
+  // The page's clock, pinned to the same instant the fixtures are seeded from.
+  await page.clock.setFixedTime(new Date(SEED_NOW));
   await page.route("**/vendor/supabase.js", (route) =>
     route.fulfill({ contentType: "text/javascript", body: STUB }));
   await page.goto("/index.html", { waitUntil: "networkidle" });

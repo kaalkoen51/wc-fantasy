@@ -1887,6 +1887,58 @@ test("the season chart shows league position by default, and points on request",
     .toBeUndefined();
 });
 
+test("each theme reveals the squad in its own language", async ({ page }) => {
+  /* A foil packet is the album's idea, and it means nothing on a floodlit
+     stadium at night -- "tap to open" over a dark ground is describing
+     something that is not on screen. Same mechanism, same elements, two
+     metaphors: a packet you tear, and a tunnel the squad walks out of. */
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const read = async (theme) => await page.evaluate((t) => {
+    setTheme(t);
+    openReveal();
+    const cover = document.getElementById("reveal-cover");
+    const slot = document.querySelector("#reveal-page .reveal-slot");
+    document.getElementById("reveal-open").click();
+    // The BUTTON, not the overlay: the overlay is inset-0 and always the
+    // shape of the panel, so measuring it says nothing about either metaphor.
+    const cs = getComputedStyle(cover);
+    const box = document.getElementById("reveal-open").getBoundingClientRect();
+    return {
+      n: document.getElementById("reveal-cover-n").textContent,
+      tap: document.getElementById("reveal-cover-tap").textContent,
+      aria: document.getElementById("reveal-open").getAttribute("aria-label"),
+      away: cs.animationName,
+      lid: getComputedStyle(cover.querySelector(".cover-lid")).animationName,
+      arrive: getComputedStyle(slot).animationName,
+      landscape: box.width > box.height,
+    };
+  }, theme);
+
+  const sticker = await read("sticker");
+  const dark = await read("dark");
+
+  expect(sticker.n, "the album counts stickers").toMatch(/STICKERS?$/);
+  expect(dark.n, "the default theme counts players").toMatch(/^SQUAD OF/);
+  expect(sticker.tap, "and each says what the thing on screen actually does")
+    .toBe("tap to open");
+  expect(dark.tap).toBe("tap to walk them out");
+  expect(sticker.aria).not.toBe(dark.aria);
+
+  /* The animations have to differ too, or this is a relabelling. Read as
+     computed names rather than as class names: that is the difference a person
+     would actually see. */
+  expect(sticker.lid, "the packet's strip tears off").toBe("lid-tear");
+  expect(dark.lid, "the tunnel's gate lifts").toBe("gate-lift");
+  expect(sticker.arrive, "stickers are dealt down onto the page").toBe("deal-in");
+  expect(dark.arrive, "players walk up out of the tunnel").toBe("walk-out");
+  expect(sticker.away).not.toBe(dark.away);
+
+  // A packet is a card and a tunnel is a doorway; the silhouette says which.
+  expect(sticker.landscape, "the packet stands upright").toBe(false);
+  expect(dark.landscape, "the tunnel mouth is wider than it is tall").toBe(true);
+});
+
 test("the packet stays sealed until it is opened, then deals the squad out", async ({ page }) => {
   /* The order is the whole point of the moment. A squad that is already on the
      page behind a wrapper is not a packet, it is a curtain -- and the deal
@@ -1894,14 +1946,14 @@ test("the packet stays sealed until it is opened, then deals the squad out", asy
   await openLeague(page, { managers: 4, played: 3 });
   const seen = await page.evaluate(() => {
     openReveal();
-    const packet = document.getElementById("reveal-packet");
+    const packet = document.getElementById("reveal-cover");
     const page_ = document.getElementById("reveal-page");
     const before = { sealed: !packet.classList.contains("hidden"),
-                     open: packet.classList.contains("packet-open"),
+                     open: packet.classList.contains("cover-open"),
                      dealing: page_.classList.contains("dealt"),
                      stickers: page_.querySelectorAll(".reveal-slot").length };
     document.getElementById("reveal-open").click();
-    return { before, after: { open: packet.classList.contains("packet-open"),
+    return { before, after: { open: packet.classList.contains("cover-open"),
                               dealing: page_.classList.contains("dealt") } };
   });
 
@@ -1978,7 +2030,7 @@ test("with motion turned down the packet is already open and the squad already t
     await page.waitForTimeout(120);          // far less than the 0.75s deal delay
 
     const state = await page.evaluate(() => {
-      const packet = document.getElementById("reveal-packet");
+      const packet = document.getElementById("reveal-cover");
       const slot = document.querySelector("#reveal-page .reveal-slot");
       const cs = getComputedStyle(slot), pcs = getComputedStyle(packet);
       return { slotOpacity: Number(cs.opacity), slotAnim: cs.animationName,

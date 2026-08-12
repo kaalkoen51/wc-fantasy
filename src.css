@@ -399,6 +399,67 @@ html[data-theme="sticker"] .sub-chip .avatar-player {
   box-shadow: 0 0 0 2px rgb(var(--c-slate-900)), 0 1px 3px rgba(0,0,0,.35);
 }
 
+/* ---- THE PACKET, on the album theme -------------------------------------
+
+   What the default theme draws as a tunnel, the album draws as a foil packet:
+   a card, sealed, with a serrated strip you tear off the top. The elements are
+   the same ones; only the paint and the way in differ. */
+html[data-theme="sticker"] .cover { width: 168px; height: 226px; }
+html[data-theme="sticker"] .cover-face {
+    border-radius: 4px; color: #FFF6D8;
+    /* Shaded with black over an OPAQUE red, not with alpha on the red: an
+       alpha stop composites with the card behind it, which on the cream theme
+       washed the bottom of the packet out to pink. */
+    background: linear-gradient(150deg, rgba(0,0,0,.38) 0%, rgba(0,0,0,0) 38%,
+                rgba(0,0,0,.16) 65%, rgba(0,0,0,.42) 100%), rgb(var(--c-wcred));
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.22), 0 6px 16px rgba(0,0,0,.3); }
+html[data-theme="sticker"] .cover-face::before {          /* foil sheen */
+    background: linear-gradient(118deg, rgba(255,255,255,0) 38%,
+                rgba(255,255,255,.30) 47%, rgba(255,236,170,.42) 52%,
+                rgba(255,255,255,0) 62%);
+    animation: foil-sweep 6s linear infinite; }
+html[data-theme="sticker"] .cover-mark i { color: #FFD66B; }
+/* The serrated edge of a torn-off strip, cut rather than drawn: a border
+   image would sit inside the box and change the wrapper's height. */
+html[data-theme="sticker"] .cover-lid { height: 30px; border-radius: 4px 4px 0 0;
+    background: linear-gradient(150deg, rgba(0,0,0,.38), rgba(0,0,0,0)), rgb(var(--c-wcred));
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.22);
+    clip-path: polygon(0 0, 100% 0, 100% 74%, 96% 100%, 92% 76%, 88% 100%,
+      84% 76%, 80% 100%, 76% 76%, 72% 100%, 68% 76%, 64% 100%, 60% 76%,
+      56% 100%, 52% 76%, 48% 100%, 44% 76%, 40% 100%, 36% 76%, 32% 100%,
+      28% 76%, 24% 100%, 20% 76%, 16% 100%, 12% 76%, 8% 100%, 4% 76%, 0 100%); }
+
+@keyframes lid-tear { to { transform: translate(58px, -108px) rotate(26deg);
+                           opacity: 0; } }
+@keyframes packet-away { to { opacity: 0; transform: scale(.94) translateY(10px);
+                              visibility: hidden; } }
+html[data-theme="sticker"] #reveal-cover.cover-open {
+    animation: packet-away .5s ease-in .42s forwards; }
+html[data-theme="sticker"] #reveal-cover.cover-open .cover-lid {
+    animation: lid-tear .55s cubic-bezier(.3,.9,.4,1) forwards; }
+
+/* Dealt out of the packet rather than walked out of a tunnel: down from above,
+   spinning, landing ON the album's own crooked angle. */
+@keyframes deal-in {
+  from { opacity: 0; transform: translate(0, -120px) rotate(-16deg) scale(1.3); }
+  55%  { opacity: 1; }
+  to   { opacity: 1; transform: rotate(var(--tilt, 0deg)); }
+}
+html[data-theme="sticker"] #reveal-page.dealt .reveal-slot {
+    animation-name: deal-in;
+    animation-timing-function: cubic-bezier(.2,.85,.3,1.05); }
+
+@media (prefers-reduced-motion: reduce) {
+  /* Explicit rather than inherited: the base rule turns motion off, but every
+     selector here outranks it, so without this the packet's keyframes would
+     quietly come back on for anyone who asked for no motion. */
+  html[data-theme="sticker"] .cover-face::before,
+  html[data-theme="sticker"] #reveal-cover.cover-open,
+  html[data-theme="sticker"] #reveal-cover.cover-open .cover-lid,
+  html[data-theme="sticker"] #reveal-page.dealt .reveal-slot { animation: none; }
+  html[data-theme="sticker"] #reveal-cover.cover-open { opacity: 0; visibility: hidden; }
+}
+
 /* An empty slot is a die-cut outline — the space in an unfilled album. */
 html[data-theme="sticker"] .pp .border-dashed {
   border-radius: 3px;
@@ -975,66 +1036,92 @@ html[data-theme="sticker"] .pick-stamp {
                  border-radius: 0 0 4px 4px;
                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-  /* The wrapper. Its colours are tokens, so it is Panini red on the sticker
-     theme and the app's own red on the default one. */
-  .packet { position: relative; width: 168px; height: 226px; border: 0;
-            padding: 0; background: transparent; font: inherit; cursor: pointer; }
-  .packet-body { position: absolute; inset: 0; border-radius: 4px; overflow: hidden;
+  /* ===== THE COVER — the squad, held back until you ask for it =====
+
+     One mechanism, two metaphors, because the same gesture does not read the
+     same way on both grounds. On the album theme it is a foil packet you tear
+     open. On the default one -- a floodlit stadium at night -- a packet of
+     stickers means nothing at all, so it is the mouth of a tunnel with the
+     lights beyond it, and the squad walks out.
+
+     Everything here is the geometry the two share. Each theme's own block
+     paints it, and each brings its own way in for the players: they walk up
+     out of the tunnel, or they are dealt down onto the page. */
+  .cover { position: relative; border: 0; padding: 0; background: transparent;
+           font: inherit; cursor: pointer; }
+  .cover-face { position: absolute; inset: 0; overflow: hidden;
       display: flex; flex-direction: column; align-items: center;
-      justify-content: center; gap: 6px; color: #FFF6D8;
-      /* Shaded with black over an OPAQUE red, not with alpha on the red: an
-         alpha stop composites with the card behind it, which on the cream
-         theme washed the bottom of the packet out to pink. */
-      background: linear-gradient(150deg, rgba(0,0,0,.38) 0%, rgba(0,0,0,0) 38%,
-                  rgba(0,0,0,.16) 65%, rgba(0,0,0,.42) 100%), rgb(var(--c-wcred));
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,.22), 0 6px 16px rgba(0,0,0,.3); }
-  .packet-body::before {                       /* foil sheen on the wrapper */
-    content: ""; position: absolute; inset: 0;
-    background: linear-gradient(118deg, rgba(255,255,255,0) 38%,
-                rgba(255,255,255,.30) 47%, rgba(255,236,170,.42) 52%,
-                rgba(255,255,255,0) 62%);
-    background-size: 300% 100%; animation: foil-sweep 6s linear infinite; }
-  .packet-mark { font-size: 21px; font-weight: 900; letter-spacing: -.02em; }
-  .packet-mark i { font-style: normal; color: #FFD66B; }
-  .packet-n { font-size: 10px; font-weight: 700; letter-spacing: .18em; }
-  .packet-tap { position: absolute; inset: auto 0 -24px 0; text-align: center;
-                font-size: 11px; font-weight: 700; letter-spacing: .04em;
-                color: rgb(var(--c-slate-400));
-                animation: packet-nudge 1.8s ease-in-out infinite; }
-  /* The serrated edge of a torn-off strip, cut rather than drawn: a border
-     image would sit inside the box and change the wrapper's height. */
-  .packet-strip { position: absolute; left: 0; right: 0; top: 0; height: 30px;
-      border-radius: 4px 4px 0 0;
-      background: linear-gradient(150deg, rgba(0,0,0,.38), rgba(0,0,0,0)), rgb(var(--c-wcred));
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,.22);
-      clip-path: polygon(0 0, 100% 0, 100% 74%, 96% 100%, 92% 76%, 88% 100%,
-        84% 76%, 80% 100%, 76% 76%, 72% 100%, 68% 76%, 64% 100%, 60% 76%,
-        56% 100%, 52% 76%, 48% 100%, 44% 76%, 40% 100%, 36% 76%, 32% 100%,
-        28% 76%, 24% 100%, 20% 76%, 16% 100%, 12% 76%, 8% 100%, 4% 76%, 0 100%); }
+      justify-content: center; gap: 6px; }
+  .cover-face::before { content: ""; position: absolute; inset: 0;
+      background-size: 300% 100%; }
+  .cover-mark { font-size: 21px; font-weight: 900; letter-spacing: -.02em; }
+  .cover-mark i { font-style: normal; }
+  .cover-n { font-size: 10px; font-weight: 700; letter-spacing: .18em; }
+  .cover-tap { position: absolute; inset: auto 0 -24px 0; text-align: center;
+               font-size: 11px; font-weight: 700; letter-spacing: .04em;
+               color: rgb(var(--c-slate-400));
+               animation: cover-nudge 1.8s ease-in-out infinite; }
+  .cover-lid { position: absolute; left: 0; right: 0; top: 0; }
+  #reveal-cover.cover-open .cover-tap { opacity: 0; }
+  @keyframes cover-nudge { 0%, 100% { transform: translateY(0) }
+                           50%      { transform: translateY(3px) } }
 
-  @keyframes packet-nudge { 0%, 100% { transform: translateY(0) }
-                            50%      { transform: translateY(3px) } }
-  @keyframes packet-tear { to { transform: translate(58px, -108px) rotate(26deg);
-                                opacity: 0; } }
-  @keyframes packet-away { to { opacity: 0; transform: scale(.94) translateY(10px);
-                                visibility: hidden; } }
-  #reveal-packet.packet-open { animation: packet-away .5s ease-in .42s forwards; }
-  #reveal-packet.packet-open .packet-strip { animation: packet-tear .55s
-                                             cubic-bezier(.3,.9,.4,1) forwards; }
-  #reveal-packet.packet-open .packet-tap { opacity: 0; }
+  /* ---- THE WALKOUT, on the default theme ----------------------------------
 
-  /* Dealt out of the packet, one at a time. `backwards` holds each sticker
-     off-screen through its delay -- without it the whole squad is visible for
+     A tunnel mouth: dark walls, the pitch lit beyond them, and a gate across
+     the top that lifts. Wider than tall, because a tunnel is a doorway and a
+     packet is a card, and the silhouette is most of what says which. */
+  .cover { width: 214px; height: 172px; }
+  .cover-face {
+    border-radius: 10px 10px 3px 3px;
+    color: rgb(var(--c-slate-200));
+    /* Walls, not edges: the two inset shadows on the sides are what turn a
+       lit rectangle into the mouth of something you are standing inside. */
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.10),
+                inset 0 -30px 40px -26px rgba(255,240,205,.6),
+                inset 36px 0 42px -34px rgba(0,0,0,.95),
+                inset -36px 0 42px -34px rgba(0,0,0,.95),
+                0 10px 26px rgba(0,0,0,.55);
+    /* The light comes from BELOW and beyond — you are looking out of the dark
+       at a lit pitch, not at a lamp on the ceiling. Nearly white at the mouth
+       with gold behind it, because floodlights are white and only the haze
+       around them is warm; an all-amber wash read as a sunset. */
+    background: radial-gradient(86% 64% at 50% 116%, rgba(255,255,255,.52) 0%,
+                                rgba(255,226,155,.30) 36%, rgba(255,199,44,0) 68%),
+                linear-gradient(90deg, #03050e 0%, #0b1230 26%,
+                                #0b1230 74%, #03050e 100%); }
+  .cover-mark i { color: rgb(var(--c-wcgold)); }
+  /* Floodlight haze drifting across the mouth. Slower and fainter than the
+     packet's foil: this is air, not shine. */
+  .cover-face::before {
+    background: linear-gradient(100deg, rgba(255,255,255,0) 40%,
+                rgba(255,236,180,.15) 50%, rgba(255,255,255,0) 60%);
+    animation: foil-sweep 7s linear infinite; }
+  .cover-lid { height: 34px; border-radius: 10px 10px 0 0;
+      background: linear-gradient(180deg, rgb(var(--c-slate-700)), rgb(var(--c-slate-900)));
+      box-shadow: inset 0 -2px 0 rgba(255,199,44,.45),
+                  inset 0 0 0 1px rgba(255,255,255,.10); }
+
+  @keyframes gate-lift { to { transform: translateY(-38px); opacity: 0; } }
+  /* Towards you, not away: the squad is coming out. */
+  @keyframes cover-away { to { opacity: 0; transform: scale(1.08);
+                               visibility: hidden; } }
+  #reveal-cover.cover-open { animation: cover-away .5s ease-in .42s forwards; }
+  #reveal-cover.cover-open .cover-lid { animation: gate-lift .5s
+      cubic-bezier(.3,.9,.4,1) forwards; }
+
+  /* Up out of the tunnel, one at a time. `backwards` holds each player out of
+     sight through their delay -- without it the whole squad is on screen for
      one frame before the first one moves. */
-  @keyframes deal-in {
-    from { opacity: 0; transform: translate(0, -120px) rotate(-16deg) scale(1.3); }
-    55%  { opacity: 1; }
-    /* Lands ON the theme's angle. --tilt is unset on the default theme, so the
-       0deg fallback leaves it straight there. */
-    to   { opacity: 1; transform: rotate(var(--tilt, 0deg)); }
+  @keyframes walk-out {
+    from { opacity: 0; transform: translateY(30px) scale(.84); }
+    60%  { opacity: 1; }
+    to   { opacity: 1; transform: none; }
   }
-  #reveal-page.dealt .reveal-slot { animation: deal-in .46s
-      cubic-bezier(.2,.85,.3,1.05) backwards;
+  #reveal-page.dealt .reveal-slot {
+      animation-duration: .46s; animation-fill-mode: backwards;
+      animation-name: walk-out;
+      animation-timing-function: cubic-bezier(.2,.9,.35,1);
       animation-delay: calc(.75s + var(--i, 0) * .075s); }
 
   /* A pick landing is a sticker being stuck in. Inert unless a theme draws it:
@@ -1042,10 +1129,12 @@ html[data-theme="sticker"] .pick-stamp {
   .pick-stamp { display: none; }
 
   @media (prefers-reduced-motion: reduce) {
-    /* The end state, with nothing moving: the packet already gone and the
-       squad already on the page. */
-    .packet-body::before, .packet-tap { animation: none; }
-    #reveal-packet.packet-open, #reveal-packet.packet-open .packet-strip,
+    /* The end state, with nothing moving: the cover already gone and the squad
+       already on the page. Written unscoped so it holds for BOTH metaphors --
+       the tunnel and the packet run different keyframes, and a rule that named
+       one of them would leave the other animating. */
+    .cover-face::before, .cover-tap { animation: none; }
+    #reveal-cover.cover-open, #reveal-cover.cover-open .cover-lid,
     #reveal-page.dealt .reveal-slot { animation: none; }
-    #reveal-packet.packet-open { opacity: 0; visibility: hidden; }
+    #reveal-cover.cover-open { opacity: 0; visibility: hidden; }
   }

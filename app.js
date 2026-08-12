@@ -7971,25 +7971,35 @@ function openReveal() {
       esc(shortName(foil.player_name))}</b> — your first pick.</p>` : ""}
     <p class="text-xs text-slate-400 text-center">Set your starting XI before the first deadline — the matchday card on your team page counts it down.</p>`;
 
-  /* Sealed, then torn open. The count is on the wrapper because a packet that
-     does not say what is in it is just a red rectangle. */
-  const packet = $("reveal-packet");
-  if (packet) {
-    const n = $("reveal-packet-n");
-    if (n) n.textContent = `${mine.length} STICKER${mine.length === 1 ? "" : "S"}`;
-    packet.classList.remove("hidden", "packet-open");
+  /* Held back, then opened. The count is on the cover because a cover that
+     does not say what is behind it is just a rectangle.
+
+     The WORDS change with the theme, because the picture does: the album
+     theme seals the squad in a foil packet, and the default one -- a floodlit
+     stadium at night -- holds them in a tunnel. "Tap to open" over a tunnel
+     mouth would be describing something that is not on screen. */
+  const cover = $("reveal-cover"), sticker = currentTheme() === "sticker";
+  if (cover) {
+    const n = $("reveal-cover-n"), tap = $("reveal-cover-tap");
+    if (n) n.textContent = sticker
+      ? `${mine.length} STICKER${mine.length === 1 ? "" : "S"}`
+      : `SQUAD OF ${mine.length}`;
+    if (tap) tap.textContent = sticker ? "tap to open" : "tap to walk them out";
+    $("reveal-open")?.setAttribute("aria-label",
+      sticker ? "Open the packet" : "Walk your squad out");
+    cover.classList.remove("hidden", "cover-open");
     $("reveal-page")?.classList.remove("dealt");
   }
   $("reveal-sheet").classList.remove("hidden");
   if (S.league?.id) localStorage.setItem("wcf_reveal_" + S.league.id, "1");
 }
 
-/* Tear it open: the strip flies off, the wrapper goes, the squad deals out.
-   The page only starts dealing once the packet is opened -- stickers sliding
-   in behind a sealed wrapper would be the one thing the animation must not
-   show. */
-function openRevealPacket() {
-  $("reveal-packet")?.classList.add("packet-open");
+/* Open it: the lid goes (torn off, or lifted), the cover goes, and the squad
+   arrives (dealt down, or walking up). The page only starts once the cover is
+   opened -- players moving in behind a closed cover would be the one thing
+   the animation must not show. */
+function openRevealCover() {
+  $("reveal-cover")?.classList.add("cover-open");
   $("reveal-page")?.classList.add("dealt");
 }
 
@@ -15992,7 +16002,7 @@ function wire() {
   $("chart-close").onclick = closeChartSheet;
   $("recap-close").onclick = closeRecap;
   $("reveal-close").onclick = closeReveal;
-  $("reveal-open").onclick = openRevealPacket;
+  $("reveal-open").onclick = openRevealCover;
   $("reveal-sheet").onclick = (e) => { if (e.target.id === "reveal-sheet") closeReveal(); };
   $("recap-sheet").onclick = (e) => { if (e.target.id === "recap-sheet") closeRecap(); };
   $("chart-sheet").onclick = (e) => { if (e.target.id === "chart-sheet") closeChartSheet(); };  // tap backdrop
