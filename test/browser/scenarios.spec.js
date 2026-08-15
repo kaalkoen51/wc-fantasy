@@ -1887,6 +1887,63 @@ test("the season chart shows league position by default, and points on request",
     .toBeUndefined();
 });
 
+test("a desktop is not a very wide phone", async ({ page }) => {
+  /* Three things that were only wrong on a big screen, which is the screen a
+     draft is actually run on. Measured rather than eyeballed, because a
+     max-width is exactly the kind of rule a later layout change deletes
+     without anyone noticing until someone is sitting in front of it. */
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const out = await page.evaluate(() => {
+    const w = (sel) => document.querySelector(sel)?.getBoundingClientRect().width || 0;
+    closeReveal();
+    showView("board"); setBoardTab("stats");
+    const listPane = w("#board-stats");
+    const listChrome = w("#board-banner");
+    showView("board"); setBoardTab("home");
+    const teamPane = w("#board-home");
+
+    // The reveal: six fixed columns of 3:4 cells, so the panel's width IS the
+    // size of every player on it.
+    openReveal();
+    const panel = w("#reveal-sheet > div");
+    const slot = document.querySelector("#reveal-page .reveal-slot")
+      ?.getBoundingClientRect();
+    closeReveal();
+
+    showView("draft");
+    const draft = document.querySelector('[data-view="draft"]');
+    const pool = document.querySelector(".draft-pool-card").getBoundingClientRect();
+    const recent = document.querySelector(".draft-recent-card").getBoundingClientRect();
+    return { listPane, listChrome, teamPane, panel, slotW: slot?.width,
+             slotH: slot?.height, poolLeft: pool.left, recentLeft: recent.left,
+             /* Measured, not counted. Counting grid tracks passed with the
+                template cut to one column: the other cards ask for column 2
+                explicitly, so the browser makes an implicit one and the
+                layout survives. Side by side is the thing that matters. */
+             sideBySide: pool.right <= recent.left + 1,
+             poolWider: pool.width > recent.width };
+  });
+
+  // A list row needs about forty characters and a number, not a monitor.
+  expect(out.listPane, "a list pane stretched the full width").toBeLessThan(860);
+  expect(Math.abs(out.listPane - out.listChrome),
+    "the pane and the chrome above it must share a right edge").toBeLessThan(2);
+  expect(out.teamPane, "but the team page has a second column to fill")
+    .toBeGreaterThan(900);
+
+  expect(out.panel, "the reveal was as wide as the monitor").toBeLessThan(600);
+  expect(out.slotW, "so every player in it came out poster-sized").toBeLessThan(120);
+  expect(out.slotH).toBeLessThan(160);
+
+  // The draft is the one screen everybody is on at once, for an hour.
+  expect(out.sideBySide, "the draft room is two columns on a desktop").toBe(true);
+  expect(out.poolLeft, "with the pool on the left, where the work is")
+    .toBeLessThan(out.recentLeft);
+  expect(out.poolWider, "and given the wider of the two").toBe(true);
+});
+
 test("each theme reveals the squad in its own language", async ({ page }) => {
   /* A foil packet is the album's idea, and it means nothing on a floodlit
      stadium at night -- "tap to open" over a dark ground is describing

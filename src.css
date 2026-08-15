@@ -1003,6 +1003,52 @@ html[data-theme="sticker"] .pick-stamp {
     body.has-rail #board-home > * { grid-column: 2; margin-bottom: 1rem; }
     body.has-rail #board-home > .home-squad { grid-column: 1; grid-row: 1 / span 99;
       margin-bottom: 0; }
+
+    /* A LIST ROW IS NOT A COLUMN WIDTH.
+
+       Every other tab is one long list, and left to fill 66rem each row put a
+       name against the left edge and a number against the right with half a
+       screen of nothing between them -- readable on a phone, and a table of
+       contents on a desktop. The team page is deliberately excluded: it has a
+       second column to fill and fills it.
+
+       The sub-tab switcher and the fixture banner stay full width, because
+       they are chrome for the pane rather than rows in it. */
+    /* The whole column narrows, chrome included, rather than the list alone:
+       a 52rem list under a 66rem fixture banner is a ragged right edge, which
+       is most of what "rough" looks like. `:has` is what lets one rule read
+       which pane is on screen -- the banner and the sub-tabs are shared markup
+       and cannot know it themselves. */
+    body.has-rail main:not(:has([data-view="board"]:not(.hidden) #board-home:not(.hidden))) {
+      max-width: 52rem; }
+
+    /* THE DRAFT ROOM, on a desktop.
+
+       This is the one screen everybody is on at once, for an hour, and it was
+       a single 48rem column: the clock, then the picks, then the queue, then
+       the pool -- so the list you actually work from sat below the fold while
+       two thirds of the monitor showed background. The draft has no rail (the
+       nav is hidden while it runs), so this cannot hang off .has-rail the way
+       the team page does.
+
+       The clock spans the top because it belongs to the room, not to a column.
+       Everything else splits: the pool and the squads on the left, where the
+       work is, and what-just-happened on the right where you glance. Source
+       order is untouched, so a phone still reads top to bottom. */
+    main:has([data-view="draft"]:not(.hidden)) { max-width: 72rem; }
+    [data-view="draft"]:not(.hidden) {
+      display: grid; column-gap: 1rem; row-gap: 0; align-items: start;
+      grid-auto-rows: min-content;
+      grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); }
+    [data-view="draft"]:not(.hidden) > * { grid-column: 2; margin-bottom: 1rem; }
+    [data-view="draft"]:not(.hidden) > #draft-head,
+    [data-view="draft"]:not(.hidden) > #draft-mybanner { grid-column: 1 / -1; }
+    /* The pool spans from the third row down, exactly as the team page's
+       squad does. Without the span it would sit on ITS source row -- fifth --
+       and leave a screen of nothing above it while the two short cards it is
+       beside stack up on the right. */
+    [data-view="draft"]:not(.hidden) > .draft-pool-card {
+      grid-column: 1; grid-row: 3 / span 99; margin-bottom: 0; }
   }
   /* A toast raised clear of the bottom navigation or an open sheet's footer,
      so it never covers the button it is reporting on. */
