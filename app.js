@@ -10759,7 +10759,10 @@ function renderDreamTeam(round, per90, worst) {
 const SCOUT_CAP = 120;
 
 function renderScoutList(pool, sortKey) {
-  const posRank = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
+  // From the sport, not from football's four: rugby's eight all scored 9 here,
+  // so "sort by position" left them in whatever order the pool arrived in.
+  const groups = playGroups();
+  const posRank = Object.fromEntries(groups.map((g, i) => [g, i]));
   const byName = (a, b) => a.name.localeCompare(b.name);
   pool.sort(
     sortKey === "pos" ? ((a, b) => (posRank[a.position] ?? 9) - (posRank[b.position] ?? 9) || byName(a, b))
@@ -10872,6 +10875,23 @@ function renderStatsTab() {
   /* Dream and Nightmare have no list to filter, only a scope, so the whole
      block would otherwise sit above the sentence that says what you are
      looking at. */
+  /* THE POSITION CHIPS AND THE CLUB SELECT ARE NOT "SCOPE".
+
+     They live inside the Filters & scope fold, and this line hides that whole
+     fold while scouting -- so the two controls the page is FOR before a draft
+     went with it, and the only way left to narrow six hundred players was to
+     type a club name into the search box. The fold exists to put round,
+     per-90, unpicked and hide-knocked-out away, and every one of those is
+     meaningless before a ball is kicked; the list controls are not.
+
+     So they are lifted out of the fold rather than hidden with it, and put
+     back at the top of it afterwards -- first child, because they sat above
+     the scope row and a control that moves between renders is its own bug. */
+  const ctl = $("stats-listctl"), more = $("stats-more"), moreBody = $("stats-more-body");
+  if (ctl && more && moreBody) {
+    const host = scouting ? more.parentElement : moreBody;
+    if (ctl.parentElement !== host) host.insertBefore(ctl, scouting ? more : host.firstChild);
+  }
   $("stats-more").classList.toggle("hidden", scouting);
   const fbar = $("stats-active");
   fbar.classList.toggle("hidden", !active.length);

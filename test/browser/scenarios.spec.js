@@ -1935,6 +1935,68 @@ test("a player who leaves the league is flagged, not dropped and not hidden", as
     .toBe(true);
 });
 
+test("the pre-draft scouting page keeps its position and club filters",
+  async ({ page }) => {
+    /* They live inside the "Filters & scope" fold, and scouting mode hid that
+       whole fold -- so the two controls the page is FOR before a draft went
+       with it, and the only way left to narrow six hundred players was to type
+       a club name into the search box. */
+    await openLeague(page, { managers: 4, predraft: true });
+
+    const out = await page.evaluate(() => {
+      const vis = (id) => {
+        const el = document.getElementById(id);
+        if (!el) return false;
+        return !!el.getClientRects().length;
+      };
+      // Browsing the pool from the lobby, before the first pick.
+      S.league.current_pick = 0; S._browsing = true;
+      showView("board"); setBoardTab("stats"); renderStatsTab();
+      const scouting = {
+        browsing: preDraftBrowsing(),
+        chips: vis("stats-chips"), club: vis("stats-team"), search: vis("stats-search"),
+        // ...while the things that need match data stay away.
+        scope: vis("stats-round"), unpicked: vis("stats-unpicked"),
+        chipLabels: [...document.querySelectorAll("#stats-chips [data-chip]")]
+          .map((b) => b.dataset.chip),
+      };
+      // The chips still filter, not just render.
+      document.querySelector('#stats-chips [data-chip="GK"]').click();
+      const filtered = [...document.querySelectorAll("#stats-list [data-sp]")]
+        .map((b) => S.playerById[b.dataset.sp]?.position);
+      S.statsPos = "ALL";
+
+      /* And once the draft is done the fold takes them back -- at the top of
+         it, where they were, because a control that moves between renders is
+         its own bug. */
+      S.league.current_pick = 9999;
+      renderStatsTab();
+      const after = {
+        browsing: preDraftBrowsing(),
+        insideFold: !!document.querySelector("#stats-more-body > #stats-listctl"),
+        firstInFold: document.getElementById("stats-more-body").firstElementChild?.id,
+      };
+      return { scouting, filtered, after };
+    });
+
+    expect(out.scouting.browsing, "this is the pre-draft page").toBe(true);
+    expect(out.scouting.chips, "the position filter is on screen").toBe(true);
+    expect(out.scouting.club, "and so is the club filter").toBe(true);
+    expect(out.scouting.search, "beside the search that was doing all the work").toBe(true);
+    expect(out.scouting.chipLabels, "one chip per position, from the sport")
+      .toEqual(["ALL", "GK", "DEF", "MID", "FWD"]);
+    expect(out.scouting.scope, "while round scope has no data to scope").toBe(false);
+    expect(out.scouting.unpicked, "and nobody has been picked yet").toBe(false);
+
+    expect(out.filtered.length, "the chip filters the list").toBeGreaterThan(0);
+    expect([...new Set(out.filtered)], "to that position only").toEqual(["GK"]);
+
+    expect(out.after.browsing, "after the draft it is a leaderboard again").toBe(false);
+    expect(out.after.insideFold, "so the controls fold away with the rest").toBe(true);
+    expect(out.after.firstInFold, "back where they were, not appended below")
+      .toBe("stats-listctl");
+  });
+
 test("a desktop is not a very wide phone", async ({ page }) => {
   /* Three things that were only wrong on a big screen, which is the screen a
      draft is actually run on. Measured rather than eyeballed, because a
