@@ -2154,6 +2154,44 @@ test("running a league and running the app are different jobs", async ({ page })
   for (const k of Object.keys(out.appOwner)) {
     expect(out.appOwner[k], `the app owner still sees ${k}`).toBe(true);
   }
+
+  /* And can tell which is which. The tag is injected from the same attribute
+     that does the hiding: two hand-kept lists of "what is restricted" is one
+     list that goes stale, and it is always the label that goes stale. */
+  const tags = await page.evaluate(() => {
+    /* Does this block's OWN heading carry the tag -- not "is there a tag
+       anywhere inside it". Run the season is the league admin's section and
+       holds one owner-only card ("Pull stats now"), so a descendant search
+       says yes about the wrong thing. */
+    const on = (sel) => {
+      const el = document.querySelector(sel);
+      const head = el?.querySelector("summary > span:first-child")
+        || el?.querySelector("summary") || el?.querySelector("h3");
+      return !!head?.querySelector("[data-owner-tag]");
+    };
+    return {
+      note: !document.getElementById("adm-owner-note").classList.contains("hidden"),
+      tagged: document.querySelectorAll("[data-owner-tag]").length,
+      restricted: document.querySelectorAll("[data-owner-only]").length,
+      schedules: on("#adm-sec-auto"), manual: on("#adm-sec-manual"),
+      // Nothing a league admin runs should be wearing the tag.
+      season: on("#adm-sec-season"),
+    };
+  });
+  expect(tags.note, "the owner is told what the tag means").toBe(true);
+  expect(tags.tagged, "every restricted section is tagged, and only those")
+    .toBe(tags.restricted);
+  expect(tags.schedules, "the scheduled pulls say so").toBe(true);
+  expect(tags.manual, "and manual stat entry").toBe(true);
+  expect(tags.season, "while the section a league admin runs is not tagged — even "
+    + "though one card inside it is").toBe(false);
+
+  // Rendering twice must not stack two tags on the same heading.
+  const twice = await page.evaluate(() => {
+    renderAdmin(); renderAdmin();
+    return document.querySelectorAll("[data-owner-tag]").length;
+  });
+  expect(twice, "and re-rendering does not stack them up").toBe(tags.restricted);
 });
 
 test("a desktop is not a very wide phone", async ({ page }) => {

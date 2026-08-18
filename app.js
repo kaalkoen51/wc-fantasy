@@ -15562,8 +15562,27 @@ function renderAdmin() {
      an API-Football key, which nobody else has.
      A league admin keeps everything that is theirs: the window, the line-up
      locks, scoring, positions, the pool, waivers, the draft and the managers. */
-  document.querySelectorAll("[data-owner-only]").forEach((el) =>
-    el.classList.toggle("hidden", !isAppOwner()));
+  const owner = isAppOwner();
+  $("adm-owner-note")?.classList.toggle("hidden", !owner);
+  document.querySelectorAll("[data-owner-only]").forEach((el) => {
+    el.classList.toggle("hidden", !owner);
+    if (!owner) return;
+    /* The tag is INJECTED from the same attribute that does the hiding, not
+       written into the markup beside it. Two hand-maintained lists of "which
+       sections are owner-only" is one list that goes stale, and the one that
+       goes stale is always the label -- so the panel would quietly start
+       claiming a section is restricted when it is not, or worse, not claiming
+       it when it is. */
+    const head = el.querySelector("summary > span:first-child")
+      || el.querySelector("summary") || el.querySelector("h3");
+    if (!head || head.querySelector("[data-owner-tag]")) return;
+    const tag = document.createElement("span");
+    tag.setAttribute("data-owner-tag", "");
+    tag.className = "ml-2 rounded bg-wcgold/20 text-wcgold px-1.5 py-0.5 "
+      + "text-[10px] font-bold align-middle whitespace-nowrap";
+    tag.textContent = "APP OWNER";
+    head.appendChild(tag);
+  });
   // Stages and redrafts are knockout machinery: a league season never has a
   // team "out", so the whole section is meaningless there.
   $("adm-sec-ko")?.classList.toggle("hidden", !isCupCompetition());

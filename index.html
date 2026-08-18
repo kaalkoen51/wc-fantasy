@@ -631,6 +631,13 @@
       <button id="admin-unlock" class="w-full btn-primary rounded-lg py-2 font-semibold">Unlock</button>
     </div>
     <div id="admin-panel" class="hidden space-y-3">
+      <!-- Shown to the app owner only, because it is the only person who can
+           see anything it is talking about. -->
+      <p id="adm-owner-note" class="hidden rounded-lg border border-wcgold/40 bg-wcgold/5 px-3 py-2 text-xs text-slate-300">
+        <b class="text-wcgold">👑 You're the app owner.</b> Anything tagged
+        <span class="rounded bg-wcgold/20 text-wcgold px-1 text-[10px] font-bold align-middle">APP OWNER</span>
+        below is hidden from a league's own admin — it writes data shared by every league on the
+        competition, or needs the API key. Everything else is theirs to run.</p>
       <details id="adm-sec-season" class="rounded-xl border border-slate-700 bg-slate-900/40" open>
         <summary class="px-4 py-3 cursor-pointer select-none flex items-baseline justify-between gap-2">
           <span class="font-semibold text-sm">🗓 Run the season</span>
