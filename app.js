@@ -15742,8 +15742,12 @@ function renderAccount() {
   // Nothing to type in the password box when all we need is the address, and
   // nothing about Google or "stay signed in" belongs on a reset screen.
   $("account-pw").classList.toggle("hidden", reset);
-  $("account-google")?.classList.toggle("hidden", reset);
-  $("account-or")?.classList.toggle("hidden", reset);
+  /* Also hidden once the project has told us the provider is off -- see
+     signInWithGoogle. A big white "Continue with Google" that answers with a
+     grey line is the worst thing on the page to hand a room full of new
+     managers on the night a league opens. */
+  $("account-google")?.classList.toggle("hidden", reset || _googleOff);
+  $("account-or")?.classList.toggle("hidden", reset || _googleOff);
   $("account-toggle")?.classList.toggle("hidden", reset);
   const blurb = $("account-blurb");
   if (blurb) blurb.textContent = reset
@@ -15820,18 +15824,37 @@ async function saveNewPassword() {
   } finally { if (btn) btn.disabled = false; }
 }
 
+/* Set when the project answers "Unsupported provider: provider is not
+   enabled" -- Google OAuth is a per-project switch in Supabase and nothing in
+   the page can know it is off until it asks. In memory only, deliberately: the
+   day it gets switched on, a reload is all it takes to get the button back,
+   and a value in localStorage would outlive the fix. */
+let _googleOff = false;
+
 // Google OAuth: redirects to Google and back to this page, where
 // detectSessionInUrl finishes the sign-in and onAuthStateChange updates the UI.
 async function signInWithGoogle() {
-  const msg = (t) => { const el = $("account-msg"); if (el) { el.textContent = t; el.className = "text-xs text-slate-400"; } };
+  const msg = (t, bad) => { const el = $("account-msg");
+    if (el) { el.textContent = t; el.className = "text-xs " + (bad ? "text-red-300" : "text-slate-400"); } };
   const { error } = await S.sb.auth.signInWithOAuth({
     provider: "google",
     options: { redirectTo: location.origin + location.pathname },   // must be allowlisted in Supabase
   });
-  if (error) msg(/provider is not enabled/i.test(error.message)
-    ? "Google sign-in isn't enabled on the project yet (enable it in Supabase → Authentication → Providers)."
-    : error.message);
-  // On success the page navigates to Google; nothing more to do here.
+  if (!error) return;                 // success navigates to Google
+  /* Not the user's problem and not the user's fault, so it is not addressed to
+     them as a failure: it says what to do instead, and the dead button goes.
+     The admin-facing half of this belongs in the console, where the person who
+     can actually fix it will look. */
+  if (/provider is not enabled|unsupported provider/i.test(error.message)) {
+    console.warn("Google sign-in is off for this Supabase project — enable it "
+      + "under Authentication → Providers, and add this origin to the allowed "
+      + "redirect URLs: " + location.origin + location.pathname);
+    _googleOff = true;
+    renderAccount();
+    msg("Google sign-in isn't switched on for this app yet — use your email and a password below.");
+    return;
+  }
+  msg(error.message, true);
 }
 
 async function signOutAccount() {

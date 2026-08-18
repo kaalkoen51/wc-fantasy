@@ -1997,6 +1997,54 @@ test("the pre-draft scouting page keeps its position and club filters",
       .toBe("stats-listctl");
   });
 
+test("a sign-in button that cannot work does not stay on the page",
+  async ({ page }) => {
+    /* Google OAuth is a per-project switch in Supabase, and nothing in the
+       page can know it is off until it asks. What it must not do is leave a
+       big white "Continue with Google" sitting there answering with a grey
+       line -- on the night a league opens that is the first thing a room full
+       of new managers touches. */
+    await openLeague(page, { managers: 4, played: 3 });
+
+    const out = await page.evaluate(async () => {
+      const vis = (id) => !!document.getElementById(id)?.getClientRects().length;
+      S.authUser = null;
+      showView("home"); renderAccount();
+      const before = { button: vis("account-google"), divider: vis("account-or") };
+
+      // Exactly what the project answers when the provider is switched off.
+      S.sb.auth.signInWithOAuth = async () => ({ error: {
+        message: "Unsupported provider: provider is not enabled" } });
+      await signInWithGoogle();
+      const after = { button: vis("account-google"), divider: vis("account-or"),
+                      msg: document.getElementById("account-msg").textContent,
+                      email: vis("account-email"), submit: vis("account-submit") };
+
+      /* Any OTHER failure is the user's to see and act on, and leaves the
+         button alone -- it will work next time. Starting from the offered
+         state, since the flag above is sticky by design. */
+      _googleOff = false; renderAccount();
+      S.sb.auth.signInWithOAuth = async () => ({ error: { message: "Network error" } });
+      await signInWithGoogle();
+      const other = { button: vis("account-google"),
+                      msg: document.getElementById("account-msg").textContent,
+                      red: document.getElementById("account-msg").className };
+      return { before, after, other };
+    });
+
+    expect(out.before.button, "the button is offered until proven otherwise").toBe(true);
+    expect(out.after.button, "and withdrawn once the project says it is off").toBe(false);
+    expect(out.after.divider, "along with the divider that introduced it").toBe(false);
+    expect(out.after.msg, "with a way forward rather than an error code")
+      .toContain("use your email");
+    expect(out.after.email, "which is still right there").toBe(true);
+    expect(out.after.submit).toBe(true);
+
+    expect(out.other.button, "an ordinary failure leaves the button alone").toBe(true);
+    expect(out.other.msg, "and is reported as itself").toBe("Network error");
+    expect(out.other.red, "as a failure").toContain("text-red-300");
+  });
+
 test("a desktop is not a very wide phone", async ({ page }) => {
   /* Three things that were only wrong on a big screen, which is the screen a
      draft is actually run on. Measured rather than eyeballed, because a
