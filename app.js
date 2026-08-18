@@ -342,8 +342,27 @@ const statsScope = () => {
    A league should look like a league, not a list of names. Every manager gets a
    stable accent colour derived from their id, so identity works immediately
    with no setup and no migration; picking a crest or colour just overrides it. */
+/* Manager accents. Twenty, because eight ran out in a ten-manager league and
+   the ninth manager was handed a colour somebody already had.
+
+   The first eight are the originals, unchanged: a manager who picked one has
+   that hex stored on their row, and dropping it from the list would leave them
+   on a colour the picker no longer offers -- no ring, no way back to it.
+
+   The twelve after them were chosen by search rather than by eye: candidates
+   on an OKLab lightness/chroma grid, each new colour the one furthest (in
+   OKLab) from every colour already in the list. The result is that NO pair in
+   the twenty is closer than the closest pair that was already there -- the
+   orange and the coral, which sit about 7.4 apart on that scale. Adding
+   options has therefore not made any two managers harder to tell apart, which
+   is the only promise worth making about a palette this size: twenty colours
+   cannot all be obvious at a glance, but no two of these are closer than two
+   the app already shipped. test_logic.js measures it. */
 const MGR_COLORS = ["#3987e5", "#d95926", "#199e70", "#c98500",
-                    "#a855f7", "#e5646a", "#14b8a6", "#f472b6"];
+                    "#a855f7", "#e5646a", "#14b8a6", "#f472b6",
+                    "#61db1f", "#a996fb", "#d0bd1c", "#34bffe",
+                    "#2ab301", "#d940c7", "#fc915f", "#87960b",
+                    "#df71ff", "#35da9b", "#f22e86", "#b36cc1"];
 /* The twelve that fit on one row of the picker, and the rest behind "More".
    Two dozen more without making the first choice a scrolling chore. */
 const CRESTS = ["⚽", "🦁", "🐉", "🦅", "🐺", "🦈", "🐍", "🐻", "🔥", "⚡", "👑", "🌋"];
@@ -7953,8 +7972,10 @@ function renderCrestPicker() {
     </div>
     <div>
       <div class="eyebrow mb-1.5">Colour</div>
-      <div class="grid grid-cols-8 gap-1.5">
-        ${MGR_COLORS.map((c) => `<button data-color="${c}" class="rounded-lg h-9 border-2 ${
+      <!-- Ten to a row: twenty at eight-across leaves a ragged last row of
+           four, and the swatches are square enough to take the smaller cell. -->
+      <div class="grid grid-cols-10 gap-1.5">
+        ${MGR_COLORS.map((c) => `<button data-color="${c}" aria-label="Use this colour" class="rounded-lg h-8 border-2 ${
           managerColor(me) === c ? "border-white" : "border-transparent"}" style="background:${c}"></button>`).join("")}
       </div>
       <button data-color="" class="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-800 py-1.5 text-xs text-slate-400">Use my default colour</button>
