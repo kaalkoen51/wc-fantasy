@@ -1887,6 +1887,54 @@ test("the season chart shows league position by default, and points on request",
     .toBeUndefined();
 });
 
+test("a player who leaves the league is flagged, not dropped and not hidden", async ({ page }) => {
+  /* A January transfer out of the competition. He stays in the squad -- nothing
+     drops a pick for you -- but his chip was cheerfully showing his old club's
+     next fixture, so he looked like a player who is merely out of the XI this
+     week rather than one who cannot score again. */
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const out = await page.evaluate(() => {
+    const mine = S.picks.filter((p) => p.manager_id === S.managers[0].id && !p.is_sub
+                                       && p.slot !== "TEAM");
+    const goneId = mine[0].player_id, stayId = mine[1].player_id;
+    const before = { badge: availBadges(goneId), roster: S.picks.length };
+
+    // The pool, re-pulled after he has left: he is simply not in it any more.
+    S.players = S.players.filter((p) => p.player_id !== goneId);
+    S.playerById = Object.fromEntries(S.players.map((p) => [p.player_id, p]));
+    bustScores();
+    setBoardTab("home"); renderBoard();
+
+    const html = document.getElementById("board-home").innerHTML;
+    return {
+      before,
+      badge: availBadges(goneId),
+      stillThere: availBadges(stayId),
+      roster: S.picks.filter((p) => p.player_id === goneId).length,
+      pitchSaysLeft: html.includes("✈ left"),
+      claimable: poolEntries ? S.players.some((p) => p.player_id === goneId) : null,
+      text: availText(goneId),
+    };
+  });
+
+  expect(out.before.badge, "nothing was flagged while he was still in the pool")
+    .not.toContain("LEFT");
+  expect(out.badge, "once he is gone from the pool, every list says so").toContain("LEFT");
+  expect(out.stillThere, "and his team-mates are left alone").not.toContain("LEFT");
+  expect(out.text, "including the trade builder's plain-text labels")
+    .toContain("left the competition");
+
+  expect(out.roster, "he is NOT dropped for you — that is your call, in a window")
+    .toBe(1);
+  expect(out.claimable, "and nobody else can claim him either").toBe(false);
+
+  /* The chip has no room for a badge and does not need one: it was already
+     showing a line that was false. */
+  expect(out.pitchSaysLeft, "the pitch stops showing his old club's next game")
+    .toBe(true);
+});
+
 test("a desktop is not a very wide phone", async ({ page }) => {
   /* Three things that were only wrong on a big screen, which is the screen a
      draft is actually run on. Measured rather than eyeballed, because a

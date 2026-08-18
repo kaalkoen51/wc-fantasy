@@ -10171,10 +10171,39 @@ function teamPlayingNow(team) {
     && Date.parse(f.kickoff_utc) <= now && Date.parse(f.kickoff_utc) > now - 2.5 * 3600e3);
 }
 
-// ⚡ playing now · 🚫 team knocked out · 🟥 suspended next · 🤕 out · ⚠️ doubtful
+/* Drafted, and no longer in the competition at all -- sold abroad, released,
+   or simply gone from every squad in it.
+
+   He stays in your squad: nothing here drops a pick for you, and he is not
+   claimable by anyone else because the pool is what the waiver list reads. He
+   also stays a permanent no-show, so the bench covers him every round, which
+   is the right outcome and needs no code.
+
+   What he must NOT do is look like someone who is merely out of the XI this
+   week. His pick still carries his old club, so his chip cheerfully shows that
+   club's next fixture -- "v ARS" for a player who is in Saudi Arabia -- and on
+   a 38-game season somebody holds a dead pick for a month without noticing.
+
+   Guarded on the pool being loaded at all: before it arrives every pick looks
+   missing, and a squad of eleven LEFT badges is a worse lie than the one this
+   is fixing. Worth knowing that a truncated pool pull would flag people
+   wrongly too -- the badge is informational, so the cost is a wrong badge
+   rather than a wrong score, but it is why this says LEFT and not something
+   that sounds like a ruling. */
+const leftCompetition = (pid) =>
+  !!pid && !String(pid).startsWith("team:")
+  && (S.players?.length || 0) > 0 && !S.playerById?.[pid];
+
+// ⚡ playing now · 🚫 team knocked out · ✈ left the competition · 🟥 suspended
+// next · 🤕 out · ⚠️ doubtful
 function availBadges(pid) {
   let out = "";
   const team = S.playerById?.[pid]?.team;
+  if (leftCompetition(pid)) {
+    out += `<span title="No longer in this competition — this pick cannot score`
+      + ` again. You can trade or replace them when the window opens."`
+      + ` class="rounded bg-red-500/25 text-red-300 px-1 text-xs font-bold align-middle">✈ LEFT</span>`;
+  }
   if (team && teamPlayingNow(team)) out += `<span title="playing now" class="text-emerald-400">⚡</span>`;
   if (team && isEliminated(team)) out += `<span title="team knocked out">🚫</span>`;
   const susp = suspendedNext(pid);
@@ -10189,6 +10218,7 @@ function availBadges(pid) {
 function availText(pid) {
   const bits = [];
   const team = S.playerById?.[pid]?.team;
+  if (leftCompetition(pid)) bits.push("✈ left the competition");
   if (team && isEliminated(team)) bits.push("🚫 KO");
   if (suspendedNext(pid)) bits.push("🟥 susp");
   const inj = injuryOf(pid);
@@ -11555,6 +11585,11 @@ function pitchRowsHtml(byPos, opts = {}) {
       <span class="pp-name text-white/60">${esc(e.name || "")}</span>
     </div>`;
     const tap = opts.tapAttr ? `${opts.tapAttr}="${esc(e.id)}"` : "";
+    /* The chip has no room for a badge, and does not need one: it is already
+       showing a line about this player that is FALSE. His pick still carries
+       his old club, so "v ARS" is that club's next game, which he will not be
+       playing in. Replace the lie rather than annotating it. */
+    const gone = leftCompetition(e.player_id);
     // The button itself is a transparent finger-sized box (the mobile rule in
     // index.html floors every button at 38px); only the inner span is painted,
     // so the badge sits on the corner of the avatar instead of covering the face.
@@ -11580,7 +11615,8 @@ function pitchRowsHtml(byPos, opts = {}) {
         </span>
         ${pips && e.position ? `<span class="pp-pos pos-${e.position}">${esc(e.position)}</span>` : ""}
         <span class="pp-name${nameFit(shortName(e.name))}">${esc(shortName(e.name))}</span>
-        ${e.opp ? `<span class="pp-opp">${esc(e.opp)}</span>` : ""}
+        ${gone ? `<span class="pp-opp text-red-300" title="No longer in this competition — this pick cannot score again.">✈ left</span>`
+               : e.opp ? `<span class="pp-opp">${esc(e.opp)}</span>` : ""}
       </button>
     </div>`;
   };
