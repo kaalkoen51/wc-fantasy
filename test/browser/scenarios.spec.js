@@ -2104,6 +2104,58 @@ test("a player starred mid-draft can be moved up the queue", async ({ page }) =>
   expect(out.expanded, "and the whole queue is one tap away").toBe(14);
 });
 
+test("running a league and running the app are different jobs", async ({ page }) => {
+  /* The admin panel had them in one pile. Loading a competition, pulling
+     stats, entering them by hand and scheduling the daily job all write data
+     SHARED by every league on that competition -- one league's admin re-pulling
+     a pool lands in everybody's season -- and all of them need an API key
+     nobody else has. */
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const out = await page.evaluate(() => {
+    const vis = (sel) => !!document.querySelector(sel)?.getClientRects().length;
+    const look = () => ({
+      // App-owner work.
+      loadComp: vis("#adm-comp-load"), pullNow: vis("#adm-pull-now"),
+      schedules: vis("#adm-sec-auto"), manual: vis("#adm-sec-manual"),
+      /* The league admin's own. Probed on controls that are always drawn:
+         the trading BUTTON hides itself when windows are automatic, which is
+         a different thing entirely and made this test ask the wrong question. */
+      season: vis("#adm-sec-season"), scoring: vis("#adm-config"),
+      positions: vis("#adm-pos-card"), pool: vis("#adm-pool-card"),
+      lineups: vis("#adm-snapshot"),
+    });
+    S.league.current_pick = 0;              // so the pre-draft cards are offered
+    showView("admin");
+
+    S.authUser = { id: S.league.owner_id, email: "someone.else@example.com" };
+    renderAdmin();
+    const leagueAdmin = look();
+
+    S.authUser = { id: S.league.owner_id, email: "koen.johan.c@gmail.com" };
+    renderAdmin();
+    const appOwner = look();
+    return { leagueAdmin, appOwner, admin: isAdmin() };
+  });
+
+  expect(out.admin, "both of these are the league's admin").toBe(true);
+
+  expect(out.leagueAdmin.loadComp, "a league admin cannot re-pull a shared pool").toBe(false);
+  expect(out.leagueAdmin.pullNow, "nor pull shared stats").toBe(false);
+  expect(out.leagueAdmin.schedules, "nor schedule the daily job").toBe(false);
+  expect(out.leagueAdmin.manual, "nor hand-write a scoreline into it").toBe(false);
+
+  expect(out.leagueAdmin.season, "but running the season is theirs").toBe(true);
+  expect(out.leagueAdmin.lineups, "including the line-up locks").toBe(true);
+  expect(out.leagueAdmin.scoring, "and the scoring").toBe(true);
+  expect(out.leagueAdmin.positions, "and their own position corrections").toBe(true);
+  expect(out.leagueAdmin.pool, "and their own pool edits").toBe(true);
+
+  for (const k of Object.keys(out.appOwner)) {
+    expect(out.appOwner[k], `the app owner still sees ${k}`).toBe(true);
+  }
+});
+
 test("a desktop is not a very wide phone", async ({ page }) => {
   /* Three things that were only wrong on a big screen, which is the screen a
      draft is actually run on. Measured rather than eyeballed, because a

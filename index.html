@@ -407,8 +407,13 @@
         <div class="text-xs text-slate-400" id="join-league-meta"></div>
       </div>
       <div id="join-new-wrap">
+        <!-- Not a real person's name. This read "Koen" -- the author's -- to
+             every stranger who ever joined a league, which is a strange first
+             thing to be shown by an app you have just been invited to. -->
         <label class="block text-sm text-slate-400">Your manager name
-          <input id="join-name" placeholder="Koen" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100"></label>
+          <input id="join-name" maxlength="24" placeholder="What the league should call you"
+                 class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100"></label>
+        <p class="mt-1 text-xs text-slate-500">Shown on the draft board, the table and every trade — pick something your league will recognise.</p>
         <button id="join-go" class="mt-3 w-full btn-primary rounded-lg py-2.5 font-semibold">Join as new manager</button>
       </div>
       <div id="join-reclaim-wrap" class="hidden">
@@ -455,7 +460,7 @@
     <button id="lobby-browse" class="hidden w-full bg-slate-800 hover:bg-slate-700 border border-wcgold/50 text-wcgold rounded-xl py-2.5 font-semibold">⭐ Browse players &amp; build your shortlist</button>
     <div id="lobby-join" class="hidden rounded-xl border border-wcgold/60 bg-wcred/10 p-4 space-y-2">
       <div class="text-sm">You're watching as a spectator — join as a manager to draft a team:</div>
-      <input id="lobby-join-name" placeholder="Your manager name" class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2">
+      <input id="lobby-join-name" maxlength="24" placeholder="What the league should call you" class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2">
       <button id="lobby-join-go" class="w-full btn-primary rounded-lg py-2 font-semibold">Join</button>
     </div>
     <!-- Admin block reads in the order you actually do things: make the lobby
@@ -656,7 +661,7 @@
         </div>
         <button id="adm-snapshot" class="w-full bg-slate-800 border border-slate-700 rounded-lg py-1.5 text-xs font-semibold">Re-lock current lineups now (fallback)</button>
       </div>
-<div class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
+<div data-owner-only class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">Pull stats now</h3>
         <p class="text-xs text-slate-400">Fetches completed matches for the chosen date straight
           from API-Football and writes everyone's stats — same as the 06:00 automated pull, on
@@ -674,7 +679,7 @@
           <span class="font-semibold text-sm">⚽ League setup</span>
           <span class="text-xs text-slate-400">competition, scoring, draft</span></summary>
         <div class="px-2 pb-2 space-y-3">
-<div class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
+<div data-owner-only class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">Competition &amp; players</h3>
         <p class="text-xs text-slate-400">Pick a competition to draft from. Its teams, squads and
           fixtures are pulled from API-Football <b>once and shared</b> by every league on the same
@@ -769,7 +774,7 @@
       </div>
         </div>
       </details>
-      <details id="adm-sec-auto" class="rounded-xl border border-slate-700 bg-slate-900/40">
+      <details id="adm-sec-auto" data-owner-only class="rounded-xl border border-slate-700 bg-slate-900/40">
         <summary class="px-4 py-3 cursor-pointer select-none flex items-baseline justify-between gap-2">
           <span class="font-semibold text-sm">🤖 Automation</span>
           <span class="text-xs text-slate-400">scheduled stat pulls</span></summary>
@@ -857,7 +862,7 @@
         <div id="adm-waiver-status" class="text-xs text-slate-400"></div>
         <button id="adm-waiver-run" class="w-full bg-slate-800 border border-wcgold/60 text-wcgold rounded-lg py-2 text-sm font-semibold">Resolve waiting claims now</button>
       </div>
-      <details id="adm-sec-manual" class="rounded-xl border border-slate-700 bg-slate-900/40">
+      <details id="adm-sec-manual" data-owner-only class="rounded-xl border border-slate-700 bg-slate-900/40">
         <summary class="px-4 py-3 cursor-pointer select-none flex items-baseline justify-between gap-2">
           <span class="font-semibold text-sm">✍️ Manual stats entry</span>
           <span class="text-xs text-slate-400">only if a pull misses something</span></summary>

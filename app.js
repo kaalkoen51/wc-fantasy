@@ -7013,34 +7013,83 @@ function boardRulesNote() {
   return bits.join(" ");
 }
 
+/* The notes that the scoring TABLE cannot carry, and only the ones that apply.
+
+   This used to open by reprinting every rule as a flat "GK 8 / DEF 5 / MID 5 /
+   FWD 4" string -- directly under the per-position matrix that exists because
+   that string is unreadable. Then it explained national team bonuses to
+   leagues with no team pick, redrafts and champion calls to a league season
+   that has neither, and a Player-of-the-Match proxy to leagues not scoring it.
+   Four paragraphs of small print, of which one was ever true.
+
+   So: no table, and each note is gated on the thing it describes actually
+   being in this league. A rule that does not apply is not "small print", it is
+   a wrong answer to a question somebody asked. */
 function scoringHtml() {
-  const rows = scoringRules().map((r) => [STAT_LABEL[r.stat] || r.stat, ruleValueText(r)])
-    .concat([["Champion pick (final phase only)", `+${finalPickBonus()}`]]);
-  const stages = stageOrder().slice(1).map((s) =>
-    `${s.toUpperCase()} +${stageBonuses()[s]}`).join(" · ");
-  return `<div class="space-y-2 text-sm text-slate-300">
-    <table class="w-full text-xs">
-      <tbody>${rows.map(([k, v]) => `<tr class="border-b border-slate-800">
-        <td class="py-1.5 text-slate-400">${k}</td>
-        <td class="py-1.5 text-right font-mono">${v}</td>
-      </tr>`).join("")}</tbody>
-    </table>
-    <p class="text-xs"><b>National TEAM pick:</b> cumulative bonus per stage reached —
-      ${stages} (a champion banks ${calcTeamPoints("winner")} in total).</p>
-    <p class="text-xs"><b>Subs:</b> a sub only scores in a round where a starter in their position
-      played that round but didn't feature (so the sub covers a no-show starter, even if they
-      play on different days). Players who don't appear score 0.</p>
-    <p class="text-xs"><b>Top-rated player:</b> awarded automatically to the
-      single highest-rated player in each match (by API-Football's match rating, and only if it's
-      ≥ 7.5). It's a data-driven "best performer" bonus — a close proxy for, but not always the
-      same as, the official Player of the Match award.</p>
-    <p class="text-xs"><b>Redrafts:</b> as the tournament field narrows the admin runs redrafts
-      with smaller squads — managers may keep up to an admin-set number of players (keepers fill
-      squad slots and each costs your earliest draft round), TEAM picks always carry, the rest
-      go back in the pool, and the order is reverse standings (last place picks first). Earlier
-      points stay banked. For the final there are no squads: surviving managers just call the
-      champion for +${finalPickBonus()}.</p>
-  </div>`;
+  const notes = [];
+  const rules = scoringRules();
+  const cup = isCupCompetition();
+
+  // Only if a club/country pick is part of the squad at all.
+  if ((posQuota().TEAM || 0) > 0 && cup) {
+    const stages = stageOrder().slice(1).map((st) =>
+      `${st.toUpperCase()} +${stageBonuses()[st]}`).join(" · ");
+    notes.push([`${sportOf() === DEFAULT_SPORT ? "National TEAM" : "TEAM"} pick`,
+      `a cumulative bonus for every stage your team reaches — ${stages}. A champion `
+      + `banks ${calcTeamPoints("winner")} in total.`]);
+  } else if ((posQuota().TEAM || 0) > 0) {
+    /* A club pick only ever scores through stage bonuses, and stages only
+       exist in a knockout. Saying "it scores the stage bonuses" to a league
+       season would be describing a slot that cannot score at all. */
+    notes.push(["Your club pick", "scores through knockout stage bonuses, so in a "
+      + "league season it scores nothing unless the admin sets stages up."]);
+  }
+
+  // Only if there is a bench to substitute from.
+  if (picksPerManager() > (playGroups().reduce((a, g) => a + (starterQuota()[g] || 0), 0))) {
+    notes.push(["Subs", "a sub scores in a round only when a starter in their position "
+      + "didn't feature but their club played — so the bench covers a no-show, even if the "
+      + "two played on different days. Anyone who doesn't appear scores 0."]);
+  }
+
+  // Only if this league actually scores it.
+  if (rules.some((r) => r.stat === "motm")) {
+    notes.push([STAT_LABEL.motm || "Man of the match",
+      sportOf() === DEFAULT_SPORT
+        ? "awarded automatically to the highest-rated player in each match, and only at 7.5 "
+          + "or better. It follows the data rather than the official award, so the two can differ."
+        : "taken from the feed's own man-of-the-match, one per match."]);
+  }
+
+  // Knockout machinery. A league season never has a team knocked out, so none
+  // of this is ever true there.
+  if (cup) {
+    notes.push(["Redrafts", "as the field narrows the admin runs a smaller redraft. You keep "
+      + "up to the number they set (each keeper costs your earliest round), your TEAM pick "
+      + "always carries, and the rest go back in the pool. Order is reverse standings — last "
+      + "place picks first — and points already banked stay banked."]);
+    notes.push(["The final", `no squads: whoever is left calls the champion for `
+      + `+${finalPickBonus()}.`]);
+  }
+
+  if (!notes.length) return "";
+  return `<div class="space-y-2">${notes.map(([k, v]) =>
+    `<p class="text-xs text-slate-300 leading-snug"><b class="text-slate-200">${k}:</b> ${v}</p>`
+  ).join("")}</div>`;
+}
+
+/* The small-print fold, or nothing at all.
+
+   Nothing at all matters: an empty "Bonuses and the small print" that opens on
+   blank space is worse than no fold, and every note inside is now conditional,
+   so empty is a state that really happens. */
+function smallPrintHtml(cls) {
+  const body = scoringHtml();
+  if (!body) return "";
+  return `<details class="${cls}">
+      <summary class="px-3 py-2 cursor-pointer select-none text-xs uppercase tracking-wide text-slate-400">The rest of the rules</summary>
+      <div class="px-3 pb-3">${body}</div>
+    </details>`;
 }
 
 /* Scoring as a per-position matrix. What a striker earns for a goal versus
@@ -7096,10 +7145,7 @@ function openScoringSheet() {
       <summary class="px-3 py-2 cursor-pointer select-none text-xs uppercase tracking-wide text-slate-400">Squad, subs and the draft itself</summary>
       <div class="px-3 pb-3 space-y-2 text-xs text-slate-300">${draftRulesHtml()}</div>
     </details>
-    <details class="rounded-xl border border-slate-700 bg-slate-900/60">
-      <summary class="px-3 py-2 cursor-pointer select-none text-xs uppercase tracking-wide text-slate-400">Bonuses and the small print</summary>
-      <div class="px-3 pb-3">${scoringHtml()}</div>
-    </details>`;
+    ${smallPrintHtml("rounded-xl border border-slate-700 bg-slate-900/60")}`;
   $("recap-sheet").classList.remove("hidden");
   lockScroll(true);
 }
@@ -7204,10 +7250,7 @@ function lobbyRulesHtml() {
       <div class="eyebrow mb-1.5">Points by position</div>
       <div class="rounded-lg bg-slate-800/50 p-2.5 overflow-x-auto">${scoringByPositionHtml()}</div>
     </div>
-    <details class="mt-2 rounded-lg bg-slate-800/50">
-      <summary class="px-3 py-2 cursor-pointer select-none text-xs uppercase tracking-wide text-slate-400">Bonuses and the small print</summary>
-      <div class="px-3 pb-3">${scoringHtml()}</div>
-    </details>`;
+    ${smallPrintHtml("mt-2 rounded-lg bg-slate-800/50")}`;
 }
 
 // Keeper-window and final-phase prompts shown at the top of the Home tab.
@@ -15511,6 +15554,16 @@ function renderAdmin() {
   $("admin-gate").classList.toggle("hidden", ok);
   $("admin-panel").classList.toggle("hidden", !ok);
   if (!ok) return;
+  /* Being a league's admin is not the same job as running the app, and this
+     panel had them in one pile. Loading a competition, pulling stats, entering
+     them by hand and scheduling the daily job all write to data SHARED by
+     every league on that competition -- one league's admin re-pulling a pool
+     or hand-entering a scoreline lands in everybody's season. They also need
+     an API-Football key, which nobody else has.
+     A league admin keeps everything that is theirs: the window, the line-up
+     locks, scoring, positions, the pool, waivers, the draft and the managers. */
+  document.querySelectorAll("[data-owner-only]").forEach((el) =>
+    el.classList.toggle("hidden", !isAppOwner()));
   // Stages and redrafts are knockout machinery: a league season never has a
   // team "out", so the whole section is meaningless there.
   $("adm-sec-ko")?.classList.toggle("hidden", !isCupCompetition());
