@@ -2045,6 +2045,65 @@ test("a sign-in button that cannot work does not stay on the page",
     expect(out.other.red, "as a failure").toContain("text-red-300");
   });
 
+test("a player starred mid-draft can be moved up the queue", async ({ page }) => {
+  /* The queue draws the top ten of your shortlist. A name starred during the
+     draft joins at the BOTTOM, so the one player you had just decided you
+     wanted was the one player you could neither see nor move -- and the ▲ that
+     would fix it was inside the row that was not drawn. */
+  await openLeague(page, { managers: 4, predraft: true });
+
+  const out = await page.evaluate(async () => {
+    const me = myManager();
+    const pool = S.players.filter((p) => p.position === "MID").slice(0, 14);
+    me.shortlist = pool.slice(0, 13).map((p) => p.player_id);
+    S.league.current_pick = 1;
+    const late = pool[13].player_id;
+
+    renderDraftQueue(me, false);
+    const before = {
+      rows: document.querySelectorAll("#draft-queue [data-qrow]").length,
+      hasLate: !!document.querySelector(`[data-qrow="${late}"]`),
+      moreBtn: !!document.getElementById("queue-all"),
+    };
+
+    toggleShortlist(late);                    // starred mid-draft
+    renderDraftQueue(myManager(), false);
+    const row = document.querySelector(`[data-qrow="${late}"]`);
+    const after = {
+      hasLate: !!row,
+      isNew: (row?.textContent || "").includes("NEW"),
+      rank: row?.querySelector("span")?.textContent?.trim(),
+      canTop: !!row?.querySelector("[data-qtop]"),
+    };
+
+    row.querySelector("[data-qtop]").click();
+    await new Promise((r) => setTimeout(r, 30));
+    const promoted = { first: myManager().shortlist[0], len: myManager().shortlist.length };
+
+    // And the cap is never the reason something is unreachable.
+    document.getElementById("queue-all")?.click();
+    const expanded = document.querySelectorAll("#draft-queue [data-qrow]").length;
+    return { before, after, promoted, expanded, late };
+  });
+
+  expect(out.before.rows, "the queue is capped, which is why the cap needs a way out")
+    .toBe(10);
+  expect(out.before.moreBtn, "and says there is more").toBe(true);
+
+  expect(out.after.hasLate, "a name starred mid-draft is pulled into view").toBe(true);
+  expect(out.after.isNew, "and marked, so it is obvious why it is there").toBe(true);
+  expect(out.after.rank, "keeping its real place in the queue, not the window's")
+    .toBe("14");
+  expect(out.after.canTop, "with one tap to promote it").toBe(true);
+
+  // Against the id itself, not against a second read of the same value: the
+  // first version of this line compared the result to itself and proved nothing.
+  expect(out.promoted.first, "which puts it first").toBe(out.late);
+  expect(out.promoted.len, "and loses nobody on the way").toBe(14);
+
+  expect(out.expanded, "and the whole queue is one tap away").toBe(14);
+});
+
 test("a desktop is not a very wide phone", async ({ page }) => {
   /* Three things that were only wrong on a big screen, which is the screen a
      draft is actually run on. Measured rather than eyeballed, because a

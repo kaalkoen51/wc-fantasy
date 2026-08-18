@@ -351,6 +351,10 @@ const CRESTS_MORE = [
   "🐅", "🐆", "🦊", "🦌", "🐗", "🦏", "🦣", "🐘", "🦧", "🦬", "🐴", "🦄",
   "🦉", "🦇", "🐙", "🦑", "🦂", "🕷", "🐝", "🦋", "🌪", "☄️", "💎", "🎯",
   "🚀", "🛡", "⚔️", "🏹", "🎸", "🍀", "🌊", "❄️", "🌟", "💀", "🤖", "👽",
+  // The pub half. A draft league is mostly an excuse to have one.
+  "🍺", "🍻", "🍷", "🥃", "🍹", "☕", "🍕", "🌮", "🍔", "🍩", "🌶️", "🧀",
+  // Kit, pitch and the things that end up on a table beside them.
+  "🏆", "🥅", "🧤", "👟", "🚩", "📣", "🥁", "🎺", "🎲", "🃏", "🧭", "⛵",
 ];
 
 function managerColor(m) {
@@ -3510,10 +3514,29 @@ function moveShortlist(pid, dir) {
   setShortlist(cur);
 }
 
+// Straight to the front. The move you actually want mid-draft is "him next",
+// and ▲ twenty-one times is not that move.
+function moveShortlistTop(pid) {
+  const cur = myShortlist();
+  if (!cur.includes(pid)) return;
+  setShortlist([pid, ...cur.filter((x) => x !== pid)]);
+}
+
+/* Starred WHILE a draft is running. Kept because the queue shows a window on
+   the shortlist rather than all of it, and a name added mid-draft joins at the
+   bottom -- so the one player you just decided you wanted was the one player
+   you could not see or move. In memory: a refresh losing a NEW badge costs
+   nothing, and the order it is marking is on the server anyway. */
+const _queueNew = new Set();
+
 function toggleShortlist(pid) {
   const cur = myShortlist();
-  const next = cur.includes(pid) ? cur.filter((x) => x !== pid) : [...cur, pid];
-  return setShortlist(next);
+  const adding = !cur.includes(pid);
+  const next = adding ? [...cur, pid] : cur.filter((x) => x !== pid);
+  const ok = setShortlist(next);
+  if (ok && adding && S.league?.current_pick) _queueNew.add(pid);
+  if (!adding) _queueNew.delete(pid);
+  return ok;
 }
 
 /* How far into the draft a shortlist of `count` names actually covers you.
@@ -4436,6 +4459,32 @@ function renderPredraftShortlist() {
      takenBy     : { playerId: { pick_number, manager_id } }
      myLastPickNo: your most recent pick number (0 if none yet)
      eligibleIds : Set of ids that still fit an open position          */
+/* Which of the queue's rows to draw.
+
+   The list is capped, because forty names inside the draft page is a wall --
+   but a cap that hides a row also hides the controls that move it, and that is
+   what made a mid-draft star unreachable. So the window is never the reason a
+   player cannot be acted on:
+
+     - the top `cap` rows, as before;
+     - PLUS anything starred since the draft started, wherever it landed, so
+       the name you just added is on screen without hunting for it;
+     - and a count of whatever is still not shown, which the caller offers to
+       expand.
+
+   Pure, because the interesting part is the rules and not the markup. */
+function queueWindow(rows, { cap = 10, newIds, showAll } = {}) {
+  const isNew = (r) => !!newIds && newIds.has(r.pid);
+  if (showAll) return { shown: rows.map((r) => ({ ...r, isNew: isNew(r) })), hidden: 0 };
+  const shown = [], rest = [];
+  for (const r of rows) (shown.length < cap ? shown : rest).push(r);
+  const pulled = rest.filter(isNew);
+  return {
+    shown: [...shown, ...pulled].map((r) => ({ ...r, isNew: isNew(r) })),
+    hidden: rest.length - pulled.length,
+  };
+}
+
 function queuePlan(shortlist, takenBy, myLastPickNo, eligibleIds) {
   const rows = [];
   let hiddenNoFit = 0;
@@ -4742,7 +4791,12 @@ function renderDraftQueue(me, myTurn) {
     : `<div class="text-xs text-slate-400">No available player fits your open slots.</div>`;
 
   const movable = rows.filter((r) => !r.gone).length;
-  const list = rows.slice(0, 10).map((r, n) => {
+  const { shown, hidden } = queueWindow(rows, { newIds: _queueNew, showAll: S._queueAll });
+  // Its place in the QUEUE, not in this window: a name pulled up from the
+  // bottom has to keep its number, or expanding the list renumbers everything.
+  const rank = new Map(rows.map((r, i) => [r.pid, i]));
+  const list = shown.map((r) => {
+    const n = rank.get(r.pid);
     const e = entryForId(r.pid);
     if (!e) return "";
     if (r.gone) return `<li class="flex items-center gap-2 py-1 opacity-45">
@@ -4750,14 +4804,18 @@ function renderDraftQueue(me, myTurn) {
         <span class="min-w-0 flex-1 truncate text-sm line-through">${esc(e.name)}</span>
         <span class="shrink-0 text-xs text-slate-400">${esc(S.managers.find((m) => m.id === r.byManagerId)?.name ?? "taken")}</span>
       </li>`;
-    const first = n === rows.findIndex((x) => !x.gone);
-    const last  = n === rows.map((x) => !x.gone).lastIndexOf(true);
-    return `<li data-qrow="${esc(r.pid)}" class="flex items-center gap-1.5 py-1 rounded">
+    const avail = rows.filter((x) => !x.gone);
+    const first = r === avail[0];
+    const last  = r === avail[avail.length - 1];
+    return `<li data-qrow="${esc(r.pid)}" class="flex items-center gap-1.5 py-1 rounded${
+      r.isNew ? " bg-wcgold/5" : ""}">
       <span class="w-4 shrink-0 text-xs text-slate-400 font-mono">${n + 1}</span>
       ${avatarHtml(r.pid, e.team, "w-6 h-6")}
-      <span class="min-w-0 flex-1 truncate text-sm">${esc(e.name)}</span>
+      <span class="min-w-0 flex-1 truncate text-sm">${esc(e.name)}${
+        r.isNew ? ' <span class="rounded bg-wcgold/20 text-wcgold px-1 text-[10px] font-bold align-middle">NEW</span>' : ""}</span>
       <span class="shrink-0 text-xs pos-${e.position} rounded px-1.5 py-0.5">${e.position}</span>
       ${myTurn ? `<button data-qpick="${esc(r.pid)}" class="shrink-0 btn-primary rounded-lg px-2.5 text-xs font-bold">Pick</button>` : ""}
+      ${movable > 1 && !first ? `<button data-qtop="${esc(r.pid)}" class="tap shrink-0 text-slate-400 text-xs" title="Move to the top of the queue" aria-label="Move to the top">⤒</button>` : ""}
       ${movable > 1 ? `<span class="nudge-col shrink-0 leading-none">
         <button data-qup="${esc(r.pid)}" class="nudge text-slate-400 ${first ? "opacity-30" : ""}" ${first ? "disabled" : ""} aria-label="Move up">▲</button>
         <button data-qdn="${esc(r.pid)}" class="nudge text-slate-400 ${last ? "opacity-30" : ""}" ${last ? "disabled" : ""} aria-label="Move down">▼</button>
@@ -4777,7 +4835,16 @@ function renderDraftQueue(me, myTurn) {
                 : "Star players on the Players tab to build a queue — auto-pick takes the top one available."}</p>`)}
     ${!collapsed && hiddenNoFit ? `<p class="text-xs text-slate-400">${hiddenNoFit} shortlisted ${
         hiddenNoFit === 1 ? "player doesn't" : "players don't"} fit your remaining slots.</p>` : ""}
-    ${!collapsed && movable > 1 ? '<p class="text-xs text-slate-400 pt-0.5">Hold a row to drag it anywhere in the queue.</p>' : ""}`;
+    ${!collapsed && (hidden || S._queueAll) ? `<button id="queue-all" class="w-full rounded-lg border border-slate-700 bg-slate-800 py-1 text-xs font-semibold text-slate-300">${
+        S._queueAll ? "Show the top 10 only" : `Show all ${rows.length} — ${hidden} more`}</button>` : ""}
+    ${!collapsed && movable > 1 ? '<p class="text-xs text-slate-400 pt-0.5">⤒ sends a name to the top. Hold a row to drag it anywhere.</p>' : ""}`;
+
+  const all = box.querySelector("#queue-all");
+  if (all) all.onclick = () => { S._queueAll = !S._queueAll; renderDraftQueue(me, myTurn); };
+  box.querySelectorAll("[data-qtop]").forEach((b) => b.onclick = () => {
+    moveShortlistTop(b.dataset.qtop);
+    renderDraftQueue(myManager(), myTurn);
+  });
 
   const tog = box.querySelector("#queue-toggle");
   if (tog) tog.onclick = () => {
