@@ -4433,10 +4433,16 @@ function renderPredraftShortlist() {
         <span class="block truncate text-xs text-slate-400">${esc(e.team || "")}</span>
       </span>
       <span class="shrink-0 text-xs pos-${e.position} rounded px-1.5 py-0.5">${e.position}</span>
+      <!-- Same control as the live draft's queue, for the same reason: the
+           move you want on a board is "him first", and ▲ nineteen times is
+           not that move. Hidden on the row that is already first. -->
+      ${ids.length > 1 && i > 0 ? `<button data-sltop="${esc(pid)}" class="tap shrink-0 text-slate-400 text-xs" title="Move to the top of your board" aria-label="Move to the top">⤒</button>` : ""}
       ${ids.length > 1 ? `<span class="nudge-col shrink-0 leading-none">
         <button data-slup="${esc(pid)}" class="nudge text-slate-400 ${i === 0 ? "opacity-30" : ""}" ${i === 0 ? "disabled" : ""} aria-label="Move up">▲</button>
         <button data-sldn="${esc(pid)}" class="nudge text-slate-400 ${i === ids.length - 1 ? "opacity-30" : ""}" ${i === ids.length - 1 ? "disabled" : ""} aria-label="Move down">▼</button>
       </span>` : ""}
+      <!-- Last: removing a name is the irreversible one, so it sits furthest
+           from the two arrows a thumb is nudging with. -->
       <button data-slrm="${esc(pid)}" class="tap shrink-0 text-slate-400 hover:text-wcred" aria-label="Remove">✕</button>
     </li>`;
   }).join("");
@@ -4462,7 +4468,7 @@ function renderPredraftShortlist() {
     ${ids.length ? `<div class="flex items-center gap-1 flex-wrap">${pips}</div>` : ""}
     ${rows ? `<ul class="divide-y divide-slate-800">${rows}</ul>
       <p class="text-xs text-slate-400 pt-1">#1 is who auto-pick takes if your clock runs out.${
-        ids.length > 1 ? " Hold a row to drag it anywhere in the list." : ""}</p>`
+        ids.length > 1 ? " ⤒ sends a name to the top; hold a row to drag it anywhere." : ""}</p>`
            : '<p class="text-xs text-slate-400">Nothing yet — tap the ☆ beside a player below.</p>'}`;
   // Keep the banner's coverage meter honest without re-rendering the board.
   const per = picksPerManager();
@@ -4481,6 +4487,12 @@ function renderPredraftShortlist() {
   };
   box.querySelectorAll("[data-slup]").forEach((b) => b.onclick = () => slide(b.dataset.slup, -1));
   box.querySelectorAll("[data-sldn]").forEach((b) => b.onclick = () => slide(b.dataset.sldn, 1));
+  box.querySelectorAll("[data-sltop]").forEach((b) => b.onclick = () => {
+    moveShortlistTop(b.dataset.sltop);
+    // Animated like the nudges, so a name travelling the length of the board
+    // is something you can follow rather than a list that blinks.
+    animateReorder("predraft-shortlist", "data-slrow", renderPredraftShortlist, b.dataset.sltop);
+  });
   makeReorderable(box, "data-slrow", (order, moved) => {
     setShortlist(applyVisibleOrder(myShortlist(), order));
     animateReorder("predraft-shortlist", "data-slrow", renderPredraftShortlist, moved);

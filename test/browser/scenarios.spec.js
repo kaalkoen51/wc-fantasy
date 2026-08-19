@@ -2045,6 +2045,48 @@ test("a sign-in button that cannot work does not stay on the page",
     expect(out.other.red, "as a failure").toContain("text-red-300");
   });
 
+test("a board can be reordered from the top before the draft, not just nudged",
+  async ({ page }) => {
+    /* The live draft's queue got a "to the top" control; the pre-draft board
+       it is built from had only ▲, one place at a time. Nineteen taps to move
+       a name you have just changed your mind about is not a thing anyone does
+       -- they retype the whole board or leave it wrong. */
+    await openLeague(page, { managers: 4, predraft: true });
+
+    const out = await page.evaluate(async () => {
+      const me = myManager();
+      me.shortlist = S.players.slice(0, 6).map((p) => p.player_id);
+      S.league.current_pick = 0; S._browsing = true;
+      showView("board"); setBoardTab("stats"); renderPredraftShortlist();
+
+      const rows = () => [...document.querySelectorAll("#predraft-shortlist [data-slrow]")]
+        .map((el) => el.dataset.slrow);
+      const before = rows();
+      const first = document.querySelector(`[data-slrow="${before[0]}"]`);
+      const fifth = document.querySelector(`[data-slrow="${before[4]}"]`);
+      const shape = { firstHasTop: !!first.querySelector("[data-sltop]"),
+                      fifthHasTop: !!fifth.querySelector("[data-sltop]"),
+                      removeIsLast: fifth.lastElementChild?.hasAttribute("data-slrm") };
+
+      fifth.querySelector("[data-sltop]").click();
+      await new Promise((r) => setTimeout(r, 60));
+      renderPredraftShortlist();
+      return { before, shape, after: rows(), stored: myManager().shortlist };
+    });
+
+    expect(out.shape.fifthHasTop, "every row but the first offers it").toBe(true);
+    expect(out.shape.firstHasTop, "and the one already first does not").toBe(false);
+    expect(out.shape.removeIsLast,
+      "with removing a name last, away from the arrows a thumb is nudging with").toBe(true);
+
+    expect(out.after[0], "the fifth name goes to the front").toBe(out.before[4]);
+    expect(out.after, "and everyone else keeps their order behind it")
+      .toEqual([out.before[4], out.before[0], out.before[1], out.before[2],
+                out.before[3], out.before[5]]);
+    expect(out.stored, "which is what gets saved, not just what is drawn")
+      .toEqual(out.after);
+  });
+
 test("a player starred mid-draft can be moved up the queue", async ({ page }) => {
   /* The queue draws the top ten of your shortlist. A name starred during the
      draft joins at the BOTTOM, so the one player you had just decided you
