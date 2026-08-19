@@ -2066,6 +2066,11 @@ test("a player starred mid-draft can be moved up the queue", async ({ page }) =>
       moreBtn: !!document.getElementById("queue-all"),
     };
 
+    /* Already a pick into the draft when the star happens. Without this the
+       manager has made none, so "the count at the time" is zero either way and
+       a version that always recorded zero would pass. */
+    S.picks.push({ id: "mine1", league_id: S.league.id, manager_id: me.id,
+                   player_id: "already-mine", pick_number: 998, position: "MID" });
     toggleShortlist(late);                    // starred mid-draft
     renderDraftQueue(myManager(), true);      // your turn, so Pick is drawn
     const row = document.querySelector(`[data-qrow="${late}"]`);
@@ -2089,7 +2094,21 @@ test("a player starred mid-draft can be moved up the queue", async ({ page }) =>
     // And the cap is never the reason something is unreachable.
     document.getElementById("queue-all")?.click();
     const expanded = document.querySelectorAll("#draft-queue [data-qrow]").length;
-    return { before, after, promoted, expanded, late };
+
+    /* The mark expires with your next pick. Otherwise every star you make all
+       draft stays lit and the whole queue is gold by the middle rounds, which
+       tells you nothing. */
+    S.picks.push({ id: "mine", league_id: S.league.id, manager_id: me.id,
+                   player_id: "whoever", pick_number: 999, position: "MID" });
+    document.getElementById("queue-all")?.click();     // back to the window
+    renderDraftQueue(myManager(), true);
+    const afterMyPick = {
+      lit: !!document.querySelector(`[data-qrow="${late}"]`)?.className.includes("bg-wcgold/5"),
+      // ...and it stops being carried into the window on its own, too.
+      inWindow: !!document.querySelector(`[data-qrow="${late}"]`),
+      pruned: _queueNew.size,
+    };
+    return { before, after, promoted, expanded, late, afterMyPick };
   });
 
   expect(out.before.rows, "the queue is capped, which is why the cap needs a way out")
@@ -2112,6 +2131,13 @@ test("a player starred mid-draft can be moved up the queue", async ({ page }) =>
   expect(out.promoted.len, "and loses nobody on the way").toBe(14);
 
   expect(out.expanded, "and the whole queue is one tap away").toBe(14);
+
+  expect(out.afterMyPick.lit, "once you have had your turn it is not news any more")
+    .toBe(false);
+  expect(out.afterMyPick.inWindow,
+    "and it stops being carried into the window on its own — it was promoted to "
+    + "the top, so it is in the window on merit").toBe(true);
+  expect(out.afterMyPick.pruned, "the mark is dropped rather than kept forever").toBe(0);
 });
 
 test("running a league and running the app are different jobs", async ({ page }) => {

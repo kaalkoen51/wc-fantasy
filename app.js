@@ -3541,19 +3541,39 @@ function moveShortlistTop(pid) {
   setShortlist([pid, ...cur.filter((x) => x !== pid)]);
 }
 
-/* Starred WHILE a draft is running. Kept because the queue shows a window on
-   the shortlist rather than all of it, and a name added mid-draft joins at the
-   bottom -- so the one player you just decided you wanted was the one player
-   you could not see or move. In memory: a refresh losing a NEW badge costs
-   nothing, and the order it is marking is on the server anyway. */
-const _queueNew = new Set();
+/* Starred WHILE a draft is running, and how many picks you had made at the
+   time. Kept because the queue shows a window on the shortlist rather than all
+   of it, and a name added mid-draft joins at the bottom -- so the one player
+   you just decided you wanted was the one you could not see or move.
+
+   The COUNT is what stops this eating itself. Marking every mid-draft star and
+   never unmarking would tint the whole queue by the middle rounds, and a
+   signal that is on everywhere is not a signal. A name is news until you have
+   had a turn to do something about it; after your next pick it is just part of
+   your board like everything else.
+
+   In memory, because a refresh losing a highlight costs nothing and the order
+   it is marking is on the server anyway. */
+const _queueNew = new Map();          // pid -> picks I had made when starred
+const myPickCount = () =>
+  (S.picks || []).filter((pk) => pk.manager_id === myManager()?.id).length;
+
+/* Which marks are still fresh. `>=` rather than `===` so a refetch that has
+   not caught up yet -- or a pick rolled back -- errs towards showing the
+   highlight rather than swallowing it. Pure, so the rule is testable without
+   a draft. */
+function freshQueueIds(marks, picksMade) {
+  const out = new Set();
+  for (const [pid, at] of (marks || [])) if (at >= picksMade) out.add(pid);
+  return out;
+}
 
 function toggleShortlist(pid) {
   const cur = myShortlist();
   const adding = !cur.includes(pid);
   const next = adding ? [...cur, pid] : cur.filter((x) => x !== pid);
   const ok = setShortlist(next);
-  if (ok && adding && S.league?.current_pick) _queueNew.add(pid);
+  if (ok && adding && S.league?.current_pick) _queueNew.set(pid, myPickCount());
   if (!adding) _queueNew.delete(pid);
   return ok;
 }
@@ -4810,7 +4830,11 @@ function renderDraftQueue(me, myTurn) {
     : `<div class="text-xs text-slate-400">No available player fits your open slots.</div>`;
 
   const movable = rows.filter((r) => !r.gone).length;
-  const { shown, hidden } = queueWindow(rows, { newIds: _queueNew, showAll: S._queueAll });
+  /* Pruned as it is read: a mark that has gone stale is dead weight, and
+     leaving it in the map would keep it growing for the whole draft. */
+  const fresh = freshQueueIds(_queueNew, myPickCount());
+  for (const pid of [..._queueNew.keys()]) if (!fresh.has(pid)) _queueNew.delete(pid);
+  const { shown, hidden } = queueWindow(rows, { newIds: fresh, showAll: S._queueAll });
   // Its place in the QUEUE, not in this window: a name pulled up from the
   // bottom has to keep its number, or expanding the list renumbers everything.
   const rank = new Map(rows.map((r, i) => [r.pid, i]));
