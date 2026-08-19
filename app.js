@@ -4428,11 +4428,19 @@ function renderPredraftShortlist() {
       <span class="w-5 shrink-0 text-xs font-mono ${
         i === 0 ? "text-wcgold font-bold" : "text-slate-400"}">${i + 1}</span>
       ${avatarHtml(pid, e.team, "w-7 h-7")}
+      <!-- The position rides on the CLUB line rather than taking a column of
+           its own. A row this wide has to carry a rank, a face, two lines of
+           text and four controls; giving the chip its own column cost the name
+           about fifty pixels, and "Bruno Fernan…" over "Manchester Uni…" tells
+           you less than either line would whole. The club is short enough to
+           share. -->
       <span class="min-w-0 flex-1">
         <span class="block truncate text-sm">${esc(e.name)}</span>
-        <span class="block truncate text-xs text-slate-400">${esc(e.team || "")}</span>
+        <span class="flex items-center gap-1.5 text-xs text-slate-400">
+          <span class="truncate">${esc(e.team || "")}</span>
+          <span class="shrink-0 pos-${e.position} rounded px-1.5">${e.position}</span>
+        </span>
       </span>
-      <span class="shrink-0 text-xs pos-${e.position} rounded px-1.5 py-0.5">${e.position}</span>
       <!-- Same control as the live draft's queue, for the same reason: the
            move you want on a board is "him first", and ▲ nineteen times is
            not that move.

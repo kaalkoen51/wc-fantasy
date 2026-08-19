@@ -2064,8 +2064,11 @@ test("a board can be reordered from the top before the draft, not just nudged",
       const before = rows();
       const first = document.querySelector(`[data-slrow="${before[0]}"]`);
       const fifth = document.querySelector(`[data-slrow="${before[4]}"]`);
-      const chipRight = (row) =>
-        Math.round(row.querySelector('[class*="pos-"]').getBoundingClientRect().right);
+      /* The nudge column, because that is a COLUMN: the position chip rides on
+         the club line inside the flexible middle, so it moves with the text
+         and says nothing about whether the controls are aligned. */
+      const colLeft = (row) =>
+        Math.round(row.querySelector(".nudge-col").getBoundingClientRect().left);
       const shape = {
         firstTopDisabled: first.querySelector("[data-sltop]")?.disabled,
         fifthHasTop: !!fifth.querySelector("[data-sltop]") && !fifth.querySelector("[data-sltop]").disabled,
@@ -2073,7 +2076,7 @@ test("a board can be reordered from the top before the draft, not just nudged",
         /* Dropping the control on row one shortens that row by a button's
            width, and every column to its left lands somewhere different from
            the rest of the list. It is invisible there, not absent. */
-        chipsLineUp: chipRight(first) === chipRight(fifth),
+        chipsLineUp: colLeft(first) === colLeft(fifth),
       };
 
       fifth.querySelector("[data-sltop]").click();
@@ -2086,8 +2089,8 @@ test("a board can be reordered from the top before the draft, not just nudged",
     expect(out.shape.firstTopDisabled, "and the one already first cannot be pressed")
       .toBe(true);
     expect(out.shape.chipsLineUp,
-      "while still holding its column, so the row above lines up with the rest")
-      .toBe(true);
+      "while still holding its column, so the controls on row one line up with "
+      + "the rest of the list").toBe(true);
     expect(out.shape.removeIsLast,
       "with removing a name last, away from the arrows a thumb is nudging with").toBe(true);
 
