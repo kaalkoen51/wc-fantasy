@@ -442,6 +442,7 @@ function showView(name) {
     nav.classList.toggle("hidden", off);
     document.body.classList.toggle("has-rail", !off);
   }
+  if (name === "join") renderJoinGate();
   const gear = $("hdr-admin");
   if (gear) gear.classList.toggle("hidden",
     !(isAdmin() && ["board", "lobby", "draft"].includes(name)));
@@ -2968,7 +2969,24 @@ async function insertManagerRow(row) {
   }
 }
 
+/* Signed in or not, on the join screen.
+
+   Looking a league up by its code is a READ of the leagues table, and RLS
+   grants that to signed-in users only. A signed-out visitor with a perfectly
+   good code therefore got "No league with that code" -- which blames the code,
+   and the person who sent it. The league is there; they are not allowed to see
+   it yet, and nothing on the screen had said so. */
+function renderJoinGate() {
+  const inn = !!authUid();
+  $("join-signin-note")?.classList.toggle("hidden", inn);
+  const btn = $("join-find");
+  if (btn) btn.textContent = inn ? "Find league" : "Sign in, then find the league";
+}
+
 async function findLeague() {
+  // Before the lookup, so the answer is about the account and not about a code
+  // that is perfectly good.
+  if (!requireAccount("joining a league")) return;
   const code = $("join-code").value.trim().toUpperCase();
   if (code.length < 4) return toast("Enter the invite code.");
   const { data, error } = await S.sb.from("leagues")
@@ -16354,6 +16372,7 @@ async function init() {
     if (event === "SIGNED_OUT") _pwRecovery = false;
     renderAccount();
     if (_shownView === "home") renderHome();
+    if (_shownView === "join") renderJoinGate();   // signing in unlocks the lookup
   });
   renderHome();
   const sess = getSession();

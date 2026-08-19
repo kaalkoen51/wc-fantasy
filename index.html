@@ -398,6 +398,13 @@
       <p class="mt-1 text-sm text-slate-400">Ask whoever set the league up for its
         six-character invite code — it is on their lobby screen.</p>
     </div>
+    <!-- Said BEFORE the code is typed, not after it fails. Looking a league up
+         by code is a read of the leagues table, and only a signed-in user is
+         allowed one — so without this a perfectly good code came back as "no
+         league with that code", which blames the code. -->
+    <p id="join-signin-note" class="hidden rounded-lg border border-wcgold/40 bg-wcgold/5 px-3 py-2 text-xs text-slate-300">
+      You'll need an account first — it is what your team is tied to, and how you get back
+      into the league from another phone. It takes an email and a password.</p>
     <label class="block text-sm text-slate-400">Invite code
       <input id="join-code" placeholder="ABC123" autocapitalize="characters" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100 uppercase tracking-widest"></label>
     <button id="join-find" class="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg py-2.5 font-semibold">Find league</button>

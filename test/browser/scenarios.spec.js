@@ -2287,6 +2287,58 @@ test("running a league and running the app are different jobs", async ({ page })
   expect(twice, "and re-rendering does not stack them up").toBe(tags.restricted);
 });
 
+test("joining without an account blames the account, not the code", async ({ page }) => {
+  /* Looking a league up by its code is a READ of the leagues table, and RLS
+     grants that to signed-in users only. So a signed-out visitor with a
+     perfectly good code was told "No league with that code" -- which blames
+     the code, and the person who sent it. */
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const out = await page.evaluate(async () => {
+    const toasts = [];
+    const realToast = window.toast;
+    window.toast = (t) => { toasts.push(t); };
+    const vis = (id) => !!document.getElementById(id)?.getClientRects().length;
+
+    S.authUser = null;
+    showView("join");
+    const signedOut = { note: vis("join-signin-note"),
+                        btn: document.getElementById("join-find").textContent.trim() };
+    document.getElementById("join-code").value = "SCEN";
+    await findLeague();
+    const asked = toasts.slice();
+    const wentHome = !!document.querySelector('[data-view="home"]')?.getClientRects().length;
+
+    S.authUser = { id: "00000000-0000-4000-8000-000000000001", email: "t@example.com" };
+    showView("join");
+    const signedIn = { note: vis("join-signin-note"),
+                       btn: document.getElementById("join-find").textContent.trim() };
+    toasts.length = 0;
+    document.getElementById("join-code").value = "SCEN";
+    await findLeague();
+    const found = { toasts: toasts.slice(), shown: vis("join-found"),
+                    name: document.getElementById("join-league-name").textContent };
+    window.toast = realToast;
+    return { signedOut, asked, wentHome, signedIn, found };
+  });
+
+  expect(out.signedOut.note, "the requirement is on screen before anything is typed")
+    .toBe(true);
+  expect(out.signedOut.btn, "and the button says what pressing it will do")
+    .toMatch(/Sign in/);
+  expect(out.asked.join(" "), "the message is about the account, not the code")
+    .toMatch(/account/i);
+  expect(out.asked.join(" "), "and never claims the league is missing")
+    .not.toMatch(/No league/);
+  expect(out.wentHome, "with the sign-in form put in front of them").toBe(true);
+
+  expect(out.signedIn.note, "once signed in the notice goes").toBe(false);
+  expect(out.signedIn.btn).toBe("Find league");
+  expect(out.found.toasts, "and the same code just works").toEqual([]);
+  expect(out.found.shown, "the league is found").toBe(true);
+  expect(out.found.name).toBe("Scenario");
+});
+
 test("a desktop is not a very wide phone", async ({ page }) => {
   /* Three things that were only wrong on a big screen, which is the screen a
      draft is actually run on. Measured rather than eyeballed, because a
