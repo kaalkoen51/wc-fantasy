@@ -370,8 +370,9 @@ const CRESTS_MORE = [
   "🐅", "🐆", "🦊", "🦌", "🐗", "🦏", "🦣", "🐘", "🦧", "🦬", "🐴", "🦄",
   "🦉", "🦇", "🐙", "🦑", "🦂", "🕷", "🐝", "🦋", "🌪", "☄️", "💎", "🎯",
   "🚀", "🛡", "⚔️", "🏹", "🎸", "🍀", "🌊", "❄️", "🌟", "💀", "🤖", "👽",
-  // The pub half. A draft league is mostly an excuse to have one.
-  "🍺", "🍻", "🍷", "🥃", "🍹", "☕", "🍕", "🌮", "🍔", "🍩", "🌶️", "🧀",
+  // The pub half. A draft league is mostly an excuse to have one -- with a
+  // bone in it, where the whiskey glass used to be.
+  "🍺", "🍻", "🍷", "🦴", "🍹", "☕", "🍕", "🌮", "🍔", "🍩", "🌶️", "🧀",
   // Kit, pitch and the things that end up on a table beside them.
   "🏆", "🥅", "🧤", "👟", "🚩", "📣", "🥁", "🎺", "🎲", "🃏", "🧭", "⛵",
 ];
