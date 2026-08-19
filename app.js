@@ -4909,12 +4909,27 @@ function renderDraftQueue(me, myTurn) {
     return `<li data-qrow="${esc(r.pid)}" class="flex items-center gap-1.5 py-1 rounded${
       r.isNew ? " bg-wcgold/5" : ""}">
       <span class="w-4 shrink-0 text-xs text-slate-400 font-mono">${n + 1}</span>
-      ${avatarHtml(r.pid, e.team, "w-6 h-6")}
-      <!-- No NEW badge. The row's own tint already says it, and the badge was
-           a fourth thing competing for a phone's width -- it truncated to
+      ${avatarHtml(r.pid, e.team, "w-7 h-7")}
+      <!-- Two lines, exactly as the pre-draft board -- and it costs nothing.
+           The row's height is set by the tallest CONTROL, not by the text, so
+           one line and two measure the same 53px; the second line was empty
+           space being paid for either way.
+
+           So the name gets the full row instead of clipping to "Bruno
+           Ferna...", the chip leads at a fixed width and lines up down the
+           list, and the club appears at all -- which the queue never showed,
+           on the one screen where "have I taken three Arsenal players" is a
+           question you are actually asking.
+
+           No NEW badge: the row's own tint says it, and the badge truncated to
            "N..." beside a name that was itself truncating. -->
-      <span class="min-w-0 flex-1 truncate text-sm">${esc(e.name)}</span>
-      <span class="shrink-0 text-xs pos-${e.position} rounded px-1.5 py-0.5">${e.position}</span>
+      <span class="min-w-0 flex-1">
+        <span class="block truncate text-sm">${esc(e.name)}</span>
+        <span class="flex items-center gap-1.5 text-xs text-slate-400">
+          <span class="shrink-0 min-w-9 text-center pos-${e.position} rounded px-1">${e.position}</span>
+          <span class="truncate">${esc(e.team || "")}</span>
+        </span>
+      </span>
       ${movable > 1 ? `<button data-qtop="${esc(r.pid)}" ${first ? "disabled" : ""}
         class="tap shrink-0 text-slate-400 text-xs ${first ? "invisible" : ""}"
         title="Move to the top of the queue" aria-label="Move to the top">⤒</button>` : ""}
