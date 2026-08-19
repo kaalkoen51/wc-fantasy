@@ -4446,17 +4446,28 @@ function renderPredraftShortlist() {
       <span class="w-5 shrink-0 text-xs font-mono ${
         i === 0 ? "text-wcgold font-bold" : "text-slate-400"}">${i + 1}</span>
       ${avatarHtml(pid, e.team, "w-7 h-7")}
-      <!-- The position rides on the CLUB line rather than taking a column of
-           its own. A row this wide has to carry a rank, a face, two lines of
-           text and four controls; giving the chip its own column cost the name
-           about fifty pixels, and "Bruno Fernan…" over "Manchester Uni…" tells
-           you less than either line would whole. The club is short enough to
-           share. -->
+      <!-- The position leads the CLUB line, at a fixed width.
+
+           Three ways to fit this row were drawn and compared at 390px. A chip
+           in its own column aligns beautifully and clips the names ("Bruno
+           Fern…", "Gabriel Ma…"). A chip trailing the club leaves the names
+           whole and the chips ragged, because a chip that starts after a club
+           name starts wherever that club name ended. Putting it FIRST, at a
+           fixed width, gets both: the chips line up under the avatar because
+           nothing before them varies, and the name keeps the full row.
+
+           What gives way instead is the club, which is the right thing to
+           spend: a truncated "Manchester U…" is still that club, and it is
+           repeated on every other row of the same squad anyway.
+
+           min-w rather than w, so a four-letter TEAM code is not clipped -- it
+           costs that one row a few pixels of alignment, which is a better
+           trade than cutting the only word in the chip. -->
       <span class="min-w-0 flex-1">
         <span class="block truncate text-sm">${esc(e.name)}</span>
         <span class="flex items-center gap-1.5 text-xs text-slate-400">
+          <span class="shrink-0 min-w-9 text-center pos-${e.position} rounded px-1">${e.position}</span>
           <span class="truncate">${esc(e.team || "")}</span>
-          <span class="shrink-0 pos-${e.position} rounded px-1.5">${e.position}</span>
         </span>
       </span>
       <!-- Same control as the live draft's queue, for the same reason: the
