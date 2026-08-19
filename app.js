@@ -4435,8 +4435,14 @@ function renderPredraftShortlist() {
       <span class="shrink-0 text-xs pos-${e.position} rounded px-1.5 py-0.5">${e.position}</span>
       <!-- Same control as the live draft's queue, for the same reason: the
            move you want on a board is "him first", and ▲ nineteen times is
-           not that move. Hidden on the row that is already first. -->
-      ${ids.length > 1 && i > 0 ? `<button data-sltop="${esc(pid)}" class="tap shrink-0 text-slate-400 text-xs" title="Move to the top of your board" aria-label="Move to the top">⤒</button>` : ""}
+           not that move.
+           On the row that is already first it is INVISIBLE rather than absent:
+           dropping the element shortens that row by the width of a button, and
+           every column to its left lands somewhere different from the rest of
+           the list. The nudges have always done the same, with "disabled". -->
+      ${ids.length > 1 ? `<button data-sltop="${esc(pid)}" ${i === 0 ? "disabled" : ""}
+        class="tap shrink-0 text-slate-400 text-xs ${i === 0 ? "invisible" : ""}"
+        title="Move to the top of your board" aria-label="Move to the top">⤒</button>` : ""}
       ${ids.length > 1 ? `<span class="nudge-col shrink-0 leading-none">
         <button data-slup="${esc(pid)}" class="nudge text-slate-400 ${i === 0 ? "opacity-30" : ""}" ${i === 0 ? "disabled" : ""} aria-label="Move up">▲</button>
         <button data-sldn="${esc(pid)}" class="nudge text-slate-400 ${i === ids.length - 1 ? "opacity-30" : ""}" ${i === ids.length - 1 ? "disabled" : ""} aria-label="Move down">▼</button>
@@ -4871,7 +4877,9 @@ function renderDraftQueue(me, myTurn) {
            "N..." beside a name that was itself truncating. -->
       <span class="min-w-0 flex-1 truncate text-sm">${esc(e.name)}</span>
       <span class="shrink-0 text-xs pos-${e.position} rounded px-1.5 py-0.5">${e.position}</span>
-      ${movable > 1 && !first ? `<button data-qtop="${esc(r.pid)}" class="tap shrink-0 text-slate-400 text-xs" title="Move to the top of the queue" aria-label="Move to the top">⤒</button>` : ""}
+      ${movable > 1 ? `<button data-qtop="${esc(r.pid)}" ${first ? "disabled" : ""}
+        class="tap shrink-0 text-slate-400 text-xs ${first ? "invisible" : ""}"
+        title="Move to the top of the queue" aria-label="Move to the top">⤒</button>` : ""}
       ${movable > 1 ? `<span class="nudge-col shrink-0 leading-none">
         <button data-qup="${esc(r.pid)}" class="nudge text-slate-400 ${first ? "opacity-30" : ""}" ${first ? "disabled" : ""} aria-label="Move up">▲</button>
         <button data-qdn="${esc(r.pid)}" class="nudge text-slate-400 ${last ? "opacity-30" : ""}" ${last ? "disabled" : ""} aria-label="Move down">▼</button>

@@ -2064,9 +2064,17 @@ test("a board can be reordered from the top before the draft, not just nudged",
       const before = rows();
       const first = document.querySelector(`[data-slrow="${before[0]}"]`);
       const fifth = document.querySelector(`[data-slrow="${before[4]}"]`);
-      const shape = { firstHasTop: !!first.querySelector("[data-sltop]"),
-                      fifthHasTop: !!fifth.querySelector("[data-sltop]"),
-                      removeIsLast: fifth.lastElementChild?.hasAttribute("data-slrm") };
+      const chipRight = (row) =>
+        Math.round(row.querySelector('[class*="pos-"]').getBoundingClientRect().right);
+      const shape = {
+        firstTopDisabled: first.querySelector("[data-sltop]")?.disabled,
+        fifthHasTop: !!fifth.querySelector("[data-sltop]") && !fifth.querySelector("[data-sltop]").disabled,
+        removeIsLast: fifth.lastElementChild?.hasAttribute("data-slrm"),
+        /* Dropping the control on row one shortens that row by a button's
+           width, and every column to its left lands somewhere different from
+           the rest of the list. It is invisible there, not absent. */
+        chipsLineUp: chipRight(first) === chipRight(fifth),
+      };
 
       fifth.querySelector("[data-sltop]").click();
       await new Promise((r) => setTimeout(r, 60));
@@ -2075,7 +2083,11 @@ test("a board can be reordered from the top before the draft, not just nudged",
     });
 
     expect(out.shape.fifthHasTop, "every row but the first offers it").toBe(true);
-    expect(out.shape.firstHasTop, "and the one already first does not").toBe(false);
+    expect(out.shape.firstTopDisabled, "and the one already first cannot be pressed")
+      .toBe(true);
+    expect(out.shape.chipsLineUp,
+      "while still holding its column, so the row above lines up with the rest")
+      .toBe(true);
     expect(out.shape.removeIsLast,
       "with removing a name last, away from the arrows a thumb is nudging with").toBe(true);
 
