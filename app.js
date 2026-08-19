@@ -16018,10 +16018,33 @@ function renderAccount() {
   }
 }
 
+/* Supabase's built-in email sender is shared by every auth email a project
+   sends -- signup confirmations, password resets, magic links, email changes
+   -- and it is rate limited PER PROJECT, at a handful an hour. It is a testing
+   sender, and it says so.
+
+   Which means the failure arrives at the worst possible moment: eight managers
+   signing up inside ten minutes on the night a league opens. The raw message
+   ("email rate limit exceeded") reads like the app is broken and tells nobody
+   what to do, so it is translated -- and the half that is actionable goes to
+   the console, where the person who can fix it will look. */
+const EMAIL_CAPPED = /rate limit|only request this after|too many requests/i;
+function authErrorText(error) {
+  if (!EMAIL_CAPPED.test(error?.message || "")) return error?.message || "Something went wrong.";
+  console.warn("Supabase's built-in email sender is capped per project and per "
+    + "hour. Fix: Project Settings -> Auth -> SMTP Settings, point it at a real "
+    + "sender (Resend, Postmark, SES...), then raise the caps under "
+    + "Authentication -> Rate Limits. Turning OFF 'Confirm email' also takes "
+    + "sign-ups off the email path entirely.");
+  return "Too many emails from this app in the last hour — that limit is the "
+    + "app's, not yours. Try again shortly, or ask the league admin.";
+}
+
 async function submitAccount() {
   const email = $("account-email").value.trim();
   const pw = $("account-pw").value;
-  const msg = (t, ok) => { const el = $("account-msg"); el.textContent = t; el.className = "text-xs " + (ok ? "text-emerald-400" : "text-slate-400"); };
+  const msg = (t, ok) => { const el = $("account-msg"); el.textContent = t;
+    el.className = "text-xs " + (ok ? "text-emerald-400" : "text-red-300"); };
   if (_accountMode === "reset") {
     if (!email) return msg("Enter your email address.");
     const btn0 = $("account-submit"); btn0.disabled = true;
@@ -16029,7 +16052,7 @@ async function submitAccount() {
       const { error } = await S.sb.auth.resetPasswordForEmail(email, {
         redirectTo: location.origin + location.pathname,   // must be allowlisted in Supabase
       });
-      if (error) return msg(error.message);
+      if (error) return msg(authErrorText(error));
       /* Deliberately the same reply whether or not that address has an account:
          a different one would let anyone check who has signed up here. */
       return msg("If that address has an account, a reset link is on its way.", true);
@@ -16040,13 +16063,13 @@ async function submitAccount() {
   try {
     if (_accountMode === "signup") {
       const { data, error } = await S.sb.auth.signUp({ email, password: pw });
-      if (error) return msg(error.message);
+      if (error) return msg(authErrorText(error));
       // With email confirmation on, there's a user but no session until confirmed.
       if (!data.session) return msg("Account created — check your email to confirm, then sign in.", true);
       msg("Account created — you're signed in.", true);
     } else {
       const { error } = await S.sb.auth.signInWithPassword({ email, password: pw });
-      if (error) return msg(error.message);
+      if (error) return msg(authErrorText(error));
     }
     await refreshAuthUser();
     $("account-pw").value = "";
