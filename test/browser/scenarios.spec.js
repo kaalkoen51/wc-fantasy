@@ -2067,13 +2067,19 @@ test("a player starred mid-draft can be moved up the queue", async ({ page }) =>
     };
 
     toggleShortlist(late);                    // starred mid-draft
-    renderDraftQueue(myManager(), false);
+    renderDraftQueue(myManager(), true);      // your turn, so Pick is drawn
     const row = document.querySelector(`[data-qrow="${late}"]`);
     const after = {
       hasLate: !!row,
-      isNew: (row?.textContent || "").includes("NEW"),
+      // The row's own tint marks it. There was a NEW badge too, and on a phone
+      // it truncated to "N..." beside a name that was already truncating.
+      isNew: !!row?.className.includes("bg-wcgold/5"),
+      noBadge: !(row?.textContent || "").includes("NEW"),
       rank: row?.querySelector("span")?.textContent?.trim(),
       canTop: !!row?.querySelector("[data-qtop]"),
+      /* Pick is the one irreversible thing on the row, so it sits furthest
+         from the thumb that is nudging names up and down. */
+      pickIsLast: row?.lastElementChild?.hasAttribute("data-qpick"),
     };
 
     row.querySelector("[data-qtop]").click();
@@ -2092,9 +2098,13 @@ test("a player starred mid-draft can be moved up the queue", async ({ page }) =>
 
   expect(out.after.hasLate, "a name starred mid-draft is pulled into view").toBe(true);
   expect(out.after.isNew, "and marked, so it is obvious why it is there").toBe(true);
+  expect(out.after.noBadge, "by its tint, not by a badge the row has no room for")
+    .toBe(true);
   expect(out.after.rank, "keeping its real place in the queue, not the window's")
     .toBe("14");
   expect(out.after.canTop, "with one tap to promote it").toBe(true);
+  expect(out.after.pickIsLast, "and Pick last, away from the reordering controls")
+    .toBe(true);
 
   // Against the id itself, not against a second read of the same value: the
   // first version of this line compared the result to itself and proved nothing.

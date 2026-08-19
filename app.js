@@ -4830,15 +4830,20 @@ function renderDraftQueue(me, myTurn) {
       r.isNew ? " bg-wcgold/5" : ""}">
       <span class="w-4 shrink-0 text-xs text-slate-400 font-mono">${n + 1}</span>
       ${avatarHtml(r.pid, e.team, "w-6 h-6")}
-      <span class="min-w-0 flex-1 truncate text-sm">${esc(e.name)}${
-        r.isNew ? ' <span class="rounded bg-wcgold/20 text-wcgold px-1 text-[10px] font-bold align-middle">NEW</span>' : ""}</span>
+      <!-- No NEW badge. The row's own tint already says it, and the badge was
+           a fourth thing competing for a phone's width -- it truncated to
+           "N..." beside a name that was itself truncating. -->
+      <span class="min-w-0 flex-1 truncate text-sm">${esc(e.name)}</span>
       <span class="shrink-0 text-xs pos-${e.position} rounded px-1.5 py-0.5">${e.position}</span>
-      ${myTurn ? `<button data-qpick="${esc(r.pid)}" class="shrink-0 btn-primary rounded-lg px-2.5 text-xs font-bold">Pick</button>` : ""}
       ${movable > 1 && !first ? `<button data-qtop="${esc(r.pid)}" class="tap shrink-0 text-slate-400 text-xs" title="Move to the top of the queue" aria-label="Move to the top">⤒</button>` : ""}
       ${movable > 1 ? `<span class="nudge-col shrink-0 leading-none">
         <button data-qup="${esc(r.pid)}" class="nudge text-slate-400 ${first ? "opacity-30" : ""}" ${first ? "disabled" : ""} aria-label="Move up">▲</button>
         <button data-qdn="${esc(r.pid)}" class="nudge text-slate-400 ${last ? "opacity-30" : ""}" ${last ? "disabled" : ""} aria-label="Move down">▼</button>
       </span>` : ""}
+      <!-- Last, and so furthest from the reordering controls. Pick is the one
+           irreversible thing on the row; it should not sit under the thumb
+           that is nudging names up and down. -->
+      ${myTurn ? `<button data-qpick="${esc(r.pid)}" class="shrink-0 btn-primary rounded-lg px-2.5 py-1 text-xs font-bold">Pick</button>` : ""}
     </li>`;
   }).join("");
 
