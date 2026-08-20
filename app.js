@@ -11600,6 +11600,7 @@ function enterLineupEdit() {
   };
   S.lineupEdit = true;
   S.lineupPick = null;
+  S.armPick = null;
   renderLineup();
 }
 
@@ -11614,11 +11615,13 @@ function discardLineupEdit() {
   }
   S.lineupEdit = false;
   S.lineupPick = null;
+  S.armPick = null;
   renderLineup();
 }
 
 function openLineup() {
   S.lineupEdit = false;           // opens read-only; Edit lineup turns it on
+  S.armPick = null;
   S.benchDraft = null;            // fall back to the saved order
   lockScroll(true);
   const me = myManager();
@@ -11903,7 +11906,7 @@ function pitchRowsHtml(byPos, opts = {}) {
            ><span class="rounded-full bg-wcred text-white text-sm font-bold w-5 h-5 inline-flex items-center justify-center leading-none shadow ring-2 ring-slate-900/60">−</span></button>` : "";
     return `<div class="relative flex justify-center">
       ${rm}
-      <button type="button" ${tap}${e.title ? ` title="${esc(e.title)}"` : ""} class="pp ${e.dim ? "pp-dim" : ""} ${e.sel ? "pp-sel" : ""} ${e.planned ? "pp-planned" : ""} ${e.foil ? "pp-foil" : ""}">
+      <button type="button" ${tap}${e.title ? ` title="${esc(e.title)}"` : ""} class="pp ${e.dim ? "pp-dim" : ""} ${e.sel ? "pp-sel" : ""} ${e.arm ? "pp-arm" : ""} ${e.planned ? "pp-planned" : ""} ${e.foil ? "pp-foil" : ""}">
         <span class="relative inline-flex">
           ${avatarHtml(e.player_id, e.team, av)}
           ${/* A 14px badge on a 40px avatar, holding an image or the club's
@@ -11963,6 +11966,25 @@ function wireLineupControls(root) {
     moveBench(b.dataset.bup, -1));
   root.querySelectorAll("[data-bdn]").forEach((b) => b.onclick = () =>
     moveBench(b.dataset.bdn, 1));
+  /* The pitch, while an armband is being handed out. Three outcomes, so that
+     every lit shirt does something: take the band off the man who has it, trade
+     the two bands when you tap the other one, or hand it over. */
+  root.querySelectorAll("[data-arm]").forEach((b) => b.onclick = () => {
+    const kind = S.armPick;
+    if (!kind) return;
+    const me = myManager();
+    const pk = managerPicks(me.id).find((x) => x.id === b.dataset.arm);
+    if (!pk) return;
+    const pid = pk.player_id;
+    const cap = S.captainDraft, vice = S.viceDraft;
+    const mine = kind === "cap" ? cap : vice, other = kind === "cap" ? vice : cap;
+    const set = (c, v) => { S.captainDraft = c; S.viceDraft = v; };
+    if (pid === mine) set(kind === "cap" ? "" : cap, kind === "cap" ? vice : "");
+    else if (pid === other) set(kind === "cap" ? pid : mine, kind === "cap" ? mine : pid);
+    else set(kind === "cap" ? pid : cap, kind === "cap" ? vice : pid);
+    S.armPick = null;
+    renderLineup();
+  });
   /* One tap does everything the + and − used to, and one thing they could
      not: hold a player, see who they can trade with, and exchange the two. */
   root.querySelectorAll("[data-hold]").forEach((b) => b.onclick = () => {
@@ -12085,24 +12107,45 @@ function renderLineup() {
   };
   const dimmed = (pk) => !!sel && pk.id !== sel.id && !canTrade(pk);
 
+  /* Handing out an armband: the pitch itself is the picker.
+
+     A dropdown made you read eleven names you were already looking at and pick
+     one blind -- the shape of the side, which is the whole reason you know who
+     should be captain, was on screen and unusable. Arming from the captain card
+     lights every starter who can take the band and dims the rest, which is the
+     same tap-to-choose language the swap already speaks.
+
+     Armed mode takes the pitch over, so it and the swap selection are mutually
+     exclusive: arming drops whoever was held. */
+  /* Every starter lights up, and no tap on the pitch is dead: this band's own
+     holder takes it off, the other band's holder trades bands with them, and
+     anyone else simply takes it. A dimmed shirt that quietly does nothing is
+     worse than no highlight at all. */
+  const arming = editing && captainEnabled() ? S.armPick : null;   // "cap" | "vice" | null
+
   const byPos = listsByGroup();
   for (const pk of starters) {
     (byPos[pk.position] ||= []).push({
       id: editing ? pk.id : pk.player_id, removeId: pk.id,
       player_id: pk.player_id, name: pk.player_name, team: pk.team,
       opp: oppShort(pk.team),
-      sel: editing && sel?.id === pk.id,
-      dim: editing && dimmed(pk),
+      sel: editing && !arming && sel?.id === pk.id,
+      arm: !!arming,
+      dim: arming ? false : editing && dimmed(pk),
       badge: captainEnabled() && S.captainDraft === pk.player_id ? "C"
            : captainEnabled() && S.viceDraft === pk.player_id ? "V" : "",
     });
   }
+  /* Nobody on the bench can wear the band, so while one is being handed out the
+     bench steps back: dimmed, and a tap opens the player's card rather than
+     starting a swap the pitch is in no state to finish. */
   const benchRow = (pk, i, arr) => `<div data-brow="${esc(pk.id)}" class="flex items-center gap-1.5 rounded-lg px-2 py-1.5 border ${
-      editing && sel?.id === pk.id ? "border-wcgold bg-wcgold/10"
+      arming ? "border-slate-700 bg-slate-800/60 opacity-40"
+        : editing && sel?.id === pk.id ? "border-wcgold bg-wcgold/10"
         : editing && dimmed(pk) ? "border-slate-700 bg-slate-800/60 opacity-40"
         : "border-slate-700 bg-slate-800/60"}">
       ${editing ? `<span class="w-4 shrink-0 text-xs font-mono text-slate-400">${i + 1}</span>` : ""}
-      <button ${editing ? `data-hold="${esc(pk.id)}"` : `data-peek="${esc(pk.player_id)}"`} class="min-w-0 flex-1 flex items-center gap-2 text-left">
+      <button ${editing && !arming ? `data-hold="${esc(pk.id)}"` : `data-peek="${esc(pk.player_id)}"`} class="min-w-0 flex-1 flex items-center gap-2 text-left">
         ${avatarHtml(pk.player_id, pk.team, "w-7 h-7")}
         <span class="min-w-0 flex-1 leading-tight">
           <span class="flex items-center gap-1 min-w-0">
@@ -12126,6 +12169,11 @@ function renderLineup() {
   /* One line, and only while editing. It changes with the state because
      "tap two players to swap" is wrong advice when the side is a man short. */
   const swapHint = !editing ? ""
+    : arming ? (arming === "cap"
+        ? (S.captainDraft ? "Tap a lit player to make them captain — or tap the current captain to take the band off."
+                          : "Tap a lit player to make them captain.")
+        : (S.viceDraft ? "Tap a lit player to make them vice-captain — or tap the current vice to take the band off."
+                       : "Tap a lit player to make them vice-captain."))
     : shortOfXI ? `Tap a bench player to fill the empty ${
         outfieldGroups().concat(sportDef().exactGroups()).find((g) =>
           (counts0[g] || 0) < (starterQuota()[g] || 0)) || ""} slot.`.replace("  ", " ")
@@ -12135,7 +12183,7 @@ function renderLineup() {
 
   $("lineup-list").innerHTML = `
     ${editing ? `<p class="text-xs text-slate-400 mb-1.5 px-0.5">${esc(swapHint)}</p>` : ""}
-    ${pitchHtml(byPos, { tapAttr: editing ? "data-hold" : "data-peek", crests: true })}
+    ${pitchHtml(byPos, { tapAttr: arming ? "data-arm" : editing ? "data-hold" : "data-peek", crests: true })}
     <div class="mt-2">
       <div class="flex items-baseline justify-between gap-2 mb-1">
         <span class="eyebrow">Bench · ${bench.length}</span>
@@ -12234,17 +12282,41 @@ function renderLineup() {
       capBox.innerHTML = shown("Captain", "© ×2", S.captainDraft)
         + shown("Vice", "Ⓥ backup", S.viceDraft);
     } else {
-      const opts = (sel) => '<option value="">— none —</option>' + starterPicks.map((pk) =>
-        `<option value="${esc(pk.player_id)}"${pk.player_id === sel ? " selected" : ""}>${esc(pk.player_name)}</option>`).join("");
-      capBox.innerHTML = `
-        <label class="text-xs text-slate-400">Captain © <span class="text-slate-400">×2</span>
-          <select id="lineup-cap-sel" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm">${opts(S.captainDraft)}</select></label>
-        <label class="text-xs text-slate-400">Vice Ⓥ <span class="text-slate-400">backup</span>
-          <select id="lineup-vice-sel" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm">${opts(S.viceDraft)}</select></label>`;
-      // Re-render so the armband on the pitch follows the selection — it used to
-      // only update on the next full render, which read as nothing happening.
-      $("lineup-cap-sel").onchange = (e) => { S.captainDraft = e.target.value; renderLineup(); };
-      $("lineup-vice-sel").onchange = (e) => { S.viceDraft = e.target.value; renderLineup(); };
+      /* Two dropdowns, replaced by two arming buttons.
+
+         The list in a <select> was the same eleven players already drawn on the
+         pitch above it, stripped of everything that tells you who should wear
+         the band -- position, club, who they are playing. You picked a name out
+         of a list while the answer sat in plain sight. Now the card says who has
+         it, and tapping the card lights the pitch. */
+      const arm = S.armPick;
+      const card = (kind, label, mark, hint, pid) => {
+        const on = arm === kind;
+        return `<button type="button" data-armset="${kind}"
+          aria-pressed="${on}"
+          class="text-left rounded-lg px-2 py-1.5 border ${on
+            ? "border-wcgold bg-wcgold/10" : "border-slate-700 bg-slate-800/60"}">
+          <div class="flex items-baseline justify-between gap-1">
+            <span class="eyebrow ${on ? "text-wcgold" : ""}">${label} ${mark}</span>
+            ${/* Read-only and edit mode drew the same card, so nothing said the
+                  armband was now yours to move. This is the affordance. */""}
+            <span class="text-[10px] shrink-0 ${on ? "text-wcgold" : "text-slate-400"}">${
+              on ? "cancel" : "change ›"}</span>
+          </div>
+          <div class="text-sm truncate ${pid ? "" : "text-slate-500"}">${
+            on ? "Pick on the pitch…" : pid ? esc(nameOf(pid) || "—") : `not set · ${hint}`}</div>
+        </button>`;
+      };
+      capBox.innerHTML = card("cap", "Captain", "©", "×2", S.captainDraft)
+        + card("vice", "Vice", "Ⓥ", "backup", S.viceDraft);
+      capBox.querySelectorAll("[data-armset]").forEach((b) => b.onclick = () => {
+        const kind = b.dataset.armset;
+        // Arming takes the pitch over, so a held player has to be put down or
+        // the next tap would mean two things at once.
+        S.armPick = S.armPick === kind ? null : kind;
+        S.lineupPick = null;
+        renderLineup();
+      });
     }
   } else capBox.classList.add("hidden");
 }
@@ -12296,7 +12368,7 @@ async function saveLineup() {
     }
   }
   toast(changes.length ? "Lineup saved." : "Lineup unchanged.");
-  S.lineupEdit = false; S.lineupPick = null;   // back to read-only; sheet stays open
+  S.lineupEdit = false; S.lineupPick = null; S.armPick = null;   // back to read-only
   S._lineupSaved = null;
   renderLineup();
   scheduleRefetch();

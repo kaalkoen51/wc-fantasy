@@ -851,6 +851,32 @@ html[data-theme="sticker"] .pick-stamp {
   .pp-sel .avatar { box-shadow: 0 0 0 3px var(--focus-ring), 0 0 0 6px rgba(0,0,0,.35); }
   .pp-sel .pp-name { background: var(--focus-ring); color: #0B1220; }
 
+  /* Every starter, while an armband is waiting to be handed out: a breathing
+     halo that says "one of these, and it's your tap". Deliberately softer and
+     wider than .pp-sel's hard ring -- that one marks ONE chosen player, this
+     one marks a whole pitch of candidates, and eleven hard rings would just
+     read as a border. Staggered off the row index so the pitch ripples rather
+     than strobing in unison. */
+  /* `both` matters: the stagger below is a positive delay, and without a fill
+     mode every delayed chip sits on the element's own box-shadow -- none --
+     until its animation starts. Ten of the eleven simply did not glow. The
+     static rule underneath covers the same hole where animations are off. */
+  .pp-arm .avatar { border-radius: 9999px;
+    box-shadow: 0 0 0 2px rgb(var(--c-wcgold) / .55), 0 0 6px 1px rgb(var(--c-wcgold) / .25);
+    animation: arm-glow 1.6s ease-in-out infinite both; }
+  .pitch-row:nth-child(2) .pp-arm .avatar { animation-delay: .12s; }
+  .pitch-row:nth-child(3) .pp-arm .avatar { animation-delay: .24s; }
+  .pitch-row:nth-child(4) .pp-arm .avatar { animation-delay: .36s; }
+  @keyframes arm-glow {
+    0%, 100% { box-shadow: 0 0 0 2px rgb(var(--c-wcgold) / .55), 0 0 6px 1px rgb(var(--c-wcgold) / .25); }
+    50%      { box-shadow: 0 0 0 4px rgb(var(--c-wcgold) / .95), 0 0 14px 4px rgb(var(--c-wcgold) / .5); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    /* The halo is the whole message, so it stays -- only the breathing stops. */
+    .pp-arm .avatar { animation: none;
+      box-shadow: 0 0 0 3px rgb(var(--c-wcgold) / .9), 0 0 10px 2px rgb(var(--c-wcgold) / .4); }
+  }
+
   /* The position a chip is filling, for a sport whose rows hold more than one
      group. Sits opposite the points bubble so the two never collide. */
   .pp-pos { position: absolute; top: -3px; left: -5px; z-index: 2;

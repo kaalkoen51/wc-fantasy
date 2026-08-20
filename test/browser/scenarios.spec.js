@@ -1687,6 +1687,86 @@ test("the head-to-head card says who each side captained", async ({ page }) => {
   expect(off, "a league without captains still shows armbands").toBe(0);
 });
 
+test("the armband is handed out by tapping the pitch, not by reading a list", async ({ page }) => {
+  /* Two dropdowns listed the same eleven players already drawn on the pitch
+     above them, stripped of position, club and fixture -- everything that tells
+     you who should wear the band. Reported from the app: the players should
+     glow and the tap should be the choice. */
+  await openLeague(page, { managers: 2, played: 3 });
+  await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    openLineup();
+  });
+  await page.locator("#lineup-primary").click();          // Edit lineup
+
+  const idOf = (pid) => page.evaluate((p) =>
+    (S.picks || []).find((pk) => pk.player_id === p)?.id, pid);
+  const state = () => page.evaluate(() => ({
+    cap: S.captainDraft, vice: S.viceDraft, armed: S.armPick || null,
+    lit: document.querySelectorAll("#lineup-list .pp-arm").length,
+    onPitch: document.querySelectorAll("#lineup-list .pp").length,
+    // While a band is being handed out the bench cannot start a swap: nobody on
+    // it can wear one, and a half-finished swap would eat the next tap.
+    benchHolds: document.querySelectorAll("#lineup-bench [data-hold]").length,
+    /* The class is not the glow. The stagger that makes the pitch ripple is a
+       positive animation-delay, and without a fill mode ten of the eleven
+       carried .pp-arm and painted nothing at all until their turn came round.
+       So this asks the browser what is actually on screen. */
+    unlit: [...document.querySelectorAll("#lineup-list .pp-arm .avatar")]
+      .filter((a) => getComputedStyle(a).boxShadow === "none").length,
+  }));
+
+  const before = await state();
+  expect(before.armed, "the editor opens already armed").toBe(null);
+  expect(before.lit, "shirts glow before anyone asked for a band").toBe(0);
+  expect(before.cap, "the seed gave nobody a captain").toBeTruthy();
+
+  await page.locator('[data-armset="cap"]').click();
+  const armed = await state();
+  expect(armed.armed).toBe("cap");
+  expect(armed.lit, "arming did not light the whole XI").toBe(armed.onPitch);
+  expect(armed.benchHolds, "the bench is still offering swaps mid-armband").toBe(0);
+  expect(armed.unlit, "a shirt marked as a candidate is not actually glowing").toBe(0);
+
+  // 1. Hand it to someone new.
+  const fresh = await page.evaluate(() => {
+    const me = myManager();
+    const pk = managerPicks(me.id).find((x) => S.lineupDraft.has(x.id)
+      && x.player_id !== S.captainDraft && x.player_id !== S.viceDraft);
+    return pk.player_id;
+  });
+  await page.locator(`#lineup-list [data-arm="${await idOf(fresh)}"]`).click();
+  let now = await state();
+  expect(now.cap, "tapping a lit player did not make them captain").toBe(fresh);
+  expect(now.armed, "the pitch stayed armed after the choice was made").toBe(null);
+  expect(now.lit, "the glow outlived the choice").toBe(0);
+
+  // 2. Tapping the OTHER band's holder trades the two, so no lit shirt is dead.
+  const vice0 = now.vice;
+  await page.locator('[data-armset="cap"]').click();
+  await page.locator(`#lineup-list [data-arm="${await idOf(vice0)}"]`).click();
+  now = await state();
+  expect(now.cap, "tapping the vice while arming captain did not promote them").toBe(vice0);
+  expect(now.vice, "the outgoing captain did not take the vice's band").toBe(fresh);
+
+  // 3. Tapping the holder of the band being handed out takes it off them.
+  await page.locator('[data-armset="cap"]').click();
+  await page.locator(`#lineup-list [data-arm="${await idOf(vice0)}"]`).click();
+  now = await state();
+  expect(now.cap, "tapping the captain again did not take the band off").toBe("");
+  expect(now.vice, "removing the captain also cleared the vice").toBe(fresh);
+
+  // Nothing is written until Save, the way the rest of the editor works.
+  const saved = await page.evaluate(() => myManager().captain_id);
+  expect(saved, "the armband was persisted without a save").toBeTruthy();
+
+  await page.locator("#lineup-secondary").click();        // Discard changes
+  expect(await page.evaluate(() => S.captainDraft),
+    "discarding did not put the armband back").toBe(saved);
+  expect(await page.evaluate(() => S.armPick || null),
+    "leaving edit mode left the pitch armed").toBe(null);
+});
+
 test("the two ways of picking a player to bring in behave the same", async ({ page }) => {
   /* There were two screens answering one question — who do I bring in — and
      they disagreed about what a useful list is. The squad planner sorted by any
