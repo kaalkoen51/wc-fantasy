@@ -440,8 +440,11 @@ S.league = {};
     [tr.stage, tr.deadlineAt, tr.cta.act], ["transfers", 5000, "trades"]);
   // …unless the lineup still needs attention — that outranks browsing players.
   const trTodo = matchdayPlan({ ...base, tradeOpen: true, lineupOpen: true,
-    tradeClosesAt: 5000, todo: ["Captain not set"] });
+    tradeClosesAt: 5000, todo: [{ text: "No captain", act: "captain" }] });
   check("matchday: an unset lineup outranks transfers", trTodo.cta.act, "lineup");
+  // Each warning carries the screen that FIXES it, so the row can be a button.
+  check("matchday: the todo is passed through with its actions",
+    trTodo.todo.map((t) => t.act), ["captain"]);
   // Trade shut, lineup still open → last chance, deadline is the lock.
   const ln = matchdayPlan({ ...base, tradeOpen: false, lineupOpen: true, lineupLockAt: 9000 });
   check("matchday: trade closed but lineup open → lineup",

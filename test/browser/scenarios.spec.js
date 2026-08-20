@@ -1767,6 +1767,99 @@ test("the armband is handed out by tapping the pitch, not by reading a list", as
     "leaving edit mode left the pitch armed").toBe(null);
 });
 
+test("the no-captain warning is loud, and one tap from the fix", async ({ page }) => {
+  /* It was two lines of 12px amber text -- the faintest thing on a card whose
+     loudest element is a countdown you cannot act on -- and tapping it did
+     nothing, so "Captain not set" could be read and ignored all season. */
+  await openLeague(page, { managers: 2, played: 3 });
+  await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    myManager().captain_id = null;
+    renderHomeTab();
+  });
+
+  const warn = page.locator('[data-todo="captain"]');
+  await expect(warn, "the missing captain is not warned about at all").toHaveCount(1);
+  // A caption is something you skim past; this has to be a control.
+  expect(await warn.evaluate((el) => el.tagName)).toBe("BUTTON");
+  const size = await warn.evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return { px: parseFloat(cs.fontSize), weight: cs.fontWeight,
+             h: el.getBoundingClientRect().height,
+             painted: cs.backgroundColor, edge: cs.borderTopWidth };
+  });
+  expect(size.px, "the warning is still caption-sized").toBeGreaterThanOrEqual(13);
+  expect(Number(size.weight), "the warning is not emphasised").toBeGreaterThanOrEqual(600);
+  expect(size.painted, "the warning has no ground of its own").not.toContain("rgba(0, 0, 0, 0)");
+  expect(parseFloat(size.edge), "the warning has no edge").toBeGreaterThan(0);
+  // Big enough to hit with a thumb, which an inert 12px line never was.
+  expect(size.h).toBeGreaterThanOrEqual(38);
+
+  // The payoff: straight into the armband picker with the pitch already lit.
+  await warn.click();
+  const landed = await page.evaluate(() => ({
+    open: !document.getElementById("lineup-sheet").classList.contains("hidden"),
+    edit: S.lineupEdit, arm: S.armPick,
+    lit: document.querySelectorAll("#lineup-list .pp-arm").length,
+  }));
+  expect(landed.open, "the warning did not open the lineup sheet").toBe(true);
+  expect(landed.edit, "it opened read-only, so the armband cannot be set").toBe(true);
+  expect(landed.arm, "it did not arm the captain").toBe("cap");
+  expect(landed.lit, "the pitch is not lit, so there is nothing to tap")
+    .toBeGreaterThan(0);
+
+  // One more tap gives someone the band.
+  await page.locator("#lineup-list [data-arm]").first().click();
+  const picked = await page.evaluate(() => S.captainDraft);
+  expect(picked, "tapping a lit player did not pick a captain").toBeTruthy();
+
+  /* The warning tracks the SAVED captain, not the draft -- an edit you have
+     not committed must not silence it. (Save itself is exercised by the
+     armband test; this seed deliberately carries an invalid XI, so the Save
+     button is correctly disabled here.) */
+  await expect(page.locator('[data-todo="captain"]'),
+    "an uncommitted draft silenced the warning").toHaveCount(1);
+  await page.evaluate(() => { myManager().captain_id = S.captainDraft; renderHomeTab(); });
+  await expect(page.locator('[data-todo="captain"]'),
+    "the warning outlived the captain being set").toHaveCount(0);
+});
+
+test("a warning you cannot act on does not pretend to be a button", async ({ page }) => {
+  await openLeague(page, { managers: 2, played: 3 });
+  const state = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    myManager().captain_id = null;
+    // Manual windows, both shut: nothing about the lineup can be changed now.
+    S.league.config = { ...S.league.config, autoWindows: false };
+    S.league.trading_open = false;
+    S.league.lineups_open = false;
+    renderHomeTab();
+    const el = document.querySelector("[data-todo]");
+    // .todo-alert is the named state, not a utility class -- selecting on the
+    // styling is what a restyle silently empties.
+    const rows = [...document.querySelectorAll('[data-view="board"] .todo-alert')]
+      .filter((n) => /captain/i.test(n.textContent));
+    return { button: !!el, stillSaysIt: rows.length > 0 };
+  });
+  // The fact is still worth knowing during a locked round -- your captain is
+  // not doubling anything -- but openLineup refuses while lineups are locked,
+  // so a "Fix" that toasts an apology is worse than no button at all.
+  expect(state.stillSaysIt, "the warning vanished when it became unfixable").toBe(true);
+  expect(state.button, "it still offers a fix it cannot deliver").toBe(false);
+
+  /* And the refusal must not freeze the page. lockScroll(true) ran before the
+     locked-window early return, so tapping the locked-round CTA left the board
+     unscrollable behind a sheet that never opened -- which reads as a hang. */
+  const frozen = await page.evaluate(() => {
+    openLineup();
+    return { overflow: document.body.style.overflow,
+             sheet: !document.getElementById("lineup-sheet").classList.contains("hidden") };
+  });
+  expect(frozen.sheet, "the sheet opened while lineups were locked").toBe(false);
+  expect(frozen.overflow, "the page was left scroll-locked with no sheet on it")
+    .not.toBe("hidden");
+});
+
 test("the two ways of picking a player to bring in behave the same", async ({ page }) => {
   /* There were two screens answering one question — who do I bring in — and
      they disagreed about what a useful list is. The squad planner sorted by any

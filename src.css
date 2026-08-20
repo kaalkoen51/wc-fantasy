@@ -158,6 +158,10 @@
   --mini-accent: #FFC72C;
   --planned-bg: rgba(255,199,44,.22);
   --planned-ring: rgba(255,199,44,.5);
+  /* The "you have not done this yet" alert. Its own tokens because the stock
+     amber utilities cannot serve both grounds: amber-300 reads at 4.1:1 on the
+     wash over cream, which is under the floor the sticker theme is held to. */
+  --warn-fg: 252 211 77;   --warn-bg: 251 191 36;   --warn-edge: 251 191 36;
 }
 
 /* ===========================================================================
@@ -311,6 +315,12 @@ html[data-theme="sticker"] {
   --mini-accent: #D0021B;
   --planned-bg: rgba(201,162,39,.28);
   --planned-ring: rgba(201,162,39,.7);
+  /* Solved against the COMPOSITED ground -- the amber wash over the matchday
+     card over album paper, measured at rgb(240,208,174) -- not against the
+     paper, which would have flattered it by a whole point. 5.31:1. The wash
+     itself stays the warm dark-theme amber rather than the sticker one: a
+     darker wash makes a darker ground, and the ink then has nowhere to go. */
+  --warn-fg: 112 75 8;      --warn-bg: 251 191 36;   --warn-edge: 180 83 9;
 }
 
 /* ===========================================================================
@@ -936,6 +946,14 @@ html[data-theme="sticker"] .pick-stamp {
      now and the styling hangs off it. */
   .pp-dim { opacity: .5; }
   .pp-planned .pp-name { background: var(--planned-bg); outline: 1px solid var(--planned-ring); }
+
+  /* An outstanding job, drawn as an alert rather than a caption. Everything
+     inside inherits the colour, so the sub-line and the "Fix" affordance are
+     told apart by weight and size instead of by a second, lighter ink -- at
+     11px there is no lighter ink that clears 4.5:1 on this ground. */
+  .todo-alert { color: rgb(var(--warn-fg));
+    background: rgb(var(--warn-bg) / .15);
+    border: 1px solid rgb(var(--warn-edge) / .6); }
 
   /* The bench, drawn as a bench: a row of smaller faces under the pitch in the
      order they'd come on. */

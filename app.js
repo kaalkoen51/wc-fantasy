@@ -7816,7 +7816,13 @@ function bumpChangedTotals(scores, playerView) {
 /* ---------- matchday card (app side) ---------- */
 const LIVE_STATUS = ["1H", "2H", "HT", "ET", "BT", "P", "LIVE", "INT"];
 
-// What this manager still hasn't set for the upcoming round.
+/* What this manager still hasn't set for the upcoming round.
+
+   Each item carries the screen that FIXES it, not just the complaint. These
+   were two lines of 12px amber text -- the faintest thing on a card whose
+   loudest element is a countdown you cannot act on -- and tapping them did
+   nothing, so "Captain not set" could sit there all season being read and
+   ignored. `act` is what lets the row take you to the job. */
 function lineupTodo(me) {
   const todo = [];
   if (!me || me.eliminated) return todo;
@@ -7824,8 +7830,12 @@ function lineupTodo(me) {
   if (!mine.length) return todo;
   const counts = zeroByGroup();
   for (const pk of mine) if (!pk.is_sub) counts[pk.position] = (counts[pk.position] || 0) + 1;
-  if (!lineupValid(counts)) todo.push("Your starting XI isn't valid yet");
-  if (captainEnabled() && !me.captain_id) todo.push("Captain not set");
+  if (!lineupValid(counts))
+    todo.push({ text: "Your starting XI isn't valid yet", act: "lineup" });
+  if (captainEnabled() && !me.captain_id)
+    // Straight into the armband picker, with the pitch already lit.
+    todo.push({ text: "No captain picked", act: "captain",
+                sub: "Nobody in your side is scoring double" });
   return todo;
 }
 
@@ -8078,9 +8088,28 @@ function matchdayCardHtml(me) {
                 p.deadlineAt - Date.now() < 3600e3 ? " urgent" : ""}">${fmtCountdown(p.deadlineAt - Date.now())}</div>
          <div class="text-xs text-slate-400">${esc(fmtWhen(p.deadlineAt))}</div>
        </div>` : "";
+  /* Alert rows, not captions. Each one is a button straight to the fix while
+     the window is open; once it shuts the row stays -- an uncaptained live
+     round is still worth knowing -- but loses the affordance, because
+     openLineup refuses when lineups are locked and a "Fix" that toasts an
+     apology is worse than no button. */
+  const canFix = lineupOpen();
+  const row = (t) => {
+    // The consequence goes on its own line rather than running the headline
+    // onto two. "No captain" is the fact; "nobody scores double" is why you
+    // should care, and it is the half that actually moves anyone.
+    const inner = `<span class="shrink-0">⚠</span>
+      <span class="min-w-0 flex-1">${esc(t.text)}${t.sub
+        ? `<span class="block font-normal text-[11px] opacity-90">${esc(t.sub)}</span>` : ""}</span>`
+      + (canFix ? '<span class="shrink-0">Fix ›</span>' : "");
+    const cls = "todo-alert w-full flex items-center gap-2 rounded-lg"
+      + " px-2.5 py-2 text-sm font-semibold";
+    return canFix
+      ? `<button type="button" data-todo="${esc(t.act)}" class="${cls} text-left">${inner}</button>`
+      : `<div class="${cls}">${inner}</div>`;
+  };
   const todo = p.todo.length
-    ? `<div class="mt-2 space-y-0.5">${p.todo.map((t) =>
-        `<div class="text-[12px] text-amber-300">⚠ ${esc(t)}</div>`).join("")}</div>` : "";
+    ? `<div class="mt-2.5 space-y-1">${p.todo.map(row).join("")}</div>` : "";
   const cta = p.cta
     ? `<button id="md-cta" data-act="${p.cta.act}" class="mt-3 w-full btn-primary rounded-lg py-2.5 text-sm font-semibold">${esc(p.cta.label)}</button>`
     : "";
@@ -8679,6 +8708,10 @@ function renderHomeTab() {
     else if (act === "recap") openRecap();
     else if (act === "live") setBoardTab("lb");
   };
+  // A warning you can tap is a warning that gets acted on. "captain" lands in
+  // the armband picker with the pitch already lit, so the job is one more tap.
+  box.querySelectorAll("[data-todo]").forEach((b) => b.onclick = () =>
+    openLineup(b.dataset.todo === "captain" ? { arm: "cap" } : undefined));
 }
 
 /* ---------- matchday banner ---------- */
@@ -11683,16 +11716,22 @@ function discardLineupEdit() {
   renderLineup();
 }
 
-function openLineup() {
+/* `opts.arm` opens straight into the armband picker: edit mode, that band
+   armed, the pitch already glowing. Used by the "No captain" warning, so the
+   nag and the fix are one tap apart instead of four. */
+function openLineup(opts = {}) {
   S.lineupEdit = false;           // opens read-only; Edit lineup turns it on
   S.armPick = null;
   S.benchDraft = null;            // fall back to the saved order
-  lockScroll(true);
   const me = myManager();
   if (!me) return;
   if (!lineupOpen())
     return toast(autoWindowsEnabled() ? lineupLockMessage()
       : "Lineups are locked — the admin opens the window between rounds.");
+  /* AFTER the refusals, not before. Locking the page scroll and then bailing
+     left the board frozen behind a sheet that never opened, which reads as the
+     app having hung -- and the locked-round CTA takes exactly that path. */
+  lockScroll(true);
   // Draft of the new lineup: set of pick ids that will be starters.
   S.lineupDraft = new Set(managerPicks(me.id)
     .filter((pk) => !pk.is_sub && pk.slot !== "TEAM").map((pk) => pk.id));
@@ -11701,6 +11740,10 @@ function openLineup() {
   const sq = starterQuota(), flex = leagueFlex();
   $("lineup-rule").textContent =
     "Pick an eligible starting XI. The rest are subs — a sub only scores when their starter doesn't play.";
+  if (opts.arm && captainEnabled()) {
+    enterLineupEdit();            // snapshots for Discard, then renders
+    S.armPick = opts.arm;
+  }
   renderLineup();
   $("lineup-sheet").classList.remove("hidden");
 }
@@ -12339,12 +12382,20 @@ function renderLineup() {
       /* Read-only outside edit mode. The dropdowns were live in the view, so
          you could change the armband with no Save button anywhere on screen —
          the change looked applied and was thrown away on the next render. */
-      const shown = (label, mark, pid) => `<div class="rounded-lg bg-slate-800/60 px-2 py-1.5">
+      /* An unset CAPTAIN is alarmed, an unset vice is not. Nobody scoring
+         double is a wasted round; no vice only costs you if the captain also
+         fails to play, and painting both amber would tell you they matter
+         equally. The whisper this replaces was the same slate-500 grey as
+         everything else, so the sheet went quiet at exactly the moment you
+         were standing in front of the thing you had not done. */
+      const shown = (label, mark, pid, loud) => `<div class="rounded-lg px-2 py-1.5 ${
+        loud && !pid ? "todo-alert" : "bg-slate-800/60"}">
         <div class="eyebrow">${label} ${mark}</div>
-        <div class="text-sm truncate ${pid ? "" : "text-slate-500"}">${
-          pid ? esc(nameOf(pid) || "—") : "not set"}</div></div>`;
-      capBox.innerHTML = shown("Captain", "© ×2", S.captainDraft)
-        + shown("Vice", "Ⓥ backup", S.viceDraft);
+        <div class="text-sm truncate ${
+          pid ? "" : loud ? "font-semibold" : "text-slate-500"}">${
+          pid ? esc(nameOf(pid) || "—") : loud ? "⚠ not set" : "not set"}</div></div>`;
+      capBox.innerHTML = shown("Captain", "© ×2", S.captainDraft, true)
+        + shown("Vice", "Ⓥ backup", S.viceDraft, false);
     } else {
       /* Two dropdowns, replaced by two arming buttons.
 
@@ -12354,25 +12405,33 @@ function renderLineup() {
          of a list while the answer sat in plain sight. Now the card says who has
          it, and tapping the card lights the pitch. */
       const arm = S.armPick;
-      const card = (kind, label, mark, hint, pid) => {
+      const card = (kind, label, mark, hint, pid, loud) => {
         const on = arm === kind;
+        // Armed wins over alarmed: once you are picking, the gold ring is the
+        // live state and an amber "you have not done this" is stale advice.
+        const warn = !on && loud && !pid;
         return `<button type="button" data-armset="${kind}"
           aria-pressed="${on}"
-          class="text-left rounded-lg px-2 py-1.5 border ${on
-            ? "border-wcgold bg-wcgold/10" : "border-slate-700 bg-slate-800/60"}">
+          class="text-left rounded-lg px-2 py-1.5 ${on
+            ? "border border-wcgold bg-wcgold/10"
+            : warn ? "todo-alert"
+            : "border border-slate-700 bg-slate-800/60"}">
           <div class="flex items-baseline justify-between gap-1">
             <span class="eyebrow ${on ? "text-wcgold" : ""}">${label} ${mark}</span>
             ${/* Read-only and edit mode drew the same card, so nothing said the
                   armband was now yours to move. This is the affordance. */""}
-            <span class="text-[10px] shrink-0 ${on ? "text-wcgold" : "text-slate-400"}">${
+            <span class="text-[10px] shrink-0 ${
+              on ? "text-wcgold" : warn ? "" : "text-slate-400"}">${
               on ? "cancel" : "change ›"}</span>
           </div>
-          <div class="text-sm truncate ${pid ? "" : "text-slate-500"}">${
-            on ? "Pick on the pitch…" : pid ? esc(nameOf(pid) || "—") : `not set · ${hint}`}</div>
+          <div class="text-sm truncate ${
+            pid ? "" : warn ? "font-semibold" : "text-slate-500"}">${
+            on ? "Pick on the pitch…" : pid ? esc(nameOf(pid) || "—")
+              : warn ? `⚠ not set · ${hint}` : `not set · ${hint}`}</div>
         </button>`;
       };
-      capBox.innerHTML = card("cap", "Captain", "©", "×2", S.captainDraft)
-        + card("vice", "Vice", "Ⓥ", "backup", S.viceDraft);
+      capBox.innerHTML = card("cap", "Captain", "©", "×2", S.captainDraft, true)
+        + card("vice", "Vice", "Ⓥ", "backup", S.viceDraft, false);
       capBox.querySelectorAll("[data-armset]").forEach((b) => b.onclick = () => {
         const kind = b.dataset.armset;
         // Arming takes the pitch over, so a held player has to be put down or
