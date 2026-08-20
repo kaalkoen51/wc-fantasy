@@ -7915,15 +7915,34 @@ function openH2HFixture(rnd, botId, topId) {
   const body = $("recap-body");
   if (!me || !opp || !body) return;
 
+  const capOn = captainEnabled();
   // Prefer the locked round's roster (with points); fall back to the live XI.
   const sideFor = (m) => {
     const round = (managerHistory(m.id).rounds || []).find((r) => r.n === rnd);
     const byPos = listsByGroup();
     const bench = [];
     let total = 0, bonus = 0;
+    /* The armband as it stood FOR THIS ROUND. A played round has it snapshotted
+       on the entries, so a manager who has since changed captain does not
+       rewrite last week's match; only an unplayed round falls back to today's
+       pick. Same order as computeScores and managerHistory, which is what stops
+       the three screens disagreeing about whose points got doubled. */
+    const armOf = (flag, live) => capOn
+      ? (round?.items.find((it) => it.entry[flag])?.entry.player_id ?? live ?? null)
+      : null;
+    const capId = armOf("is_captain", m.captain_id);
+    const viceId = armOf("is_vice", m.vice_id);
     const add = (e, pts, extra) => {
+      // The sub badge wins over the armband, exactly as the round view has it:
+      // coming on is the rarer fact and the one being asked about. The armband
+      // survives in the tooltip either way, so it is never simply lost.
+      const arm = e.player_id === capId ? "C" : e.player_id === viceId ? "V" : "";
+      const armText = arm === "C" ? "Captain — points doubled"
+        : arm === "V" ? "Vice-captain — doubles if the captain does not play" : "";
       const chip = { id: e.player_id, player_id: e.player_id, name: e.player_name,
-        team: e.team, opp: oppShort(e.team), note: pts, ...extra };
+        team: e.team, opp: oppShort(e.team), note: pts,
+        ...(arm ? { badge: arm, title: armText } : {}), ...extra,
+        ...(arm && extra?.title ? { title: `${extra.title} · ${armText}` } : {}) };
       if (e.is_sub) bench.push({ ...chip, position: e.position, pts });
       else if (byPos[e.position]) byPos[e.position].push(chip);
     };
@@ -11846,6 +11865,11 @@ function dugoutHtml(subs, opts = {}) {
               painting a text pill across every face after the pitch stopped. */
           crestBadgeHtml(e.team, "w-3 h-3")
           ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${crestBadgeHtml(e.team, "w-3 h-3")}</span>` : ""}
+        ${/* A captain can end a round on the bench -- named to start, did not
+              turn out, replaced, and moved down here. Same corner disc the
+              pitch draws, or the armband would vanish exactly when it is most
+              worth explaining a doubled score. */
+          e.badge ? `<span class="absolute -top-1 -right-1 rounded-full bg-wcgold text-slate-900 text-[10px] font-bold w-4 h-4 inline-flex items-center justify-center">${esc(e.badge)}</span>` : ""}
         ${e.note != null ? `<span class="pp-pts">${e.note}</span>` : ""}
       </span>
       <span class="sub-name${nameFit(shortName(e.name))}">${esc(shortName(e.name))}</span>

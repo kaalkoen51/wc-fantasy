@@ -1625,6 +1625,68 @@ test("the head-to-head card reports the same match the standings do", async ({ p
   expectCleanSweep(await sweepAllViews(page));
 });
 
+test("the head-to-head card says who each side captained", async ({ page }) => {
+  /* Reported from the app: the one screen whose job is "what happened in this
+     match" did not say whose points were doubled, so a score you could not
+     reconstruct was the normal case. Both sides get an armband, because the
+     opponent's captain is the half of the fixture you cannot see anywhere
+     else. */
+  await openLeague(page, { managers: 2, played: 3, h2h: true, benchSub: true });
+
+  const view = await page.evaluate(() => {
+    const me = myManager().id;
+    const other = S.managers.find((m) => m.id !== me).id;
+    const h = managerHistory(me);
+    const rnd = h.rounds[h.rounds.length - 1].n;
+    openH2HFixture(rnd, me, other);
+    const body = document.getElementById("recap-body");
+    // Read the armband off the DOM by the name it sits next to, so this asserts
+    // what a manager can actually see rather than what the data said.
+    const armbands = {};
+    /* The card carries both layouts at once -- stacked for a phone, facing for
+       a wide screen -- and only one of them is displayed. Counting both would
+       double every name and hide a real duplicate behind an expected one. */
+    for (const chip of body.querySelectorAll(".pp, .sub-chip")) {
+      if (!chip.offsetParent) continue;
+      const badge = [...chip.querySelectorAll("span")]
+        .map((s) => s.textContent.trim()).find((t) => t === "C" || t === "V");
+      const name = chip.querySelector(".pp-name, .sub-name")?.textContent.trim();
+      if (badge && name) (armbands[badge] ||= []).push(name);
+    }
+    const shortOf = (mid) => {
+      const m = S.managers.find((x) => x.id === mid);
+      const pick = (S.picks || []).find((p) => p.player_id === m.captain_id);
+      return shortName(pick?.player_name || "");
+    };
+    const viceOf = (mid) => {
+      const m = S.managers.find((x) => x.id === mid);
+      const pick = (S.picks || []).find((p) => p.player_id === m.vice_id);
+      return shortName(pick?.player_name || "");
+    };
+    return { armbands, caps: [shortOf(me), shortOf(other)].sort(),
+             vices: [viceOf(me), viceOf(other)].sort() };
+  });
+
+  expect((view.armbands.C || []).sort(), "each side's captain is not on the card")
+    .toEqual(view.caps);
+  expect((view.armbands.V || []).sort(), "each side's vice-captain is not on the card")
+    .toEqual(view.vices);
+
+  // Turn captaincy off and the armbands must go with it, or the card advertises
+  // a rule this league does not play.
+  const off = await page.evaluate(() => {
+    S.league.config = { ...S.league.config, captain: false };
+    const me = myManager().id;
+    const other = S.managers.find((m) => m.id !== me).id;
+    const h = managerHistory(me);
+    openH2HFixture(h.rounds[h.rounds.length - 1].n, me, other);
+    const body = document.getElementById("recap-body");
+    return [...body.querySelectorAll(".pp span, .sub-chip span")]
+      .filter((s) => s.offsetParent && ["C", "V"].includes(s.textContent.trim())).length;
+  });
+  expect(off, "a league without captains still shows armbands").toBe(0);
+});
+
 test("the two ways of picking a player to bring in behave the same", async ({ page }) => {
   /* There were two screens answering one question — who do I bring in — and
      they disagreed about what a useful list is. The squad planner sorted by any
