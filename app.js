@@ -10481,6 +10481,29 @@ function suspendedNext(pid) {
 
 const injuryOf = (pid) => (S.injuryByPid || {})[pid] || null;
 
+/* What the injury feed is actually doing, in one line, for the owner panel.
+
+   The failure this exists for: injuries.json was built only for the World Cup
+   and keyed on FIFA squad ids, so for any league drafted from an API-Football
+   competition every lookup missed. A feed keyed on ids the pool never uses
+   looks *exactly* like a feed with nobody injured -- no error, no empty state,
+   just no badges, for months. The count of reports that land in this pool is
+   the number that tells the two apart. */
+function injuryFeedNote(map = S.injuryByPid, pool = S.playerById) {
+  if (map === undefined) return "Injury feed: not loaded yet.";
+  const ids = Object.keys(map || {});
+  if (!ids.length)
+    return "Injury feed: no current reports — injuries.json is empty, missing, "
+      + "or every entry has expired (they lapse 4 days after the feed last built).";
+  const mine = ids.filter((pid) => (pool || {})[pid]).length;
+  const built = ids.map((pid) => map[pid]?.as_of || "").sort().pop() || "unknown";
+  const head = `Injury feed: ${ids.length} current report${ids.length === 1 ? "" : "s"}, `
+    + `${mine} in this competition's pool. Last built ${built}.`;
+  return mine ? head : head
+    + " None of them match, which almost always means the feed was built for a"
+    + " different competition than this league drafted from.";
+}
+
 // Is this team in a match that's kicked off and not yet finished? (Same live
 // window as the Home banner: started, not FT/AET/PEN, within ~2.5h.)
 function teamPlayingNow(team) {
@@ -15850,6 +15873,8 @@ function renderAdmin() {
      locks, scoring, positions, the pool, waivers, the draft and the managers. */
   const owner = isAppOwner();
   $("adm-owner-note")?.classList.toggle("hidden", !owner);
+  const injNote = $("adm-injury-note");
+  if (injNote) injNote.textContent = injuryFeedNote();
   document.querySelectorAll("[data-owner-only]").forEach((el) => {
     el.classList.toggle("hidden", !owner);
     if (!owner) return;

@@ -9,6 +9,7 @@ import json
 import os
 import unittest
 
+import build_injuries
 import daily_pull
 from daily_pull import (
     PLAYERS_JSON,
@@ -352,6 +353,158 @@ class TestUpsertGracefulDegradation(unittest.TestCase):
                 daily_pull.upsert_match_stats([dict(daily_pull_ROW)], ["l"])
         finally:
             daily_pull.requests.post = orig
+
+
+class TestInjuriesFeed(unittest.TestCase):
+    """The injury badge feed, which was invisible for every non-World-Cup league.
+
+    A league built from an API-Football competition keys its pool on the API's
+    own player id ("api_276"); the static World Cup pool keys on FIFA squad
+    ids ("mex_9"). The builder only ever emitted the second, so nothing it
+    wrote could match a Premier League squad.
+    """
+
+    def test_api_id_is_always_emitted(self):
+        ids, why = build_injuries.ids_for({"id": 276, "name": "Someone"}, "Arsenal", None)
+        self.assertEqual(ids, ["api_276"])
+        self.assertIsNone(why)
+
+    def test_both_id_spaces_when_a_matcher_is_supplied(self):
+        matcher = PlayerMatcher([
+            {"player_id": "arg_10", "name": "Lionel Messi", "team": "Argentina"},
+        ])
+        ids, why = build_injuries.ids_for(
+            {"id": 154, "name": "L. Messi"}, "Argentina", matcher)
+        # Both, so one file serves an API-backed league and the static pool
+        # alike -- an id nobody recognises is simply inert.
+        self.assertEqual(ids, ["api_154", "arg_10"])
+        self.assertIsNone(why)
+
+    def test_an_unmatched_name_still_keeps_its_api_id(self):
+        matcher = PlayerMatcher([
+            {"player_id": "arg_10", "name": "Lionel Messi", "team": "Argentina"},
+        ])
+        ids, why = build_injuries.ids_for(
+            {"id": 999, "name": "Nobody At All"}, "Narnia", matcher)
+        self.assertEqual(ids, ["api_999"])
+        self.assertTrue(why, "an unmatched name should say why")
+
+    def test_a_player_with_no_api_id_and_no_match_yields_nothing(self):
+        ids, why = build_injuries.ids_for({"name": "Ghost"}, "Arsenal", None)
+        self.assertEqual(ids, [])
+
+    def test_status_from_player_type(self):
+        self.assertEqual(build_injuries.injury_status("Missing Fixture"), "out")
+        self.assertEqual(build_injuries.injury_status("Questionable"), "doubtful")
+        self.assertEqual(build_injuries.injury_status(None), "doubtful")
+
+    def test_stale_reports_are_dropped(self):
+        """The app expires on `as_of`, which is always today. Over a 38-week
+        season that meant a September hamstring was still being reported in
+        May, so the freshness test has to happen here."""
+        today = "2026-09-14"
+        self.assertTrue(build_injuries.is_current("2026-09-10", today))
+        self.assertTrue(build_injuries.is_current("2026-09-04", today))   # window edge
+        self.assertFalse(build_injuries.is_current("2026-09-03", today))
+        self.assertFalse(build_injuries.is_current("2026-03-01", today))
+        # A future fixture the player is flagged to miss is the best case there
+        # is, and an empty date comes from the current-state `injured` flag.
+        self.assertTrue(build_injuries.is_current("2026-10-01", today))
+        self.assertTrue(build_injuries.is_current("", today))
+
+    def test_out_beats_doubtful_and_recent_beats_old(self):
+        doubtful = {"status": "doubtful", "fixture_date": "2026-09-20"}
+        out_old = {"status": "out", "fixture_date": "2026-09-01"}
+        out_new = {"status": "out", "fixture_date": "2026-09-20"}
+        self.assertTrue(build_injuries.better(None, doubtful))
+        # The stronger claim wins even though its fixture is older.
+        self.assertTrue(build_injuries.better(doubtful, out_old))
+        self.assertFalse(build_injuries.better(out_old, doubtful))
+        self.assertTrue(build_injuries.better(out_old, out_new))
+        self.assertFalse(build_injuries.better(out_new, out_old))
+
+    def test_competitions_parse(self):
+        self.assertEqual(build_injuries.parse_competitions("39:2026,1:2026"),
+                         [(39, 2026), (1, 2026)])
+        self.assertEqual(build_injuries.parse_competitions(" 39:2026 , "),
+                         [(39, 2026)])
+        self.assertEqual(build_injuries.parse_competitions(""), [])
+
+    def test_collect_files_a_club_report_under_the_pool_id_the_app_uses(self):
+        """The whole path, with the network stubbed: a Premier League injury
+        has to come out keyed `api_<id>`, because that is what
+        parseSquadPlayer writes into the pool."""
+        pages = {
+            ("teams", 39): {"response": [{"team": {"id": 42, "name": "Arsenal"}}]},
+            ("injuries", 39): {"response": [{
+                "fixture": {"date": "2026-09-18T14:00:00+00:00"},
+                "team": {"id": 42, "name": "Arsenal"},
+                "player": {"id": 276, "name": "Bukayo Saka",
+                           "type": "Missing Fixture", "reason": "Knee Injury"},
+            }]},
+            ("injuries", 42): {"response": []},
+            ("players", 42): {"response": [
+                {"player": {"id": 1485, "name": "Someone Else", "injured": True}},
+                {"player": {"id": 9999, "name": "Fit Player", "injured": False}},
+            ], "paging": {"current": 1, "total": 1}},
+        }
+
+        def fake_get(path, params):
+            key = (path, params.get("league") or params.get("team"))
+            return pages.get(key, {"response": [], "paging": {"total": 1}})
+
+        orig = build_injuries.api_get
+        build_injuries.api_get = fake_get
+        try:
+            best, log = {}, []
+            build_injuries.collect(39, 2026, "2026-09-14", None, best, log)
+        finally:
+            build_injuries.api_get = orig
+
+        self.assertEqual(sorted(best), ["api_1485", "api_276"])
+        self.assertEqual(best["api_276"]["status"], "out")
+        self.assertEqual(best["api_276"]["reason"], "Knee Injury")
+        self.assertEqual(best["api_276"]["fixture_date"], "2026-09-18")
+        self.assertEqual(best["api_276"]["as_of"], "2026-09-14")
+        # The `injured` flag carries no fixture, and a fit player carries none
+        # of this at all.
+        self.assertEqual(best["api_1485"]["fixture_date"], "")
+        self.assertNotIn("api_9999", best)
+
+    def test_collect_drops_a_report_about_an_old_fixture(self):
+        """Over a 38-week season this is the difference between a badge and a
+        lie: the app expires on `as_of`, which is always today."""
+        pages = {
+            ("teams", 39): {"response": []},
+            ("injuries", 39): {"response": [{
+                "fixture": {"date": "2026-03-01T14:00:00+00:00"},
+                "team": {"id": 42, "name": "Arsenal"},
+                "player": {"id": 276, "name": "Bukayo Saka", "type": "Missing Fixture"},
+            }]},
+        }
+        orig = build_injuries.api_get
+        build_injuries.api_get = lambda path, params: pages.get(
+            (path, params.get("league") or params.get("team")),
+            {"response": [], "paging": {"total": 1}})
+        try:
+            best, log = {}, []
+            build_injuries.collect(39, 2026, "2026-09-14", None, best, log)
+        finally:
+            build_injuries.api_get = orig
+        self.assertEqual(best, {})
+        self.assertTrue(any("too old" in line for line in log))
+
+    def test_the_shipped_file_carries_ids_the_app_can_look_up(self):
+        """A guard against the whole failure mode: a file none of whose ids
+        belong to any live league is indistinguishable from no file at all."""
+        path = PLAYERS_JSON.parent / "injuries.json"
+        if not path.exists():
+            self.skipTest("no injuries.json in the tree")
+        rows = json.loads(path.read_text(encoding="utf-8"))
+        for r in rows:
+            self.assertTrue(r["player_id"].startswith("api_") or "_" in r["player_id"],
+                            f"unrecognisable id shape: {r['player_id']}")
+            self.assertIn(r["status"], ("out", "doubtful"))
 
 
 class TestRealPlayersJson(unittest.TestCase):

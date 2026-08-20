@@ -29,9 +29,16 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # Every competition a live league runs on, in one invocation -- the
+      # script writes them all, so a competition is never dropped from the file
+      # just because a different one was built last. Override without editing
+      # code by setting the INJURY_COMPETITIONS repository variable, e.g.
+      # "1:2026,39:2026". Each competition costs roughly one call per club plus
+      # a squad page or two, so adding one is not free on a metered API plan.
       - name: Build injuries.json
         env:
           API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          INJURY_COMPETITIONS: ${{ vars.INJURY_COMPETITIONS }}
         run: python build_injuries.py
 
       - name: Commit if changed
