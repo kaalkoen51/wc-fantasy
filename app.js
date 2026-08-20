@@ -505,18 +505,25 @@ async function resilientWrite(table, rows, opts = {}) {
    WC-2026 players.json. The pool (squads + fixtures) and raw stats are pulled
    ONCE and stored per-competition (keyed by "<apiLeagueId>-<season>"), so every
    league on the same competition shares them — no duplicated API calls. */
+/* `yellowBan` is how many bookings earn a one-match ban in THIS competition.
+   It is not a detail: the SUSP badge used to hardcode FIFA's two, so a Premier
+   League squad lit up red on every player's second, fourth and sixth yellow of
+   a season -- a confident, wrong statement on the busiest screen in the app.
+   Two for national-team tournaments, three for UEFA club competitions, five
+   across the big domestic leagues. See suspendedNext for what is deliberately
+   NOT modelled (the later 10/15 thresholds and their cut-off rounds). */
 const COMPETITIONS = [
-  { name: "FIFA World Cup",        apiLeagueId: 1,   kind: "cup" },
-  { name: "UEFA Champions League", apiLeagueId: 2,   kind: "cup" },
-  { name: "UEFA Europa League",    apiLeagueId: 3,   kind: "cup" },
-  { name: "UEFA Euro",             apiLeagueId: 4,   kind: "cup" },
-  { name: "UEFA Nations League",   apiLeagueId: 5,   kind: "cup" },
-  { name: "Copa América",          apiLeagueId: 9,   kind: "cup" },
-  { name: "Premier League",        apiLeagueId: 39,  kind: "league" },
-  { name: "La Liga",               apiLeagueId: 140, kind: "league" },
-  { name: "Serie A",               apiLeagueId: 135, kind: "league" },
-  { name: "Bundesliga",            apiLeagueId: 78,  kind: "league" },
-  { name: "Ligue 1",               apiLeagueId: 61,  kind: "league" },
+  { name: "FIFA World Cup",        apiLeagueId: 1,   kind: "cup",    yellowBan: 2 },
+  { name: "UEFA Champions League", apiLeagueId: 2,   kind: "cup",    yellowBan: 3 },
+  { name: "UEFA Europa League",    apiLeagueId: 3,   kind: "cup",    yellowBan: 3 },
+  { name: "UEFA Euro",             apiLeagueId: 4,   kind: "cup",    yellowBan: 2 },
+  { name: "UEFA Nations League",   apiLeagueId: 5,   kind: "cup",    yellowBan: 2 },
+  { name: "Copa América",          apiLeagueId: 9,   kind: "cup",    yellowBan: 2 },
+  { name: "Premier League",        apiLeagueId: 39,  kind: "league", yellowBan: 5 },
+  { name: "La Liga",               apiLeagueId: 140, kind: "league", yellowBan: 5 },
+  { name: "Serie A",               apiLeagueId: 135, kind: "league", yellowBan: 5 },
+  { name: "Bundesliga",            apiLeagueId: 78,  kind: "league", yellowBan: 5 },
+  { name: "Ligue 1",               apiLeagueId: 61,  kind: "league", yellowBan: 5 },
 ];
 /* Which seasons you may start a league on.
 
@@ -669,18 +676,23 @@ async function fetchCompetitionRounds(key, apiLeagueId, season) {
    * `tryAssists` is null across every competition, so there is no assist
      scoring to be had here. Anything that promises one is promising a zero. */
 
+/* `yellowBan: null` throughout, and not by omission. A rugby yellow is a
+   sin-bin served inside the same match -- it is punishment already taken, and
+   there is no accumulation across fixtures to count toward a ban. Carrying
+   football's rule over would have flagged half a squad as suspended for cards
+   they had already sat out. */
 const RUGBY_COMPETITIONS = [
   // kind drives the season model, and it already means exactly the right
   // thing: "cup" is keyed by its own calendar year (the feed writes those
   // YYYY00), "league" runs across two (YYYY01).
   { name: "United Rugby Championship", apiLeagueId: 1068, kind: "league",
-    feedName: "United Rugby Championship" },
+    yellowBan: null, feedName: "United Rugby Championship" },
   { name: "Investec Champions Cup",    apiLeagueId: 1008, kind: "league",
-    feedName: "Investec Champions Cup" },
+    yellowBan: null, feedName: "Investec Champions Cup" },
   { name: "Super Rugby Pacific",       apiLeagueId: 1020, kind: "cup",
-    feedName: "Super Rugby Pacific" },
+    yellowBan: null, feedName: "Super Rugby Pacific" },
   { name: "Nations Championship",      apiLeagueId: 2146, kind: "cup",
-    feedName: "Nations Championship" },
+    yellowBan: null, feedName: "Nations Championship" },
 ];
 
 /* ---------- confirmed matchday squads: the observation ----------
@@ -10392,6 +10404,11 @@ function ownerChipHtml(pid, opts = {}) {
 // last quarter-final (so every QF sits in the same accumulation window).
 let _yrd = null, _yrdFor = null;
 function yellowResetDates() {
+  /* A domestic season has no stage boundaries to reset at -- bookings run from
+     August to May in one window. This used to fall through to the hardcoded
+     World Cup dates below, which for a season straddling them would have split
+     one competition's bookings into two imaginary halves. */
+  if (!isCupCompetition()) return [];
   if (_yrdFor === S.fixtures && _yrd) return _yrd;
   const fx = S.fixtures || [];
   const firstDate = (key) => fx.filter((f) => koRoundOf(f.round) === key)
@@ -10416,12 +10433,33 @@ function yellowResetDates() {
 // 2 = semis onward). Yellows only combine within the same window.
 const yellowWindow = (d) => yellowResetDates().filter((r) => String(d) >= r).length;
 
-// Best-effort "suspended for their next match" from our own card data:
-// a red in their latest appearance, or an even count of single-yellow
-// matches *in the current window* with the latest appearance booked (2nd/4th
-// yellow triggers a one-match ban; playing again clears the flag, i.e. ban
-// served). Two yellows in one match arrive as a red and don't count toward
-// accumulation.
+/* How many single yellows earn a one-match ban here. Legacy leagues carry no
+   competition at all and are World Cup ones, so they keep FIFA's two. A
+   competition we do not recognise returns null, which switches the yellow half
+   of the badge off entirely -- guessing a threshold is how this broke. */
+function yellowBanCount() {
+  const c = leagueCompetition();
+  if (!c) return 2;
+  const meta = competitionsFor(c.sport).find((x) => x.apiLeagueId === c.apiLeagueId);
+  return meta ? (meta.yellowBan ?? null) : null;
+}
+
+/* Best-effort "suspended for their next match" from our own card data: a red
+   in their latest appearance, or a count of single-yellow matches *in the
+   current window* that has just reached a multiple of the competition's
+   threshold, with the latest appearance being the booking. Playing again
+   clears the flag -- that is the ban served. Two yellows in one match arrive
+   as a red and do not count toward accumulation.
+
+   Three things are deliberately not modelled, and the badge is worded as an
+   inference because of them: the later thresholds are treated as multiples of
+   the first (a Premier League 10th and 15th yellow land on multiples of five
+   anyway, so the answer is right even though the reasoning is coarse); the
+   cut-off ROUNDS those later thresholds carry -- a yellow after matchweek 19
+   no longer counts toward the five -- are ignored; and bookings from before
+   this league pulled its stats are invisible, so a mid-season start undercounts
+   until the season turns over. This flags nothing and scores nothing; the cost
+   of each is a missing or a spurious badge. */
 function suspendedNext(pid) {
   const rows = statRowsFor(pid).filter((r) => r.appeared)
     .sort((a, b) => String(labelDate(a.match_label))
@@ -10429,12 +10467,15 @@ function suspendedNext(pid) {
   if (!rows.length) return null;
   const last = rows[rows.length - 1];
   if ((last.red_cards || 0) > 0) return "red card";
+  const ban = yellowBanCount();
+  if (!ban) return null;              // no accumulation rule we know of
   const lastWin = yellowWindow(labelDate(last.match_label));
   const yellows = rows.filter((r) =>
     yellowWindow(labelDate(r.match_label)) === lastWin
     && (r.yellow_cards || 0) > 0 && !(r.red_cards || 0)).length;
-  if ((last.yellow_cards || 0) > 0 && !(last.red_cards || 0) && yellows % 2 === 0)
-    return "2 yellows";
+  if ((last.yellow_cards || 0) > 0 && !(last.red_cards || 0)
+      && yellows > 0 && yellows % ban === 0)
+    return `${yellows} yellows`;
   return null;
 }
 
