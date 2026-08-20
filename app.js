@@ -4103,8 +4103,34 @@ async function autoPick(info) {
   await makePick(choice.entry, info);
 }
 
-// Runs every 500ms. The on-the-clock manager's client auto-picks at 0;
-// the admin's client is a fallback 4s later in case that phone is gone.
+/* Whose client fires the auto-pick, and when.
+
+   Three tiers: the manager on the clock at 0, the ADMIN four seconds later in
+   case that phone is gone, and ANY watching client four seconds after that.
+
+   The third tier is the fix for a draft that stopped dead. With only the first
+   two there was a hole exactly one manager wide: when the admin IS the manager
+   on the clock, both tiers are the same person, so an admin who stepped away
+   froze the room -- while every other manager's turn auto-picked normally,
+   which is exactly what it looked like from the outside.
+
+   Racing is safe and deliberate. Picks carry a unique (league, pick_number),
+   so the first insert wins and every other client takes 23505 and resyncs; and
+   the choice is computed from the on-the-clock manager's OWN shortlist, which
+   is server data, so whoever fires it picks the same player.
+
+   What this still cannot do is pick when nobody at all has the draft open. In
+   a room where every phone is asleep the clock waits, which is the honest
+   limit of a draft that runs in the browser. */
+function autoPickTurn(remain, { mine, admin } = {}) {
+  if (remain > 0) return false;
+  const over = -remain;
+  if (mine) return true;
+  if (admin) return over >= 4;
+  return over >= 8;
+}
+
+// Runs every 500ms.
 function tickTimer() {
   const L = S.league;
   const clock = $("draft-clock");
@@ -4166,7 +4192,7 @@ function tickTimer() {
   if (remain > 0 || autoPickedFor === L.current_pick) return;
   const info = pickInfo(L.current_pick);
   const mine = info.manager.id === myManager()?.id;
-  if (mine || (isAdmin() && remain <= -4)) {
+  if (autoPickTurn(remain, { mine, admin: isAdmin() })) {
     autoPickedFor = L.current_pick;
     autoPick(info).catch((e) => { autoPickedFor = 0; toast(e.message); });
   }
