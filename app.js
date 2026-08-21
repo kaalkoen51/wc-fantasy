@@ -593,12 +593,52 @@ const apiPosToSlot = (pos) => API_POS[pos] || "MID";
 const teamCodeFrom = (name, code) =>
   code || String(name || "").replace(/[^A-Za-z]/g, "").slice(0, 3).toUpperCase() || "TBD";
 
+/* Feed text arrives HTML-escaped, and the app escapes again at render.
+
+   Reported from the app: "N. O&apos;Reilly", printed exactly like that. The
+   feed sends the apostrophe as `&apos;`, esc() turns its `&` into `&amp;`, and
+   the browser faithfully prints the entity as the text it now is. Note esc()
+   emits `&#39;`, never `&apos;` — the entity on screen could only have come
+   from the data, which is what pins this on ingest rather than on rendering.
+
+   The rule the app follows is: store PLAIN text, escape exactly once at
+   render. So this decodes at the boundary where feed text enters, and nothing
+   downstream changes.
+
+   ONE PASS, deliberately, and an allowlist rather than a DOM decode. Looping
+   until stable would turn `&amp;lt;script&gt;` — which is a feed correctly
+   telling us a name literally contains "&lt;script&gt;" — into a live tag.
+   One pass undoes exactly one layer of encoding, which is the one layer the
+   feed applied. Anything unrecognised is left alone rather than guessed at. */
+const HTML_ENTITY = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+const decodeEntities = (s) => String(s ?? "").replace(
+  /&(#\d{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z]{2,8});/g, (m, e) => {
+    if (e[0] === "#") {
+      const n = e[1] === "x" || e[1] === "X"
+        ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      // Astral planes and control characters are not names; leave them be.
+      return n >= 32 && n <= 0x2fff ? String.fromCodePoint(n) : m;
+    }
+    const v = HTML_ENTITY[e.toLowerCase()];
+    return v === undefined ? m : v;
+  });
+
+// Every name the feed hands us, in one place, so a new call site cannot
+// quietly skip it. Mutates a copy, never the row it was given.
+const cleanPlayerNames = (rows) => (rows || []).map((p) =>
+  p && (p.name || p.team || p.player_name)
+    ? { ...p,
+        ...(p.name ? { name: decodeEntities(p.name) } : {}),
+        ...(p.player_name ? { player_name: decodeEntities(p.player_name) } : {}),
+        ...(p.team ? { team: decodeEntities(p.team) } : {}) }
+    : p);
+
 // One API squad player → the app's player record. player_id = "api_<id>" so
 // stats match exactly by id later (no name/shirt guessing).
 function parseSquadPlayer(ap, teamName, teamCode, teamLogo) {
   return {
     player_id: "api_" + ap.id, api_id: ap.id,
-    name: ap.name, position: apiPosToSlot(ap.position),
+    name: decodeEntities(ap.name), position: apiPosToSlot(ap.position),
     team: teamName, team_code: teamCode,
     number: ap.number ?? null, photo: ap.photo || null,
     // The team's API id, so club crests resolve without a separate lookup
@@ -612,7 +652,7 @@ function parseApiFixture(f) {
     // The match's real identity, kept rather than reconstructed later from
     // "Home vs Away (date)" (ROUNDS_DESIGN.md Phase 3).
     fixture_id: f.fixture?.id ?? null,
-    home: f.teams.home.name, away: f.teams.away.name,
+    home: decodeEntities(f.teams.home.name), away: decodeEntities(f.teams.away.name),
     kickoff_utc: f.fixture.date, date: String(f.fixture.date || "").slice(0, 10),
     status: f.fixture.status?.short || "NS",
     round: f.league?.round || null,
@@ -629,7 +669,7 @@ async function fetchCompetitionPool(key, apiLeagueId, season, onProgress) {
   const names = [];
   let done = 0;
   for (const t of teams) {
-    const teamName = t.team.name, code = teamCodeFrom(teamName, t.team.code);
+    const teamName = decodeEntities(t.team.name), code = teamCodeFrom(teamName, t.team.code);
     names.push(teamName);
     onProgress && onProgress(++done, teams.length, teamName);
     const squads = await apiFootball(key, "players/squads", { team: t.team.id });
@@ -1008,7 +1048,8 @@ const crestFields = (pair) => pair
    resolved display name ("Rieko Ioane"); first+last is the fallback, not the
    default, because nicknames are already settled in `known`. */
 function parseRugbyPlayer(rp, teamName, teamCode, teamId) {
-  const name = rp.known || [rp.firstName, rp.lastName].filter(Boolean).join(" ").trim();
+  const name = decodeEntities(
+    rp.known || [rp.firstName, rp.lastName].filter(Boolean).join(" ").trim());
   return {
     player_id: "rug_" + rp.id, api_id: rp.id,
     name,
@@ -1508,7 +1549,10 @@ async function loadPlayers() {
   // Phase 2.5. Empty = fall back to ordering rounds by kickoff, as before.
   S.roundOrder = pool?.round_order || [];
   if (pool?.players?.length) {
-    S.players = pool.players;                       // API competition pool
+    /* Decoded on the way IN as well as at ingest, so a pool pulled before the
+       escaping was noticed reads correctly today without anyone re-pulling
+       anything. Idempotent on data that is already plain. */
+    S.players = cleanPlayerNames(pool.players);     // API competition pool
   } else {
     /* players.json is a FOOTBALL squad list -- the built-in World Cup pool.
        Falling back to it in a rugby league does not fail, it substitutes: the
@@ -1855,7 +1899,12 @@ async function refetchAll({ initial = false } = {}) {
   if (err) return bail(err.message);
   S.managers = m.data;
   applyLocalOverrides();   // a read that started before our last write is stale
-  S.picks = mergeOptimisticPicks(p.data, S.picks, Date.now());
+  /* A pick carries a COPY of the name taken when it was drafted, so anyone
+     drafted while the pool was escaped is carrying the entity in their own
+     row. Decoded on read for the same reason the pool is: nobody should have
+     to re-draft to see an apostrophe. The stored row keeps whatever it has --
+     this is display, not a migration. */
+  S.picks = cleanPlayerNames(mergeOptimisticPicks(p.data, S.picks, Date.now()));
   S.stats = st.data;
   S.stages = tg.data;
   S.trades = tr.data;

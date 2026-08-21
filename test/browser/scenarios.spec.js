@@ -1911,6 +1911,48 @@ function shortOf(name) {
   return bits.length > 1 ? bits.slice(1).join(" ") : name;
 }
 
+test("a name the feed escaped is printed as a name, not as an entity",
+  async ({ page }) => {
+  /* Reported from the app: the players list showed "N. O&apos;Reilly", exactly
+     like that. The feed HTML-escapes names and the app escapes again at
+     render, so the entity became the text. */
+  await openLeague(page, { managers: 2, played: 3 });
+
+  const seen = await page.evaluate(() => {
+    // Straight into the loaded pool, the way a stored competition_pools row
+    // carries it — this is the state that is live right now.
+    const p = S.players[0];
+    p.name = "N. O&apos;Reilly";
+    S.players = cleanPlayerNames(S.players);
+    S.playerById = Object.fromEntries(S.players.map((x) => [x.player_id, x]));
+    S._poolBase = S.players;
+    setBoardTab("stats");
+    S.statsSearch = "Reilly";
+    renderStatsTab();
+    const pane = document.getElementById("board-stats");
+    return { text: pane.textContent, html: pane.innerHTML };
+  });
+  expect(seen.text, "the entity is still being printed as text").not.toContain("&apos;");
+  expect(seen.text, "the apostrophe never arrived").toContain("O'Reilly");
+
+  /* And the escape it replaced is still doing its job. A feed that says a name
+     literally contains a tag must not put one in the page. */
+  const safe = await page.evaluate(() => {
+    const p = S.players[0];
+    p.name = "Bobby &lt;img src=x onerror=alert(1)&gt; Tables";
+    S.players = cleanPlayerNames(S.players);
+    S.playerById = Object.fromEntries(S.players.map((x) => [x.player_id, x]));
+    S._poolBase = S.players;
+    S.statsSearch = "Tables";
+    renderStatsTab();
+    const pane = document.getElementById("board-stats");
+    return { imgs: pane.querySelectorAll("img[onerror]").length,
+             shows: pane.textContent.includes("<img src=x onerror=alert(1)>") };
+  });
+  expect(safe.imgs, "decoding a name put live markup in the page").toBe(0);
+  expect(safe.shows, "the name is not shown as the text it is").toBe(true);
+});
+
 test("a warning you cannot act on does not pretend to be a button", async ({ page }) => {
   await openLeague(page, { managers: 2, played: 3 });
   const state = await page.evaluate(() => {
