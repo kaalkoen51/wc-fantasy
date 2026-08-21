@@ -7,3 +7,6 @@ node_modules/
 public/
 test-results/
 playwright-report/
+
+# Push signing key. Never committed — see vapid_keys.js.
+.vapid/

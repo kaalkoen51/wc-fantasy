@@ -574,6 +574,52 @@ do $$ begin
     create policy fa_claims_all on fa_claims for all using (true) with check (true);
 exception when duplicate_object then null; end $$;
 
+/* Where to deliver a notification, one row per DEVICE.
+
+   A push is not sent to a person, it is sent to an address the browser issues
+   and only the browser can issue. Someone with a phone and a laptop is two
+   rows; reinstall the app and the old row is dead and a new one appears. That
+   is why `endpoint` is the unique key rather than the user: re-subscribing on
+   the same browser hands back the same address, so the write is an upsert and
+   nobody accumulates duplicates.
+
+   `p256dh` and `auth_secret` are the encryption keys the browser generates
+   alongside the address. Every push is encrypted to them, so the push service
+   -- Apple's or Google's -- relays a payload it cannot read. The column is
+   named auth_secret rather than the spec's bare `auth` only because `auth` is
+   also a schema in a Supabase database and reading `auth.uid() = auth` in a
+   policy is a sentence nobody should have to parse.
+
+   THIS TABLE'S RLS IS STRICT, unlike its neighbours. Everything else here is
+   open because a league's data is shared by the league anyway and the app is
+   the only client. A delivery address is different: it belongs to one person,
+   the client never has a reason to read anyone else's, and the sender runs
+   with the service key and bypasses this entirely. Strictness costs nothing
+   and removes the only table where "any signed-in user can delete any row"
+   would mean "any member can silently switch off another manager's alerts".*/
+create table if not exists push_subscriptions (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid not null,
+    endpoint text not null unique,
+    p256dh text not null,
+    auth_secret text not null,
+    -- Which alerts this device wants. Per device on purpose: "buzz my phone
+    -- but not the laptop I have open at work" is a real preference, and the
+    -- device is the thing being buzzed.
+    prefs jsonb not null default '{}'::jsonb,
+    -- So a manager with three devices can tell which row is which when turning
+    -- one off. Never parsed, only shown.
+    label text,
+    created_at timestamptz default now(),
+    last_seen_at timestamptz default now()
+);
+create index if not exists push_subs_user_idx on push_subscriptions (user_id);
+alter table push_subscriptions enable row level security;
+do $$ begin
+    create policy push_subs_own on push_subscriptions for all
+        using (user_id = auth.uid()) with check (user_id = auth.uid());
+exception when duplicate_object then null; end $$;
+
 -- Realtime: stream changes to connected clients.
 -- (wrapped so re-running this file never errors on already-added tables)
 do $$

@@ -108,3 +108,68 @@ test("a desktop is not nagged to install — it gains nothing by it", async ({ p
   });
   await expect(page.locator("#install-hint")).toHaveCount(0);
 });
+
+/* ---------- stage 2: subscribing ---------- */
+
+test("the alerts panel offers the switch, remembers the choices, and can be turned off",
+  async ({ page }) => {
+  await openLeague(page, { managers: 2, played: 3 });
+  await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    openCrestPicker();
+  });
+  const panel = page.locator("#alerts-panel");
+  await expect(panel, "there is no alerts panel in the settings sheet").toHaveCount(1);
+
+  // Signed out: alerts follow an account, so there is nothing to switch on.
+  await page.evaluate(() => { S._uid = S.authUser; S.authUser = null; renderAlertsPanel(); });
+  await expect(page.locator("#alerts-on"),
+    "a signed-out device was offered a switch it cannot use").toHaveCount(0);
+  await expect(panel).toContainText("Sign in");
+
+  await page.evaluate(() => { S.authUser = S._uid; renderAlertsPanel(); });
+  await expect(page.locator("#alerts-on"),
+    "a signed-in device is not offered the switch").toHaveCount(1);
+
+  // Subscribed: the switches appear, one per kind, and a change is written
+  // through immediately rather than waiting on a Save nobody would press.
+  const saved = await page.evaluate(async () => {
+    const writes = [];
+    S.sb.from = ((orig) => (t) => t === "push_subscriptions"
+      ? { update: (v) => { writes.push(v); return { eq: async () => ({}) }; } }
+      : orig(t))(S.sb.from.bind(S.sb));
+    S.pushSub = { endpoint: "https://push.example/abc" };
+    S.alertPrefs = defaultAlertPrefs();
+    renderAlertsPanel();
+    document.querySelector('[data-alert="chatAll"]').click();
+    await new Promise((r) => setTimeout(r, 0));
+    return { writes, boxes: document.querySelectorAll("[data-alert]").length };
+  });
+  expect(saved.boxes, "not every alert kind has a switch")
+    .toBe(await page.evaluate(() => ALERT_KINDS.length));
+  expect(saved.writes.length, "flipping a switch wrote nothing").toBe(1);
+  expect(saved.writes[0].prefs.chatAll,
+    "the change was not the one that was made").toBe(true);
+
+  await expect(page.locator("#alerts-off"),
+    "there is no way to turn alerts off again").toHaveCount(1);
+});
+
+test.describe("an iPhone in a browser tab", () => {
+  test.use({ userAgent: IPHONE });
+
+  test("is told to install rather than offered a button that can never work",
+    async ({ page }) => {
+    /* Safari does not deliver a notification to a tab under any
+       circumstances, so "Turn on alerts" there is a button someone could tap
+       every week for a season and never get anything. */
+    await openLeague(page, { managers: 2, played: 3 });
+    await page.evaluate(() => {
+      document.getElementById("reveal-sheet")?.classList.add("hidden");
+      openCrestPicker();
+    });
+    await expect(page.locator("#alerts-panel")).toContainText("Home Screen");
+    await expect(page.locator("#alerts-on"),
+      "an iPhone tab was offered a switch that cannot work").toHaveCount(0);
+  });
+});

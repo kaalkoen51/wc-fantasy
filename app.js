@@ -8137,6 +8137,237 @@ function openH2HFixture(rnd, botId, topId) {
   lockScroll(true);
 }
 
+/* ---------- notifications ---------- */
+
+/* The public half of the signing pair. Not a secret: it ships to every browser
+   and is what Apple and Google check a send against. Generated once by
+   vapid_keys.js; the private half lives only in the sender. Changing it breaks
+   every subscription taken before the change, silently, so it does not change.
+   Empty means notifications are not set up yet, and the panel says so rather
+   than offering a button that cannot work. */
+const VAPID_PUBLIC_KEY =
+  "BJPwkz9kQXXz8P4jpbWw6UVj0giN1viJ1XJ0yr4XSb0QQMY5q5ErhQP_0hs0722GlqXt_vtrLzdCblKHPdRaGro";
+
+/* What the alerts panel should show, as one decision.
+
+   Six answers, and every one of them has to be a different sentence, because
+   "you are not getting notifications" is the same visible outcome for all of
+   them and the fix is different every time. Getting this wrong is how an
+   iPhone user ends up tapping a dead button forever: Safari does not deliver
+   to a tab, so the honest answer there is not "turn them on", it is "install
+   the app first".
+
+   Pure, and that is the only way it can be tested at all -- the states it
+   describes are exactly the ones a headless browser cannot be put into.     */
+function pushState({ supported = false, configured = false, signedIn = false,
+                     permission = "default", standalone = false, ua = "",
+                     subscribed = false } = {}) {
+  const iOS = /iPad|iPhone|iPod/.test(ua);
+  // Ask for the install BEFORE anything else on iOS. Permission cannot even be
+  // requested from a tab there, so every other message would be a lie.
+  if (iOS && !standalone) return { state: "needs-install",
+    title: "Add to your Home Screen first",
+    body: "An iPhone will only send you alerts from the installed app, never "
+      + "from a browser tab. Tap Share, then \u201cAdd to Home Screen\u201d." };
+  if (!supported) return { state: "unsupported",
+    title: "This browser can't do alerts",
+    body: "Nothing to switch on here. Chrome, Edge, Firefox and Safari all can." };
+  if (!configured) return { state: "unconfigured",
+    title: "Alerts aren't set up yet",
+    body: "The app owner still has to add the signing key. Nothing you can do "
+      + "from here." };
+  if (!signedIn) return { state: "signed-out",
+    title: "Sign in to get alerts",
+    body: "Alerts follow your account, so the app knows who to tell." };
+  if (permission === "denied") return { state: "blocked",
+    title: "Alerts are blocked",
+    body: "You said no once, and only your browser can undo that \u2014 find "
+      + "DraftBaron in its site settings and allow notifications." };
+  if (subscribed) return { state: "on",
+    title: "Alerts are on for this device",
+    body: "Choose what is worth a buzz. Each device is set separately." };
+  return { state: "off",
+    title: "Turn on alerts",
+    body: "Your turn in the draft, deadlines, trades and messages \u2014 "
+      + "you choose which." };
+}
+
+/* Everything an alert can be about. Held in one list so the panel, the stored
+   preference and (later) the sender all read the same names -- three
+   hand-kept copies of a list like this is two that go stale.
+   `on` is the default for a device that has just said yes: the ones that are
+   about YOU, not the ones that fire whenever anybody does anything. */
+const ALERT_KINDS = [
+  { id: "turn",    label: "My turn in the draft",     on: true },
+  { id: "deadline",label: "An hour before a deadline", on: true,
+    note: "lineups locking, trade window closing" },
+  { id: "waivers", label: "Waiver results",            on: true },
+  { id: "trades",  label: "Trade offers",              on: true },
+  { id: "chat",    label: "Direct messages",           on: true },
+  { id: "chatAll", label: "Every league message",      on: false,
+    note: "busy on a matchday" },
+];
+const defaultAlertPrefs = () =>
+  Object.fromEntries(ALERT_KINDS.map((k) => [k.id, k.on]));
+
+const pushSupported = () => typeof window !== "undefined"
+  && "serviceWorker" in navigator && "PushManager" in window
+  && "Notification" in window;
+
+const pushStateNow = () => pushState({
+  supported: pushSupported(),
+  configured: !!VAPID_PUBLIC_KEY,
+  signedIn: !!authUid(),
+  permission: pushSupported() ? Notification.permission : "default",
+  standalone: navigator.standalone === true
+    || window.matchMedia?.("(display-mode: standalone)").matches === true,
+  ua: navigator.userAgent,
+  subscribed: !!S.pushSub,
+});
+
+// base64url → the Uint8Array the Push API insists on. Three characters of
+// difference from base64, and no browser will tell you which one is wrong.
+function urlBase64ToUint8Array(s) {
+  const pad = "=".repeat((4 - (s.length % 4)) % 4);
+  const b64 = (s + pad).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(b64);
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+
+// What the browser hands back, flattened into the row the sender needs.
+function subscriptionRow(sub, uid, prefs, label) {
+  const key = (n) => {
+    const b = sub.getKey(n);
+    return btoa(String.fromCharCode(...new Uint8Array(b)))
+      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  };
+  return { user_id: uid, endpoint: sub.endpoint, p256dh: key("p256dh"),
+           auth_secret: key("auth"), prefs, label,
+           last_seen_at: new Date().toISOString() };
+}
+
+/* Ask, subscribe, store. Must be called from a tap: iOS refuses a permission
+   prompt that no gesture asked for, and silently -- the promise resolves
+   "default" and nothing happens. */
+async function enableAlerts() {
+  if (!pushSupported()) return toast("This browser can't do alerts.");
+  const uid = authUid();
+  if (!uid) return toast("Sign in first — alerts follow your account.");
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") {
+    renderAlertsPanel();
+    return toast(perm === "denied"
+      ? "Alerts blocked — your browser has to undo that in its site settings."
+      : "Alerts not enabled.");
+  }
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,                       // required; we never send silent pushes
+    applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+  });
+  S.pushSub = sub;
+  S.alertPrefs = S.alertPrefs || defaultAlertPrefs();
+  const row = subscriptionRow(sub, uid, S.alertPrefs, deviceLabel());
+  /* On endpoint, not on id: the browser hands back the SAME address when a
+     device re-subscribes, so this has to update that row rather than add a
+     second one nobody will ever clean up. */
+  const { error } = await S.sb.from("push_subscriptions")
+    .upsert(row, { onConflict: "endpoint" });
+  if (error) {
+    console.warn("push_subscriptions write failed:", error.message);
+    toast(/relation|schema cache|column/.test(error.message)
+      ? "Alerts need a schema update — run schema.sql."
+      : "Couldn't save this device: " + error.message);
+  } else toast("Alerts on for this device.");
+  renderAlertsPanel();
+}
+
+async function disableAlerts() {
+  const sub = S.pushSub;
+  S.pushSub = null;
+  if (sub) {
+    await S.sb.from("push_subscriptions").delete().eq("endpoint", sub.endpoint);
+    await sub.unsubscribe().catch(() => {});
+  }
+  renderAlertsPanel();
+  toast("Alerts off for this device.");
+}
+
+async function saveAlertPrefs() {
+  if (!S.pushSub) return;
+  await S.sb.from("push_subscriptions")
+    .update({ prefs: S.alertPrefs }).eq("endpoint", S.pushSub.endpoint);
+}
+
+// Something a person can recognise in a list of their own devices. Rough on
+// purpose -- it is a label, not a fingerprint.
+function deviceLabel() {
+  const ua = navigator.userAgent;
+  const os = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad"
+    : /Android/.test(ua) ? "Android" : /Macintosh/.test(ua) ? "Mac"
+    : /Windows/.test(ua) ? "Windows" : "Browser";
+  return os;
+}
+
+/* Pick up an existing subscription on load, so the panel opens telling the
+   truth rather than offering to turn on something that is already on. */
+async function loadPushSubscription() {
+  if (!pushSupported() || !authUid()) return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    S.pushSub = await reg.pushManager.getSubscription();
+    if (!S.pushSub) return;
+    const { data } = await S.sb.from("push_subscriptions")
+      .select("prefs").eq("endpoint", S.pushSub.endpoint).maybeSingle();
+    S.alertPrefs = { ...defaultAlertPrefs(), ...(data?.prefs || {}) };
+  } catch (e) { console.warn("Could not read the push subscription:", e.message); }
+}
+
+/* The alerts panel. Redraws itself rather than the whole sheet, so turning a
+   switch does not scroll you back to the crest grid. */
+function renderAlertsPanel() {
+  const box = $("alerts-panel");
+  if (!box) return;
+  const st = pushStateNow();
+  const head = `<div class="rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2">
+      <div class="text-sm font-semibold">${esc(st.title)}</div>
+      <p class="mt-0.5 text-xs text-slate-400">${esc(st.body)}</p>
+    </div>`;
+
+  if (st.state === "off") {
+    box.innerHTML = head
+      + `<button id="alerts-on" class="mt-1.5 w-full btn-primary rounded-lg py-2 text-sm font-semibold">Turn on alerts</button>`;
+    $("alerts-on").onclick = () => enableAlerts().catch((e) => {
+      console.warn("enableAlerts:", e);
+      toast(e.message || "Couldn't turn alerts on.");
+    });
+    return;
+  }
+  if (st.state !== "on") { box.innerHTML = head; return; }
+
+  const prefs = S.alertPrefs || defaultAlertPrefs();
+  box.innerHTML = head
+    + `<div class="mt-1.5 space-y-1">${ALERT_KINDS.map((k) => `
+        <label class="flex items-start gap-2 rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2">
+          <input type="checkbox" data-alert="${esc(k.id)}" ${prefs[k.id] ? "checked" : ""}
+                 class="mt-0.5 shrink-0 w-4 h-4 accent-wcgold">
+          <span class="min-w-0 flex-1">
+            <span class="block text-sm">${esc(k.label)}</span>
+            ${k.note ? `<span class="block text-xs text-slate-400">${esc(k.note)}</span>` : ""}
+          </span>
+        </label>`).join("")}</div>
+      <button id="alerts-off" class="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-900 py-1.5 text-xs text-slate-400">Turn off on this device</button>`;
+
+  box.querySelectorAll("[data-alert]").forEach((c) => c.onchange = () => {
+    S.alertPrefs = { ...prefs, [c.dataset.alert]: c.checked };
+    // Written straight away and not on a Save button: a checkbox that needs
+    // confirming is a checkbox half this league will leave unconfirmed.
+    saveAlertPrefs().catch((e) => toast("Couldn't save: " + e.message));
+  });
+  $("alerts-off").onclick = () => disableAlerts().catch((e) =>
+    toast(e.message || "Couldn't turn alerts off."));
+}
+
 /* ---------- add to Home Screen ---------- */
 
 /* Whether to nudge this browser toward installing, and why.
@@ -8306,7 +8537,13 @@ function renderCrestPicker() {
         </button>`).join("")}
       </div>
     </div>
+    <div>
+      <div class="eyebrow mb-1.5">Alerts <span class="font-normal normal-case tracking-normal text-slate-500">\u00b7 this device</span></div>
+      <div id="alerts-panel"></div>
+    </div>
     <p id="crest-note" class="text-xs text-slate-400 text-center min-h-[1em]"></p>`;
+
+  renderAlertsPanel();
 
   body.querySelectorAll("[data-theme-pick]").forEach((b2) => b2.onclick = () => {
     setTheme(b2.dataset.themePick);
@@ -16843,6 +17080,11 @@ async function init() {
     },
   });
   await refreshAuthUser();
+  /* Read back any subscription this browser already holds, so the alerts panel
+     opens telling the truth rather than offering to switch on something that
+     is already on. Not awaited: it is display state, and the app has never
+     needed it to start. */
+  loadPushSubscription();
   S.sb.auth.onAuthStateChange((event, session) => {
     S.authUser = session?.user || null;
     /* Arriving from a reset link signs the user in AND fires PASSWORD_RECOVERY.
