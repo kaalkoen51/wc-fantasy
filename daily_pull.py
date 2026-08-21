@@ -600,6 +600,23 @@ def pull_competition_rows(date: str, league_id: int, season: int, mock: bool) ->
     return [r for r in rows if featured(r) and r["player_id"]]
 
 
+def parse_competition_key(key: str):
+    """"39-2026" -> (39, 2026). None for anything this puller cannot serve.
+
+    Non-football competitions carry their sport in the key ("rugby-1068-202501")
+    and come from a different feed entirely, so they are not malformed -- they
+    are simply not ours. Shared with live_pull so the two agree about which
+    competitions they are allowed to touch.
+    """
+    parts = str(key or "").split("-")
+    if len(parts) != 2:
+        return None
+    try:
+        return int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+
+
 def run_competition_pulls(date: str, mock: bool, dry_run: bool) -> None:
     """Pull every competition whose app-admin scheduled toggle is on into the
     shared competition_stats — one pull serves every league on it."""
@@ -609,12 +626,11 @@ def run_competition_pulls(date: str, mock: bool, dry_run: bool) -> None:
         return
     print(f"{len(keys)} scheduled competition(s): {', '.join(keys)}")
     for key in keys:
-        try:
-            lid_s, season_s = key.split("-")
-            league_id, season = int(lid_s), int(season_s)
-        except ValueError:
-            print(f"  skip malformed competition_key {key!r}")
+        parsed = parse_competition_key(key)
+        if not parsed:
+            print(f"  skip competition_key {key!r} (not an API-Football key)")
             continue
+        league_id, season = parsed
         rows = pull_competition_rows(date, league_id, season, mock)
         print(f"  {key} (league {league_id}, season {season}): {len(rows)} player rows")
         if not rows:

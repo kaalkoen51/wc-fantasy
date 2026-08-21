@@ -9,8 +9,11 @@ import json
 import os
 import unittest
 
+import argparse
+
 import build_injuries
 import daily_pull
+import live_pull
 from daily_pull import (
     PLAYERS_JSON,
     PlayerMatcher,
@@ -353,6 +356,139 @@ class TestUpsertGracefulDegradation(unittest.TestCase):
                 daily_pull.upsert_match_stats([dict(daily_pull_ROW)], ["l"])
         finally:
             daily_pull.requests.post = orig
+
+
+class TestLivePull(unittest.TestCase):
+    """In-match scoring, which for a club competition never happened.
+
+    live_pull defaulted to --league 1 (the World Cup), mapped players onto
+    FIFA squad ids from players.json, and wrote to match_stats. A league
+    drafted from an API-Football competition matched none of those three, so
+    it got no live scoring and nothing said so: points just appeared after
+    the final whistle when the twice-daily sweep ran.
+    """
+
+    def _fixture(self, fid=7, league=39):
+        return {"fixture": {"id": fid, "status": {"short": "2H"},
+                            "date": "2026-08-21T19:00:00+00:00"},
+                "league": {"id": league, "round": "Regular Season - 2"},
+                "teams": {"home": {"id": 42, "name": "Arsenal"},
+                          "away": {"id": 45, "name": "Coventry"}},
+                "goals": {"home": 1, "away": 0}}
+
+    def test_a_competition_writes_api_ids_to_the_shared_table(self):
+        """The whole fix in one assertion: rows keyed api_<id>, landing in
+        competition_stats under the competition's own key."""
+        wrote = {}
+        orig = (live_pull.fetch_fixture_players, live_pull.upsert_competition_stats,
+                live_pull.upsert_match_stats)
+        live_pull.fetch_fixture_players = lambda fid, mock=False: [{
+            "team": {"id": 42, "name": "Arsenal"},
+            "players": [{"player": {"id": 276, "name": "B. Saka"},
+                         "statistics": [{"games": {"minutes": 70, "rating": "7.8"},
+                                         "goals": {"total": 1, "assists": None,
+                                                   "conceded": 0, "saves": None},
+                                         "cards": {"yellow": 0, "red": 0},
+                                         "penalty": {"saved": None, "missed": None},
+                                         "tackles": {"total": 2, "interceptions": 1},
+                                         "duels": {"total": 3, "won": 2}}]}]}]
+        live_pull.upsert_competition_stats = lambda rows, key: wrote.update(
+            {"rows": rows, "key": key})
+        live_pull.upsert_match_stats = lambda rows, ids: wrote.update({"legacy": True})
+        try:
+            t = live_pull.Target(39, 2026, "competition", key="39-2026")
+            live_pull.pull_fixture(self._fixture(), t, dry_run=False)
+        finally:
+            (live_pull.fetch_fixture_players, live_pull.upsert_competition_stats,
+             live_pull.upsert_match_stats) = orig
+
+        self.assertEqual(wrote.get("key"), "39-2026")
+        self.assertNotIn("legacy", wrote, "a competition wrote to match_stats")
+        self.assertEqual([r["player_id"] for r in wrote["rows"]], ["api_276"])
+        # Scored on the way in, the same as the sweep that later replaces it,
+        # so a live row and a swept row differ by nothing.
+        self.assertIn("points", wrote["rows"][0])
+
+    def test_one_api_call_covers_every_competition_watched(self):
+        """This loop wakes every fifteen minutes all season, so watching three
+        competitions must not cost three times as much as watching one."""
+        calls = []
+        orig = live_pull.api_get
+        live_pull.api_get = lambda path, params: (calls.append((path, params)) or {
+            "response": [self._fixture(1, 39), self._fixture(2, 140),
+                         self._fixture(3, 78)]})
+        try:
+            # Four competitions. A per-competition implementation makes four
+            # calls here; this must make one however long the list gets.
+            by_league = live_pull.fetch_live_fixtures([39, 140, 135, 61])
+        finally:
+            live_pull.api_get = orig
+        self.assertEqual(len(calls), 1,
+                         f"{len(calls)} calls for 4 competitions — should be 1")
+        self.assertEqual(sorted(by_league), [39, 61, 135, 140])
+        self.assertEqual([f["fixture"]["id"] for f in by_league[39]], [1])
+        self.assertEqual([f["fixture"]["id"] for f in by_league[140]], [2])
+        # A live game in a competition nobody drafted from is not our business.
+        self.assertNotIn(78, by_league)
+
+    def test_the_static_pool_still_writes_where_it_always_did(self):
+        wrote = {}
+        orig = (live_pull.fetch_fixture_players, live_pull.upsert_match_stats,
+                live_pull.upsert_competition_stats)
+        live_pull.fetch_fixture_players = lambda fid, mock=False: []
+        live_pull.upsert_match_stats = lambda rows, ids: wrote.update({"ids": ids})
+        live_pull.upsert_competition_stats = lambda rows, key: wrote.update(
+            {"competition": True})
+        try:
+            matcher = PlayerMatcher([{"player_id": "arg_10", "name": "Lionel Messi",
+                                      "team": "Argentina"}])
+            t = live_pull.Target(1, 2026, "legacy", matcher=matcher,
+                                 league_ids=["lg-1"])
+            # No players in the payload, so nothing is written -- what is being
+            # checked is that it did not take the competition branch.
+            live_pull.pull_fixture(self._fixture(league=1), t, dry_run=False)
+        finally:
+            (live_pull.fetch_fixture_players, live_pull.upsert_match_stats,
+             live_pull.upsert_competition_stats) = orig
+        self.assertNotIn("competition", wrote)
+
+    def test_targets_come_from_the_admin_toggle(self):
+        """The same switch the twice-daily sweep reads, rather than a second
+        list somebody has to remember to keep in step."""
+        orig = live_pull.fetch_scheduled_competitions
+        live_pull.fetch_scheduled_competitions = lambda: [
+            "39-2026", "140-2026", "rugby-1068-202501", "nonsense"]
+        os.environ.pop("FANTASY_LEAGUE_ID", None)
+        try:
+            args = argparse.Namespace(no_competitions=False, league=1, season=2026)
+            targets = live_pull.build_targets(args)
+        finally:
+            live_pull.fetch_scheduled_competitions = orig
+        self.assertEqual([t.key for t in targets], ["39-2026", "140-2026"])
+        self.assertTrue(all(t.kind == "competition" for t in targets))
+
+    def test_a_rugby_competition_is_skipped_not_crashed_on(self):
+        # It is not malformed, it is simply served by a different feed.
+        self.assertIsNone(daily_pull.parse_competition_key("rugby-1068-202501"))
+        self.assertEqual(daily_pull.parse_competition_key("39-2026"), (39, 2026))
+        # A key of an unexpected shape is refused rather than guessed at. Both
+        # halves of the guard earn their place: the try/except turns away
+        # "rugby-...", and only the length check turns away this one.
+        self.assertIsNone(daily_pull.parse_competition_key("39-2026-2"))
+        self.assertIsNone(daily_pull.parse_competition_key(""))
+        self.assertIsNone(daily_pull.parse_competition_key(None))
+
+    def test_nothing_to_watch_is_not_a_failure(self):
+        """The watchdog fires every fifteen minutes; exiting red when there is
+        nothing to do would be ninety-six failure mails a day."""
+        orig = live_pull.fetch_scheduled_competitions
+        live_pull.fetch_scheduled_competitions = lambda: []
+        os.environ.pop("FANTASY_LEAGUE_ID", None)
+        try:
+            args = argparse.Namespace(no_competitions=False, league=1, season=2026)
+            self.assertEqual(live_pull.build_targets(args), [])
+        finally:
+            live_pull.fetch_scheduled_competitions = orig
 
 
 class TestInjuriesFeed(unittest.TestCase):

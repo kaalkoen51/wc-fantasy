@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live in-match scoring loop for the World Cup fantasy league.
+"""Live in-match scoring loop.
 
 Designed to run from the "Live stats pull" GitHub Actions workflow,
 which wakes it every 15 minutes (see .github/workflows/live-pull.yml):
@@ -20,10 +20,22 @@ Every pull is a full cumulative upsert on (league, player, match), so
 restarts, overlaps with the manual "Pull stats now" button, and the
 06:00 daily sweep are all safe — the last write simply wins.
 
+WHAT IT WATCHES. Every competition whose scheduled-pull toggle is on in
+the admin panel -- the same switch the twice-daily sweep reads -- plus,
+if FANTASY_LEAGUE_ID is set, the original static World Cup league. All
+of them in ONE live=all call per poll, so watching three competitions
+costs exactly what watching one did.
+
+This used to be World-Cup-only, and silently: the defaults said league 1,
+players were mapped onto FIFA squad ids from players.json, and rows went
+to match_stats. A league drafted from an API-Football competition matched
+none of those three, so it got no in-match scoring at all and nothing
+said so -- points simply appeared after the final whistle, once the
+twice-daily sweep ran.
+
 Environment variables: same as daily_pull.py (API_FOOTBALL_KEY,
-SUPABASE_URL, SUPABASE_SERVICE_KEY, FANTASY_LEAGUE_ID — one league uuid
-or a comma-separated allowlist; every listed league gets the same rows,
-at no extra API-Football cost).
+SUPABASE_URL, SUPABASE_SERVICE_KEY, and optionally FANTASY_LEAGUE_ID --
+one league uuid or a comma-separated allowlist for the static pool).
 """
 
 import argparse
@@ -34,15 +46,19 @@ from datetime import datetime, timezone
 
 from daily_pull import (
     COMPLETED_STATUSES,
+    PLAYERS_JSON,
     PlayerMatcher,
     api_get,
+    calculate_points,
     extract_player_rows,
     featured,
     fetch_fixture_players,
-    load_players,
+    fetch_scheduled_competitions,
+    parse_competition_key,
     parse_league_ids,
 )
-from daily_pull import upsert_match_stats
+from daily_pull import upsert_competition_stats, upsert_match_stats
+import json
 
 # In-play statuses, including halftime/breaks/shootouts/interruptions.
 LIVE_STATUSES = {"1H", "HT", "2H", "ET", "BT", "P", "SUSP", "INT", "LIVE"}
@@ -52,11 +68,20 @@ def log(msg: str) -> None:
     print(f"[{datetime.now(timezone.utc):%H:%M:%S}] {msg}", flush=True)
 
 
-def fetch_live_fixtures(league: int) -> list:
-    # live=all then filter: one call either way, and "all" is the parameter
-    # form the API documents unambiguously.
-    return [f for f in api_get("fixtures", {"live": "all"}).get("response", [])
-            if f.get("league", {}).get("id") == league]
+def fetch_live_fixtures(leagues) -> dict:
+    """Every live fixture in the competitions we care about, by league id.
+
+    ONE call for all of them. live=all is a single request whatever the number
+    of competitions, so watching three costs exactly what watching one did --
+    which matters, because this loop wakes every fifteen minutes all season.
+    """
+    wanted = set(leagues)
+    out = {lid: [] for lid in wanted}
+    for f in api_get("fixtures", {"live": "all"}).get("response", []):
+        lid = f.get("league", {}).get("id")
+        if lid in wanted:
+            out[lid].append(f)
+    return out
 
 
 def minutes_to_next_kickoff(league: int, season: int):
@@ -69,27 +94,113 @@ def minutes_to_next_kickoff(league: int, season: int):
     return (kickoff - datetime.now(timezone.utc)).total_seconds() / 60
 
 
+def soonest_kickoff(targets):
+    """The nearest kickoff across everything being watched, or None.
+
+    Whether to stay alive is a question about the WHOLE watchlist: exiting
+    because one competition has nothing on tonight would leave another one
+    unscored.
+    """
+    times = [t for t in (minutes_to_next_kickoff(x.league, x.season)
+                         for x in targets) if t is not None]
+    return min(times) if times else None
+
+
 def fetch_fixture(fixture_id: int) -> dict:
     resp = api_get("fixtures", {"id": fixture_id}).get("response", [])
     return resp[0] if resp else None
 
 
-def pull_fixture(fixture: dict, matcher: PlayerMatcher, league_ids: list,
-                 dry_run: bool) -> None:
+class Target:
+    """One thing to watch, and where its rows go.
+
+    Two kinds, and the difference is the whole point of this change:
+
+      competition  -- an API-Football competition a league has been drafted
+                      from. Rows are keyed by the API's own player id and land
+                      in the SHARED competition_stats, so one pull serves every
+                      league on that competition.
+      legacy       -- the original static World Cup pool. Rows are mapped
+                      through players.json onto FIFA squad ids and land in
+                      match_stats, keyed by the leagues named in
+                      FANTASY_LEAGUE_ID.
+
+    Before this, only the second kind existed -- and it was the default, with
+    league 1 hardcoded. So a Premier League draft got no in-match scoring at
+    all: wrong competition, wrong id space, wrong table, three independent
+    reasons for the same silence.
+    """
+
+    def __init__(self, league, season, kind, key=None, matcher=None,
+                 league_ids=None):
+        self.league = league
+        self.season = season
+        self.kind = kind
+        self.key = key
+        self.matcher = matcher
+        self.league_ids = league_ids or []
+
+    def __repr__(self):
+        return self.key or f"league {self.league}/{self.season}"
+
+
+def pull_fixture(fixture: dict, target: Target, dry_run: bool) -> None:
     fid = fixture["fixture"]["id"]
     home = fixture["teams"]["home"]["name"]
     away = fixture["teams"]["away"]["name"]
     status = fixture["fixture"]["status"]["short"]
+    competition = target.kind == "competition"
     rows = extract_player_rows(
-        fixture, fetch_fixture_players(fid, mock=False), matcher)
+        fixture, fetch_fixture_players(fid, mock=False), target.matcher,
+        use_api_ids=competition)
     appeared = [r for r in rows if featured(r)]
     matched = [r for r in appeared if r["player_id"]]
     unmatched = len(appeared) - len(matched)
     note = f", {unmatched} unmapped" if unmatched else ""
-    log(f"  {home} vs {away} [{status}]: {len(matched)} players{note}")
+    log(f"  [{target}] {home} vs {away} [{status}]: {len(matched)} players{note}")
     if dry_run or not matched:
         return
-    upsert_match_stats(matched, league_ids)
+    if competition:
+        # Same shape the twice-daily sweep writes, so a live row and the row
+        # that later replaces it agree rather than differing by a column.
+        for row in matched:
+            row["points"] = calculate_points(row)
+        upsert_competition_stats(matched, target.key)
+    else:
+        upsert_match_stats(matched, target.league_ids)
+
+
+def build_targets(args) -> list:
+    """Everything worth watching this run.
+
+    The competitions come from the same toggle the twice-daily sweep reads
+    (competition_pools.scheduled), so turning a competition on in the admin
+    panel turns on its live scoring too -- rather than being a second list
+    someone has to remember to keep in step.
+    """
+    targets = []
+    if not args.no_competitions:
+        for key in fetch_scheduled_competitions():
+            parsed = parse_competition_key(key)
+            if not parsed:
+                log(f"skipping {key} — not an API-Football competition")
+                continue
+            targets.append(Target(parsed[0], parsed[1], "competition", key=key))
+
+    # The original World Cup league, kept alive only when it has somewhere to
+    # write. It used to be the default and the only option; now it is the
+    # fallback, because a repository without players.json -- every league
+    # drafted from the API -- has no FIFA ids to map onto and would fail on
+    # load, which is why load_players() sys.exits rather than returning empty.
+    league_ids = parse_league_ids(os.environ.get("FANTASY_LEAGUE_ID"))
+    if league_ids and PLAYERS_JSON.exists():
+        matcher = PlayerMatcher(json.loads(PLAYERS_JSON.read_text(encoding="utf-8")))
+        targets.append(Target(args.league, args.season, "legacy",
+                              matcher=matcher, league_ids=league_ids))
+    elif league_ids:
+        log(f"FANTASY_LEAGUE_ID is set but {PLAYERS_JSON.name} is missing — "
+            "skipping the static World Cup pool.")
+    return targets
 
 
 def main() -> None:
@@ -111,41 +222,49 @@ def main() -> None:
                         "fixture as live (API-Football typically lags "
                         "3-10 min; default: 15)")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--no-competitions", action="store_true",
+                        help="watch only the static World Cup league")
     args = parser.parse_args()
 
-    league_ids = parse_league_ids(os.environ.get("FANTASY_LEAGUE_ID"))
-    if not args.dry_run and not league_ids:
-        # Exit green, not red: this watchdog fires every 15 minutes, and a
-        # missing league id would otherwise mean ~96 failure mails a day.
-        log("WARNING: FANTASY_LEAGUE_ID is not set — nothing to score into. "
-            "Create the league, then: gh secret set FANTASY_LEAGUE_ID "
-            "(value = your leagues.id uuid from Supabase, or a comma-"
-            "separated list of several). Exiting.")
+    targets = build_targets(args)
+    if not targets:
+        # Exit green, not red: this watchdog fires every 15 minutes, and
+        # nothing to do would otherwise mean ~96 failure mails a day.
+        log("Nothing to score into — no competition has its scheduled pull "
+            "switched on, and FANTASY_LEAGUE_ID is not set. Turn a "
+            "competition on in the admin panel, or set the secret for a "
+            "static World Cup league. Exiting.")
         return
+    log(f"watching {len(targets)}: {', '.join(str(t) for t in targets)}")
 
-    matcher = PlayerMatcher(load_players())
     deadline = time.monotonic() + args.max_minutes * 60
-    watched = set()  # fixture ids we have seen live this run
+    # Fixture ids seen live this run, and which target each belongs to -- a
+    # fixture that has gone full time still has to be written to the right
+    # place, and by then it is no longer in any live list to look it up from.
+    watched = {}
     grace_until = None  # monotonic timestamp: stay alive past kickoff lag
 
     while True:
-        live = fetch_live_fixtures(args.league)
-        live_ids = {f["fixture"]["id"] for f in live}
+        by_league = fetch_live_fixtures([t.league for t in targets])
+        live_ids = set()
 
-        for f in live:
-            pull_fixture(f, matcher, league_ids, args.dry_run)
-        watched |= live_ids
+        for t in targets:
+            for f in by_league.get(t.league, []):
+                fid = f["fixture"]["id"]
+                live_ids.add(fid)
+                watched[fid] = t
+                pull_fixture(f, t, args.dry_run)
 
         # One final pull with official full-time data per finished fixture.
-        for fid in sorted(watched - live_ids):
+        for fid in sorted(set(watched) - live_ids):
+            t = watched.pop(fid)
             f = fetch_fixture(fid)
             if f and f["fixture"]["status"]["short"] in COMPLETED_STATUSES:
                 log("final whistle:")
-                pull_fixture(f, matcher, league_ids, args.dry_run)
-            watched.discard(fid)
+                pull_fixture(f, t, args.dry_run)
 
-        if not live:
-            nxt = minutes_to_next_kickoff(args.league, args.season)
+        if not live_ids:
+            nxt = soonest_kickoff(targets)
             if nxt is not None and nxt <= args.lookahead:
                 # Kickoff is imminent or just passed — arm/extend grace window.
                 grace_until = time.monotonic() + args.kickoff_grace * 60
