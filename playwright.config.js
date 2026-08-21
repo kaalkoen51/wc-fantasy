@@ -14,7 +14,17 @@ module.exports = {
   /* Use whatever Chromium the machine already has rather than downloading one.
      The image ships a build that the pinned @playwright/test does not expect,
      and `playwright install` is both slow and blocked in some sandboxes --
-     CHROME_PATH lets CI point at its own. */
+     CHROME_PATH lets CI point at its own.
+
+     WHICH Chromium matters more than it looks. CI runs chrome-headless-shell;
+     pointing CHROME_PATH at a full Chromium build gives a browser with
+     different DEFAULTS, and at least one of them is load-bearing:
+     Notification.permission is "denied" in the shell and "default" in the full
+     build. A test that assumed the permissive default passed locally and
+     failed on CI, which is the worst way to find out. If a browser test asks
+     the browser about permissions, media, or anything else the user would
+     normally be prompted for, drive it from an explicit value rather than the
+     browser's own default -- and run it both ways before trusting it. */
   use: {
     baseURL: "http://127.0.0.1:4173",
     headless: true,

@@ -8400,11 +8400,19 @@ async function loadPushSubscription() {
 }
 
 /* The alerts panel. Redraws itself rather than the whole sheet, so turning a
-   switch does not scroll you back to the crest grid. */
-function renderAlertsPanel() {
+   switch does not scroll you back to the crest grid.
+
+   Takes the state to draw, defaulting to the real one. That seam exists
+   because the state is read from the BROWSER -- whether it supports push, and
+   what it has already been told about permission -- and a test cannot put a
+   browser into most of those states. It could not even reach the ordinary one:
+   chrome-headless-shell, which CI runs, reports Notification.permission as
+   "denied" out of the box while full Chromium reports "default", so a test
+   asserting the panel offers its button passed locally and failed on CI. The
+   panel is now a pure function of its state, and the state has its own tests. */
+function renderAlertsPanel(st = pushStateNow()) {
   const box = $("alerts-panel");
   if (!box) return;
-  const st = pushStateNow();
   const head = `<div class="rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2">
       <div class="text-sm font-semibold">${esc(st.title)}</div>
       <p class="mt-0.5 text-xs text-slate-400">${esc(st.body)}</p>

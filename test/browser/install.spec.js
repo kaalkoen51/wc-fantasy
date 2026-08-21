@@ -121,15 +121,51 @@ test("the alerts panel offers the switch, remembers the choices, and can be turn
   const panel = page.locator("#alerts-panel");
   await expect(panel, "there is no alerts panel in the settings sheet").toHaveCount(1);
 
-  // Signed out: alerts follow an account, so there is nothing to switch on.
-  await page.evaluate(() => { S._uid = S.authUser; S.authUser = null; renderAlertsPanel(); });
-  await expect(page.locator("#alerts-on"),
-    "a signed-out device was offered a switch it cannot use").toHaveCount(0);
-  await expect(panel).toContainText("Sign in");
+  /* Each state drawn from an explicit state object rather than by trying to
+     put the browser into it. What each state SAYS is tested in test_logic;
+     what the panel DRAWS for it is this. */
+  const draw = (o) => page.evaluate((opts) => {
+    renderAlertsPanel(pushState(opts));
+    const box = document.getElementById("alerts-panel");
+    return { text: box.textContent, on: !!box.querySelector("#alerts-on"),
+             off: !!box.querySelector("#alerts-off"),
+             switches: box.querySelectorAll("[data-alert]").length };
+  }, o);
 
-  await page.evaluate(() => { S.authUser = S._uid; renderAlertsPanel(); });
-  await expect(page.locator("#alerts-on"),
-    "a signed-in device is not offered the switch").toHaveCount(1);
+  const ready = { supported: true, configured: true, signedIn: true, ua: "Linux" };
+  const off = await draw(ready);
+  expect(off.on, "a device that could subscribe is not offered the switch").toBe(true);
+  expect(off.switches, "the switches appear before anyone has opted in").toBe(0);
+
+  for (const [name, opts, wanted] of [
+    ["signed out", { ...ready, signedIn: false }, "Sign in"],
+    ["unsupported", { ...ready, supported: false }, "can't do alerts"],
+    ["blocked", { ...ready, permission: "denied" }, "blocked"],
+    ["no key yet", { ...ready, configured: false }, "aren't set up"],
+    ["iPhone in a tab", { ...ready, ua: "iPhone" }, "Home Screen"],
+  ]) {
+    const r = await draw(opts);
+    expect(r.text, `the ${name} state says the wrong thing`).toContain(wanted);
+    expect(r.on, `the ${name} state offered a switch that cannot work`).toBe(false);
+  }
+
+  /* The live path, checked WITHOUT assuming which state this browser is in.
+     Notification.permission is a browser default, not something a test sets:
+     chrome-headless-shell says "denied" out of the box and full Chromium says
+     "default", and granting the permission moves neither. So rather than
+     demanding a particular state, assert the panel drew the state the app
+     actually reports -- which is the wiring worth checking, and true anywhere. */
+  const live = await page.evaluate(() => {
+    renderAlertsPanel();
+    const st = pushStateNow();
+    const box = document.getElementById("alerts-panel");
+    return { state: st.state, title: st.title, text: box.textContent,
+             on: !!box.querySelector("#alerts-on") };
+  });
+  expect(live.text, "the panel is not drawing the state the app reports")
+    .toContain(live.title);
+  expect(live.on, "only the ready-to-subscribe state may offer the switch")
+    .toBe(live.state === "off");
 
   // Subscribed: the switches appear, one per kind, and a change is written
   // through immediately rather than waiting on a Save nobody would press.
@@ -140,10 +176,14 @@ test("the alerts panel offers the switch, remembers the choices, and can be turn
       : orig(t))(S.sb.from.bind(S.sb));
     S.pushSub = { endpoint: "https://push.example/abc" };
     S.alertPrefs = defaultAlertPrefs();
-    renderAlertsPanel();
+    // Explicit state again: whether this browser would REPORT "on" depends on
+    // a permission default the test does not own.
+    renderAlertsPanel(pushState({ supported: true, configured: true,
+      signedIn: true, ua: "Linux", subscribed: true }));
     document.querySelector('[data-alert="chatAll"]').click();
     await new Promise((r) => setTimeout(r, 0));
-    return { writes, boxes: document.querySelectorAll("[data-alert]").length };
+    return { writes, boxes: document.querySelectorAll("[data-alert]").length,
+             off: !!document.querySelector("#alerts-off") };
   });
   expect(saved.boxes, "not every alert kind has a switch")
     .toBe(await page.evaluate(() => ALERT_KINDS.length));
@@ -151,8 +191,7 @@ test("the alerts panel offers the switch, remembers the choices, and can be turn
   expect(saved.writes[0].prefs.chatAll,
     "the change was not the one that was made").toBe(true);
 
-  await expect(page.locator("#alerts-off"),
-    "there is no way to turn alerts off again").toHaveCount(1);
+  expect(saved.off, "there is no way to turn alerts off again").toBe(true);
 });
 
 test.describe("an iPhone in a browser tab", () => {
