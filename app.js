@@ -8904,11 +8904,42 @@ function openAwards() {
 /* ---------- round recap (app side) ---------- */
 
 // The most recent completed round for a manager, digested.
+/* Which round numbers are actually OVER, from the calendar.
+
+   A round appears in a manager's history the moment ANY match in it has been
+   scored, which is not the same thing as the round being finished -- and the
+   recap took the newest one and called it complete. Reported from the app:
+   "Round 1 complete" on a Friday night with the round's first game still on
+   the screen behind it. Now that the live pull writes mid-match, that would
+   have fired during the opening game of every round.
+
+   Same fact the line-up lock uses: `last` is a kick-off, not a final whistle,
+   so a match length has to be added. */
+const roundsEndedBy = (weeks, nowMs) => {
+  const ended = new Set();
+  for (const w of weeks || []) {
+    const n = Number(mwNo(w.round));
+    if (n >= 1 && nowMs >= w.last + MATCH_MS) ended.add(n);
+  }
+  return ended;
+};
+
+// The rounds a recap may offer: finished ones, plus any the calendar cannot
+// place at all. A round with no matchweek to compare against keeps the old
+// behaviour rather than silently never being recapped.
+function recappableRounds(rounds, weeks, nowMs) {
+  const ended = roundsEndedBy(weeks, nowMs);
+  const placed = new Set((weeks || []).map((w) => Number(mwNo(w.round)))
+    .filter((n) => n >= 1));
+  return (rounds || []).filter((r) => !placed.has(r.n) || ended.has(r.n));
+}
+
 function myRecap() {
   const me = myManager();
   if (!me) return null;
   const hist = managerHistory(me.id);
-  const round = (hist.rounds || [])[hist.rounds.length - 1];
+  const shown = recappableRounds(hist.rounds, matchweeksOf(S.fixtures || []), Date.now());
+  const round = shown[shown.length - 1];
   if (!round) return null;
   // Everyone's subtotal for the same round number.
   const leagueRound = {};
