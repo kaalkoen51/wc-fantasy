@@ -698,6 +698,40 @@ for (const [theme, floor] of [["sticker", 4.5], ["dark", 2.1]]) {
 }
 
 for (const theme of ["dark", "sticker"]) {
+  test(`every pitch state is visible in the ${theme} theme`, async ({ page }) => {
+    /* Each of these is a state class whose whole job is to make one shirt look
+       different from the others. Three of the four painted NOTHING in the
+       sticker theme and nobody noticed, because the theme draws its own
+       box-shadow on the sticker at a higher specificity than the state rules
+       and simply won. .pp-arm survived by accident -- animations outrank
+       normal declarations -- which is exactly the kind of luck that makes a
+       bug look like a working feature.
+
+       Asserting "differs from a plain chip" rather than any particular shadow:
+       the point is that the state is VISIBLE, and pinning the value would just
+       be a second copy of the stylesheet. */
+    await openLeague(page, { managers: 2, played: 3 });
+    await page.evaluate((t) => setTheme(t), theme);
+    await page.waitForTimeout(300);       // theme transition, see the sweep above
+
+    const dead = await page.evaluate(() => {
+      const pp = document.querySelector('[data-view="board"] .pitch .pp');
+      const av = pp.querySelector(".avatar");
+      const was = pp.className;
+      const shadow = (cls) => { pp.className = "pp " + cls;
+        return getComputedStyle(av).boxShadow; };
+      const plain = shadow("");
+      const out = [];
+      for (const cls of ["pp-risk", "pp-doubt", "pp-sel", "pp-arm"])
+        if (shadow(cls) === plain) out.push(cls);
+      pp.className = was;
+      return out;
+    });
+    expect(dead, "pitch states that paint nothing at all").toEqual([]);
+  });
+}
+
+for (const theme of ["dark", "sticker"]) {
   test(`a club mark is legible at every hue in the ${theme} theme`, async ({ page }) => {
     /* The mark takes only a HUE from the JS -- 360 of them, one per club name
        -- and gets its saturation and lightness from the stylesheet. That is

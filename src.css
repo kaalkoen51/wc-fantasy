@@ -371,10 +371,39 @@ html[data-theme="sticker"] .avatar-player.w-14 {
 }
 
 /* Only ON THE PITCH do they sit crooked. In a list a rotation reads as a
-   rendering fault rather than as something stuck on by hand. */
+   rendering fault rather than as something stuck on by hand.
+
+   Composed from two inherited variables rather than written as one literal,
+   and that is load-bearing. This selector is (0,3,1); every pitch STATE --
+   .pp-risk, .pp-sel -- is (0,2,0), so each of them silently lost the whole
+   box-shadow here and painted nothing at all in this theme. Reported from the
+   app: an injured starter had no ring on the sticker pitch. .pp-arm survived
+   only by accident, because animations outrank normal declarations.
+
+   Custom properties inherit, so a state sets the COLOUR on .pp and the trim
+   is still drawn by this one rule. A new state cannot forget the trim, and
+   cannot lose a specificity fight it does not know it is in. */
 html[data-theme="sticker"] .pp .avatar-player {
-  box-shadow: 0 0 0 2.5px rgb(var(--c-slate-900)), 0 2px 5px rgba(0,0,0,.42);
+  box-shadow: 0 0 0 2.5px var(--pp-trim, rgb(var(--c-slate-900))),
+              0 2px 5px rgba(0,0,0,.42),
+              var(--pp-halo, 0 0 rgba(0,0,0,0));
   transform: rotate(-2deg);
+}
+/* The die-cut trim turns the colour of the state -- which is a better sticker
+   idiom than a ring floating outside the card anyway. Source order is the
+   precedence: a player held for a swap is something you are doing right now,
+   so it wins over the standing fact that he is injured. */
+html[data-theme="sticker"] .pp-doubt {
+  --pp-trim: rgb(var(--warn-edge));
+  --pp-halo: 0 0 12px 3px rgb(var(--warn-edge) / .45);
+}
+html[data-theme="sticker"] .pp-risk {
+  --pp-trim: rgb(var(--c-danger));
+  --pp-halo: 0 0 12px 3px rgb(var(--c-danger) / .5);
+}
+html[data-theme="sticker"] .pp-sel {
+  --pp-trim: var(--focus-ring);
+  --pp-halo: 0 0 0 5px rgba(11,60,140,.22);
 }
 /* Not all at the same angle, or it reads as a skewed grid rather than as
    things stuck on by hand. */
