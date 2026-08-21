@@ -27,6 +27,17 @@ const REQUIRED = [
   "_headers",
   "vendor/supabase.js",
   "players.json",
+  /* Installability. Without the manifest an iPhone's "Add to Home Screen"
+     makes a bookmark rather than a web app, and only a web app can be sent a
+     notification -- so these are required, not optional: a build that quietly
+     dropped them would leave the button there and the notifications silently
+     undeliverable. sw.js is what receives a push once the sender ships. */
+  "manifest.json",
+  "sw.js",
+  "icons/icon-192.png",
+  "icons/icon-512.png",
+  "icons/icon-maskable-512.png",
+  "icons/apple-touch-icon.png",
 ];
 /* sticker.html is a TEMPORARY design preview, not part of the app -- nothing
    links to it and it links to nothing. It is served from this domain only

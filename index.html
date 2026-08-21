@@ -13,6 +13,15 @@
      Served from our own origin so a third-party CDN outage can't take the app
      down, and so a new upstream release can't land in users' browsers
      unannounced — upgrades are a deliberate, reviewable commit. -->
+<!-- Makes the site installable: an iPhone's "Add to Home Screen" produces a
+     bookmark without this and a real web app with it, and only the second kind
+     can ever receive a notification. Same-origin, so `default-src \'self\'`
+     already covers it and _headers needs no new directive. -->
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<!-- Ahead of theme.js on purpose: that script updates this tag to match the
+     chosen theme, and cannot find a tag the parser has not reached yet. -->
+<meta name="theme-color" content="#070B24">
 <!-- Before the body is parsed, so a non-default theme never flashes the
      default first. Must be a file, not inline: see the CSP note in theme.js. -->
 <script src="theme.js"></script>

@@ -15,6 +15,13 @@
  * preference is not worth widening it for. A same-origin file costs one small
  * render-blocking request and needs no policy change at all.
  */
+/* One place, so the boot path and the theme picker can never disagree about
+   which colour belongs to which theme. */
+window.setThemeColorMeta = function (theme) {
+  var meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", theme === "sticker" ? "#F2EAD9" : "#070B24");
+};
+
 (function () {
   /* "dark" is the default and deliberately carries NO attribute: the :root
      tokens ARE dark, so the default theme costs nothing to express and cannot
@@ -28,4 +35,11 @@
     return;          // private mode or storage disabled: the default is fine
   }
   if (saved && KNOWN[saved]) document.documentElement.dataset.theme = saved;
+  /* Match the browser's own chrome -- the status bar of an installed app, the
+     address bar of a tab -- to the theme. Without this an installed sticker
+     album gets a navy status bar sitting on cream paper, which reads as a
+     rendering fault rather than as a choice. The manifest carries the same
+     colour, but that one is fixed at install time and cannot follow a
+     preference the user changes later. */
+  window.setThemeColorMeta(saved);
 })();

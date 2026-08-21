@@ -8137,6 +8137,63 @@ function openH2HFixture(rnd, botId, topId) {
   lockScroll(true);
 }
 
+/* ---------- add to Home Screen ---------- */
+
+/* Whether to nudge this browser toward installing, and why.
+
+   iPHONES ONLY, and that is the whole point rather than an oversight. On
+   Android a notification reaches a plain browser tab, so asking someone to
+   install is asking for a favour that buys them nothing. On an iPhone, Safari
+   will not deliver a notification to a tab under any circumstances -- the site
+   has to have been added to the Home Screen first (iOS 16.4+). So this is the
+   one platform where installing is a requirement rather than a nicety, and the
+   only one worth interrupting anybody about.
+
+   iPadOS reports itself as a Macintosh, which is why the touch-point check is
+   there: without it every iPad in the league is told nothing.
+
+   Pure, so the conditions are pinned rather than inferred from a live
+   browser: this cannot be tested any other way, because the state it reads is
+   exactly the state a headless browser does not have.                       */
+function installHint({ ua = "", standalone = false, dismissed = false,
+                       touchPoints = 0 } = {}) {
+  if (standalone) return null;          // already installed; nothing to ask for
+  if (dismissed) return null;           // asked once, said no
+  const iPad = /Macintosh/.test(ua) && touchPoints > 1;
+  if (!/iPad|iPhone|iPod/.test(ua) && !iPad) return null;
+  return {
+    title: "Add DraftBaron to your Home Screen",
+    body: "Tap Share, then \u201cAdd to Home Screen\u201d. It opens without the "
+      + "browser bar \u2014 and on an iPhone it is the only way alerts can reach you.",
+  };
+}
+
+const INSTALL_DISMISS_KEY = "wcf_install_hint";
+const installHintNow = () => installHint({
+  ua: navigator.userAgent,
+  // iOS reports an installed web app through its own non-standard flag; every
+  // other platform uses the display-mode query. Check both.
+  standalone: navigator.standalone === true
+    || window.matchMedia?.("(display-mode: standalone)").matches === true,
+  dismissed: (() => { try { return !!localStorage.getItem(INSTALL_DISMISS_KEY); }
+                      catch { return false; } })(),
+  touchPoints: navigator.maxTouchPoints || 0,
+});
+
+function installHintHtml() {
+  const h = installHintNow();
+  if (!h) return "";
+  return `<div id="install-hint" class="rounded-xl border border-wcgold/50 bg-slate-900 p-3 flex items-start gap-3">
+    <img src="icons/icon-192.png" alt="" width="40" height="40" class="shrink-0 rounded-lg">
+    <div class="min-w-0 flex-1">
+      <div class="text-sm font-semibold">${esc(h.title)}</div>
+      <p class="mt-0.5 text-xs text-slate-400">${esc(h.body)}</p>
+    </div>
+    <button id="install-hint-x" aria-label="Dismiss"
+      class="shrink-0 -mt-1 -mr-1 w-8 h-8 inline-flex items-center justify-center text-slate-400">\u2715</button>
+  </div>`;
+}
+
 function matchdayCardHtml(me) {
   const p = matchdayNow();
   if (p.stage === "preseason" || me?.eliminated) return "";
@@ -8296,6 +8353,8 @@ function setTheme(id) {
      keeping it out of the database means no migration, no RLS rule, and no way
      for a failed write to leave you looking at a theme you did not pick. */
   try { localStorage.setItem("wcf_theme", id); } catch (e) { /* private mode */ }
+  // The browser's own chrome follows too — see theme.js.
+  window.setThemeColorMeta?.(id);
 }
 
 function openCrestPicker() {
@@ -8735,6 +8794,12 @@ function renderHomeTab() {
      thing you see, and it is not the thing with a countdown on it. */
   box.innerHTML = `
     ${matchdayCardHtml(me)}
+    ${/* AFTER the matchday card, never before it. That card carries the
+          deadline and the things you still have to do; pushing it down the
+          screen to advertise an install would be the app putting its own
+          convenience above the thing the manager came here for. Second on the
+          page is prominent enough for something shown once. */""}
+    ${installHintHtml()}
     <div class="rounded-xl border bg-slate-900 p-3 flex items-center gap-3"
          style="border-color:${managerColor(me)}55">
       <button id="home-crest" class="relative shrink-0" title="Edit your crest and colour">
@@ -8771,6 +8836,13 @@ function renderHomeTab() {
   if (h2hBtn) h2hBtn.onclick = openH2HPreview;
   const crestBtn = box.querySelector("#home-crest");
   if (crestBtn) crestBtn.onclick = openCrestPicker;
+  const hintX = box.querySelector("#install-hint-x");
+  if (hintX) hintX.onclick = () => {
+    // Per device, like the theme: "I have installed it here" is a fact about
+    // this screen, not about the manager.
+    try { localStorage.setItem(INSTALL_DISMISS_KEY, "1"); } catch { /* private mode */ }
+    box.querySelector("#install-hint")?.remove();
+  };
   const cta = box.querySelector("#md-cta");
   if (cta) cta.onclick = () => {
     const act = cta.dataset.act;
@@ -16731,8 +16803,28 @@ function wire() {
   });
 }
 
+/* Register the service worker.
+
+   Nothing in the app needs it yet -- it caches nothing and handles no fetches.
+   It is registered now because a push notification is delivered to a service
+   worker, not to a page, and a browser has to have installed one BEFORE the
+   first notification can arrive. Registering it at the same time as the
+   manifest means everyone who adds the app to their Home Screen this week is
+   already able to receive one when the sender ships.
+
+   Fails quietly on purpose: an unsupported browser, a private window, or a
+   blocked registration must cost a console line and nothing else. The app has
+   never needed this to work and still does not. */
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.register("sw.js").catch((e) =>
+    console.warn("Service worker not registered — notifications will not be "
+      + "deliverable on this device until it is:", e.message));
+}
+
 async function init() {
   wire();
+  registerServiceWorker();
   setInterval(tickTimer, 500);
   setInterval(tickMatchday, 1000);   // the matchday countdown
   // Banner LIVE/FT states are time-based; the render cache makes this a

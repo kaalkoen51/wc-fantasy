@@ -4,8 +4,13 @@
    itself break, and this only has to answer GETs. */
 const http = require("http"), fs = require("fs"), path = require("path");
 const ROOT = path.join(__dirname, "..", "public");
+/* Content types the real host sets from the extension. Kept in step with what
+   the site actually ships: a harness that serves every icon as
+   application/octet-stream is a harness that cannot tell a correct manifest
+   from one naming files no browser would accept. */
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
-  ".json": "application/json", ".svg": "image/svg+xml" };
+  ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png",
+  ".webmanifest": "application/manifest+json" };
 
 const server = http.createServer((req, res) => {
   const rel = decodeURIComponent(req.url.split("?")[0]).replace(/^\/+/, "") || "index.html";

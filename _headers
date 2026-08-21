@@ -27,6 +27,18 @@
 /*.json
   Cache-Control: public, max-age=300
 
+# Icons are content that never changes without a new filename, so they can sit
+# in the cache for a week.
+/icons/*
+  Cache-Control: public, max-age=604800
+
+# The service worker must NOT be cached. It is the one file that can outlive a
+# deploy in a browser, so a stale copy is a bug you cannot reach: the fix is in
+# the new sw.js the browser is refusing to fetch. Browsers cap this at 24h on
+# their own; saying it explicitly costs nothing and removes the guesswork.
+/sw.js
+  Cache-Control: no-cache
+
 # On the image hosts:
 #   media.api-sports.io    — football player photos and club crests.
 #   *.incrowdsports.com    — the rugby feed's own domain, which is where it
