@@ -5711,6 +5711,49 @@ function matchweeksOf(fixtures) {
     round: r, first: Math.min(...by[r]), last: Math.max(...by[r]),
   })).sort((a, b) => (rank(a.round) - rank(b.round)) || (a.first - b.first));
 }
+/* How long after kick-off a match is still being played. Nothing in a feed
+   says when a game ENDS, so every part of this app that needs "is it over yet"
+   works from kickoff plus a fixed allowance -- the banner, the playing-now
+   badge and the round grouping all already used 2.5 hours, written out three
+   times. Named once here so the fourth caller cannot pick a different number
+   and quietly disagree with the other three about whether a round has ended. */
+const MATCH_MS = 2.5 * 3600e3;
+
+/* A fixture's kick-off in epoch ms, or null if it has none.
+
+   Both forms are real and matchweeksOf has always accepted both: the feed
+   writes an ISO string, the test bench and the simulator write numbers.
+   Date.parse on a number returns NaN, so a reader that assumes the string
+   form silently decides nothing is ever playing -- which a test caught here
+   before it shipped. */
+const kickoffMs = (f) => {
+  const k = f?.kickoff_utc;
+  if (k == null) return null;
+  const t = typeof k === "number" ? k : Date.parse(k);
+  return isFinite(t) ? t : null;
+};
+
+/* The matchweek being played right now, or null between rounds. Its own
+   function because two callers need the same answer, and a second copy of
+   "first kickoff until last kickoff plus a match" is a copy that drifts. */
+const weekInPlay = (weeks, nowMs) =>
+  (weeks || []).find((w) => nowMs >= w.first && nowMs < w.last + MATCH_MS) || null;
+
+/* Is a match actually being played at this instant?
+
+   Two sources, because neither is right alone. The feed's status is
+   authoritative once it updates, but the pull runs on a schedule and a fixture
+   can sit at "NS" for an hour after kick-off -- which is exactly how the
+   matchday card came to read "Last chance to set your team" while the banner
+   directly above it said LIVE. The clock knows immediately; the status knows
+   about extra time. Take either. */
+const anyMatchLive = (fixtures, nowMs) => (fixtures || []).some((f) => {
+  if (LIVE_STATUS.includes(f.status)) return true;
+  if (FINAL_STATUS.includes(f.status)) return false;
+  const t = kickoffMs(f);
+  return t != null && t <= nowMs && nowMs < t + MATCH_MS;
+});
+
 function fixtureWindows(fixtures, nowMs, opts) {
   const H = 3600e3, o = opts || {};
   const openAfter = (o.tradeOpenAfterH ?? 1) * H;
@@ -5731,8 +5774,20 @@ function fixtureWindows(fixtures, nowMs, opts) {
   // Upcoming matchweek = earliest whose first fixture hasn't kicked off yet.
   const upcoming = weeks.find((w) => w.first > nowMs) || null;
   const lineupLockAt = upcoming ? upcoming.first - lockBefore : null;
-  const lineupOpen = lineupLockAt != null && nowMs < lineupLockAt;
-  return { tradeOpen, tradeWindow, lineupOpen, lineupLockAt, upcoming, weeks };
+  /* The matchweek being PLAYED right now: its first game has kicked off and
+     its last has not finished. `last` is the final KICKOFF, not the final
+     whistle, so a match length has to be added or a week counts as done while
+     its last game is still on.
+
+     This is what stops line-ups reopening mid-round. Without it `upcoming`
+     rolls to the NEXT matchweek the instant the current one's first game
+     kicks off, and since the lock is derived from that week's kickoff -- days
+     away -- the window sprang back open while the round was being played.
+     Reported from the app: games live in matchweek 1, "Last chance to set your
+     team, Matchweek 2", and an editable XI. */
+  const inPlay = weekInPlay(weeks, nowMs);
+  const lineupOpen = !inPlay && lineupLockAt != null && nowMs < lineupLockAt;
+  return { tradeOpen, tradeWindow, lineupOpen, lineupLockAt, upcoming, inPlay, weeks };
 }
 
 /* The most recently CLOSED trade window — the one whose queued claims are now
@@ -5855,6 +5910,11 @@ function matchdayPlan(o) {
   }
   let stage;
   if (o.live) stage = "live";
+  /* A round that has started but has no game on RIGHT NOW -- the Sunday of a
+     Friday-to-Monday matchweek. Without this the card fell through to
+     "Round complete, trade window opens", which is a lie told for two days
+     while a third of the round is still to be played. */
+  else if (o.inPlay) stage = "locked";
   else if (o.lineupOpen) stage = o.tradeOpen ? "transfers" : "lineup";
   else if (o.tradeOpen) stage = "transfers";
   else if (o.tradeOpensAt != null && o.tradeOpensAt > o.nowMs) stage = "results";
@@ -5874,8 +5934,19 @@ function matchdayPlan(o) {
     title = "Last chance to set your team"; deadlineAt = o.lineupLockAt;
     deadlineLabel = "Lineup locks"; cta = { label: "Set your lineup", act: "lineup" };
   } else if (stage === "locked") {
-    title = "Lineups locked"; deadlineAt = o.kickoffAt;
-    deadlineLabel = "First kick-off"; cta = { label: "View your XI", act: "lineup" };
+    /* Mid-round there is no deadline worth showing: the next lock belongs to
+       the NEXT matchweek, days away, and putting that countdown here is what
+       made the card read "Last chance to set your team, Matchweek 2" while
+       matchweek 1 was being played. And no "View your XI" either -- openLineup
+       refuses while lineups are locked, so it would be a button that only ever
+       apologises. The table is the thing worth looking at mid-round. */
+    if (o.inPlay) {
+      title = "Matchweek under way";
+      cta = { label: "See the table", act: "live" };
+    } else {
+      title = "Lineups locked"; deadlineAt = o.kickoffAt;
+      deadlineLabel = "First kick-off"; cta = { label: "View your XI", act: "lineup" };
+    }
   } else {
     title = "Games in progress"; cta = { label: "Watch live", act: "live" };
   }
@@ -7912,7 +7983,7 @@ function matchdayNow() {
   const me = myManager();
   const auto = autoWindowsEnabled();
   const w = auto ? autoWindowState() : null;
-  const live = (S.fixtures || []).some((f) => LIVE_STATUS.includes(f.status));
+  const live = anyMatchLive(S.fixtures, Date.now());
   // In auto mode the next window open is the start of the gap after this round.
   let tradeOpensAt = null;
   if (auto && !w.tradeOpen) {
@@ -7930,7 +8001,12 @@ function matchdayNow() {
     kickoffAt: w?.upcoming?.first ?? null,
     tradeOpensAt,
     tradeClosesAt: w?.tradeWindow?.closeAt ?? null,
-    matchweek: w?.upcoming ? mwNo(w.upcoming.round) : null,
+    inPlay: !!w?.inPlay,
+    /* The round being PLAYED when there is one, not the one after it. The card
+       named matchweek 2 while matchweek 1 was live, which is the label half of
+       the same bug the lock had. */
+    matchweek: w?.inPlay ? mwNo(w.inPlay.round)
+      : w?.upcoming ? mwNo(w.upcoming.round) : null,
     todo: lineupTodo(me),
   });
 }

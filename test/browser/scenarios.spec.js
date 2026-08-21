@@ -3367,3 +3367,89 @@ test("editing a lineup is a swap, not an add and a remove", async ({ page }) => 
   expect(out.stillLegal, "and never leaves it illegal").toBe(true);
   expect(out.plusButtons, "the + and − controls are gone").toBe(0);
 });
+
+test("a round already under way keeps line-ups locked", async ({ page }) => {
+  /* Reported from the app: matchweek 1 live in the banner, and the card
+     directly beneath it offering "Last chance to set your team · Matchweek 2"
+     with an editable XI.
+
+     The cause was that `upcoming` rolls to the NEXT matchweek the instant the
+     current one's first game kicks off, and the lock is derived from that
+     week's kickoff -- days away. So the window sprang back open mid-round.
+
+     A real matchweek runs Friday night to Monday night, so the seed's
+     all-at-once round is reshaped here into that spread: the hours that matter
+     are the quiet ones, when nothing is live and a manager would otherwise be
+     rewriting their XI having already seen Saturday's results. */
+  await openLeague(page, { managers: 2, played: 3, h2h: true });
+
+  const round = await page.evaluate(() => {
+    const weeks = matchweeksOf(S.fixtures);
+    const next = weeks[weeks.length - 1];             // the one not yet played
+    const DAY = 24 * 3600e3;
+    let i = 0;
+    // Friday to Monday, the shape a real matchweek has. New array rather than a
+    // mutation: autoWindowState caches on the array's identity.
+    const spread = S.fixtures.map((f) => f.round !== next.round ? f
+      : { ...f, status: "NS",
+          kickoff_utc: new Date(next.first + (i++ % 4) * DAY).toISOString() });
+    /* And a round AFTER it. Without one there is no next kickoff to lock
+       against, so the window stays shut whatever the code does -- which would
+       make this test pass with the bug put back in. The reported situation had
+       matchweek 2 sitting a week beyond the live matchweek 1. */
+    const nextWeek = new Date(next.first + 10 * DAY).toISOString();
+    S.fixtures = spread.concat(spread.slice(0, 4).map((f, k) => ({
+      ...f, fixture_id: 90000 + k, round: "Regular Season - 9",
+      status: "NS", kickoff_utc: nextWeek })));
+    return { name: next.round, first: next.first, last: next.first + 3 * DAY };
+  });
+
+  const at = async (ms) => {
+    await page.clock.setFixedTime(new Date(ms));
+    return page.evaluate(() => {
+      renderHomeTab();
+      const p = matchdayNow();
+      return { stage: p.stage, title: p.title, matchweek: p.matchweek,
+               lineupOpen: lineupOpen(),
+               cta: p.cta?.act || null,
+               offersLineup: !!document.querySelector('#md-cta[data-act="lineup"]') };
+    });
+  };
+
+  const before = await at(round.first - 6 * 3600e3);
+  expect(before.lineupOpen, "the window was shut before the round even started")
+    .toBe(true);
+
+  // Saturday morning: the round has started, nothing is on this minute.
+  const quiet = await at(round.first + 14 * 3600e3);
+  expect(quiet.lineupOpen, "line-ups were editable mid-round — the reported bug")
+    .toBe(false);
+  expect(quiet.stage, "a round under way was reported as finished").toBe("locked");
+  expect(quiet.title, "the card still invited an edit").not.toMatch(/set your team/i);
+  expect(quiet.offersLineup, "the card offered a button openLineup would refuse")
+    .toBe(false);
+  /* The label half of the same bug: the card named the round that had not
+     started rather than the one being played. */
+  expect(quiet.matchweek, "the card named the wrong matchweek")
+    .toBe(String(Number(round.name.match(/\d+/)?.[0])));
+
+  // Still locked while the final game of the round is being played.
+  const last = await at(round.last + 3600e3);
+  expect(last.lineupOpen, "the last game of the round was treated as the end of it")
+    .toBe(false);
+
+  /* Reopening once the round ends is covered by the pure tests, not here: the
+     round reshaped above is the seed's LAST matchweek, so after it there is no
+     next kickoff to lock against and the window correctly stays shut. */
+
+  // The sheet itself refuses, not just the card — this is what actually stops
+  // the edit, and it must not leave the page scroll-locked behind nothing.
+  await at(round.first + 14 * 3600e3);
+  const refused = await page.evaluate(() => {
+    openLineup();
+    return { open: !document.getElementById("lineup-sheet").classList.contains("hidden"),
+             overflow: document.body.style.overflow };
+  });
+  expect(refused.open, "the lineup sheet opened mid-round").toBe(false);
+  expect(refused.overflow).not.toBe("hidden");
+});
