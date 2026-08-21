@@ -3453,3 +3453,78 @@ test("a round already under way keeps line-ups locked", async ({ page }) => {
   expect(refused.open, "the lineup sheet opened mid-round").toBe(false);
   expect(refused.overflow).not.toBe("hidden");
 });
+
+test("the log says 'as it stands' while a round is still being played",
+  async ({ page }) => {
+  /* A table built on a round in progress reads exactly like a final one,
+     which is how somebody tells their group chat they have won on a Saturday
+     night. Reported from the app. */
+  await openLeague(page, { managers: 6, played: 3, h2h: true });
+
+  const cur = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    // Spread the newest played round Friday->Monday, the shape a real one has.
+    const weeks = matchweeksOf(S.fixtures);
+    const w = weeks[weeks.length - 2];
+    const DAY = 24 * 3600e3; let i = 0;
+    S.fixtures = S.fixtures.map((f) => f.round !== w.round ? f
+      : { ...f, kickoff_utc: new Date(w.first + (i++ % 4) * DAY).toISOString() });
+    return { first: w.first, last: w.first + 3 * DAY };
+  });
+
+  const logAt = async (ms) => {
+    await page.clock.setFixedTime(new Date(ms));
+    return page.evaluate(() => {
+      S._recapChecked = true;                 // the recap owns its own test
+      setBoardTab("lb"); renderBoard();
+      const box = document.getElementById("board-lb");
+      return { text: box.textContent,
+               flagged: !!box.querySelector(".todo-alert") };
+    });
+  };
+
+  // Sunday morning: the round has started, nothing is on this minute.
+  const mid = await logAt(cur.first + 36 * 3600e3);
+  expect(mid.flagged, "a provisional table is not marked as one").toBe(true);
+  expect(mid.text).toContain("As it stands");
+  expect(mid.text, "it still counts the unfinished round as played")
+    .not.toMatch(/\b3 rounds played\b/);
+
+  // Still provisional while the last game of the round is on.
+  expect((await logAt(cur.last + 3600e3)).flagged,
+    "the round's last game being on was treated as the round being over")
+    .toBe(true);
+
+  // Once the round is over, the table is the table.
+  const done = await logAt(cur.last + 4 * 3600e3);
+  expect(done.flagged, "a finished round still claims to be provisional").toBe(false);
+  expect(done.text).not.toContain("As it stands");
+});
+
+test("a fixture's leader is shown by weight, not by colouring the name green",
+  async ({ page }) => {
+  await openLeague(page, { managers: 6, played: 3, h2h: true });
+  const seen = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    setBoardTab("fixtures"); renderBoard();
+    const live = getComputedStyle(document.documentElement)
+      .getPropertyValue("--c-live").trim();
+    const rows = [...document.querySelectorAll("#board-fixtures [data-fix]")];
+    const names = rows.flatMap((r) =>
+      [...r.querySelectorAll(".grid > span")].slice(0, 3).filter((_, i) => i !== 1)
+        .map((n) => ({ colour: getComputedStyle(n).color,
+                       weight: Number(getComputedStyle(n).fontWeight) })));
+    return { live, names, rows: rows.length };
+  });
+  expect(seen.rows, "no fixtures to look at").toBeGreaterThan(0);
+  /* The score bar underneath already says whose lead it is and by how much;
+     a green NAME was a second, louder signal for the same fact, and green on
+     a name reads as a status rather than as a score. */
+  const [r, g, b] = seen.live.split(/\s+/).map(Number);
+  const greenish = `rgb(${r}, ${g}, ${b})`;
+  expect(seen.names.map((n) => n.colour), "a manager's name is still green")
+    .not.toContain(greenish);
+  expect(seen.names.some((n) => n.weight >= 700),
+    "nothing marks the leader at all now").toBe(true);
+});

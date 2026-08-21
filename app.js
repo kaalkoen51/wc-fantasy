@@ -6687,6 +6687,26 @@ function isRoundSettled(roundKey, roundNo) {
    earlier matches, so lookups fall back to the player's own stat rows. And
    BLANK/DOUBLE gameweeks: see roundIndex() above. */
 const _recRoundMemo = new WeakMap();
+/* Who gets the doubled round: the captain, unless it is CONFIRMED he did not
+   feature in it.
+
+   The old test was "did the captain appear?", which on a Friday night is
+   false for every captain whose club plays on Sunday -- so the armband fell
+   to the vice the moment the vice's game kicked off, and a manager watching
+   the table saw the vice's points doubled while the captain was still to
+   play. Reported from the app.
+
+   "Confirmed" is missedRound(): his club's match for that round has FINISHED
+   and he was not in it, or his club has no fixture that round at all. Until
+   then the captain keeps the band and simply has no points to double yet, so
+   nothing is doubled early and nothing is lost.
+
+   Pure, and shared by both scoring paths. Those two have drifted before --
+   the pager once came out a whole captain bonus below the leaderboard -- so
+   the rule lives in one place rather than being written out twice. */
+const effectiveCaptain = (cap, vice, capConfirmedMissed) =>
+  (cap && !capConfirmedMissed) ? cap : (vice || null);
+
 function roundResolvers(statsByPlayer, teamMatches) {
   const ri = roundIndex();
   // Matchweek numbering only where it is meaningful and actually present.
@@ -6882,6 +6902,7 @@ function computeScoresUncached() {
       (fixedCache[rnd] = fixedRoundSubs(roster, rnd, labelForRound, appearedIn, maxSubsPerRound(), missedRound));
     const captain = captainEnabled();
     const capByRnd = {}, viceByRnd = {}, playedByRnd = {}, ptsByRnd = {};
+    const capEntryByRnd = {};
     const rndKey = {};                 // round number -> its recorded round key
     for (const label of statLabels) {
       const d = labelDate(label);
@@ -6893,6 +6914,9 @@ function computeScoresUncached() {
       if (captain) {   // snapshot-locked captain, else the manager's current pick
         capByRnd[rnd] = roster.find((e) => e.is_captain)?.player_id ?? m.captain_id ?? capByRnd[rnd];
         viceByRnd[rnd] = roster.find((e) => e.is_vice)?.player_id ?? m.vice_id ?? viceByRnd[rnd];
+        // The entry, not just the id: missedRound needs the club he was at.
+        capEntryByRnd[rnd] = roster.find((e) => e.player_id === capByRnd[rnd])
+          ?? capEntryByRnd[rnd];
       }
       for (const entry of roster) {
         if (entry.position === "TEAM") continue;
@@ -6930,10 +6954,13 @@ function computeScoresUncached() {
         total += pts;
       }
     }
-    // Captain (or vice, if the captain didn't play) doubles their round points.
+    // Captain doubles; the vice only once the captain is confirmed absent.
     if (captain) for (const rnd of Object.keys(ptsByRnd)) {
       const cap = capByRnd[rnd], vice = viceByRnd[rnd];
-      const eff = (cap && playedByRnd[rnd]?.has(cap)) ? cap : vice;
+      const capEntry = capEntryByRnd[rnd];
+      const missed = !!cap && !playedByRnd[rnd]?.has(cap)
+        && !!capEntry && missedRound(capEntry, Number(rnd));
+      const eff = effectiveCaptain(cap, vice, missed);
       const bonus = eff ? (ptsByRnd[rnd][eff] || 0) : 0;
       if (!bonus) continue;
       total += bonus;
@@ -7091,6 +7118,7 @@ function managerHistory(mgrId) {
      both and compares them rather than checking either on its own. */
   const capOn = captainEnabled();
   const capByRnd = {}, viceByRnd = {}, playedByRnd = {}, ptsByRnd = {};
+  const capEntryByRnd = {};
   for (const label of statLabels) {
     const t = matchTimeFor(label), d = labelDate(label);
     if (elimAt && t > elimAt) continue;        // stop crediting after elimination
@@ -7114,6 +7142,8 @@ function managerHistory(mgrId) {
     if (capOn && rnd >= 1) {   // snapshot-locked captain, else today's pick
       capByRnd[rnd] = roster.find((e) => e.is_captain)?.player_id ?? mgr0?.captain_id ?? capByRnd[rnd];
       viceByRnd[rnd] = roster.find((e) => e.is_vice)?.player_id ?? mgr0?.vice_id ?? viceByRnd[rnd];
+      capEntryByRnd[rnd] = roster.find((e) => e.player_id === capByRnd[rnd])
+        ?? capEntryByRnd[rnd];
     }
     const mp = matchPoints(roster, label, rnd);
     for (const pid in mp) {
@@ -7128,11 +7158,15 @@ function managerHistory(mgrId) {
     }
   }
 
-  // The captain (or the vice, if the captain did not play) doubles their round.
-  // Same rule and same order as computeScores, so the two cannot drift.
+  // Captain doubles; the vice only once the captain is confirmed absent.
+  // Same rule as computeScores, through the same function, so the two cannot
+  // drift -- they have before, by exactly this bonus.
   if (capOn) for (const rnd of Object.keys(ptsByRnd)) {
     const cap = capByRnd[rnd], vice = viceByRnd[rnd];
-    const eff = (cap && playedByRnd[rnd]?.has(cap)) ? cap : vice;
+    const capEntry = capEntryByRnd[rnd];
+    const missed = !!cap && !playedByRnd[rnd]?.has(cap)
+      && !!capEntry && missedRound(capEntry, Number(rnd));
+    const eff = effectiveCaptain(cap, vice, missed);
     const bonus = eff ? (ptsByRnd[rnd][eff] || 0) : 0;
     if (!bonus) continue;
     earnedByPlayer[eff] = (earnedByPlayer[eff] || 0) + bonus;
@@ -8924,6 +8958,15 @@ const roundsEndedBy = (weeks, nowMs) => {
   return ended;
 };
 
+/* Is a round still being played -- i.e. is anything computed from it
+   provisional? Only claims so when the calendar can actually place the round;
+   an unplaceable one says nothing rather than guessing, the same posture the
+   recap takes. */
+const roundStillPlaying = (roundNo, weeks, nowMs) =>
+  roundNo >= 1
+  && (weeks || []).some((w) => Number(mwNo(w.round)) === roundNo)
+  && !roundsEndedBy(weeks, nowMs).has(roundNo);
+
 // The rounds a recap may offer: finished ones, plus any the calendar cannot
 // place at all. A round with no matchweek to compare against keeps the old
 // behaviour rather than silently never being recapped.
@@ -10307,7 +10350,13 @@ function renderFixturesTab() {
     const sa = done(a.id), sb = done(b.id);
     const live = sa != null && sb != null;
     const mine = me && (a.id === me.id || b.id === me.id);
-    const win = (x, y) => live && x > y ? "text-live font-bold" : live && x < y ? "text-slate-400" : "text-slate-200";
+    /* Ahead reads as BRIGHT AND BOLD, behind as dim. Not green: the coloured
+       bar underneath already carries whose lead it is and by how much, so the
+       name was a second, louder signal saying the same thing -- and green on
+       a name reads as a status ("safe", "confirmed") rather than as a score.
+       Reported from the app: it looks bad. */
+    const win = (x, y) => live && x > y ? "text-slate-100 font-bold"
+      : live && x < y ? "text-slate-400" : "text-slate-200";
     return `<button data-fix="${esc(a.id)}|${esc(b.id)}" class="w-full text-left rounded-xl border px-3 py-2.5 ${
       mine ? "border-wcgold/50 bg-wcgold/5" : "border-slate-700 bg-slate-900"}">
       <div class="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
@@ -10419,6 +10468,8 @@ function h2hStandingsHtml(me) {
   const { rows, order } = h2hStandings();
   const cfg = h2hConfig();
   const played = h2hCurrentRound();
+  const provisional = roundStillPlaying(
+    played, matchweeksOf(S.fixtures || []), Date.now());
   const mgrOf = (id) => S.managers.find((m) => m.id === id);
   const anyPlayed = order.some((id) => rows[id].P > 0);
 
@@ -10525,7 +10576,16 @@ function h2hStandingsHtml(me) {
           `<option value="${k}" ${sortKey === k ? "selected" : ""}>${lbl}</option>`).join("")}
       </select>
     </div>
-    <p class="px-1 -mt-1 text-[11px] text-slate-500">${played} round${played === 1 ? "" : "s"} played${
+    ${/* A table built on a round still being played is not the table, it is
+          the table so far -- and it reads exactly like a final one, which is
+          how somebody ends up telling their group chat they have won. Says so
+          plainly, and in its own colour, so the difference is visible before
+          anyone reads a word. */""}
+    ${provisional ? `<p class="mx-1 -mt-1 rounded-lg todo-alert px-2 py-1 text-[11px] font-semibold">
+        As it stands · round ${played} is still being played</p>` : ""}
+    <p class="px-1 ${provisional ? "" : "-mt-1"} text-[11px] text-slate-500">${
+      provisional ? `${played - 1} round${played === 2 ? "" : "s"} final`
+                  : `${played} round${played === 1 ? "" : "s"} played`}${
       sortKey !== "logPts" ? ` · sorted by ${esc((H2H_SORTS.find(([k]) => k === sortKey) || [, ""])[1].toLowerCase())}, but the number on the left is still league position` : ""}</p>
     ${body ? `<div class="flex items-center gap-2 px-3 pb-1 border-b border-slate-800 text-[10px] uppercase tracking-wide text-slate-500">
       <span class="w-8 shrink-0">#</span>
