@@ -601,6 +601,22 @@ for (const [theme, floor] of [["sticker", 4.5], ["dark", 2.1]]) {
        one. */
     await page.setViewportSize({ width: 390, height: 844 });
     await openLeague(page, { managers: 4, played: 3 });
+    /* Put both alert tiers on screen before sweeping. Nobody in the seed is
+       injured, so the red "won't play" row and its amber sibling never
+       rendered here and their contrast went unmeasured -- which is the exact
+       shape of hole this test exists to close, so it must not have one of its
+       own. Any state that only appears under a condition has to be staged. */
+    await page.evaluate(() => {
+      const xi = managerPicks(myManager().id).filter((p) => !p.is_sub && p.slot !== "TEAM");
+      S.injuryByPid = {
+        [xi[0].player_id]: { status: "out", reason: "Hamstring Injury" },
+        [xi[1].player_id]: { status: "doubtful", reason: "Knock" },
+      };
+      /* And repaint. setBoardTab only unhides an already-rendered pane, so
+         without this the sweep walks the DOM as it was at open time and the
+         staged rows are never on screen to be measured. */
+      renderHomeTab();
+    });
     await page.evaluate((t) => setTheme(t), theme);
     /* Buttons carry `transition: ... color .15s`, so flipping the theme fades
        every one of them from the old colour to the new. Reading computed
@@ -1823,6 +1839,77 @@ test("the no-captain warning is loud, and one tap from the fix", async ({ page }
   await expect(page.locator('[data-todo="captain"]'),
     "the warning outlived the captain being set").toHaveCount(0);
 });
+
+test("an unavailable starter is ringed on the pitch and counted on the card",
+  async ({ page }) => {
+  /* The badges already said all of this, in 14px emoji, on a list you scroll
+     past. Reported from the app: it is easy to miss that a man in your XI is
+     not playing on Saturday. */
+  await openLeague(page, { managers: 2, played: 3 });
+
+  const seed = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    const mine = managerPicks(myManager().id).filter((p) => p.slot !== "TEAM");
+    const starters = mine.filter((p) => !p.is_sub);
+    const sub = mine.find((p) => p.is_sub);
+    S.injuryByPid = {
+      [starters[0].player_id]: { status: "out", reason: "Hamstring Injury" },
+      [starters[1].player_id]: { status: "doubtful", reason: "Knock" },
+      // An injured player ON THE BENCH is the bench doing its job.
+      [sub.player_id]: { status: "out", reason: "Knee Injury" },
+    };
+    renderHomeTab();
+    return { out: starters[0].player_name, doubt: starters[1].player_name,
+             benched: sub.player_name };
+  });
+
+  const pitch = await page.evaluate(() => {
+    const on = (cls) => [...document.querySelectorAll(`[data-view="board"] .pitch .${cls}`)]
+      .map((el) => el.querySelector(".pp-name")?.textContent.trim());
+    return { risk: on("pp-risk"), doubt: on("pp-doubt"),
+      // The ring has to be painted, not merely classed.
+      lit: [...document.querySelectorAll('[data-view="board"] .pitch .pp-risk .avatar')]
+        .every((a) => getComputedStyle(a).boxShadow !== "none") };
+  });
+  expect(pitch.risk, "the absent starter is not ringed")
+    .toEqual([shortOf(seed.out)]);
+  expect(pitch.doubt, "the doubtful starter is not ringed, or shares the alarm")
+    .toEqual([shortOf(seed.doubt)]);
+  expect(pitch.lit, "the ring is a class that paints nothing").toBe(true);
+
+  // The front page counts the same people, from the same model.
+  const card = await page.evaluate(() => ({
+    bad: [...document.querySelectorAll('[data-view="board"] .todo-alert.is-bad')]
+      .map((n) => n.textContent.replace(/\s+/g, " ").trim()),
+    warn: [...document.querySelectorAll('[data-view="board"] .todo-alert:not(.is-bad)')]
+      .map((n) => n.textContent.replace(/\s+/g, " ").trim()),
+  }));
+  expect(card.bad.join(" "), "the card does not say a starter is out")
+    .toContain("1 starter won't play");
+  expect(card.bad.join(" "), "it does not say who").toContain(shortOf(seed.out));
+  expect(card.warn.join(" "), "the doubt is missing or wearing the wrong tier")
+    .toContain("1 starter is doubtful");
+  expect(card.bad.join(" "), "a doubt was reported as a certainty")
+    .not.toContain(shortOf(seed.doubt));
+  // The benched injury must appear nowhere: it is not a problem.
+  expect((card.bad + card.warn), "an injured substitute raised a warning")
+    .not.toContain(shortOf(seed.benched));
+
+  /* A PAST round shows what happened. Ringing a player there would claim he
+     was unavailable then because he is unavailable now. */
+  const past = await page.evaluate(() => {
+    // The card pages backwards: 0 = the live roster, 1 = the last locked round.
+    S.histIdxByMgr[myManager().id] = 1;
+    renderHomeTab();
+    return document.querySelectorAll('[data-view="board"] .pitch .pp-risk').length;
+  });
+  expect(past, "a past round was re-coloured by today's injuries").toBe(0);
+});
+
+function shortOf(name) {
+  const bits = String(name).trim().split(/\s+/);
+  return bits.length > 1 ? bits.slice(1).join(" ") : name;
+}
 
 test("a warning you cannot act on does not pretend to be a button", async ({ page }) => {
   await openLeague(page, { managers: 2, played: 3 });

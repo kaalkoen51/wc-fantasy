@@ -7605,6 +7605,10 @@ function squadBoardHtml(items, mgrId, opts = {}) {
       opp: oppShort(e.team),
       note: anyPts ? (ptsOf(it) || 0) : undefined,
       foil: isBest(it),
+      /* Only on the LIVE squad. A past round shows what happened, and ringing
+         a player red there would claim he was unavailable then because he is
+         unavailable now -- which is usually false and always unprovable. */
+      risk: curView ? riskOf(e.player_id)?.level : null,
       dim: out,
       // The sub badge wins over the captain armband: coming on is the rarer
       // fact and the one being asked about.
@@ -7836,6 +7840,21 @@ function lineupTodo(me) {
     // Straight into the armband picker, with the pitch already lit.
     todo.push({ text: "No captain picked", act: "captain",
                 sub: "Nobody in your side is scoring double" });
+
+  /* Starters who are not going to play. Counted, not one row each: a squad can
+     carry five of these and five identical rows is a wall rather than a
+     warning. `bad` is red because it is a fact, `doubt` amber because it is a
+     maybe -- the same two tiers the pitch rings them with, from the same
+     model, so the two can never disagree about who is at risk. */
+  const { bad, doubt } = lineupRisks(me.id);
+  if (bad.length) todo.push({
+    level: "bad", act: "lineup",
+    text: `${bad.length} starter${bad.length === 1 ? "" : "s"} won't play`,
+    sub: riskNames(bad) });
+  if (doubt.length) todo.push({
+    act: "lineup",
+    text: `${doubt.length} starter${doubt.length === 1 ? " is" : "s are"} doubtful`,
+    sub: riskNames(doubt) });
   return todo;
 }
 
@@ -8098,12 +8117,15 @@ function matchdayCardHtml(me) {
     // The consequence goes on its own line rather than running the headline
     // onto two. "No captain" is the fact; "nobody scores double" is why you
     // should care, and it is the half that actually moves anyone.
-    const inner = `<span class="shrink-0">⚠</span>
+    const inner = `<span class="shrink-0 leading-5">⚠</span>
       <span class="min-w-0 flex-1">${esc(t.text)}${t.sub
         ? `<span class="block font-normal text-[11px] opacity-90">${esc(t.sub)}</span>` : ""}</span>`
-      + (canFix ? '<span class="shrink-0">Fix ›</span>' : "");
-    const cls = "todo-alert w-full flex items-center gap-2 rounded-lg"
-      + " px-2.5 py-2 text-sm font-semibold";
+      + (canFix ? '<span class="shrink-0 self-center">Fix ›</span>' : "");
+    // Two tiers. A starter who WILL NOT play is a different statement from a
+    // job you have not done yet, and colouring them the same makes the amber
+    // mean "something on this card" rather than anything in particular.
+    const cls = `todo-alert${t.level === "bad" ? " is-bad" : ""}`
+      + " w-full flex items-start gap-2 rounded-lg px-2.5 py-2 text-sm font-semibold";
     return canFix
       ? `<button type="button" data-todo="${esc(t.act)}" class="${cls} text-left">${inner}</button>`
       : `<div class="${cls}">${inner}</div>`;
@@ -10589,6 +10611,53 @@ function availBadges(pid) {
   return out;
 }
 
+/* Why a named starter might not turn out, as one ranked answer.
+
+   The badges already said all of this, in 14px emoji, on a list you scroll
+   past. Nobody reads a row of pictograms looking for the one that means "this
+   man is not playing on Saturday" -- reported from the app, and the reason
+   this exists as a MODEL rather than another badge: the pitch can ring them
+   and the front page can count them, both from here, so the two can never
+   disagree about who is at risk.
+
+   Ranked worst-first, because a player can be several of these at once and
+   only the worst one is worth saying. "out" is a fact -- he will not play;
+   "doubt" is a maybe, and worth a different colour rather than the same
+   alarm. Elimination is deliberately NOT here: in a knockout most of a squad
+   goes out eventually, so it would fire on nearly everyone and mean nothing.
+     Pure apart from the S lookups the badges already do.                   */
+function riskOf(pid) {
+  if (leftCompetition(pid)) return { level: "out", why: "left the competition" };
+  const susp = suspendedNext(pid);
+  if (susp) return { level: "out", why: `suspended (${susp})` };
+  const inj = injuryOf(pid);
+  if (!inj) return null;
+  return { level: inj.status === "out" ? "out" : "doubt",
+           why: (inj.reason || "injured").toLowerCase() };
+}
+
+/* The named XI, split by whether each starter is going to play. Bench players
+   are excluded on purpose: an injured sub is doing exactly the job a bench is
+   for, and warning about him would train people to ignore the warning. */
+function lineupRisks(mgrId) {
+  const bad = [], doubt = [];
+  for (const pk of managerPicks(mgrId)) {
+    if (pk.is_sub || pk.slot === "TEAM") continue;
+    const r = riskOf(pk.player_id);
+    if (!r) continue;
+    (r.level === "out" ? bad : doubt).push({ name: pk.player_name, why: r.why });
+  }
+  return { bad, doubt };
+}
+
+// "Madjo (hamstring), Adingra (suspended)" — capped, because the sub-line is
+// 11px and a squad can have five of these.
+function riskNames(list, cap = 3) {
+  const shown = list.slice(0, cap)
+    .map((r) => `${shortName(r.name)} (${r.why})`).join(", ");
+  return list.length > cap ? `${shown}, +${list.length - cap} more` : shown;
+}
+
 // Plain-text variant for <option> labels in the trade builder.
 function availText(pid) {
   const bits = [];
@@ -12013,7 +12082,7 @@ function pitchRowsHtml(byPos, opts = {}) {
            ><span class="rounded-full bg-wcred text-white text-sm font-bold w-5 h-5 inline-flex items-center justify-center leading-none shadow ring-2 ring-slate-900/60">−</span></button>` : "";
     return `<div class="relative flex justify-center">
       ${rm}
-      <button type="button" ${tap}${e.title ? ` title="${esc(e.title)}"` : ""} class="pp ${e.dim ? "pp-dim" : ""} ${e.sel ? "pp-sel" : ""} ${e.arm ? "pp-arm" : ""} ${e.planned ? "pp-planned" : ""} ${e.foil ? "pp-foil" : ""}">
+      <button type="button" ${tap}${e.title ? ` title="${esc(e.title)}"` : ""} class="pp ${e.dim ? "pp-dim" : ""} ${e.risk === "out" ? "pp-risk" : e.risk === "doubt" ? "pp-doubt" : ""} ${e.sel ? "pp-sel" : ""} ${e.arm ? "pp-arm" : ""} ${e.planned ? "pp-planned" : ""} ${e.foil ? "pp-foil" : ""}">
         <span class="relative inline-flex">
           ${avatarHtml(e.player_id, e.team, av)}
           ${/* A 14px badge on a 40px avatar, holding an image or the club's
@@ -12238,6 +12307,7 @@ function renderLineup() {
       opp: oppShort(pk.team),
       sel: editing && !arming && sel?.id === pk.id,
       arm: !!arming,
+      risk: riskOf(pk.player_id)?.level || null,
       dim: arming ? false : editing && dimmed(pk),
       badge: captainEnabled() && S.captainDraft === pk.player_id ? "C"
            : captainEnabled() && S.viceDraft === pk.player_id ? "V" : "",

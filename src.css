@@ -162,6 +162,7 @@
      amber utilities cannot serve both grounds: amber-300 reads at 4.1:1 on the
      wash over cream, which is under the floor the sticker theme is held to. */
   --warn-fg: 252 211 77;   --warn-bg: 251 191 36;   --warn-edge: 251 191 36;
+  --bad-fg: 252 165 165;   --bad-bg: 239 68 68;     --bad-edge: 248 113 113;
 }
 
 /* ===========================================================================
@@ -321,6 +322,7 @@ html[data-theme="sticker"] {
      itself stays the warm dark-theme amber rather than the sticker one: a
      darker wash makes a darker ground, and the ink then has nowhere to go. */
   --warn-fg: 112 75 8;      --warn-bg: 251 191 36;   --warn-edge: 180 83 9;
+  --bad-fg: 138 20 24;      --bad-bg: 239 68 68;     --bad-edge: 176 32 39;
 }
 
 /* ===========================================================================
@@ -855,6 +857,19 @@ html[data-theme="sticker"] .pick-stamp {
   .pitch-rugby .pitch-posts.t { top: calc(12% - 15px); }
   .pitch-rugby .pitch-posts.b { bottom: calc(12% - 15px); }
 
+  /* A named starter who is not going to turn out. Static, never animated:
+     these can be four shirts at once and a pulsing pitch is a fairground.
+     Red for a fact -- injured out, suspended, gone from the competition --
+     amber for a doubt, matching the two tiers on the front page.
+
+     Placed ABOVE .pp-sel and .pp-arm on purpose. Holding a player for a swap
+     and handing out an armband are things you are doing right now; the risk
+     is a standing condition, and the transient state has to win the ring. */
+  .pp-risk .avatar { border-radius: 9999px;
+    box-shadow: 0 0 0 2px rgb(var(--c-danger) / .95), 0 0 11px 3px rgb(var(--c-danger) / .45); }
+  .pp-doubt .avatar { border-radius: 9999px;
+    box-shadow: 0 0 0 2px rgb(var(--warn-edge) / .95), 0 0 11px 3px rgb(var(--warn-edge) / .4); }
+
   /* The player currently held, waiting for someone to trade with. A ring
      rather than a fill: the chip still has to read as itself, and a filled
      highlight on a pitch of fifteen is a lot of colour. */
@@ -954,6 +969,11 @@ html[data-theme="sticker"] .pick-stamp {
   .todo-alert { color: rgb(var(--warn-fg));
     background: rgb(var(--warn-bg) / .15);
     border: 1px solid rgb(var(--warn-edge) / .6); }
+  /* The worse tier: a starter who will not play, as opposed to a job you have
+     not done. Same shape, so the two read as one family, different ink. */
+  .todo-alert.is-bad { color: rgb(var(--bad-fg));
+    background: rgb(var(--bad-bg) / .15);
+    border-color: rgb(var(--bad-edge) / .6); }
 
   /* The bench, drawn as a bench: a row of smaller faces under the pitch in the
      order they'd come on. */
