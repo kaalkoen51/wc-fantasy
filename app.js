@@ -12616,7 +12616,7 @@ function dugoutHtml(subs, opts = {}) {
               turn out, replaced, and moved down here. Same corner disc the
               pitch draws, or the armband would vanish exactly when it is most
               worth explaining a doubled score. */
-          e.badge ? `<span class="absolute -top-1 -right-1 rounded-full bg-wcgold text-slate-900 text-[10px] font-bold w-4 h-4 inline-flex items-center justify-center">${esc(e.badge)}</span>` : ""}
+          e.badge ? `<span class="cap-badge absolute -top-1 -right-1 rounded-full bg-wcgold text-slate-900 text-[10px] font-bold w-4 h-4 inline-flex items-center justify-center">${esc(e.badge)}</span>` : ""}
         ${e.note != null ? `<span class="pp-pts">${e.note}</span>` : ""}
       </span>
       <span class="sub-name${nameFit(shortName(e.name))}">${esc(shortName(e.name))}</span>
@@ -12658,7 +12658,7 @@ function pitchRowsHtml(byPos, opts = {}) {
                 pill across the bottom half of every face here once. */
             opts.crests && crestBadgeHtml(e.team)
             ? `<span class="absolute -bottom-0.5 -left-1 rounded-full bg-slate-900/90 p-0.5 inline-flex">${crestBadgeHtml(e.team)}</span>` : ""}
-          ${e.badge ? `<span class="absolute -top-1 -right-1 rounded-full bg-wcgold text-slate-900 text-[10px] font-bold w-4 h-4 inline-flex items-center justify-center">${e.badge}</span>` : ""}
+          ${e.badge ? `<span class="cap-badge absolute -top-1 -right-1 rounded-full bg-wcgold text-slate-900 text-[10px] font-bold w-4 h-4 inline-flex items-center justify-center">${e.badge}</span>` : ""}
           ${e.note != null ? `<span class="pp-pts">${e.note}</span>` : ""}
           ${e.swapFor ? `<span class="absolute -bottom-1 -right-2 inline-flex items-center rounded-full bg-slate-900/95 ring-1 ring-wcgold/70 p-0.5"
              title="replacing">${avatarHtml(e.swapFor, "", "w-4 h-4")}</span>` : ""}

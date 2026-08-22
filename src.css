@@ -430,6 +430,24 @@ html[data-theme="sticker"] .pp-pts {
   bottom: auto; top: -2px; right: -4px;
   box-shadow: 0 0 0 1px rgb(var(--c-slate-900));
 }
+/* ...and moving it there took the armband's corner.
+
+   The armband is `-top-1 -right-1` in the markup, which on the default theme
+   is the free corner: there, the tally rides the bottom of the shirt. The
+   album prints the tally at the top instead, so the two landed on the same
+   16px of card -- and .pp-pts is drawn later, so it won. The captain's C was
+   painted every time and then covered by their own score, which is why it
+   looked like the armband had stopped working rather than like a collision.
+
+   So the album gives the armband the other side. It reads as a rule rather
+   than as an avoidance: the two marks that say WHO this is -- the club badge
+   and the armband -- run down the left edge, and the one that says how they
+   did sits on the right. */
+html[data-theme="sticker"] .cap-badge {
+  right: auto; left: -4px; top: -3px;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgb(var(--c-slate-900));
+}
 
 /* The bench is the strip of spares at the back of the album. */
 html[data-theme="sticker"] .dugout {

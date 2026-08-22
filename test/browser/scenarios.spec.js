@@ -732,6 +732,45 @@ for (const theme of ["dark", "sticker"]) {
 }
 
 for (const theme of ["dark", "sticker"]) {
+  test(`the armband is not covered up in the ${theme} theme`, async ({ page }) => {
+    /* Reported from the app: "I can't see my captain picks on the sticker
+       album theme". The badge was there the whole time -- right position,
+       right size, right colours, 16x16 and opaque. It was underneath the
+       points bubble, which the album theme moves from the bottom of the shirt
+       to the top of the card, onto the same corner the armband uses. .pp-pts
+       is written later in the markup, so it won, and a captain's own score
+       hid the fact that they were captain.
+
+       Every check that could have caught this looked at the badge and found
+       it healthy. So this one asks the only question that was actually being
+       got wrong: at the middle of the badge, is the badge what you SEE? It
+       needs no knowledge of which corner anything is in, so it keeps working
+       when either mark moves again. */
+    await openLeague(page, { managers: 2, played: 3 });
+    await page.evaluate(() => closeReveal());
+    await page.evaluate((t) => setTheme(t), theme);
+    await page.waitForTimeout(300);              // theme transition
+
+    const buried = await page.evaluate(() => {
+      const out = [];
+      for (const b of document.querySelectorAll('[data-view="board"] .cap-badge')) {
+        const r = b.getBoundingClientRect();
+        if (!r.width) continue;                  // in a pane that is not showing
+        const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        if (top !== b) out.push(`${b.textContent.trim()} under .${
+          String(top && top.className || "?").split(" ")[0]}`);
+      }
+      return out;
+    });
+    // A scenario with no armband on screen would pass this vacuously.
+    const shown = await page.evaluate(() => [...document.querySelectorAll('[data-view="board"] .cap-badge')]
+      .filter((b) => b.getBoundingClientRect().width).length);
+    expect(shown, "no armband was on screen, so this asserted nothing").toBeGreaterThan(0);
+    expect(buried, "an armband is painted underneath something else").toEqual([]);
+  });
+}
+
+for (const theme of ["dark", "sticker"]) {
   test(`a club mark is legible at every hue in the ${theme} theme`, async ({ page }) => {
     /* The mark takes only a HUE from the JS -- 360 of them, one per club name
        -- and gets its saturation and lightness from the stylesheet. That is
