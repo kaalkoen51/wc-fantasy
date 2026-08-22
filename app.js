@@ -431,6 +431,8 @@ function showView(name) {
   // Belt and braces: a view change can never leave the page scroll-locked by
   // an abandoned drag, whatever route the code took to get here.
   document.documentElement.classList.remove("drag-lock");
+  // Walking away from the admin panel closes the scoring lock behind you.
+  if (name !== "admin") S._scoringUnlocked = false;
   document.querySelectorAll("[data-view]").forEach(
     (el) => el.classList.toggle("hidden", el.dataset.view !== name));
   // The header "Exit league" button only makes sense once you're in a league.
@@ -2043,6 +2045,7 @@ function leaveLeague() {
   S.players = []; S.teams = []; S.playerById = {}; S.fixtures = null; S._compPool = undefined;
   S._poolBase = null; S._posFixes = null;
   S.messages = []; S.chatThread = "league"; S._chatSeenLoaded = false;
+  S._scoringUnlocked = false;
   $("hdr-league").textContent = "";
   renderHome();
   showView("home");
@@ -16258,11 +16261,29 @@ function readConfigFromFields(container) {
 function renderConfigEditor() {
   const box = $("adm-config");
   if (!box) return;
-  const locked = (S.stats?.length || 0) > 0;
+  /* The lock is a guard, not a wall.
+
+     It exists because every total in this app is RECOMPUTED from the rules
+     rather than stored, so editing them rewrites history -- last week's
+     result, the log, everything. That is the right default and the wrong
+     absolute: a league that finds a rule wrong in gameweek 1, when rewriting
+     history means rewriting one round, should be able to fix it rather than
+     live with it until next season.
+
+     So it opens deliberately, per session, and never quietly: unlocking is a
+     separate act from saving, the confirm names how much gets recalculated,
+     and closing the panel locks it again. */
+  const scored = new Set((S.stats || []).map((r) => r.match_label)).size;
+  const locked = scored > 0 && !S._scoringUnlocked;
   const eff = effectiveConfig(cfgOf());
   S._admRules = eff.rules;
   box.innerHTML = `
-    ${locked ? `<div class="rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs px-3 py-2">🔒 Games have already been scored — the draft design is locked so past totals never change.</div>` : ""}
+    ${locked ? `<div class="rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs px-3 py-2 space-y-2">
+      <div>🔒 ${scored} match${scored === 1 ? " has" : "es have"} already been scored, so the design is locked — every total in this league is worked out from these rules, and changing them changes results that have already happened.</div>
+      <button id="adm-config-unlock" class="w-full rounded-lg border border-amber-400/60 bg-amber-400/10 px-3 py-1.5 text-xs font-semibold">Unlock anyway</button>
+    </div>` : ""}
+    ${scored > 0 && !locked ? `<div class="rounded-lg todo-alert is-bad px-3 py-2 text-xs font-semibold">
+      ⚠ Unlocked. Saving will recalculate all ${scored} scored match${scored === 1 ? "" : "es"} and every standing that comes from them.</div>` : ""}
     <div class="text-xs text-slate-400 font-medium">Scoring rules</div>
     <div id="adm-rules" class="space-y-1.5"></div>
     <div class="rounded-xl border border-slate-700 bg-slate-800/30 p-3 space-y-2">
@@ -16282,7 +16303,16 @@ function renderConfigEditor() {
   };
   renderRulesEditor($("adm-rules"), S._admRules, { locked, onChange: renderAdmBalance });
   renderAdmBalance();
-  if (locked) return;
+  if (locked) {
+    $("adm-config-unlock").onclick = () => {
+      if (!confirm(`Unlock scoring?\n\n${scored} match${scored === 1 ? "" : "es"} `
+        + `already scored will be recalculated the moment you save, and past `
+        + `results can change. Nothing changes until you press Save.`)) return;
+      S._scoringUnlocked = true;
+      renderConfigEditor();
+    };
+    return;
+  }
   $("adm-config-save").onclick = saveConfigEditor;
   $("adm-config-reset").onclick = resetConfigEditor;
 }
@@ -16539,6 +16569,10 @@ async function saveConfigEditor() {
   if (error) return toast(/config|column|schema cache/.test(error.message)
     ? "Config needs a schema update — run schema.sql." : error.message);
   S.league.config = cfg;
+  /* Re-lock. One unlock, one save: leaving it open invites a second edit
+     nobody weighed, and the whole point of the lock is that changing these
+     rules is a decision rather than a setting. */
+  S._scoringUnlocked = false;
   toast("Draft design saved.");
   renderAdmin(); renderBoard();
 }

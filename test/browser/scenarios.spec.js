@@ -3528,3 +3528,75 @@ test("a fixture's leader is shown by weight, not by colouring the name green",
   expect(seen.names.some((n) => n.weight >= 700),
     "nothing marks the leader at all now").toBe(true);
 });
+
+test("scoring can be corrected after a game has been scored, but only deliberately",
+  async ({ page }) => {
+  /* Every total in this app is recomputed from the rules rather than stored,
+     so editing them rewrites results that have already happened. That is why
+     the design locks once a game is scored -- and why it has to be openable:
+     a league that finds a rule wrong in gameweek 1 should be able to fix it
+     rather than live with it for a season. Reported from the app: the league
+     always meant to score on pass accuracy PERCENTAGE, not the count. */
+  await openLeague(page, { managers: 2, played: 3 });
+  const shown = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    showView("admin"); renderAdmin();
+    // The scoring card lives inside a collapsed section; open it the way a
+    // person would before reaching for anything in it.
+    document.querySelectorAll('[data-view="admin"] details').forEach((d) => d.open = true);
+    const box = document.getElementById("adm-config");
+    return { locked: !!box.querySelector("#adm-config-unlock"),
+             save: !!document.getElementById("adm-config-save"),
+             inputs: box.querySelectorAll("input:not([disabled])").length,
+             text: box.textContent };
+  });
+  expect(shown.locked, "a scored league does not warn that its design is locked")
+    .toBe(true);
+  expect(shown.save, "a locked design still offers Save").toBe(false);
+  expect(shown.text, "the lock does not say how much is at stake")
+    .toMatch(/match(es)? have already been scored|match has already been scored/);
+
+  // Unlocking is its own act, behind a confirm that names the consequence.
+  const asked = [];
+  await page.evaluate(() => { window.confirm = (m) => (window.__asked = m, true); });
+  await page.locator("#adm-config-unlock").click();
+  asked.push(await page.evaluate(() => window.__asked));
+  expect(asked[0], "unlocking does not say what it will recalculate")
+    .toMatch(/recalculated/);
+
+  const open = await page.evaluate(() => {
+    const box = document.getElementById("adm-config");
+    return { save: !!document.getElementById("adm-config-save"),
+             warned: !!box.querySelector(".todo-alert.is-bad"),
+             editable: box.querySelectorAll("select:not([disabled])").length };
+  });
+  expect(open.save, "unlocking did not make the design editable").toBe(true);
+  expect(open.editable, "the rule pickers are still disabled").toBeGreaterThan(0);
+  expect(open.warned, "an unlocked design does not say it will rewrite results")
+    .toBe(true);
+
+  /* And it closes behind you. Walking away has to re-lock, or a panel left
+     open becomes a setting rather than a decision. */
+  const relocked = await page.evaluate(() => {
+    showView("board"); showView("admin"); renderAdmin();
+    document.querySelectorAll('[data-view="admin"] details').forEach((d) => d.open = true);
+    return !!document.getElementById("adm-config-unlock");
+  });
+  expect(relocked, "the design stayed unlocked after leaving the panel").toBe(true);
+});
+
+test("pass accuracy is offered as a percentage, not only as a count",
+  async ({ page }) => {
+  await openLeague(page, { managers: 2, played: 3 });
+  const opts = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    showView("admin"); renderAdmin();
+    document.querySelectorAll('[data-view="admin"] details').forEach((d) => d.open = true);
+    return [...document.querySelectorAll('#adm-config select[data-rk="stat"] option')]
+      .map((o) => o.textContent);
+  });
+  expect(opts, "there is no way to score a pass-accuracy percentage")
+    .toContain("Pass accuracy %");
+  expect(opts, "the raw count is no longer offered under its own name")
+    .toContain("Accurate passes");
+});
