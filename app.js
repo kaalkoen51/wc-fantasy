@@ -5208,7 +5208,8 @@ const STAT_CATALOG = [
   { key: "penalty.missed", label: "Penalty missed" },
   { key: "passes.total", label: "Pass" },
   { key: "passes.key", label: "Key pass" },
-  { key: "passes.accuracy", label: "Pass accuracy %" },
+  { key: "passes.accuracy", label: "Accurate passes" },
+  { key: "passes.pct", label: "Pass accuracy %" },
   { key: "shots.total", label: "Shot" },
   { key: "shots.on", label: "Shot on target" },
   { key: "dribbles.success", label: "Successful dribble" },
@@ -6163,7 +6164,33 @@ function rawStatsOf(r) {
     "penalty.missed": r.penalty_missed || 0,
     "defensive_actions": r.defensive_actions || 0, "minutes": r.minutes || 0,
   };
-  return r.raw ? { ...base, ...r.raw } : base;
+  const out = r.raw ? { ...base, ...r.raw } : base;
+  out["passes.pct"] = passAccuracyPct(out);
+  return out;
+}
+
+/* A real pass-accuracy PERCENTAGE, derived rather than taken on trust.
+
+   Reported from the app: "Pass accuracy % x52" for a midfielder who played 76
+   minutes of a 3-0 win. 52% would be an implausibly bad afternoon; 52 accurate
+   passes out of about sixty is an ordinary one. API-Football's fixture player
+   stats put a COUNT in `passes.accuracy`, whatever the field is called, so the
+   app was showing a count under a percent sign.
+
+   Decided per row instead of by picking a side, because the field is
+   inconsistent enough to have caused this in the first place: a count can
+   never exceed the total passes, so anything larger is already a percentage
+   and is taken as one. Right under either reading, and it says which it is
+   rather than assuming.
+
+   The raw count keeps its own key and its own rules -- a league scoring on
+   `passes.accuracy` scores exactly what it scored yesterday. Only the label
+   changes, to the thing it always was. */
+function passAccuracyPct(raw) {
+  const acc = +raw["passes.accuracy"] || 0;
+  const total = +raw["passes.total"] || 0;
+  if (acc > total) return acc;                    // already a percentage
+  return total ? Math.round((100 * acc) / total) : 0;
 }
 
 // Points a single rule awards a player at position `pos` for one match.
@@ -10924,6 +10951,11 @@ function playerBreakdown(pid, pos) {
     const qual = seen[base] > 1
       ? [a.rule.minMinutes ? `≥${a.rule.minMinutes}′` : null,
          a.rule.per && a.rule.per !== 1 ? `per ${a.rule.per}` : null,
+         /* The threshold ITSELF, not the word "threshold". Two minutes rules
+            at different cut-offs both fell through to the mode name and came
+            out as the same sentence twice -- which is the duplication this
+            qualifier exists to prevent. */
+         a.rule.mode === "threshold" && a.rule.gte != null ? `≥${a.rule.gte}` : null,
         ].filter(Boolean).join(" ") || a.rule.mode || ""
       : "";
     return { label: qual ? `${base} (${qual})` : base, count: a.count, pts: a.pts };
