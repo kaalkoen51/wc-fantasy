@@ -5219,7 +5219,10 @@ const STAT_CATALOG = [
   { key: "duels.won", label: "Duel won" },
   { key: "fouls.drawn", label: "Foul drawn" },
   { key: "fouls.committed", label: "Foul committed" },
-  { key: "goals.conceded", label: "Goal conceded" },
+  // Said out loud, because the obvious reading is the wrong one: this is what
+  // the player's CLUB let in that match, so it applies to the whole XI and
+  // not only to whoever was in goal.
+  { key: "goals.conceded", label: "Goal conceded by their club" },
   { key: "offsides", label: "Offside" },
   { key: "rating", label: "Match rating" },
   { key: "minutes", label: "Minute played" },
@@ -5611,11 +5614,22 @@ function h2hTable(mgrIds, scoresByMgr, fixtures, cfg, placement) {
     }
     return d;
   };
+  /* Level on points, and then the same order a football table uses:
+     difference, then points for, and only then the meeting between them.
+
+     Difference used to be missing entirely -- points, then head-to-head, then
+     points for -- which is not how anybody reads a league table, and it was
+     the more wrong of the two for a reason worth writing down: met() compares
+     one PAIR. In a three-way tie it is not a total order (a can beat b, b beat
+     c, c beat a), so the finishing order depended on which two the sort
+     happened to compare first. Difference is a plain number every manager has
+     one of, so it settles a tie of any size the same way twice running. */
+  const diff = (id) => rows[id].PF - rows[id].PA;
   const order = mgrIds.slice().sort((x, y) => {
     if (rows[x].logPts !== rows[y].logPts) return rows[y].logPts - rows[x].logPts;
-    const h = met(x, y);
-    if (h !== 0) return -h;
-    return rows[y].PF - rows[x].PF;
+    if (diff(x) !== diff(y)) return diff(y) - diff(x);
+    if (rows[x].PF !== rows[y].PF) return rows[y].PF - rows[x].PF;
+    return -met(x, y);        // 0 when they have not met, which keeps them level
   });
   return { rows, order };
 }
@@ -10626,7 +10640,8 @@ function h2hStandingsHtml(me) {
     ${body || '<p class="rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm text-slate-400">No completed rounds yet.</p>'}
     <details class="rounded-xl border border-slate-800 bg-slate-900/40">
       <summary class="px-3 py-2 cursor-pointer select-none text-xs uppercase tracking-wide text-slate-400">How the log is scored</summary>
-      <p class="px-3 pb-3 text-xs text-slate-400">Win ${cfg.win} · draw ${cfg.draw} · loss ${cfg.loss} · +1 attacking (round ≥ ${cfg.score_bonus}) · +1 losing (by ≤ ${cfg.losing_margin}). For/Against are fantasy points scored and conceded.${
+      <p class="px-3 pb-3 text-xs text-slate-400">Win ${cfg.win} · draw ${cfg.draw} · loss ${cfg.loss} · +1 attacking (round ≥ ${cfg.score_bonus}) · +1 losing (by ≤ ${cfg.losing_margin}). For/Against are fantasy points scored and conceded.
+        Level on points is split by difference, then by points for, then by the meeting between them.${
         cfg.rumble ? (cfg.rumble_scoring === "placement"
           ? ` ⚔️ Rumble rounds score by placement (${(cfg.rumble_points || [3, 2, 1]).join("-")}).`
           : " ⚔️ Rumble rounds pit everyone against everyone.") : ""}</p>
@@ -15651,7 +15666,16 @@ function buildFixtureStatRows(f, teamBlocks, keyField, fixName, pidOf, skipped) 
         minutes,
         raw: {
           "goals.total": +g.total || 0, "goals.assists": +g.assists || 0,
-          "goals.saves": +g.saves || 0, "goals.conceded": +g.conceded || 0,
+          /* Goals conceded by their CLUB in this match, not the API's
+             per-player field. That field is filled in for goalkeepers and
+             left at 0 for everyone else, so a league scoring "-1 per 2
+             conceded" for defenders and midfielders charged its keepers and
+             quietly charged nobody else -- which is not a rule anybody would
+             write on purpose. `conceded` is the same map clean_sheet is
+             derived from one line down, so the two now agree about what a
+             team let in. For a keeper who played the full match the number is
+             unchanged. */
+          "goals.saves": +g.saves || 0, "goals.conceded": conceded[tb.team.id] || 0,
           "clean_sheet": minutes >= 60 && !(conceded[tb.team.id] || 0) ? 1 : 0,
           "cards.yellow": +cards.yellow || 0, "cards.red": +cards.red || 0,
           "penalty.saved": +pen.saved || 0, "penalty.missed": +pen.missed || 0,

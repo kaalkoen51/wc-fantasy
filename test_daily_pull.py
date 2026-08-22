@@ -174,6 +174,33 @@ class TestExtractPlayerRows(unittest.TestCase):
             },
         ]
 
+    def test_goals_conceded_is_the_clubs_not_the_players(self):
+        """Reported from the app: "goals conceded does not seem to be working
+        properly". raw["goals.conceded"] read stat_goals["conceded"], which
+        API-Football fills in for goalkeepers and leaves at 0 for everyone
+        else -- so a league scoring "-1 per 2 conceded" for defenders and
+        midfielders charged its keepers and nobody else.
+
+        The legacy `conceded` column had used the team total all along, so
+        this is the two halves of the same row agreeing again. Argentina 2-0
+        Scotland: every Scot is charged 2, every Argentine 0.
+        """
+        teams = self.make_teams_data()
+        # A deliberately absurd per-player figure: if the API's field ever
+        # leaks back in, this fails rather than passing on a coincidence.
+        teams[0]["players"][0]["statistics"][0]["goals"]["conceded"] = 99
+        rows = extract_player_rows(self.make_fixture(), teams, PlayerMatcher(ROSTER))
+        by_api = {r["api_player_id"]: r for r in rows}
+
+        self.assertEqual(by_api["284"]["raw"]["goals.conceded"], 2)   # Scotland let in 2
+        self.assertEqual(by_api["154"]["raw"]["goals.conceded"], 0)   # Argentina let in none
+        # ...and the legacy column, which was right all along, still agrees.
+        self.assertEqual(by_api["284"]["conceded"], 2)
+        self.assertEqual(by_api["154"]["conceded"], 0)
+        # Clean sheet is derived from the same fact and must not disagree.
+        self.assertEqual(by_api["154"]["raw"]["clean_sheet"], 1)
+        self.assertEqual(by_api["284"]["raw"]["clean_sheet"], 0)
+
     def test_rows_carry_fifa_ids_and_unmatched_is_none(self):
         rows = extract_player_rows(
             self.make_fixture(), self.make_teams_data(), PlayerMatcher(ROSTER)

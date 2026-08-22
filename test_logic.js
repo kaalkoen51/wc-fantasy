@@ -263,6 +263,36 @@ S.league = {};
   check("h2hTable: loser logPts = loss + losing bonus", t.rows.b.logPts, 1);
   check("h2hTable: PF/PA recorded", [t.rows.a.PF, t.rows.a.PA], [62, 59]);
   check("h2hTable: order by log points", t.order, ["a", "b"]);
+  /* Level on points: difference decides, not the meeting between them.
+     Reported from the app -- "the league table is sorted on points first
+     (correct) but if tied, the points difference should be used". It was
+     points, then head-to-head, then points for; difference was in the table
+     and in the sort menu but not in the ranking.
+
+     a, b and c all finish on 3. a BEAT b head-to-head (41-40), which is what
+     used to put a above them -- but a was then beaten 80-30 by c, so a's
+     difference is -49 against b's +69. The table has to read b, c, a. */
+  const tbCfg = { win: 3, draw: 1, loss: 0, score_bonus: 999, losing_margin: -1 };
+  const tbFx = [
+    { round: 1, home_manager_id: "a", away_manager_id: "b" },
+    { round: 2, home_manager_id: "a", away_manager_id: "c" },
+    { round: 3, home_manager_id: "b", away_manager_id: "d" },
+  ];
+  const tbScores = { a: [41, 30], b: [40, undefined, 90], c: [undefined, 80], d: [undefined, undefined, 20] };
+  const tbTable = h2hTable(["a", "b", "c", "d"], tbScores, tbFx, tbCfg);
+  check("h2hTable: everyone in the tie is genuinely level on points",
+    [tbTable.rows.a.logPts, tbTable.rows.b.logPts, tbTable.rows.c.logPts], [3, 3, 3]);
+  check("h2hTable: difference is what it should be",
+    [tbTable.rows.a.PF - tbTable.rows.a.PA, tbTable.rows.b.PF - tbTable.rows.b.PA], [-49, 69]);
+  check("h2hTable: level on points, difference orders the table", tbTable.order, ["b", "c", "a", "d"]);
+  /* ...and the order no longer depends on which pair the sort happened to
+     compare first. met() compares ONE pair, and here a beat b, b beat nobody
+     relevant, c beat a -- a cycle, so a non-transitive comparator could and
+     did return different tables for the same data. Difference is a plain
+     number every manager has one of. */
+  const tbAgain = h2hTable(["d", "c", "b", "a"], tbScores, tbFx, tbCfg);
+  check("h2hTable: the same table whichever order the managers arrive in",
+    tbAgain.order, tbTable.order);
   // A round only counts once BOTH have a score.
   const t2 = h2hTable(["a", "b"], { a: [62] }, fx, cfg);
   check("h2hTable: incomplete round is skipped", t2.rows.a.P, 0);
@@ -402,6 +432,8 @@ S.league = {};
   check("buildFixtureStatRows: non-participant dropped", rows.length, 2);
   check("buildFixtureStatRows: scorer id/goals/raw", [rows[0].player_id, rows[0].goals, rows[0].raw["goals.total"]], ["api_100", 2, 2]);
   check("buildFixtureStatRows: clean sheet (90', 0 conceded)", rows[0].clean_sheet, true);
+  check("buildFixtureStatRows: a clean sheet means nothing conceded, for everyone",
+    rows.map((r) => r.raw["goals.conceded"]), [0, 0]);
   check("buildFixtureStatRows: MOTM = top rating ≥7.5", rows[0].motm, true);
   check("buildFixtureStatRows: rows scoped by competition key", rows[0].competition_key, "39-2024");
   check("buildFixtureStatRows: maxMin + clean-sheet diagnostics", [maxMin, cs], [90, 2]);
@@ -422,6 +454,50 @@ S.league = {};
      them without the match having changed at all. */
   check("buildFixtureStatRows: the fixture id is stamped on every row",
     rows.map((r) => r.fixture_id), [1, 1]);
+
+  /* Goals conceded is what their CLUB let in, not the API's per-player field.
+
+     Reported from the app: "goals conceded does not seem to be working
+     properly". The league scores -1 per 2 conceded for GK, DEF and MID, and
+     only the keepers were ever charged. raw["goals.conceded"] was reading
+     stat_goals.conceded, which API-Football fills in for goalkeepers and
+     leaves at 0 for everyone else -- so the rule fired for one player per
+     club per match and silently did nothing for the other ten.
+
+     It survived because the LEGACY `conceded` column had always used the team
+     total, and so does sim.js -- which is why the simulator scored this
+     correctly and only the real feed did not. The three now agree.
+
+     The away forward carries a deliberately absurd per-player value: if it
+     ever leaks back into the row, this says so rather than passing because
+     the two numbers happened to match. */
+  const cf = {
+    teams: { home: { id: 10, name: "Home" }, away: { id: 20, name: "Away" } },
+    goals: { home: 1, away: 3 },
+    fixture: { id: 7, date: "2026-03-08T15:00:00+00:00", status: { short: "FT" } },
+    league: { round: "Regular Season - 28" },
+  };
+  const cBlocks = [
+    { team: { id: 10, name: "Home" }, players: [
+      // The keeper: the API does report this one, and it agrees with the team.
+      { player: { id: 300, name: "Keeper" }, statistics: [{ games: { minutes: 90 }, goals: { saves: 4, conceded: 3 } }] },
+      // The defender: the API reports nothing, and he used to be charged nothing.
+      { player: { id: 301, name: "Defender" }, statistics: [{ games: { minutes: 90 }, tackles: { total: 3 } }] },
+    ] },
+    { team: { id: 20, name: "Away" }, players: [
+      { player: { id: 400, name: "Forward" }, statistics: [{ games: { minutes: 90 }, goals: { total: 2, conceded: 99 } }] },
+    ] },
+  ];
+  const cRows = buildFixtureStatRows(cf, cBlocks, {}, (n) => n, pidOf, []).rows;
+  const concededOf = (id) => cRows.find((r) => r.player_id === id).raw["goals.conceded"];
+  check("buildFixtureStatRows: an outfielder is charged what his club let in", concededOf("api_301"), 3);
+  check("buildFixtureStatRows: ...and so is the keeper, unchanged", concededOf("api_300"), 3);
+  check("buildFixtureStatRows: the other club is charged its own goals against", concededOf("api_400"), 1);
+  check("buildFixtureStatRows: the API's per-player figure is not consulted",
+    cRows.every((r) => r.raw["goals.conceded"] !== 99), true);
+  // The legacy column and the raw map must not drift apart again.
+  check("buildFixtureStatRows: nobody on a conceding side has a clean sheet",
+    cRows.map((r) => r.raw["clean_sheet"]), [0, 0, 0]);
   check("buildFixtureStatRows: no fixture id available stamps null, not a guess",
     buildFixtureStatRows({ ...f, fixture: { ...f.fixture, id: undefined } },
       teamBlocks, {}, (n) => n, pidOf, []).rows[0].fixture_id, null);

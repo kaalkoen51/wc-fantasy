@@ -377,7 +377,14 @@ def extract_player_rows(
                         "goals.total": to_int(stat_goals.get("total")),
                         "goals.assists": to_int(stat_goals.get("assists")),
                         "goals.saves": to_int(stat_goals.get("saves")),
-                        "goals.conceded": to_int(stat_goals.get("conceded")),
+                        # Goals conceded by their CLUB, not the API's
+                        # per-player field -- that one is filled in for
+                        # goalkeepers and left at 0 for everyone else, so a
+                        # rule charging defenders for goals against never
+                        # fired. Same value the `conceded` column above and
+                        # clean_sheet below already use. See app.js
+                        # buildFixtureStatRows for the other half of this.
+                        "goals.conceded": team_conceded,
                         "clean_sheet": 1 if (minutes >= 60 and team_conceded == 0) else 0,
                         "cards.yellow": to_int(cards.get("yellow")),
                         "cards.red": to_int(cards.get("red")),
