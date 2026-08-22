@@ -16239,6 +16239,26 @@ function stageBonusFieldsHtml(eff, locked) {
 // Read a container's [data-cfg] number inputs (stage bonuses, quota, starters,
 // champion bonus) into a partial config. Scoring rules come separately from the
 // rules editor. Empty sub-objects are dropped.
+/* The config keys the design editor OWNS.
+
+   leagues.config is one jsonb blob holding everything about a league: whether
+   it is head-to-head, whether it has captains, its windows, its waiver rules,
+   its pool corrections. The design editor renders a handful of those and
+   nothing else -- and it used to save by rebuilding a config from the fields
+   on screen and writing that over the column. Every key it does not render was
+   destroyed by every save.
+
+   Reported from the app, by someone who edited a scoring rule and found their
+   league was no longer head-to-head and their captains had vanished. The
+   captains had not vanished: captain_id lives on the manager row and was
+   untouched. `config.captain` was gone, so the feature that reads them
+   switched off.
+
+   Naming the owned keys is what makes a merge safe in both directions: these
+   are replaced by whatever the editor says, including being deleted when a
+   field is cleared, and everything else is carried across untouched. */
+const DESIGN_KEYS = ["stageBonus", "quota", "starters", "finalPickBonus", "scoring"];
+
 function readConfigFromFields(container) {
   const cfg = { stageBonus: {}, quota: {}, starters: {} };
   for (const inp of container.querySelectorAll("[data-cfg]")) {
@@ -16563,7 +16583,10 @@ function applyPositionsCsvText(text) {
 }
 
 async function saveConfigEditor() {
-  const cfg = readConfigFromFields($("adm-config"));
+  // Everything this editor does not own, carried across untouched.
+  const keep = { ...(S.league?.config || {}) };
+  for (const k of DESIGN_KEYS) delete keep[k];
+  const cfg = { ...keep, ...readConfigFromFields($("adm-config")) };
   if (JSON.stringify(S._admRules) !== JSON.stringify(sportDef().rules())) cfg.scoring = S._admRules;
   const { error } = await S.sb.from("leagues").update({ config: cfg }).eq("id", S.league.id);
   if (error) return toast(/config|column|schema cache/.test(error.message)
@@ -16579,10 +16602,18 @@ async function saveConfigEditor() {
 
 async function resetConfigEditor() {
   if (!confirm("Reset scoring & bonuses to the standard World Cup values?")) return;
-  const { error } = await S.sb.from("leagues").update({ config: null }).eq("id", S.league.id);
+  /* Resets what this editor owns and NOTHING else. It used to write null over
+     the whole column, which is a different sentence entirely: it also turned
+     off head-to-head, captains, automatic windows and every pool correction,
+     none of which the button mentions. */
+  const cfg = { ...(S.league?.config || {}) };
+  for (const k of DESIGN_KEYS) delete cfg[k];
+  const next = Object.keys(cfg).length ? cfg : null;
+  const { error } = await S.sb.from("leagues").update({ config: next }).eq("id", S.league.id);
   if (error) return toast(error.message);
-  S.league.config = null;
-  toast("Reset to defaults.");
+  S.league.config = next;
+  S._scoringUnlocked = false;
+  toast("Scoring & bonuses reset to defaults.");
   renderAdmin(); renderBoard();
 }
 

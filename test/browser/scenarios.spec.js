@@ -3600,3 +3600,78 @@ test("pass accuracy is offered as a percentage, not only as a count",
   expect(opts, "the raw count is no longer offered under its own name")
     .toContain("Accurate passes");
 });
+
+test("editing the scoring design leaves every other league setting alone",
+  async ({ page }) => {
+  /* leagues.config is one blob holding everything about a league -- whether it
+     is head-to-head, whether it has captains, its windows, its waiver rules,
+     its pool corrections. The design editor renders a handful of those and
+     used to save by rebuilding a config from the fields on screen and writing
+     that over the column, destroying every key it does not render.
+
+     Reported from the app by someone who changed a scoring rule and found
+     their league was no longer head-to-head and their captains had gone. */
+  await openLeague(page, { managers: 2, played: 3, h2h: true });
+
+  const before = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    // A setting the editor never shows, and a pool correction nobody could
+    // re-enter from memory.
+    S.league.config = { ...S.league.config, poolEdit: { api_1: { position: "MID" } } };
+    let wrote = null;
+    S.sb.from = ((orig) => (t) => t === "leagues"
+      ? { update: (v) => { wrote = v; return { eq: async () => ({}) }; } }
+      : orig(t))(S.sb.from.bind(S.sb));
+    window.__wrote = () => wrote;
+    return { h2h: h2hEnabled(), captain: captainEnabled(),
+             auto: autoWindowsEnabled() };
+  });
+  expect(before.h2h, "the seed is not head-to-head, so this proves nothing").toBe(true);
+  expect(before.captain, "the seed has no captains, so this proves nothing").toBe(true);
+
+  await page.evaluate(() => {
+    showView("admin"); renderAdmin();
+    document.querySelectorAll('[data-view="admin"] details').forEach((d) => d.open = true);
+    window.confirm = () => true;
+    document.getElementById("adm-config-unlock")?.click();
+    document.getElementById("adm-config-save").click();
+  });
+
+  const wrote = await page.evaluate(() => window.__wrote());
+  expect(wrote, "nothing was written").toBeTruthy();
+  expect(wrote.config.h2hEnabled, "saving scoring turned off head-to-head").toBe(true);
+  expect(wrote.config.captain, "saving scoring turned off captains").toBe(true);
+  expect(wrote.config.autoWindows, "saving scoring turned off automatic windows").toBe(true);
+  expect(wrote.config.poolEdit, "saving scoring discarded the pool corrections")
+    .toEqual({ api_1: { position: "MID" } });
+
+  const after = await page.evaluate(() => ({
+    h2h: h2hEnabled(), captain: captainEnabled(), auto: autoWindowsEnabled(),
+  }));
+  expect(after, "the league changed shape when only scoring was edited").toEqual(before);
+});
+
+test("resetting scoring resets scoring, not the whole league", async ({ page }) => {
+  await openLeague(page, { managers: 2, played: 3, h2h: true });
+  const wrote = await page.evaluate(async () => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    // A custom rule to reset AWAY from -- without one, "scoring is gone"
+    // is true before the button is pressed and proves nothing.
+    S.league.config = { ...S.league.config,
+      scoring: [{ stat: "goals.total", mode: "each", points: 99 }] };
+    let w = "untouched";
+    S.sb.from = ((orig) => (t) => t === "leagues"
+      ? { update: (v) => { w = v; return { eq: async () => ({}) }; } }
+      : orig(t))(S.sb.from.bind(S.sb));
+    window.confirm = () => true;
+    await resetConfigEditor();
+    return w;
+  });
+  /* It used to write null over the entire column -- a different sentence from
+     the one on the button, which says "scoring & bonuses". */
+  expect(wrote.config, "reset wiped the whole league config").not.toBeNull();
+  expect(wrote.config.h2hEnabled, "reset turned off head-to-head").toBe(true);
+  expect(wrote.config.captain, "reset turned off captains").toBe(true);
+  expect(wrote.config.scoring, "reset left the custom scoring in place").toBeUndefined();
+  expect(wrote.config.stageBonus, "reset left a custom stage bonus in place").toBeUndefined();
+});
