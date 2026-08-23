@@ -204,6 +204,45 @@ check("partial starters config keeps defaults (DEF still 3)", starterQuota().DEF
     new Set([...ids.filter((id) => id !== "d4"), "bm1", "bf1"]), B);
   check("flex: bench order priority (MID listed first subs in)",
     [r3.has("bm1"), r3.has("bf1")], [true, false]);
+
+  /* A starter whose match has not been played YET is not a no-show.
+
+     Reported from the app at ten to four on a Saturday, with three fixtures
+     of the matchweek still to kick off: a bench defender was already marked
+     as having come on, and his points were already counting. Every starter
+     waiting for a fixture looked exactly like a starter whose club had
+     played without him, because "has not appeared" was the only test.
+
+     fixedRoundSubs has taken a `missed` predicate since it was written --
+     confirmed absence, meaning the club's match has FINISHED without him.
+     flexCounting never did, so the two engines answered the same question
+     differently and only one of them was right. The league that hit this
+     had just moved from fixed to flex, which is what uncovered it. */
+  const bench2 = [P("bd1", "DEF"), P("bd2", "DEF")];
+  const waiting = new Set([...ids.filter((id) => id !== "d4"), "bd1", "bd2"]);  // d4 kicks off later
+  const held = flexCounting(st442, bench2, waiting, B, 11, 5, new Set());  // nobody CONFIRMED out
+  check("flex: a starter still to play holds his slot — no sub comes on",
+    [held.has("bd1"), held.has("bd2")], [false, false]);
+  check("flex: ...and he scores nothing while he waits", held.has("d4"), false);
+  check("flex: ...so only the ten who have played count", held.size, 10);
+  // ...and once his club HAS played without him, the bench comes on as before.
+  const settled = flexCounting(st442, bench2, waiting, B, 11, 5, new Set(["d4"]));
+  check("flex: once the absence is confirmed, the bench covers it",
+    [settled.has("bd1"), settled.size], [true, 11]);
+  /* The same rule for the keeper, which takes a separate path through the
+     function and so can be got right in one place and wrong in the other. */
+  const gkWaiting = new Set([...ids.filter((id) => id !== "gk"), "bgk"]);
+  check("flex: a keeper still to play is not replaced",
+    flexCounting(st442, [P("bgk", "GK")], gkWaiting, B, 11, 5, new Set()).has("bgk"), false);
+  check("flex: a keeper confirmed absent is",
+    flexCounting(st442, [P("bgk", "GK")], gkWaiting, B, 11, 5, new Set(["gk"])).has("bgk"), true);
+  /* And a SETTLED round is unaffected: once every match has finished, "did
+     not play" and "confirmed absent" are the same people, so every score
+     already in the league's history stays exactly where it was. */
+  const noSet = flexCounting(st442, bench2, waiting, B, 11, 5);
+  const allDecided = flexCounting(st442, bench2, waiting, B, 11, 5, new Set(["d4"]));
+  check("flex: a settled round scores the same with or without the new set",
+    [...noSet].sort(), [...allDecided].sort());
 }
 check("formationValid: 4-4-2 legal", formationValid({ GK: 1, DEF: 4, MID: 4, FWD: 2 }, DEFAULT_FORMATION), true);
 check("formationValid: 2-4-4 illegal (DEF<3, FWD>3)", formationValid({ GK: 1, DEF: 2, MID: 4, FWD: 4 }, DEFAULT_FORMATION), false);

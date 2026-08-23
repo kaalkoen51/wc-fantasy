@@ -5360,28 +5360,63 @@ function formationValid(counts, bounds) {
 // but only into a subset that keeps the formation valid (every position within
 // [min,max]); GK is only ever covered by a bench GK. If a no-show can't be
 // validly covered its slot stays empty (scores 0). Pure + unit-tested.
-function flexCounting(starters, bench, playedIds, bounds, totalStarters, maxSubs) {
+function flexCounting(starters, bench, playedIds, bounds, totalStarters, maxSubs, missedIds) {
   const b = bounds || formationBounds();
   const total = totalStarters || b.starters;
   const subCap = (maxSubs == null) ? Infinity : maxSubs;   // max bench promotions
   const played = playedIds instanceof Set ? playedIds : new Set(playedIds);
+  /* A starter has THREE states mid-round, not two, and collapsing them is
+     what put a substitute on the pitch at ten to four on a Saturday with
+     half the fixtures still to kick off.
+
+       played            — counts, and holds his slot
+       confirmed absent  — his club's match has finished without him (or he
+                           has a blank gameweek): the slot opens, and the
+                           bench may cover it
+       not yet decided   — his match has not kicked off, or is still being
+                           played: he HOLDS the slot and scores nothing yet
+
+     Only the middle one is a no-show. Reading "has not appeared" as "did not
+     play" makes every unplayed fixture in the matchweek look like an absence,
+     so the bench comes on immediately and the round reads as settled while it
+     is barely started.
+
+     fixedRoundSubs has taken a `missed` predicate for exactly this reason
+     since it was written; this function never did, so the two engines
+     disagreed about the same question and only one of them was right. When
+     no set is supplied the old meaning is kept, which is what makes a
+     SETTLED round score identically: once every match has finished, "not
+     played" and "confirmed absent" are the same people. */
+  const missed = missedIds == null
+    ? null : (missedIds instanceof Set ? missedIds : new Set(missedIds));
+  const absent = (e) => missed ? missed.has(e.player_id) : !played.has(e.player_id);
   const counting = new Set();
   // GK slot — GK only covers GK (and it counts toward the sub cap).
   let gkSubbed = 0;
   const gk = starters.find((s) => s.position === "GK");
   if (gk && played.has(gk.player_id)) counting.add(gk.player_id);
-  else if (gk && subCap > 0) {
+  else if (gk && subCap > 0 && absent(gk)) {
     const bgk = bench.find((x) => x.position === "GK" && played.has(x.player_id));
     if (bgk) { counting.add(bgk.player_id); gkSubbed = 1; }
   }
-  // Outfield — played starters always count.
+  /* Outfield. `base` is the slots already SPOKEN FOR -- played starters, who
+     score, and undecided ones, who do not score yet but whose place is not
+     going to anybody else. Both belong in the formation-validity counts, or
+     the bench would be offered a position that is not actually free. */
   const base = { DEF: 0, MID: 0, FWD: 0 };
-  for (const s of starters)
-    if (s.position !== "GK" && played.has(s.player_id)) { counting.add(s.player_id); base[s.position]++; }
+  let taken = 0;
+  for (const s of starters) {
+    if (s.position === "GK") continue;
+    if (played.has(s.player_id)) {
+      counting.add(s.player_id); base[s.position]++; taken++;
+    } else if (!absent(s)) {
+      base[s.position]++; taken++;                 // held, pending his fixture
+    }
+  }
   const cand = bench.filter((x) => x.position !== "GK" && played.has(x.player_id));
   const gkSlots = (b.GK && b.GK[1] > 0) ? 1 : 0;
-  const maxAdd = Math.min((total - gkSlots) - (base.DEF + base.MID + base.FWD),   // empty outfield slots
-    subCap - gkSubbed);                                                            // …within the sub cap
+  const maxAdd = Math.min((total - gkSlots) - taken,   // genuinely empty outfield slots
+    subCap - gkSubbed);                                // …within the sub cap
   if (maxAdd > 0 && cand.length) {
     // Pick the bench subset that maximizes coverage while keeping the formation
     // valid, tie-broken toward earlier bench order (cand ≤ ~8, so enumerate).
@@ -5410,7 +5445,7 @@ function flexCounting(starters, bench, playedIds, bounds, totalStarters, maxSubs
 // Flex counting player_ids for round `rnd` from a roster (starter/bench entries),
 // resolving each player's round-r match via teamMatches + an appeared(pid,label)
 // predicate. Shared by the leaderboard and the lineup-history views.
-function flexRoundCounting(roster, rnd, labelFor, appeared) {
+function flexRoundCounting(roster, rnd, labelFor, appeared, missed) {
   const st = roster.filter((e) => !e.is_sub && e.position !== "TEAM");
   const bn = roster.filter((e) => e.is_sub && e.position !== "TEAM");
   const played = new Set();
@@ -5418,8 +5453,14 @@ function flexRoundCounting(roster, rnd, labelFor, appeared) {
     const lbl = labelFor(e, rnd);
     if (lbl && appeared(e.player_id, lbl)) played.add(e.player_id);
   }
+  /* Confirmed absences only -- see flexCounting. Without this the bench came
+     on the moment a starter's fixture had not been played YET, which on a
+     Saturday afternoon is most of the matchweek. */
+  const gone = missed
+    ? new Set(st.filter((e) => missed(e, rnd)).map((e) => e.player_id))
+    : null;
   const b = formationBounds();
-  return flexCounting(st, bn, played, b, b.starters, maxSubsPerRound());
+  return flexCounting(st, bn, played, b, b.starters, maxSubsPerRound(), gone);
 }
 
 // Max bench players that may be promoted per round. Default = the whole bench
@@ -6942,7 +6983,7 @@ function computeScoresUncached() {
     const flex = isFlexFormation();
     const flexCache = {};
     const flexCountForRound = (rnd, roster) => flexCache[rnd] ||
-      (flexCache[rnd] = flexRoundCounting(roster, rnd, labelForRound, appearedIn));
+      (flexCache[rnd] = flexRoundCounting(roster, rnd, labelForRound, appearedIn, missedRound));
     const fixedCap = !flex && maxSubsCapped();   // fixed mode with a sub cap set
     const fixedCache = {};
     const fixedSubsForRound = (rnd, roster) => fixedCache[rnd] ||
@@ -7129,8 +7170,8 @@ function managerHistory(mgrId) {
       const scored = rows.reduce((s2, r) => s2 + calcPlayerPoints(r, entry.position), 0);
       let pts = 0, did = false;
       if (flex) {
-        did = flexRoundCounting(roster, entryRound(entry, label), labelForRound, appearedIn)
-          .has(entry.player_id);
+        did = flexRoundCounting(roster, entryRound(entry, label), labelForRound,
+          appearedIn, missedRound).has(entry.player_id);
       } else if (!entry.is_sub) {
         did = true;
       } else if (maxSubsCapped()) {
