@@ -40,6 +40,7 @@ one league uuid or a comma-separated allowlist for the static pool).
 
 import argparse
 import os
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -109,6 +110,51 @@ def soonest_kickoff(targets):
 def fetch_fixture(fixture_id: int) -> dict:
     resp = api_get("fixtures", {"id": fixture_id}).get("response", [])
     return resp[0] if resp else None
+
+
+def origin_head_sha():
+    """What the default branch points at right now, or None if unaskable.
+
+    None on any failure -- no git, no network, no remote, a timeout. A
+    watchdog must never fall over because it could not ask an optional
+    question, so every one of those means "carry on" rather than "stop".
+    """
+    try:
+        out = subprocess.run(["git", "ls-remote", "origin", "HEAD"],
+                             capture_output=True, text=True, timeout=20)
+    except Exception:
+        return None
+    if out.returncode != 0:
+        return None
+    line = out.stdout.strip().split("\n")[0].strip()
+    return line.split()[0] if line else None
+
+
+def code_has_moved(started_on):
+    """True once the default branch has moved past the commit this run began at.
+
+    THE PROBLEM THIS SOLVES, which cost a live league most of a Saturday
+    afternoon: this loop can stay alive for hours, and the workflow's
+    `concurrency: live-pull` group means only one run holds it at a time.
+    So a run that started before a fix was merged keeps writing the OLD
+    behaviour, and every run launched afterwards -- including the ones
+    carrying the fix -- is cancelled while it queues behind this one. The
+    fix is deployed, the tests are green, the code that is actually
+    running is yesterday's, and nothing anywhere says so.
+
+    Exiting is already the safe move: every write is a full cumulative
+    upsert, the next cron resumes within fifteen minutes, and the daily
+    sweep reconciles regardless. So the loop simply stops being the reason
+    a newer version cannot start.
+
+    GITHUB_SHA is set by Actions and by nothing else, which is deliberate:
+    a local or manual run has no "newer commit" to be behind and should
+    not be making network calls to find that out.
+    """
+    if not started_on:
+        return False
+    head = origin_head_sha()
+    return bool(head) and head != started_on
 
 
 class Target:
@@ -226,6 +272,7 @@ def main() -> None:
                         help="watch only the static World Cup league")
     args = parser.parse_args()
 
+    started_on = os.environ.get("GITHUB_SHA")
     targets = build_targets(args)
     if not targets:
         # Exit green, not red: this watchdog fires every 15 minutes, and
@@ -282,6 +329,11 @@ def main() -> None:
 
         if time.monotonic() > deadline:
             log("max runtime reached — exiting; the next cron resumes.")
+            return
+        if code_has_moved(started_on):
+            log("a newer commit is on the default branch — exiting so the "
+                "next cron picks it up; the daily sweep reconciles anything "
+                "this run missed.")
             return
         time.sleep(args.poll)
 

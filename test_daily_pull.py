@@ -518,6 +518,92 @@ class TestLivePull(unittest.TestCase):
             live_pull.fetch_scheduled_competitions = orig
 
 
+class TestWatcherStaleness(unittest.TestCase):
+    """A long-running watcher must not outlive the code it was started on.
+
+    The failure this guards against was watched happening: a run that began
+    before a fix was merged kept writing the old behaviour for over an hour,
+    while three runs carrying the fix were cancelled queueing behind it on
+    the workflow's concurrency group. Everything looked shipped and nothing
+    was running.
+
+    Every branch here decides whether the loop keeps going, and getting any
+    of them backwards is either a watcher that never updates or one that
+    quits constantly, so each is pinned rather than trusted to the shape of
+    the expression.
+    """
+
+    def _with_head(self, head):
+        orig = live_pull.origin_head_sha
+        live_pull.origin_head_sha = lambda: head
+        self.addCleanup(lambda: setattr(live_pull, "origin_head_sha", orig))
+
+    def test_a_newer_commit_stops_the_loop(self):
+        self._with_head("bbbb222")
+        self.assertTrue(live_pull.code_has_moved("aaaa111"))
+
+    def test_the_same_commit_keeps_it_going(self):
+        self._with_head("aaaa111")
+        self.assertFalse(live_pull.code_has_moved("aaaa111"))
+
+    def test_a_run_that_does_not_know_its_own_commit_never_stops(self):
+        """No GITHUB_SHA means a local or manual run, which is not behind
+        anything and should not be asking the network whether it is."""
+        called = []
+        self._with_head(None)                       # registers the restore first
+        live_pull.origin_head_sha = lambda: called.append(1) or "bbbb222"
+        self.assertFalse(live_pull.code_has_moved(None))
+        self.assertFalse(live_pull.code_has_moved(""))
+        self.assertEqual(called, [], "it asked the network with nothing to compare")
+
+    def test_an_unanswerable_question_keeps_it_going(self):
+        """No git, no network, no remote. A watchdog that stops because it
+        could not ask an optional question is worse than one that carries on
+        -- the daily sweep reconciles either way, but a dead loop scores
+        nothing at all."""
+        self._with_head(None)
+        self.assertFalse(live_pull.code_has_moved("aaaa111"))
+
+    def test_git_failure_modes_all_answer_none(self):
+        import subprocess as sp
+        cases = {
+            "non-zero exit": sp.CompletedProcess([], 128, "", "fatal: no remote"),
+            "empty output": sp.CompletedProcess([], 0, "", ""),
+            "whitespace only": sp.CompletedProcess([], 0, "\n\n", ""),
+        }
+        for name, result in cases.items():
+            with self.subTest(name):
+                orig = sp.run
+                sp.run = lambda *a, **k: result
+                try:
+                    self.assertIsNone(live_pull.origin_head_sha())
+                finally:
+                    sp.run = orig
+
+    def test_a_real_ls_remote_line_is_parsed(self):
+        import subprocess as sp
+        orig = sp.run
+        sp.run = lambda *a, **k: sp.CompletedProcess(
+            [], 0, "ef660b9c1d\tHEAD\nff11223344\trefs/heads/other\n", "")
+        try:
+            self.assertEqual(live_pull.origin_head_sha(), "ef660b9c1d")
+        finally:
+            sp.run = orig
+
+    def test_a_thrown_exception_is_not_fatal(self):
+        import subprocess as sp
+        orig = sp.run
+
+        def boom(*a, **k):
+            raise OSError("git not found")
+
+        sp.run = boom
+        try:
+            self.assertIsNone(live_pull.origin_head_sha())
+        finally:
+            sp.run = orig
+
+
 class TestInjuriesFeed(unittest.TestCase):
     """The injury badge feed, which was invisible for every non-World-Cup league.
 
