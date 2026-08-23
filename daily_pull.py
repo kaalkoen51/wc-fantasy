@@ -317,6 +317,10 @@ def normalise_events(events):
             out.append({"kind": "goal", "minute": minute, "team": team,
                         "own": "own goal" in detail})
         elif kind == "subst":
+            # BOTH names are kept and NEITHER is labelled. Which of `player`
+            # and `assist` holds the man coming on is a property of the feed
+            # that cannot be checked from here, and getting it backwards is
+            # silent -- see on_pitch_window, which does not ask.
             out.append({"kind": "subst", "minute": minute,
                         "on": player, "off": assist})
         elif kind == "card" and ("red card" in detail or "second yellow" in detail):
@@ -342,22 +346,44 @@ def conceded_minutes(norm, team_id, home_id, away_id):
 def on_pitch_window(api_id, norm, started):
     """(start, end) in match minutes, or None if the events cannot place him.
 
-    None matters as much as the numbers: it is the difference between "was
-    not on for those goals" and "we do not know where he was", and only the
-    first of those should reduce anybody's charge.
+    WHICH SIDE OF A SUBSTITUTION A PLAYER IS ON IS DECIDED BY WHETHER HE
+    STARTED, not by which field of the event names him.
+
+    That is the whole point of this shape. A substitution event has two
+    names in it, and API-Football's choice of which goes in `player` and
+    which in `assist` is not something this repo can verify -- there is no
+    reaching the feed from the container this is written in. Reading it the
+    wrong way round is silent and expensive: a substitute matches as the man
+    going OFF, his start is never set, the window comes back unknown, and he
+    is charged his club's whole-match total. Reported from the app exactly
+    that way -- a midfielder who came on for the last five minutes, after
+    both goals, charged for both.
+
+    `games.substitute` answers the same question without the ambiguity: it
+    comes from the player's own stat block and says plainly whether he began
+    on the bench. So a starter's substitution event is his exit, a
+    substitute's first is his entrance and his second (rare, but it happens)
+    is his exit, and the orientation of the feed never comes into it.
+
+    None still means "cannot be placed", which is not the same as "was not
+    on" and must not reduce anybody's charge.
     """
-    start = 0 if started else None
-    end = None
-    for e in norm:
-        if e["kind"] == "subst":
-            if e["on"] == api_id and start is None:
-                start = e["minute"]
-            if e["off"] == api_id and end is None:
-                end = e["minute"]
-        elif e["kind"] == "off" and e["player"] == api_id and end is None:
-            end = e["minute"]
-    if start is None:
+    if api_id is None:
         return None
+    subs = sorted(e["minute"] for e in norm
+                  if e["kind"] == "subst" and api_id in (e["on"], e["off"]))
+    sent_off = min((e["minute"] for e in norm
+                    if e["kind"] == "off" and e["player"] == api_id), default=None)
+    if started:
+        start, end = 0, (subs[0] if subs else None)
+    else:
+        if not subs:
+            return None                      # a substitute nobody swapped on
+        start = subs[0]
+        end = subs[1] if len(subs) > 1 else None
+    # A sending-off ends his afternoon too, and earlier than any later change.
+    if sent_off is not None:
+        end = sent_off if end is None else min(end, sent_off)
     return (start, ON_PITCH_END if end is None else end)
 
 

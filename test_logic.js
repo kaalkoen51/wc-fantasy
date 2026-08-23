@@ -1057,16 +1057,21 @@ check("...and the percentage sits beside it",
     ON_PITCH_END, spec.end_sentinel);
 
   // The table's shorthand -> the shape API-Football actually sends.
-  const asApi = (list) => list.map((e) => ({
-    type: e.type, detail: e.detail,
-    time: { elapsed: e.minute, extra: e.extra },
-    team: { id: e.team },
-    player: { id: e.player != null ? e.player : e.on },
-    assist: { id: e.off },
-  }));
+  // "swap" builds the same substitution with the feed's two fields the other
+  // way round. Nothing may read differently because of it.
+  const asApi = (list, swap) => list.map((e) => {
+    const on = swap ? e.off : e.on, off = swap ? e.on : e.off;
+    return {
+      type: e.type, detail: e.detail,
+      time: { elapsed: e.minute, extra: e.extra },
+      team: { id: e.team },
+      player: { id: e.player != null ? e.player : on },
+      assist: { id: off },
+    };
+  });
 
   const run = (c, label) => {
-    const norm = normaliseEvents(asApi(c.events));
+    const norm = normaliseEvents(asApi(c.events, c.swap));
     for (const p of c.players) {
       const window = c.events.length
         ? onPitchWindow(p.id, norm, !p.substitute) : null;

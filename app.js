@@ -15795,6 +15795,9 @@ function normaliseEvents(events) {
       if (detail.includes("missed")) continue;
       out.push({ kind: "goal", minute, team, own: detail.includes("own goal") });
     } else if (kind === "subst") {
+      // BOTH names kept and NEITHER labelled -- which of `player` and
+      // `assist` holds the man coming on is a property of the feed that
+      // cannot be checked from here. onPitchWindow does not ask.
       out.push({ kind: "subst", minute, on: player, off: assist });
     } else if (kind === "card" && (detail.includes("red card") || detail.includes("second yellow"))) {
       out.push({ kind: "off", minute, player });
@@ -15816,20 +15819,40 @@ function concededMinutes(norm, teamId, homeId, awayId) {
 
 /* [start, end] in match minutes, or null when the events cannot place him.
 
-   Null matters as much as the numbers: it is the difference between "was not
-   on for those goals" and "we do not know where he was", and only the first
-   of those should reduce anybody's charge. */
+   WHICH SIDE OF A SUBSTITUTION A PLAYER IS ON IS DECIDED BY WHETHER HE
+   STARTED, not by which field of the event names him.
+
+   A substitution event carries two names, and API-Football's choice of which
+   goes in `player` and which in `assist` is not something this repo can
+   verify -- there is no reaching the feed from here. Reading it the wrong way
+   round is silent and expensive: a substitute matches as the man going OFF,
+   his start is never set, the window comes back unknown, and he is charged
+   his club's whole-match total. Reported from the app exactly that way -- a
+   midfielder on for the last five minutes, after both goals, charged for
+   both.
+
+   `games.substitute` answers the same question with no ambiguity, from the
+   player's own stat block. So a starter's substitution event is his exit, a
+   substitute's first is his entrance and his second is his exit, and the
+   orientation of the feed never comes into it.
+
+   Null still means "cannot be placed", which is not "was not on" and must not
+   reduce anybody's charge. */
 function onPitchWindow(apiId, norm, started) {
-  let start = started ? 0 : null, end = null;
-  for (const e of norm) {
-    if (e.kind === "subst") {
-      if (e.on === apiId && start == null) start = e.minute;
-      if (e.off === apiId && end == null) end = e.minute;
-    } else if (e.kind === "off" && e.player === apiId && end == null) {
-      end = e.minute;
-    }
+  if (apiId == null) return null;
+  const subs = norm.filter((e) => e.kind === "subst"
+    && (e.on === apiId || e.off === apiId)).map((e) => e.minute).sort((a, b) => a - b);
+  const reds = norm.filter((e) => e.kind === "off" && e.player === apiId)
+    .map((e) => e.minute).sort((a, b) => a - b);
+  let start, end;
+  if (started) { start = 0; end = subs.length ? subs[0] : null; }
+  else {
+    if (!subs.length) return null;           // a substitute nobody swapped on
+    start = subs[0];
+    end = subs.length > 1 ? subs[1] : null;
   }
-  if (start == null) return null;
+  // A sending-off ends his afternoon too, and earlier than any later change.
+  if (reds.length) end = end == null ? reds[0] : Math.min(end, reds[0]);
   return [start, end == null ? ON_PITCH_END : end];
 }
 

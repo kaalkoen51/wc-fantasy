@@ -539,14 +539,20 @@ class TestOnPitchConceded(unittest.TestCase):
     def _events(self, case):
         """The case table's shorthand -> the shape API-Football actually sends."""
         out = []
+        # "swap" builds the same substitution with the feed's two fields the
+        # other way round. Nothing may read differently because of it.
+        swap = case.get("swap")
         for e in case["events"]:
+            on, off = e.get("on"), e.get("off")
+            if swap:
+                on, off = off, on
             out.append({
                 "type": e["type"],
                 "detail": e.get("detail"),
                 "time": {"elapsed": e.get("minute"), "extra": e.get("extra")},
                 "team": {"id": e.get("team")},
-                "player": {"id": e.get("player", e.get("on"))},
-                "assist": {"id": e.get("off")},
+                "player": {"id": e.get("player", on)},
+                "assist": {"id": off},
             })
         return out
 
