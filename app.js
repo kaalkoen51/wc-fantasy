@@ -15806,15 +15806,51 @@ function normaliseEvents(events) {
   return out;
 }
 
-// The minutes at which `teamId` conceded, earliest first.
-function concededMinutes(norm, teamId, homeId, awayId) {
-  const mins = [];
-  for (const e of norm) {
-    if (e.kind !== "goal") continue;
-    const conceding = e.own ? e.team : (e.team === homeId ? awayId : homeId);
-    if (conceding === teamId) mins.push(e.minute);
-  }
-  return mins.sort((a, b) => a - b);
+/* Both sides' conceded minutes, with the own-goal orientation DECIDED by the
+   scoreline rather than assumed.
+
+   Reported from the app: a goalkeeper whose side won 4-0 was charged one goal
+   conceded, and so lost the clean sheet he had plainly kept.
+
+   An own goal is the one event whose `team` cannot be read like every other.
+   API-Football might file it under the side whose player put it in, or under
+   the side credited with the goal, and this repo cannot reach the feed to
+   find out -- the same unverifiable assumption that had a substitute charged
+   for goals scored before he came on.
+
+   So it is not assumed. Each side's conceded count MUST equal the final
+   score, which is authoritative and already in hand: both readings are tried
+   and the one reproducing the scoreline wins. With no own goals the readings
+   are identical and the question never arises; with one, exactly one fits.
+
+   A goal naming neither side is skipped rather than falling through to the
+   home team, which is the OTHER way this produced a phantom concession:
+   `team === homeId ? awayId : homeId` sends anything unrecognised -- a null,
+   a shootout, a competition mix-up -- to whoever was at home. */
+function concededMinutesByTeam(norm, homeId, awayId, goalsHome, goalsAway) {
+  const tally = (ownCountsAgainstItsOwnSide) => {
+    const out = { [homeId]: [], [awayId]: [] };
+    for (const e of norm) {
+      if (e.kind !== "goal") continue;
+      if (e.team !== homeId && e.team !== awayId) continue;   // not guessed at
+      const other = e.team === homeId ? awayId : homeId;
+      const conceding = (e.own && ownCountsAgainstItsOwnSide) ? e.team : other;
+      out[conceding].push(e.minute);
+    }
+    for (const k in out) out[k].sort((a, b) => a - b);
+    return out;
+  };
+  const ownSide = tally(true), creditedSide = tally(false);
+  const fits = (t) => t[homeId].length === goalsAway && t[awayId].length === goalsHome;
+  if (fits(ownSide) !== fits(creditedSide)) return fits(ownSide) ? ownSide : creditedSide;
+  // Both fit (no own goals) or neither does (a live match whose events have
+  // not caught up). Either way they agree on every ordinary goal.
+  return ownSide;
+}
+
+// One side's conceded minutes. See concededMinutesByTeam.
+function concededMinutes(norm, teamId, homeId, awayId, goalsHome = 0, goalsAway = 0) {
+  return concededMinutesByTeam(norm, homeId, awayId, goalsHome, goalsAway)[teamId] || [];
 }
 
 /* [start, end] in match minutes, or null when the events cannot place him.
@@ -15894,10 +15930,8 @@ function buildFixtureStatRows(f, teamBlocks, keyField, fixName, pidOf, skipped, 
      behaviour this replaces and the right thing to land on. See
      normaliseEvents for why this is not simply "read the events". */
   const norm = normaliseEvents(events);
-  const concededMins = {
-    [f.teams.home.id]: concededMinutes(norm, f.teams.home.id, f.teams.home.id, f.teams.away.id),
-    [f.teams.away.id]: concededMinutes(norm, f.teams.away.id, f.teams.home.id, f.teams.away.id),
-  };
+  const concededMins = concededMinutesByTeam(norm, f.teams.home.id, f.teams.away.id,
+    +f.goals.home || 0, +f.goals.away || 0);
   const rows = [];
   let best = null;
   for (const tb of teamBlocks) {

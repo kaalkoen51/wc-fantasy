@@ -328,19 +328,57 @@ def normalise_events(events):
     return out
 
 
-def conceded_minutes(norm, team_id, home_id, away_id):
-    """The minutes at which `team_id` conceded, earliest first."""
-    mins = []
-    for e in norm:
-        if e["kind"] != "goal":
-            continue
-        if e["own"]:
-            conceding = e["team"]
-        else:
-            conceding = away_id if e["team"] == home_id else home_id
-        if conceding == team_id:
-            mins.append(e["minute"])
-    return sorted(mins)
+def conceded_minutes_by_team(norm, home_id, away_id, goals_home, goals_away):
+    """Both sides' conceded minutes, with the own-goal orientation DECIDED by
+    the scoreline rather than assumed.
+
+    Reported from the app: a goalkeeper whose side won 4-0 was charged one
+    goal conceded, and so lost the clean sheet he had plainly kept.
+
+    An own goal is the one event whose `team` cannot be read the same way as
+    every other. API-Football might file it under the side whose player put it
+    in, or under the side credited with the goal, and this repo cannot reach
+    the feed to find out -- the same unverifiable assumption that had a
+    substitute charged for goals scored before he came on.
+
+    So it is not assumed. Each team's conceded count MUST equal the final
+    score, which is authoritative and already in hand, so both readings are
+    tried and the one that reproduces the scoreline wins. With no own goals
+    the two readings are identical and the question never arises; with one,
+    exactly one reading fits.
+
+    A goal event naming neither side is skipped rather than falling through to
+    the home team, which is the other way this produced a phantom concession:
+    `away if team == home else home` sends anything unrecognised -- a null, a
+    shootout, a competition mix-up -- to whoever was at home.
+    """
+    def tally(own_counts_against_its_own_side):
+        out = {home_id: [], away_id: []}
+        for e in norm:
+            if e["kind"] != "goal":
+                continue
+            t = e["team"]
+            if t not in (home_id, away_id):
+                continue                    # cannot be placed; not guessed at
+            other = away_id if t == home_id else home_id
+            conceding = t if (e["own"] and own_counts_against_its_own_side) else other
+            out[conceding].append(e["minute"])
+        return {k: sorted(v) for k, v in out.items()}
+
+    own_side, credited_side = tally(True), tally(False)
+    want = {home_id: goals_away, away_id: goals_home}
+    fits = lambda t: all(len(t[k]) == want[k] for k in want)
+    if fits(own_side) != fits(credited_side):
+        return own_side if fits(own_side) else credited_side
+    # Both fit (no own goals) or neither does (a live match whose events have
+    # not caught up). Either way the readings agree on every ordinary goal.
+    return own_side
+
+
+def conceded_minutes(norm, team_id, home_id, away_id, goals_home=0, goals_away=0):
+    """One side's conceded minutes. See conceded_minutes_by_team."""
+    return conceded_minutes_by_team(
+        norm, home_id, away_id, goals_home, goals_away).get(team_id, [])
 
 
 def on_pitch_window(api_id, norm, started):
@@ -472,10 +510,9 @@ def extract_player_rows(
     # because nobody could be placed would silently under-score a matchday and
     # look exactly like a defence that kept a clean sheet.
     norm_events = normalise_events(events)
-    conceded_mins = {
-        home["id"]: conceded_minutes(norm_events, home["id"], home["id"], away["id"]),
-        away["id"]: conceded_minutes(norm_events, away["id"], home["id"], away["id"]),
-    }
+    conceded_mins = conceded_minutes_by_team(
+        norm_events, home["id"], away["id"],
+        to_int(goals.get("home")), to_int(goals.get("away")))
 
     rows = []
     for team_block in teams_data:

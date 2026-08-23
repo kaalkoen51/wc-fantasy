@@ -542,15 +542,23 @@ class TestOnPitchConceded(unittest.TestCase):
         # "swap" builds the same substitution with the feed's two fields the
         # other way round. Nothing may read differently because of it.
         swap = case.get("swap")
+        # "og_swap" files an own goal under the OTHER side, which is the
+        # second thing the feed might do and the second thing nothing may
+        # depend on.
+        og_swap = case.get("og_swap")
+        other = {case["home"]: case["away"], case["away"]: case["home"]}
         for e in case["events"]:
             on, off = e.get("on"), e.get("off")
             if swap:
                 on, off = off, on
+            team = e.get("team")
+            if og_swap and "own goal" in str(e.get("detail", "")).lower():
+                team = other.get(team, team)
             out.append({
                 "type": e["type"],
                 "detail": e.get("detail"),
                 "time": {"elapsed": e.get("minute"), "extra": e.get("extra")},
-                "team": {"id": e.get("team")},
+                "team": {"id": team},
                 "player": {"id": e.get("player", on)},
                 "assist": {"id": off},
             })
@@ -566,7 +574,9 @@ class TestOnPitchConceded(unittest.TestCase):
                 self.assertEqual(
                     list(window) if window else None, p["expect"]["window"],
                     "on-pitch window")
-                mins = daily_pull.conceded_minutes(norm, p["team"], home, away)
+                mins = daily_pull.conceded_minutes(
+                    norm, p["team"], home, away,
+                    case["score"]["home"], case["score"]["away"])
                 on = daily_pull.conceded_while_on(window, mins)
                 club = (case["score"]["away"] if p["team"] == home
                         else case["score"]["home"])

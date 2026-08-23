@@ -18,7 +18,9 @@
     "would drop stoppage-time goals, which is the half of the match this rule is",
     "most often asked about.",
     "",
-    "ORIENTATION. A substitution event names two players and this repo cannot verify which of API-Football's `player` and `assist` holds the one coming ON. So nothing here depends on it: a case may set \"swap\": true to build the same substitution with the two fields exchanged, and it must produce byte-identical windows. Reading it the wrong way round was silent and cost a real manager points -- a midfielder on for the last five minutes, after both goals, charged for both."
+    "ORIENTATION. A substitution event names two players and this repo cannot verify which of API-Football's `player` and `assist` holds the one coming ON. So nothing here depends on it: a case may set \"swap\": true to build the same substitution with the two fields exchanged, and it must produce byte-identical windows. Reading it the wrong way round was silent and cost a real manager points -- a midfielder on for the last five minutes, after both goals, charged for both.",
+    "",
+    "OWN GOALS have the same problem and the same answer. The feed may file one under the side whose player put it in, or under the side credited with the goal, and nothing here may depend on which: a case may set \"og_swap\": true to file it under the other side, and must produce identical results. The orientation is resolved from the SCORELINE, which each side's conceded count has to equal. Reported from the app as a goalkeeper who won 4-0, was charged one goal conceded, and lost the clean sheet he had plainly kept."
   ],
   "end_sentinel": 100000,
   "cases": [
@@ -706,6 +708,141 @@
         }
       ],
       "_note": "The reported case: on at 85 with the game already lost, charged 0. Identical to the un-swapped reading, which is the point."
+    },
+    {
+      "name": "a keeper whose side wins 4-0 with an own goal keeps his clean sheet",
+      "home": 10,
+      "away": 20,
+      "score": {
+        "home": 4,
+        "away": 0
+      },
+      "events": [
+        {
+          "type": "Goal",
+          "detail": "Normal Goal",
+          "minute": 15,
+          "team": 10
+        },
+        {
+          "type": "Goal",
+          "detail": "Normal Goal",
+          "minute": 33,
+          "team": 10
+        },
+        {
+          "type": "Goal",
+          "detail": "Own Goal",
+          "minute": 51,
+          "team": 20,
+          "player": 41
+        },
+        {
+          "type": "Goal",
+          "detail": "Normal Goal",
+          "minute": 78,
+          "team": 10
+        }
+      ],
+      "players": [
+        {
+          "id": 40,
+          "team": 10,
+          "minutes": 90,
+          "substitute": false,
+          "expect": {
+            "window": [
+              0,
+              100000
+            ],
+            "conceded": 0,
+            "clean_sheet": 1
+          }
+        },
+        {
+          "id": 41,
+          "team": 20,
+          "minutes": 90,
+          "substitute": false,
+          "expect": {
+            "window": [
+              0,
+              100000
+            ],
+            "conceded": 4,
+            "clean_sheet": 0
+          }
+        }
+      ],
+      "_note": "The reported case. Read the own goal as a concession by the side credited with it and the winning keeper is charged 1, which is both wrong and enough to cost the clean sheet."
+    },
+    {
+      "name": "...and the same when the feed files that own goal the other way",
+      "home": 10,
+      "away": 20,
+      "score": {
+        "home": 4,
+        "away": 0
+      },
+      "events": [
+        {
+          "type": "Goal",
+          "detail": "Normal Goal",
+          "minute": 15,
+          "team": 10
+        },
+        {
+          "type": "Goal",
+          "detail": "Normal Goal",
+          "minute": 33,
+          "team": 10
+        },
+        {
+          "type": "Goal",
+          "detail": "Own Goal",
+          "minute": 51,
+          "team": 20,
+          "player": 41
+        },
+        {
+          "type": "Goal",
+          "detail": "Normal Goal",
+          "minute": 78,
+          "team": 10
+        }
+      ],
+      "players": [
+        {
+          "id": 40,
+          "team": 10,
+          "minutes": 90,
+          "substitute": false,
+          "expect": {
+            "window": [
+              0,
+              100000
+            ],
+            "conceded": 0,
+            "clean_sheet": 1
+          }
+        },
+        {
+          "id": 41,
+          "team": 20,
+          "minutes": 90,
+          "substitute": false,
+          "expect": {
+            "window": [
+              0,
+              100000
+            ],
+            "conceded": 4,
+            "clean_sheet": 0
+          }
+        }
+      ],
+      "_note": "Identical expectations. Which side an own goal is filed under must not change a single number.",
+      "og_swap": true
     }
   ],
   "unplaceable": {
