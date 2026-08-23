@@ -1,0 +1,217 @@
+{
+  "_comment": [
+    "Goals conceded WHILE ON THE PITCH, as a table of cases both languages read.",
+    "",
+    "app.js and daily_pull.py each implement this, because each is a writer and a",
+    "stat that two writers disagree about is exactly the bug this replaces. Two",
+    "implementations need one specification, so it lives here rather than being",
+    "written out twice and drifting the first time somebody fixes only one.",
+    "",
+    "THE WINDOW RULE, which every case below is an instance of: a goal counts",
+    "against a player when start < minute <= end. A starter has start 0, so every",
+    "goal from the first minute counts. A substitute has start = the minute he came",
+    "on, and the man he replaced has end = that same minute -- so a goal in the",
+    "minute of a substitution belongs to exactly one of them, never both and never",
+    "neither. The two windows tile.",
+    "",
+    "END = 100000 stands for 'was still on at the final whistle'. A literal 90",
+    "would drop stoppage-time goals, which is the half of the match this rule is",
+    "most often asked about."
+  ],
+  "end_sentinel": 100000,
+  "cases": [
+    {
+      "name": "a starter who plays the full match carries the lot",
+      "home": 10, "away": 20, "score": { "home": 0, "away": 3 },
+      "events": [
+        { "type": "Goal", "detail": "Normal Goal", "minute": 12, "team": 20 },
+        { "type": "Goal", "detail": "Normal Goal", "minute": 55, "team": 20 },
+        { "type": "Goal", "detail": "Normal Goal", "minute": 90, "team": 20 }
+      ],
+      "players": [
+        { "id": 1, "team": 10, "minutes": 90, "substitute": false,
+          "expect": { "window": [0, 100000], "conceded": 3, "clean_sheet": 0 } },
+        { "id": 2, "team": 20, "minutes": 90, "substitute": false,
+          "expect": { "window": [0, 100000], "conceded": 0, "clean_sheet": 1 } }
+      ]
+    },
+    {
+      "name": "a starter substituted off is not charged for what happened after",
+      "home": 10, "away": 20, "score": { "home": 0, "away": 2 },
+      "events": [
+        { "type": "Goal", "detail": "Normal Goal", "minute": 20, "team": 20 },
+        { "type": "subst", "minute": 60, "on": 3, "off": 1 },
+        { "type": "Goal", "detail": "Normal Goal", "minute": 75, "team": 20 }
+      ],
+      "players": [
+        { "id": 1, "team": 10, "minutes": 60, "substitute": false,
+          "expect": { "window": [0, 60], "conceded": 1, "clean_sheet": 0 } },
+        { "id": 3, "team": 10, "minutes": 30, "substitute": true,
+          "expect": { "window": [60, 100000], "conceded": 1, "clean_sheet": 0 } }
+      ]
+    },
+    {
+      "name": "a substitute brought on with the game already lost is charged nothing",
+      "home": 10, "away": 20, "score": { "home": 0, "away": 3 },
+      "events": [
+        { "type": "Goal", "detail": "Normal Goal", "minute": 10, "team": 20 },
+        { "type": "Goal", "detail": "Normal Goal", "minute": 25, "team": 20 },
+        { "type": "Goal", "detail": "Normal Goal", "minute": 40, "team": 20 },
+        { "type": "subst", "minute": 70, "on": 4, "off": 1 }
+      ],
+      "players": [
+        { "id": 4, "team": 10, "minutes": 20, "substitute": true,
+          "expect": { "window": [70, 100000], "conceded": 0, "clean_sheet": 0 } }
+      ],
+      "_note": "conceded 0, but no clean sheet either -- he played 20 minutes, and the 60-minute floor is a separate condition that this rule does not touch."
+    },
+    {
+      "name": "a goal in the minute of the substitution belongs to the man going off",
+      "home": 10, "away": 20, "score": { "home": 0, "away": 1 },
+      "events": [
+        { "type": "subst", "minute": 65, "on": 6, "off": 5 },
+        { "type": "Goal", "detail": "Normal Goal", "minute": 65, "team": 20 }
+      ],
+      "players": [
+        { "id": 5, "team": 10, "minutes": 65, "substitute": false,
+          "expect": { "window": [0, 65], "conceded": 1, "clean_sheet": 0 } },
+        { "id": 6, "team": 10, "minutes": 25, "substitute": true,
+          "expect": { "window": [65, 100000], "conceded": 0, "clean_sheet": 0 } }
+      ]
+    },
+    {
+      "name": "a substitute who is himself substituted has both ends",
+      "home": 10, "away": 20, "score": { "home": 0, "away": 3 },
+      "events": [
+        { "type": "Goal", "detail": "Normal Goal", "minute": 15, "team": 20 },
+        { "type": "subst", "minute": 30, "on": 7, "off": 1 },
+        { "type": "Goal", "detail": "Normal Goal", "minute": 50, "team": 20 },
+        { "type": "subst", "minute": 70, "on": 8, "off": 7 },
+        { "type": "Goal", "detail": "Normal Goal", "minute": 85, "team": 20 }
+      ],
+      "players": [
+        { "id": 7, "team": 10, "minutes": 40, "substitute": true,
+          "expect": { "window": [30, 70], "conceded": 1, "clean_sheet": 0 } }
+      ],
+      "_note": "The case the free approximation gets wrong: 40 minutes played, and 'the last 40 minutes' would be 50-90, charging him the 85th-minute goal he was not there for."
+    },
+    {
+      "name": "a player sent off stops being charged when he leaves",
+      "home": 10, "away": 20, "score": { "home": 0, "away": 2 },
+      "events": [
+        { "type": "Card", "detail": "Red Card", "minute": 35, "player": 9 },
+        { "type": "Goal", "detail": "Normal Goal", "minute": 40, "team": 20 },
+        { "type": "Goal", "detail": "Normal Goal", "minute": 80, "team": 20 }
+      ],
+      "players": [
+        { "id": 9, "team": 10, "minutes": 35, "substitute": false,
+          "expect": { "window": [0, 35], "conceded": 0, "clean_sheet": 0 } }
+      ],
+      "_note": "He is punished for the red card by the card rule. Charging him for goals conceded after he had left the field would be the same unfairness this whole change removes."
+    },
+    {
+      "name": "a second yellow is a red",
+      "home": 10, "away": 20, "score": { "home": 0, "away": 1 },
+      "events": [
+        { "type": "Card", "detail": "Second Yellow card", "minute": 50, "player": 11 },
+        { "type": "Goal", "detail": "Normal Goal", "minute": 70, "team": 20 }
+      ],
+      "players": [
+        { "id": 11, "team": 10, "minutes": 50, "substitute": false,
+          "expect": { "window": [0, 50], "conceded": 0, "clean_sheet": 0 } }
+      ]
+    },
+    {
+      "name": "an own goal is charged to the side that scored it",
+      "home": 10, "away": 20, "score": { "home": 0, "away": 1 },
+      "events": [
+        { "type": "Goal", "detail": "Own Goal", "minute": 30, "team": 10, "player": 12 }
+      ],
+      "players": [
+        { "id": 12, "team": 10, "minutes": 90, "substitute": false,
+          "expect": { "window": [0, 100000], "conceded": 1, "clean_sheet": 0 } },
+        { "id": 13, "team": 20, "minutes": 90, "substitute": false,
+          "expect": { "window": [0, 100000], "conceded": 0, "clean_sheet": 1 } }
+      ],
+      "_note": "API-Football files an own goal under the team of the player who put it in. Read naively that is backwards -- it would credit the concession to the side that benefited."
+    },
+    {
+      "name": "a missed penalty is not a goal",
+      "home": 10, "away": 20, "score": { "home": 0, "away": 0 },
+      "events": [
+        { "type": "Goal", "detail": "Missed Penalty", "minute": 33, "team": 20, "player": 14 }
+      ],
+      "players": [
+        { "id": 15, "team": 10, "minutes": 90, "substitute": false,
+          "expect": { "window": [0, 100000], "conceded": 0, "clean_sheet": 1 } }
+      ],
+      "_note": "API-Football files a missed penalty as type Goal. Read naively it concedes one."
+    },
+    {
+      "name": "stoppage time counts",
+      "home": 10, "away": 20, "score": { "home": 0, "away": 1 },
+      "events": [
+        { "type": "Goal", "detail": "Normal Goal", "minute": 90, "extra": 4, "team": 20 }
+      ],
+      "players": [
+        { "id": 16, "team": 10, "minutes": 90, "substitute": false,
+          "expect": { "window": [0, 100000], "conceded": 1, "clean_sheet": 0 } }
+      ]
+    },
+    {
+      "name": "a clean sheet needs the hour as well as the shut-out",
+      "home": 10, "away": 20, "score": { "home": 0, "away": 1 },
+      "events": [
+        { "type": "subst", "minute": 55, "on": 18, "off": 17 },
+        { "type": "Goal", "detail": "Normal Goal", "minute": 80, "team": 20 }
+      ],
+      "players": [
+        { "id": 17, "team": 10, "minutes": 55, "substitute": false,
+          "expect": { "window": [0, 55], "conceded": 0, "clean_sheet": 0 } }
+      ],
+      "_note": "Nothing conceded while he was on, but 55 minutes is short of the hour, so no clean sheet. The two conditions are independent and both have to hold."
+    },
+    {
+      "name": "off at the hour of a goalless game that is later lost",
+      "home": 10, "away": 20, "score": { "home": 0, "away": 1 },
+      "events": [
+        { "type": "subst", "minute": 70, "on": 20, "off": 19 },
+        { "type": "Goal", "detail": "Normal Goal", "minute": 85, "team": 20 }
+      ],
+      "players": [
+        { "id": 19, "team": 10, "minutes": 70, "substitute": false,
+          "expect": { "window": [0, 70], "conceded": 0, "clean_sheet": 1 } }
+      ],
+      "_note": "The visible consequence of the change: he KEEPS the clean sheet his side lost after he had gone off. Under the old whole-match rule he lost it."
+    }
+  ],
+  "unplaceable": {
+    "_comment": [
+      "When the events cannot say where a player was, the club's whole-match total",
+      "is used -- which is the behaviour being replaced, and the right thing to fall",
+      "back to. Charging nobody because nobody could be placed would silently",
+      "under-score a matchday and look identical to a clean sheet."
+    ],
+    "home": 10, "away": 20, "score": { "home": 0, "away": 2 },
+    "events": [
+      { "type": "Goal", "detail": "Normal Goal", "minute": 20, "team": 20 },
+      { "type": "Goal", "detail": "Normal Goal", "minute": 75, "team": 20 }
+    ],
+    "players": [
+      { "id": 21, "team": 10, "minutes": 30, "substitute": true,
+        "expect": { "window": null, "conceded": 2, "clean_sheet": 0 } }
+    ],
+    "_note": "A substitute with no substitution event naming him. He cannot be placed, so he is charged what his club let in."
+  },
+  "no_events": {
+    "_comment": "No events at all -- an older match, or a feed gap. Everyone gets the club total, exactly as before this rule existed.",
+    "home": 10, "away": 20, "score": { "home": 0, "away": 2 },
+    "events": [],
+    "players": [
+      { "id": 22, "team": 10, "minutes": 90, "substitute": false,
+        "expect": { "window": null, "conceded": 2, "clean_sheet": 0 } },
+      { "id": 23, "team": 20, "minutes": 90, "substitute": false,
+        "expect": { "window": null, "conceded": 0, "clean_sheet": 1 } }
+    ]
+  }
+}

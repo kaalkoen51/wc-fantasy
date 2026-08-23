@@ -8,6 +8,7 @@ Run:
 import json
 import os
 import unittest
+from pathlib import Path
 
 import argparse
 
@@ -408,7 +409,8 @@ class TestLivePull(unittest.TestCase):
         competition_stats under the competition's own key."""
         wrote = {}
         orig = (live_pull.fetch_fixture_players, live_pull.upsert_competition_stats,
-                live_pull.upsert_match_stats)
+                live_pull.upsert_match_stats, live_pull.fetch_fixture_events)
+        live_pull.fetch_fixture_events = lambda fid, mock=False: []
         live_pull.fetch_fixture_players = lambda fid, mock=False: [{
             "team": {"id": 42, "name": "Arsenal"},
             "players": [{"player": {"id": 276, "name": "B. Saka"},
@@ -427,7 +429,7 @@ class TestLivePull(unittest.TestCase):
             live_pull.pull_fixture(self._fixture(), t, dry_run=False)
         finally:
             (live_pull.fetch_fixture_players, live_pull.upsert_competition_stats,
-             live_pull.upsert_match_stats) = orig
+             live_pull.upsert_match_stats, live_pull.fetch_fixture_events) = orig
 
         self.assertEqual(wrote.get("key"), "39-2026")
         self.assertNotIn("legacy", wrote, "a competition wrote to match_stats")
@@ -461,8 +463,9 @@ class TestLivePull(unittest.TestCase):
     def test_the_static_pool_still_writes_where_it_always_did(self):
         wrote = {}
         orig = (live_pull.fetch_fixture_players, live_pull.upsert_match_stats,
-                live_pull.upsert_competition_stats)
+                live_pull.upsert_competition_stats, live_pull.fetch_fixture_events)
         live_pull.fetch_fixture_players = lambda fid, mock=False: []
+        live_pull.fetch_fixture_events = lambda fid, mock=False: []
         live_pull.upsert_match_stats = lambda rows, ids: wrote.update({"ids": ids})
         live_pull.upsert_competition_stats = lambda rows, key: wrote.update(
             {"competition": True})
@@ -476,7 +479,7 @@ class TestLivePull(unittest.TestCase):
             live_pull.pull_fixture(self._fixture(league=1), t, dry_run=False)
         finally:
             (live_pull.fetch_fixture_players, live_pull.upsert_match_stats,
-             live_pull.upsert_competition_stats) = orig
+             live_pull.upsert_competition_stats, live_pull.fetch_fixture_events) = orig
         self.assertNotIn("competition", wrote)
 
     def test_targets_come_from_the_admin_toggle(self):
@@ -516,6 +519,122 @@ class TestLivePull(unittest.TestCase):
             self.assertEqual(live_pull.build_targets(args), [])
         finally:
             live_pull.fetch_scheduled_competitions = orig
+
+
+class TestOnPitchConceded(unittest.TestCase):
+    """Goals conceded while on the pitch, against the shared case table.
+
+    The cases live in test/fixtures/on_pitch.json and are read by the
+    JavaScript suite too. Two writers implement this rule, and a stat two
+    writers disagree about is the exact bug it replaces -- so they get one
+    specification rather than two copies of it that drift the first time
+    somebody fixes only one.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        path = Path(__file__).parent / "test" / "fixtures" / "on_pitch.json"
+        cls.spec = json.loads(path.read_text(encoding="utf-8"))
+
+    def _events(self, case):
+        """The case table's shorthand -> the shape API-Football actually sends."""
+        out = []
+        for e in case["events"]:
+            out.append({
+                "type": e["type"],
+                "detail": e.get("detail"),
+                "time": {"elapsed": e.get("minute"), "extra": e.get("extra")},
+                "team": {"id": e.get("team")},
+                "player": {"id": e.get("player", e.get("on"))},
+                "assist": {"id": e.get("off")},
+            })
+        return out
+
+    def _run(self, case):
+        norm = daily_pull.normalise_events(self._events(case))
+        home, away = case["home"], case["away"]
+        for p in case["players"]:
+            with self.subTest(case=case.get("name", "?"), player=p["id"]):
+                window = daily_pull.on_pitch_window(
+                    p["id"], norm, not p["substitute"]) if case["events"] else None
+                self.assertEqual(
+                    list(window) if window else None, p["expect"]["window"],
+                    "on-pitch window")
+                mins = daily_pull.conceded_minutes(norm, p["team"], home, away)
+                on = daily_pull.conceded_while_on(window, mins)
+                club = (case["score"]["away"] if p["team"] == home
+                        else case["score"]["home"])
+                conceded = on if on is not None else club
+                self.assertEqual(conceded, p["expect"]["conceded"], "goals conceded")
+                clean = 1 if (p["minutes"] >= 60 and conceded == 0) else 0
+                self.assertEqual(clean, p["expect"]["clean_sheet"], "clean sheet")
+
+    def test_every_case_in_the_shared_table(self):
+        self.assertGreaterEqual(len(self.spec["cases"]), 10,
+                                "the shared case table has shrunk")
+        for case in self.spec["cases"]:
+            self._run(case)
+
+    def test_a_goalless_match_never_pays_for_the_extra_call(self):
+        """The whole of this rule's cost control, and the easy thing to lose
+        in a later refactor: nobody has conceded, so no on-pitch window can
+        change a number, so the call is not made. It can never be wrong in
+        the expensive direction -- a 0-0 that turns out to have had a goal is
+        not a thing."""
+        self.assertFalse(daily_pull.scored_in({"goals": {"home": 0, "away": 0}}))
+        self.assertFalse(daily_pull.scored_in({"goals": {"home": None, "away": None}}))
+        self.assertFalse(daily_pull.scored_in({}))
+        self.assertTrue(daily_pull.scored_in({"goals": {"home": 1, "away": 0}}))
+        self.assertTrue(daily_pull.scored_in({"goals": {"home": 0, "away": 3}}))
+
+    def test_an_events_call_that_fails_degrades_instead_of_dying(self):
+        """A pull that died because one optional call failed would lose the
+        other twenty stats with it. Note SystemExit is deliberately NOT
+        caught: a missing API key is a configuration error, not a feed
+        wobble, and should stop the run rather than quietly score it wrong."""
+        orig = daily_pull.api_get
+
+        def boom(path, params):
+            raise RuntimeError("503 from the feed")
+
+        daily_pull.api_get = boom
+        try:
+            self.assertEqual(daily_pull.fetch_fixture_events(1), [])
+        finally:
+            daily_pull.api_get = orig
+
+    def test_a_player_the_events_cannot_place_gets_the_clubs_total(self):
+        self._run(self.spec["unplaceable"])
+
+    def test_no_events_at_all_is_the_old_behaviour_for_everyone(self):
+        self._run(self.spec["no_events"])
+
+    def test_the_window_rule_tiles_across_a_substitution(self):
+        """No goal is counted twice and none is dropped. Asserted over the
+        whole table rather than one case, because 'start < m <= end' is the
+        kind of boundary that is right in the example it was written for and
+        wrong one minute either side of it."""
+        for case in self.spec["cases"]:
+            norm = daily_pull.normalise_events(self._events(case))
+            home, away = case["home"], case["away"]
+            for team in (home, away):
+                mins = daily_pull.conceded_minutes(norm, team, home, away)
+                for m in mins:
+                    # Each side of every substitution: exactly one window owns it.
+                    for e in norm:
+                        if e["kind"] != "subst":
+                            continue
+                        won = daily_pull.on_pitch_window(e["on"], norm, False)
+                        woff = daily_pull.on_pitch_window(e["off"], norm, True)
+                        if not won or not woff:
+                            continue
+                        owns = sum([
+                            1 if won[0] < m <= won[1] else 0,
+                            1 if woff[0] < m <= woff[1] else 0,
+                        ])
+                        self.assertLessEqual(
+                            owns, 1,
+                            f"goal at {m}' charged to both sides of the {e['minute']}' change")
 
 
 class TestWatcherStaleness(unittest.TestCase):

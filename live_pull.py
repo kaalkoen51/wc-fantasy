@@ -53,8 +53,10 @@ from daily_pull import (
     calculate_points,
     extract_player_rows,
     featured,
+    fetch_fixture_events,
     fetch_fixture_players,
     fetch_scheduled_competitions,
+    scored_in,
     parse_competition_key,
     parse_league_ids,
 )
@@ -196,9 +198,13 @@ def pull_fixture(fixture: dict, target: Target, dry_run: bool) -> None:
     away = fixture["teams"]["away"]["name"]
     status = fixture["fixture"]["status"]["short"]
     competition = target.kind == "competition"
+    # Skipped while the match is goalless -- nobody has conceded anything,
+    # so no on-pitch window can change a number. This is what keeps the extra
+    # call off the first half of most fixtures.
+    events = fetch_fixture_events(fid) if scored_in(fixture) else []
     rows = extract_player_rows(
         fixture, fetch_fixture_players(fid, mock=False), target.matcher,
-        use_api_ids=competition)
+        use_api_ids=competition, events=events)
     appeared = [r for r in rows if featured(r)]
     matched = [r for r in appeared if r["player_id"]]
     unmatched = len(appeared) - len(matched)

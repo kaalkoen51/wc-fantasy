@@ -241,6 +241,140 @@ def fetch_fixture_players(fixture_id: int, mock: bool) -> list:
     return data.get("response", [])
 
 
+def scored_in(fixture: dict) -> bool:
+    """Did anybody score? If not, the events call is skipped.
+
+    A goalless match has nothing to charge anyone with, so knowing who was on
+    the pitch cannot change a single number. Worth its own function because
+    it is the whole of this rule's cost control: on a typical matchday it
+    removes the extra call from roughly one fixture in ten, and it can never
+    be wrong in the expensive direction -- a 0-0 that turns out to have had a
+    goal is not a thing.
+    """
+    g = fixture.get("goals") or {}
+    return to_int(g.get("home")) + to_int(g.get("away")) > 0
+
+
+def fetch_fixture_events(fixture_id: int, mock: bool = False) -> list:
+    """Goal, substitution and card events for one fixture.
+
+    Needed to know WHEN goals went in and who was on the pitch for them.
+    Returns [] on any failure rather than raising: a scoring rule that
+    depends on this degrades to the club's whole-match total, which is what
+    it did before this existed. A pull that dies because one optional call
+    failed would lose the other twenty stats as well.
+
+    Skipped entirely for a goalless match by the callers -- if nobody scored,
+    nobody conceded, and no window can change that.
+    """
+    if mock:
+        path = MOCK_DIR / f"events_{fixture_id}.json"
+        if not path.exists():
+            return []
+        return json.loads(path.read_text(encoding="utf-8")).get("response", [])
+    try:
+        return api_get("fixtures/events", {"fixture": fixture_id}).get("response", [])
+    except Exception as exc:                       # noqa: BLE001 - see docstring
+        print(f"  events unavailable for fixture {fixture_id} ({exc}) — "
+              "falling back to the club's whole-match total.")
+        return []
+
+
+# "Still on at the final whistle". A literal 90 would drop stoppage-time
+# goals, which is the half of a match this rule gets asked about most.
+ON_PITCH_END = 100000
+
+
+def normalise_events(events):
+    """API-Football fixture events -> the three facts this rule needs.
+
+    Two of these are traps rather than details, and both are silent:
+
+      OWN GOALS are filed under the team of the player who put the ball in
+      his own net -- so the team on the event is the team that CONCEDED, the
+      opposite of every other goal. Read the same way as the rest and an own
+      goal is charged to the side it was a present to.
+
+      MISSED PENALTIES arrive as type "Goal", detail "Missed Penalty". Read
+      the same way as the rest and a miss concedes one.
+
+    A red card ends a player's afternoon as surely as a substitution does, so
+    it is normalised into the same "off" shape. Second yellows are spelled
+    differently by the feed and mean exactly the same thing.
+    """
+    out = []
+    for e in events or []:
+        t = e.get("time") or {}
+        minute = to_int(t.get("elapsed")) + to_int(t.get("extra"))
+        kind = str(e.get("type") or "").strip().lower()
+        detail = str(e.get("detail") or "").strip().lower()
+        team = (e.get("team") or {}).get("id")
+        player = (e.get("player") or {}).get("id")
+        assist = (e.get("assist") or {}).get("id")
+        if kind == "goal":
+            if "missed" in detail:
+                continue
+            out.append({"kind": "goal", "minute": minute, "team": team,
+                        "own": "own goal" in detail})
+        elif kind == "subst":
+            out.append({"kind": "subst", "minute": minute,
+                        "on": player, "off": assist})
+        elif kind == "card" and ("red card" in detail or "second yellow" in detail):
+            out.append({"kind": "off", "minute": minute, "player": player})
+    return out
+
+
+def conceded_minutes(norm, team_id, home_id, away_id):
+    """The minutes at which `team_id` conceded, earliest first."""
+    mins = []
+    for e in norm:
+        if e["kind"] != "goal":
+            continue
+        if e["own"]:
+            conceding = e["team"]
+        else:
+            conceding = away_id if e["team"] == home_id else home_id
+        if conceding == team_id:
+            mins.append(e["minute"])
+    return sorted(mins)
+
+
+def on_pitch_window(api_id, norm, started):
+    """(start, end) in match minutes, or None if the events cannot place him.
+
+    None matters as much as the numbers: it is the difference between "was
+    not on for those goals" and "we do not know where he was", and only the
+    first of those should reduce anybody's charge.
+    """
+    start = 0 if started else None
+    end = None
+    for e in norm:
+        if e["kind"] == "subst":
+            if e["on"] == api_id and start is None:
+                start = e["minute"]
+            if e["off"] == api_id and end is None:
+                end = e["minute"]
+        elif e["kind"] == "off" and e["player"] == api_id and end is None:
+            end = e["minute"]
+    if start is None:
+        return None
+    return (start, ON_PITCH_END if end is None else end)
+
+
+def conceded_while_on(window, mins):
+    """How many of `mins` fall inside the window.
+
+    start < minute <= end, which is what makes two windows either side of a
+    substitution TILE: a goal in the minute of the change belongs to the man
+    going off and not to the man coming on, so it is counted once rather than
+    twice or not at all.
+    """
+    if window is None:
+        return None
+    start, end = window
+    return sum(1 for m in mins if start < m <= end)
+
+
 def to_int(value) -> int:
     return int(value) if value else 0
 
@@ -265,7 +399,8 @@ def featured(row: dict) -> bool:
 
 
 def extract_player_rows(
-    fixture: dict, teams_data: list, matcher, use_api_ids: bool = False
+    fixture: dict, teams_data: list, matcher, use_api_ids: bool = False,
+    events: list = None,
 ) -> list:
     """Flatten API-Football fixture-player stats into per-player dicts.
 
@@ -304,6 +439,17 @@ def extract_player_rows(
         home["id"]: to_int(goals.get("away")),
         away["id"]: to_int(goals.get("home")),
     }
+    # Goal minutes and who was on for them. `events` is optional: when it is
+    # missing -- an older match, a feed gap, a caller that does not fetch it --
+    # every player falls back to the club's whole-match total, which is the
+    # behaviour this replaces and the right thing to land on. Charging nobody
+    # because nobody could be placed would silently under-score a matchday and
+    # look exactly like a defence that kept a clean sheet.
+    norm_events = normalise_events(events)
+    conceded_mins = {
+        home["id"]: conceded_minutes(norm_events, home["id"], home["id"], away["id"]),
+        away["id"]: conceded_minutes(norm_events, away["id"], home["id"], away["id"]),
+    }
 
     rows = []
     for team_block in teams_data:
@@ -326,12 +472,24 @@ def extract_player_rows(
 
             minutes = to_int(games.get("minutes"))
             position = POSITION_MAP.get(games.get("position"), "MID")
-            team_conceded = conceded_by_team.get(team_id, 0)
+            api_id = player.get("id")
+            # Gated on events being SUPPLIED, not on them normalising to
+            # anything. A match whose only event is a missed penalty has a
+            # real events list that normalises to nothing, and every player
+            # in it was still exactly where the feed says he was.
+            window = on_pitch_window(
+                api_id, norm_events, not games.get("substitute")
+            ) if events else None
+            on_pitch = conceded_while_on(window, conceded_mins.get(team_id, []))
+            # None = the events could not place him; fall back to the club's.
+            team_conceded = (
+                on_pitch if on_pitch is not None
+                else conceded_by_team.get(team_id, 0)
+            )
 
             api_name = player.get("name", "Unknown")
             shirt = to_int(games.get("number")) or None
             if use_api_ids:
-                api_id = player.get("id")
                 resolved_id = f"api_{api_id}" if api_id is not None else None
                 resolved_name, resolved_pos, match_note = api_name, position, "api-id"
             else:
@@ -729,7 +887,8 @@ def main() -> None:
     for fixture in fixtures:
         fixture_id = fixture["fixture"]["id"]
         teams_data = fetch_fixture_players(fixture_id, args.mock)
-        rows_f = extract_player_rows(fixture, teams_data, matcher)
+        events = fetch_fixture_events(fixture_id, args.mock) if scored_in(fixture) else []
+        rows_f = extract_player_rows(fixture, teams_data, matcher, events=events)
         # Diagnostic: does the player-stats endpoint actually carry goals? If the
         # scoreline shows goals but the summed player goals are 0, API-Football
         # isn't populating goals in fixtures/players for this match (they'd be in

@@ -35,7 +35,7 @@ const lsStub = {
 globalThis.appended = appended;
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, scoringRules, rugbyMatchSettled, rugbyTeamKnown, firstArray, RUGBY_BENCH_POS, noCandidatesReason, lineupSwapValid, crestUrlFor, rugbyTeamCrest, rugbyPlayerCrest, crestFields, rugbyCrestUrl, rugbyTeamCode, clubHue, initialsOf, markSvg, teamCodeOf, teamCrestHtml, avatarHtml, loadedCompetitions, practiceCompetition, practiceNote, resolveRugbyPosition, canonicalTeamNames, crestBadgeHtml, leftCompetition, availBadges, availText, riskOf, lineupRisks, riskNames, lineupTodo, decodeEntities, cleanPlayerNames, esc, installHint, anyMatchLive, weekInPlay, MATCH_MS, roundsEndedBy, recappableRounds, roundStillPlaying, pushState, ALERT_KINDS, defaultAlertPrefs, subscriptionRow, urlBase64ToUint8Array, rugbySeasonWindow, rugbyDataWindow, rugbyRoundOrder, positionsCsv, parsePositionsCsv, csvSplit, positionRows, positionEvidence, applyPoolOverrides, poolEditsOf, scoredMatchCount, poolCsv, parsePoolCsv, mergePoolCsv, manualPlayerId, preDraftPoolNote, PHASE1_STARTERS, sportNeedsApiKey, summariseLineupSample, lineupObservationText, RUGBY_QUOTA, RUGBY_STARTERS, RUGBY_PLAY_GROUPS, RUGBY_PITCH_BANDS, RUGBY_RULES, RUGBY_STAT_CATALOG, RUGBY_SLOTS, slotMapsFor, sumGroups, zeroByGroup, outfieldGroups, squadSize, flexComplete, flexLeft, fixedRoundSubs, SLOT_POS, SLOT_RANK, rugbyPosCode, isRugbyBenchSlot, parseRugbyPlayer, parseRugbyMatch, usableRugbyMatches, rugbyStatRows, rugbyStatsOf, RUGBY_STAT_KEYS, RUGBY_COMPETITIONS, rugbyBody, parseCompKey, competitionsFor, SPORTS, sportOf, sportDef, posGroups, playGroups, slotPosMap, slotRankMap, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, passAccuracyPct, rawStatsOf, suspendedNext, yellowBanCount, yellowWindow, injuryFeedNote, effectiveCaptain, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, queueWindow, freshQueueIds, moveShortlistTop, scoringHtml, smallPrintHtml, CRESTS, CRESTS_MORE, MGR_COLORS, authErrorText, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid, pitchHtml, pitchFacingHtml, pitchRowsHtml, squadBoardHtml, historyViewHtml, benchInOrder, moveBench, orderedRoster, flipRows, wireLineupControls, markQueueMoved, matchdayCtaAct, matchdayCardHtml, renderLineup, renderHomeTab, openH2HPreview, openH2HFixture, lineupRowHtml, dugoutHtml, renderFixturesTab, h2hRoundFixtures, h2hTotalRounds, h2hFormOf, h2hStandingsHtml, seasonChartHtml, renderScoutList, renderStatsTab, renderPredraftShortlist, preDraftBrowsing, shortlistCoverage, coverageHint, scoringByPositionHtml, openScoringSheet, animateReorder, applyLocalOverrides, queueManagerWrite, wireStars, starHtml, draftFactCards, draftRulesHtml, lobbyRulesHtml, scoringHtml, applyVisibleOrder, makeReorderable, refetchAll, markConnection, enterLeagueWithFeedback, route, showView, dragActive, afterDrag, overrideStillWins, queueManagerWrite, applyLocalOverrides, keepLocalPick, autoPickStale, autoPickTurn, makePick, autoPick, tickTimer, mergeOptimisticPicks, pickKey, queueFieldWrite, OVERRIDE_TABLES, setPlanner, saveLineup, toggleKeeper, setFinalPick, txWindowStarts, txWhen, txShell, txAvatar, txMgrChip, tradeTxCard, swapTxCard, transactionsLogHtml, renderTrades, builderHtml, faClaimsSectionHtml, waiverOrderHtml, shortlistSectionHtml, plannerSectionHtml, plannerMoveHtml, squadChooserHtml, tradeSectionHtml, setClaimOrder, reorderClaim, tradeForShortlisted, submitTrade, TRADE_TABS, tradeTabBodyHtml, faClaimRowHtml, faClaimRowsHtml, renderClaimList, wireClaimControls, ROW_ATTRS, plannerMoveChoice, plannerSetChoiceOrder, plannerPickPool, renderPlannerPick, setWindowMode, toggleLineups, squadPitchHtml, squadShape, renderDreamTeam, dreamTeam, renderChat, chatThreads, interacting, markInteracting, scheduleDeferredFlush, INTERACT_MS, animateReorder, flipRows, flushDeferredRender, currentSeasonFor, seasonOptions, seasonLabel, backtestSeason, createCompKind, createPreviewSeason, loadScoringPreviewData, pullCreateHistory, renderCreateBalance, updateCreatePullStatus, renderCreateForm, pickReconciliation, reconcilePicksToPool, mapApiPlayer, loadCompetition, roundResolvers, roundIndex, mwNo, FINAL_STATUS, draftOrderMode, lobbyOrderManagers, shuffled, setDraftOrder, renderLobbyOrder, lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow, nextLockMs, lockAfterWindow, snapshotAt, snapshotForNextLock, rosterAtFor, setSession, getSession, repairStarters, lineupShape, repairLineupFor, faWindowKey, roundToSettle, closedWindowRound, closedWindowRounds, closedTradeWindows, roundsOwedSettlement, isRoundSettled, matchFixture, matchTimeFor, computeScoresUncached, bustScores, roundKeyLockedAt, roundKeyOfLabel, roundLabelShort, roundIndex, rosterAtFor, snapshotsByManager, advanceRound, maybeAdvanceRounds };"
+  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, compKeyOf, competitionKey, scoringRules, rugbyMatchSettled, rugbyTeamKnown, firstArray, RUGBY_BENCH_POS, noCandidatesReason, lineupSwapValid, crestUrlFor, rugbyTeamCrest, rugbyPlayerCrest, crestFields, rugbyCrestUrl, rugbyTeamCode, clubHue, initialsOf, markSvg, teamCodeOf, teamCrestHtml, avatarHtml, loadedCompetitions, practiceCompetition, practiceNote, resolveRugbyPosition, canonicalTeamNames, crestBadgeHtml, leftCompetition, availBadges, availText, riskOf, lineupRisks, riskNames, lineupTodo, decodeEntities, cleanPlayerNames, esc, installHint, anyMatchLive, weekInPlay, MATCH_MS, roundsEndedBy, recappableRounds, roundStillPlaying, pushState, ALERT_KINDS, defaultAlertPrefs, subscriptionRow, urlBase64ToUint8Array, rugbySeasonWindow, rugbyDataWindow, rugbyRoundOrder, positionsCsv, parsePositionsCsv, csvSplit, positionRows, positionEvidence, applyPoolOverrides, poolEditsOf, scoredMatchCount, poolCsv, parsePoolCsv, mergePoolCsv, manualPlayerId, preDraftPoolNote, PHASE1_STARTERS, sportNeedsApiKey, summariseLineupSample, lineupObservationText, RUGBY_QUOTA, RUGBY_STARTERS, RUGBY_PLAY_GROUPS, RUGBY_PITCH_BANDS, RUGBY_RULES, RUGBY_STAT_CATALOG, RUGBY_SLOTS, slotMapsFor, sumGroups, zeroByGroup, outfieldGroups, squadSize, flexComplete, flexLeft, fixedRoundSubs, SLOT_POS, SLOT_RANK, rugbyPosCode, isRugbyBenchSlot, parseRugbyPlayer, parseRugbyMatch, usableRugbyMatches, rugbyStatRows, rugbyStatsOf, RUGBY_STAT_KEYS, RUGBY_COMPETITIONS, rugbyBody, parseCompKey, competitionsFor, SPORTS, sportOf, sportDef, posGroups, playGroups, slotPosMap, slotRankMap, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, passAccuracyPct, rawStatsOf, normaliseEvents, concededMinutes, onPitchWindow, concededWhileOn, ON_PITCH_END, suspendedNext, yellowBanCount, yellowWindow, injuryFeedNote, effectiveCaptain, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, queueWindow, freshQueueIds, moveShortlistTop, scoringHtml, smallPrintHtml, CRESTS, CRESTS_MORE, MGR_COLORS, authErrorText, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid, pitchHtml, pitchFacingHtml, pitchRowsHtml, squadBoardHtml, historyViewHtml, benchInOrder, moveBench, orderedRoster, flipRows, wireLineupControls, markQueueMoved, matchdayCtaAct, matchdayCardHtml, renderLineup, renderHomeTab, openH2HPreview, openH2HFixture, lineupRowHtml, dugoutHtml, renderFixturesTab, h2hRoundFixtures, h2hTotalRounds, h2hFormOf, h2hStandingsHtml, seasonChartHtml, renderScoutList, renderStatsTab, renderPredraftShortlist, preDraftBrowsing, shortlistCoverage, coverageHint, scoringByPositionHtml, openScoringSheet, animateReorder, applyLocalOverrides, queueManagerWrite, wireStars, starHtml, draftFactCards, draftRulesHtml, lobbyRulesHtml, scoringHtml, applyVisibleOrder, makeReorderable, refetchAll, markConnection, enterLeagueWithFeedback, route, showView, dragActive, afterDrag, overrideStillWins, queueManagerWrite, applyLocalOverrides, keepLocalPick, autoPickStale, autoPickTurn, makePick, autoPick, tickTimer, mergeOptimisticPicks, pickKey, queueFieldWrite, OVERRIDE_TABLES, setPlanner, saveLineup, toggleKeeper, setFinalPick, txWindowStarts, txWhen, txShell, txAvatar, txMgrChip, tradeTxCard, swapTxCard, transactionsLogHtml, renderTrades, builderHtml, faClaimsSectionHtml, waiverOrderHtml, shortlistSectionHtml, plannerSectionHtml, plannerMoveHtml, squadChooserHtml, tradeSectionHtml, setClaimOrder, reorderClaim, tradeForShortlisted, submitTrade, TRADE_TABS, tradeTabBodyHtml, faClaimRowHtml, faClaimRowsHtml, renderClaimList, wireClaimControls, ROW_ATTRS, plannerMoveChoice, plannerSetChoiceOrder, plannerPickPool, renderPlannerPick, setWindowMode, toggleLineups, squadPitchHtml, squadShape, renderDreamTeam, dreamTeam, renderChat, chatThreads, interacting, markInteracting, scheduleDeferredFlush, INTERACT_MS, animateReorder, flipRows, flushDeferredRender, currentSeasonFor, seasonOptions, seasonLabel, backtestSeason, createCompKind, createPreviewSeason, loadScoringPreviewData, pullCreateHistory, renderCreateBalance, updateCreatePullStatus, renderCreateForm, pickReconciliation, reconcilePicksToPool, mapApiPlayer, loadCompetition, roundResolvers, roundIndex, mwNo, FINAL_STATUS, draftOrderMode, lobbyOrderManagers, shuffled, setDraftOrder, renderLobbyOrder, lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow, nextLockMs, lockAfterWindow, snapshotAt, snapshotForNextLock, rosterAtFor, setSession, getSession, repairStarters, lineupShape, repairLineupFor, faWindowKey, roundToSettle, closedWindowRound, closedWindowRounds, closedTradeWindows, roundsOwedSettlement, isRoundSettled, matchFixture, matchTimeFor, computeScoresUncached, bustScores, roundKeyLockedAt, roundKeyOfLabel, roundLabelShort, roundIndex, rosterAtFor, snapshotsByManager, advanceRound, maybeAdvanceRounds };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -57,7 +57,7 @@ const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcT
         RUGBY_QUOTA, RUGBY_STARTERS, RUGBY_PLAY_GROUPS, RUGBY_PITCH_BANDS, RUGBY_RULES, RUGBY_STAT_CATALOG, RUGBY_SLOTS, slotMapsFor, sumGroups, zeroByGroup, outfieldGroups, squadSize, flexComplete, flexLeft, fixedRoundSubs, SLOT_POS, SLOT_RANK, 
         slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick,
         posQuota, picksPerManager, totalPicks,
-        playerBreakdown, playerPoints, passAccuracyPct, rawStatsOf, suspendedNext, yellowBanCount, yellowWindow, injuryFeedNote, effectiveCaptain, resilientWrite,
+        playerBreakdown, playerPoints, passAccuracyPct, rawStatsOf, normaliseEvents, concededMinutes, onPitchWindow, concededWhileOn, ON_PITCH_END, suspendedNext, yellowBanCount, yellowWindow, injuryFeedNote, effectiveCaptain, resilientWrite,
         playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt,
         slotLabel, managerHistory, poolEntries, availableForGroup,
         isEliminated, computeYetToPlay, showView,
@@ -974,6 +974,78 @@ check("the count is still there under its own name",
   rawStatsOf({ raw: { "passes.accuracy": 52, "passes.total": 63 } })["passes.accuracy"], 52);
 check("...and the percentage sits beside it",
   rawStatsOf({ raw: { "passes.accuracy": 52, "passes.total": 63 } })["passes.pct"], 83);
+
+/* Every API path the app asks for must be one the proxy will pass on.
+
+   Nearly shipped: fixtures/events was added to app.js and not to the edge
+   function's ALLOWED set. The proxy answers an unlisted path with a 400, and
+   the caller swallows its own failures on purpose -- so the app would have
+   scored every match as though no events existed, while the Python pull,
+   which talks to the API directly, scored them correctly. Two writers
+   disagreeing again, from one forgotten line, and nothing on screen to say
+   so.
+
+   Read out of both files as text rather than asserted against a list written
+   here, because a third copy of the same set is the thing that goes stale. */
+{
+  const fs = require("fs"), path = require("path");
+  const src = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
+  const fn = fs.readFileSync(path.join(__dirname, "supabase", "functions",
+    "api-football", "index.ts"), "utf8");
+  const allowed = new Set(
+    (fn.match(/const ALLOWED = new Set\(\[([\s\S]*?)\]\)/)?.[1] || "")
+      .split("\n").map((l) => l.match(/"([^"]+)"/)?.[1]).filter(Boolean));
+  const asked = new Set(
+    [...src.matchAll(/apiFootball\(\s*\w+\s*,\s*"([^"]+)"/g)].map((m) => m[1]));
+  check("the app asks for paths at all", asked.size > 0, true);
+  check("every path the app calls is allowed by the proxy",
+    [...asked].filter((p) => !allowed.has(p)), []);
+}
+
+/* Goals conceded WHILE ON THE PITCH, against the shared case table.
+
+   The cases live in test/fixtures/on_pitch.json and the Python suite reads
+   the same file. app.js and daily_pull.py both write this stat, and a stat
+   two writers disagree about is exactly the bug it replaces -- so they get
+   one specification rather than two copies of it that drift the first time
+   somebody fixes only one. If these two suites ever disagree, one of the
+   writers has moved and the other has not. */
+{
+  const spec = JSON.parse(require("fs").readFileSync(
+    require("path").join(__dirname, "test", "fixtures", "on_pitch.json"), "utf8"));
+  check("the shared case table is intact", spec.cases.length >= 10, true);
+  check("both languages agree on the final-whistle sentinel",
+    ON_PITCH_END, spec.end_sentinel);
+
+  // The table's shorthand -> the shape API-Football actually sends.
+  const asApi = (list) => list.map((e) => ({
+    type: e.type, detail: e.detail,
+    time: { elapsed: e.minute, extra: e.extra },
+    team: { id: e.team },
+    player: { id: e.player != null ? e.player : e.on },
+    assist: { id: e.off },
+  }));
+
+  const run = (c, label) => {
+    const norm = normaliseEvents(asApi(c.events));
+    for (const p of c.players) {
+      const window = c.events.length
+        ? onPitchWindow(p.id, norm, !p.substitute) : null;
+      check(`${label} · ${p.id}: on-pitch window`, window, p.expect.window);
+      const mins = concededMinutes(norm, p.team, c.home, c.away);
+      const on = concededWhileOn(window, mins);
+      const club = p.team === c.home ? c.score.away : c.score.home;
+      const conceded = on != null ? on : club;
+      check(`${label} · ${p.id}: goals conceded`, conceded, p.expect.conceded);
+      check(`${label} · ${p.id}: clean sheet`,
+        (p.minutes >= 60 && conceded === 0) ? 1 : 0, p.expect.clean_sheet);
+    }
+  };
+
+  for (const c of spec.cases) run(c, c.name);
+  run(spec.unplaceable, "unplaceable");
+  run(spec.no_events, "no events");
+}
 
 check("GK breakdown sums to playerPoints",
   playerBreakdown("ger_1", "GK").reduce((s, r) => s + r.pts, 0),

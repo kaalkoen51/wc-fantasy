@@ -12,11 +12,29 @@
 // Only the endpoints the app actually uses are proxied, so a leaked anon key
 // can't turn this into an open relay for your API quota.
 
+/* The allowlist is the point of this proxy: the key lives server-side, so
+   the set of things the key can be spent on has to be named here rather than
+   chosen by whatever calls it.
+
+   Which also means a new caller does not fail loudly. `fixtures/events` was
+   added to the app before it was added here, and the rejection came back as
+   a 400 that the caller swallows -- so the app quietly scored every match as
+   though no events existed, while the Python pull, which talks to the API
+   directly, scored them correctly. Two writers disagreeing again, from one
+   forgotten line. If you add a path in app.js, add it here in the same
+   commit and redeploy the function. */
 const ALLOWED = new Set([
   "teams",
   "players/squads",
   "fixtures",
   "fixtures/players",
+  "fixtures/events",     // goal minutes + substitutions: who was on the pitch
+  /* The competition's own round order. Found by the test described above,
+     already broken and already silent: fetchCompetitionRounds has always
+     swallowed the rejection and fallen back to sorting rounds by earliest
+     kickoff -- which is the inference it was written to replace, because
+     moving a knockout tie ahead of a group game reorders the season. */
+  "fixtures/rounds",
 ]);
 
 const CORS: Record<string, string> = {

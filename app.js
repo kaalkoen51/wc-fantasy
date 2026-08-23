@@ -2633,7 +2633,8 @@ async function pullCompetitionHistory(apiLeagueId, season, apiKey, key, log) {
     log(`Pulling new match ${i}/${todo.length}${already ? ` (${already} already loaded)` : ""}…`);
     try {
       const teamBlocks = await apiFootball(apiKey, "fixtures/players", { fixture: f.fixture.id });
-      const { rows } = buildFixtureStatRows(f, teamBlocks, keyField, (n) => n, pidOf);
+      const events = await fixtureEvents(apiKey, f);
+      const { rows } = buildFixtureStatRows(f, teamBlocks, keyField, (n) => n, pidOf, null, events);
       if (rows.length) await resilientWrite("competition_stats", rows, { upsert: true, onConflict });
       total += rows.length;
     } catch { fails++; }
@@ -5219,10 +5220,12 @@ const STAT_CATALOG = [
   { key: "duels.won", label: "Duel won" },
   { key: "fouls.drawn", label: "Foul drawn" },
   { key: "fouls.committed", label: "Foul committed" },
-  // Said out loud, because the obvious reading is the wrong one: this is what
-  // the player's CLUB let in that match, so it applies to the whole XI and
-  // not only to whoever was in goal.
-  { key: "goals.conceded", label: "Goal conceded by their club" },
+  // Said out loud, because two different wrong readings of the short label
+  // have now been shipped: this is what his club let in WHILE HE WAS ON THE
+  // PITCH -- so it applies to the whole XI and not only to whoever was in
+  // goal, and a substitute is not charged for the goals that went in before
+  // he came on.
+  { key: "goals.conceded", label: "Goal conceded while on the pitch" },
   { key: "offsides", label: "Offside" },
   { key: "rating", label: "Match rating" },
   { key: "minutes", label: "Minute played" },
@@ -15614,11 +15617,126 @@ async function renderScheduleManager() {
 // fixtures/players API response. keyField scopes the rows (competition vs
 // league); fixName normalizes team names; pidOf(team, shirt, name, apiId)
 // resolves the player id (null → unmappable, pushed to `skipped`). Shared by
+/* ---------- goals conceded WHILE ON THE PITCH ----------
+
+   Mirrors daily_pull.py (normalise_events / conceded_minutes /
+   on_pitch_window / conceded_while_on) and is driven by the same case table,
+   test/fixtures/on_pitch.json, read by both suites. Two writers implement
+   this rule; a stat two writers disagree about is precisely the bug it
+   replaces, so they share one specification rather than two copies that
+   drift the first time somebody fixes only one.
+
+   "Still on at the final whistle". A literal 90 would drop stoppage-time
+   goals, which is the half of a match this gets asked about most. */
+const ON_PITCH_END = 100000;
+
+/* API-Football's events -> the three facts this rule needs.
+
+   Two of these are traps rather than details, and both are silent:
+
+     OWN GOALS are filed under the team of the player who put the ball into
+     his own net -- so the team on the event is the team that CONCEDED, the
+     opposite of every other goal. Read like the rest and an own goal is
+     charged to the side it was a present to.
+
+     MISSED PENALTIES arrive as type "Goal", detail "Missed Penalty". Read
+     like the rest and a miss concedes one.
+
+   A red card ends a player's afternoon as surely as a substitution does, so
+   it normalises into the same "off" shape. Second yellows are spelled
+   differently by the feed and mean exactly the same thing. */
+function normaliseEvents(events) {
+  const out = [];
+  for (const e of events || []) {
+    const t = e.time || {};
+    const minute = (+t.elapsed || 0) + (+t.extra || 0);
+    const kind = String(e.type || "").trim().toLowerCase();
+    const detail = String(e.detail || "").trim().toLowerCase();
+    const team = e.team?.id, player = e.player?.id, assist = e.assist?.id;
+    if (kind === "goal") {
+      if (detail.includes("missed")) continue;
+      out.push({ kind: "goal", minute, team, own: detail.includes("own goal") });
+    } else if (kind === "subst") {
+      out.push({ kind: "subst", minute, on: player, off: assist });
+    } else if (kind === "card" && (detail.includes("red card") || detail.includes("second yellow"))) {
+      out.push({ kind: "off", minute, player });
+    }
+  }
+  return out;
+}
+
+// The minutes at which `teamId` conceded, earliest first.
+function concededMinutes(norm, teamId, homeId, awayId) {
+  const mins = [];
+  for (const e of norm) {
+    if (e.kind !== "goal") continue;
+    const conceding = e.own ? e.team : (e.team === homeId ? awayId : homeId);
+    if (conceding === teamId) mins.push(e.minute);
+  }
+  return mins.sort((a, b) => a - b);
+}
+
+/* [start, end] in match minutes, or null when the events cannot place him.
+
+   Null matters as much as the numbers: it is the difference between "was not
+   on for those goals" and "we do not know where he was", and only the first
+   of those should reduce anybody's charge. */
+function onPitchWindow(apiId, norm, started) {
+  let start = started ? 0 : null, end = null;
+  for (const e of norm) {
+    if (e.kind === "subst") {
+      if (e.on === apiId && start == null) start = e.minute;
+      if (e.off === apiId && end == null) end = e.minute;
+    } else if (e.kind === "off" && e.player === apiId && end == null) {
+      end = e.minute;
+    }
+  }
+  if (start == null) return null;
+  return [start, end == null ? ON_PITCH_END : end];
+}
+
+/* How many of `mins` fall inside the window.
+
+   start < minute <= end, which is what makes the two windows either side of
+   a substitution TILE: a goal in the minute of the change belongs to the man
+   going off and not to the man coming on, so it is counted once rather than
+   twice or not at all. */
+function concededWhileOn(window, mins) {
+  if (!window) return null;
+  const [start, end] = window;
+  return mins.filter((m) => m > start && m <= end).length;
+}
+
+/* Match events for one fixture, or [] if they cannot be had.
+
+   Skipped entirely for a goalless match: nobody has conceded, so no on-pitch
+   window can change a number, and this is the whole of the rule's cost
+   control. Swallows its own failure on purpose -- a pull that died because
+   one optional call went wrong would lose the other twenty stats with it,
+   and the fallback (the club's whole-match total) is the behaviour that
+   shipped before this existed. Mirrors fetch_fixture_events in daily_pull.py. */
+async function fixtureEvents(apiKey, f) {
+  const g = f.goals || {};
+  if (!((+g.home || 0) + (+g.away || 0))) return [];
+  try {
+    return await apiFootball(apiKey, "fixtures/events", { fixture: f.fixture.id });
+  } catch { return []; }
+}
+
 // the admin daily pull and the on-demand history pull.
-function buildFixtureStatRows(f, teamBlocks, keyField, fixName, pidOf, skipped) {
+function buildFixtureStatRows(f, teamBlocks, keyField, fixName, pidOf, skipped, events) {
   const home = fixName(f.teams.home.name), away = fixName(f.teams.away.name);
   const label = `${home} vs ${away} (${f.fixture.date.slice(0, 10)})`;
   const conceded = { [f.teams.home.id]: f.goals.away || 0, [f.teams.away.id]: f.goals.home || 0 };
+  /* Goal minutes and who was on for them. Optional: without events every
+     player falls back to the club's whole-match total, which is the
+     behaviour this replaces and the right thing to land on. See
+     normaliseEvents for why this is not simply "read the events". */
+  const norm = normaliseEvents(events);
+  const concededMins = {
+    [f.teams.home.id]: concededMinutes(norm, f.teams.home.id, f.teams.home.id, f.teams.away.id),
+    [f.teams.away.id]: concededMinutes(norm, f.teams.away.id, f.teams.home.id, f.teams.away.id),
+  };
   const rows = [];
   let best = null;
   for (const tb of teamBlocks) {
@@ -15639,6 +15757,15 @@ function buildFixtureStatRows(f, teamBlocks, keyField, fixName, pidOf, skipped) 
       if (!minutes && !contributed) continue;
       const pid = pidOf(team, +games.number || 0, e.player.name, e.player.id);
       if (!pid) { skipped && skipped.push(`${e.player.name} (${team})`); continue; }
+      /* Gated on events being SUPPLIED, not on them normalising to anything.
+         A match whose only event is a missed penalty has a real events list
+         that normalises to nothing, and every player in it was still exactly
+         where the feed says he was. */
+      const window = (events && events.length)
+        ? onPitchWindow(e.player.id, norm, !games.substitute) : null;
+      const onPitch = concededWhileOn(window, concededMins[tb.team.id] || []);
+      // null = the events could not place him; fall back to the club's total.
+      const conc = onPitch != null ? onPitch : (conceded[tb.team.id] || 0);
       const row = {
         ...keyField, player_id: pid, match_label: label, appeared: true,
         // The club they played for in THIS match, so a later transfer can't
@@ -15657,7 +15784,7 @@ function buildFixtureStatRows(f, teamBlocks, keyField, fixName, pidOf, skipped) 
         // label that has to be parsed back apart to be useful.
         fixture_id: f.fixture?.id ?? null,
         goals: +g.total || 0, assists: +g.assists || 0,
-        clean_sheet: minutes >= 60 && !(conceded[tb.team.id] || 0),
+        clean_sheet: minutes >= 60 && !conc,
         yellow_cards: +cards.yellow || 0, red_cards: +cards.red || 0,
         saves: +g.saves || 0, motm: false,
         penalty_saved: +pen.saved || 0, penalty_missed: +pen.missed || 0,
@@ -15675,8 +15802,8 @@ function buildFixtureStatRows(f, teamBlocks, keyField, fixName, pidOf, skipped) 
              derived from one line down, so the two now agree about what a
              team let in. For a keeper who played the full match the number is
              unchanged. */
-          "goals.saves": +g.saves || 0, "goals.conceded": conceded[tb.team.id] || 0,
-          "clean_sheet": minutes >= 60 && !(conceded[tb.team.id] || 0) ? 1 : 0,
+          "goals.saves": +g.saves || 0, "goals.conceded": conc,
+          "clean_sheet": minutes >= 60 && !conc ? 1 : 0,
           "cards.yellow": +cards.yellow || 0, "cards.red": +cards.red || 0,
           "penalty.saved": +pen.saved || 0, "penalty.missed": +pen.missed || 0,
           "defensive_actions": def, "minutes": minutes, "motm": 0,
@@ -15810,9 +15937,10 @@ async function pullStatsNow() {
     for (const f of fixtures) {
       log(`Pulling ${fixName(f.teams.home.name)} vs ${fixName(f.teams.away.name)}…`);
       const teamBlocks = await apiFootball(key, "fixtures/players", { fixture: f.fixture.id });
+      const events = await fixtureEvents(key, f);
       // Diagnostic (maxMin/cs): a stuck-at-49 game is then obviously an upstream
       // (API) issue, not the write.
-      const { rows, label, maxMin, cs } = buildFixtureStatRows(f, teamBlocks, keyField, fixName, pidOf, skipped);
+      const { rows, label, maxMin, cs } = buildFixtureStatRows(f, teamBlocks, keyField, fixName, pidOf, skipped, events);
       await resilientWrite(statsTable, rows, { upsert: true, onConflict });
       total += rows.length;
       summary.push(`${label}: ${rows.length} rows · API max ${maxMin}′ · ${cs} clean sheets`);
