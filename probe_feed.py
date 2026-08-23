@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""Ask API-Football what it actually does, instead of assuming.
+
+    python probe_feed.py --date 2026-08-23
+    python probe_feed.py --fixture 1234567
+    python probe_feed.py --date 2026-08-23 --league 39 --season 2026
+
+Needs API_FOOTBALL_KEY. Reads only; writes nothing, anywhere.
+
+WHY THIS EXISTS. Three separate bugs in this repo were the same mistake:
+believing something about the feed that turned out not to be true, and only
+finding out when a manager noticed their points were wrong.
+
+  * `goals.conceded` was read as the player's own figure. API-Football fills
+    it in for goalkeepers and leaves it at 0 for everybody else, so a rule
+    charging defenders never fired.
+  * `passes.accuracy` was read as a percentage. It is a count, so the app
+    showed "52%" for a midfielder who completed 52 passes.
+  * A substitution event was read as `player` = coming on. Get that backwards
+    and a substitute is charged for goals scored before he was on the pitch.
+
+Each was invisible until somebody reported it, and each took a round of
+guessing to find. This is the tool that should have existed instead: point it
+at a real fixture and it prints what the feed SAYS, so the question stops
+being a matter of opinion.
+
+It answers four questions and will grow as more come up:
+
+  1. Which penalty fields exist, and do they carry values?
+  2. Does a penalty WON also show up as an assist?
+  3. Which side of a `subst` event holds the player coming on?
+  4. Is `passes.accuracy` a count or a percentage?
+"""
+import argparse
+import sys
+from collections import Counter
+
+from daily_pull import api_get
+
+
+def fixtures_on(date, league, season):
+    params = {"date": date}
+    if league:
+        params.update({"league": league, "season": season})
+    return api_get("fixtures", params).get("response", [])
+
+
+def players_of(fid):
+    return api_get("fixtures/players", {"fixture": fid}).get("response", [])
+
+
+def events_of(fid):
+    return api_get("fixtures/events", {"fixture": fid}).get("response", [])
+
+
+def stat_blocks(teams_data):
+    """(team_id, player_id, name, stats) for everyone in a fixture."""
+    for tb in teams_data:
+        tid = (tb.get("team") or {}).get("id")
+        for entry in tb.get("players", []):
+            p = entry.get("player") or {}
+            sl = entry.get("statistics") or []
+            yield tid, p.get("id"), p.get("name"), (sl[0] if sl else {})
+
+
+def probe(fid, label):
+    print(f"\n=== {label}  (fixture {fid})")
+    teams = players_of(fid)
+    events = events_of(fid)
+    if not teams:
+        print("  no player stats for this fixture — skipping")
+        return
+
+    blocks = list(stat_blocks(teams))
+    by_id = {pid: (name, st) for _, pid, name, st in blocks}
+
+    # 1. WHICH PENALTY FIELDS EXIST, and which are ever non-zero.
+    keys, nonzero = Counter(), Counter()
+    for _, _, _, st in blocks:
+        for k, v in (st.get("penalty") or {}).items():
+            keys[k] += 1
+            if v:
+                nonzero[k] += 1
+    print("  penalty fields:", ", ".join(
+        f"{k}({nonzero[k]}/{keys[k]} non-zero)" for k in sorted(keys)) or "none")
+
+    # 2. DOES A PENALTY WON ALSO COUNT AS AN ASSIST?
+    #    The direct question. For everyone the feed says won a penalty, print
+    #    their assist count beside it. If winning one implies an assist, the
+    #    two move together; if it does not, assists stay put.
+    won = [(pid, by_id[pid][0], v) for _, pid, _, st in blocks
+           for k, v in [("won", (st.get("penalty") or {}).get("won"))]
+           if v and pid in by_id]
+    if not won:
+        print("  penalties won: none in this match — try a date with one")
+    for pid, name, n in won:
+        st = by_id[pid][1]
+        assists = (st.get("goals") or {}).get("assists")
+        print(f"  penalty won: {name} won={n} assists={assists!r}")
+    # ...and the other side of it: every penalty GOAL, and who the event
+    # credits alongside the scorer.
+    for e in events:
+        if str(e.get("type", "")).lower() == "goal" \
+                and "penalty" in str(e.get("detail", "")).lower():
+            pl = (e.get("player") or {}).get("name")
+            asst = (e.get("assist") or {}).get("name")
+            print(f"  penalty goal: detail={e.get('detail')!r} "
+                  f"player={pl!r} assist={asst!r}")
+
+    # 3. WHICH SIDE OF A SUBSTITUTION IS THE PLAYER COMING ON?
+    #    Settled without opinion: `games.substitute` says who started on the
+    #    bench, so whichever field names a bench player is the incoming one.
+    for e in events:
+        if str(e.get("type", "")).lower() != "subst":
+            continue
+        a = (e.get("player") or {}).get("id")
+        b = (e.get("assist") or {}).get("id")
+        sub_of = lambda pid: (by_id.get(pid, (None, {}))[1].get("games") or {}).get("substitute")
+        print(f"  subst {e.get('time', {}).get('elapsed')}': "
+              f"player={by_id.get(a, ('?',))[0]!r} started_on_bench={sub_of(a)!r} | "
+              f"assist={by_id.get(b, ('?',))[0]!r} started_on_bench={sub_of(b)!r}")
+        break                                   # one is enough to settle it
+
+    # 4. IS passes.accuracy A COUNT OR A PERCENTAGE?
+    #    A count can never exceed total passes; a percentage can never exceed
+    #    100. Print the worst offender in each direction and let the numbers say.
+    over100 = [(n, (st.get("passes") or {})) for _, _, n, st in blocks
+               if (st.get("passes") or {}).get("accuracy")
+               and float((st.get("passes") or {}).get("accuracy") or 0) > 100]
+    sample = [(n, (st.get("passes") or {}).get("total"),
+               (st.get("passes") or {}).get("accuracy"))
+              for _, _, n, st in blocks if (st.get("passes") or {}).get("total")][:3]
+    for n, total, acc in sample:
+        print(f"  passes: {n} total={total!r} accuracy={acc!r}")
+    print(f"  accuracy >100 for {len(over100)} player(s) "
+          f"— {'so it is a COUNT' if over100 else 'inconclusive from this match'}")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--date", help="probe every fixture on this date")
+    ap.add_argument("--fixture", type=int, help="probe one fixture by id")
+    ap.add_argument("--league", type=int, default=39)
+    ap.add_argument("--season", type=int, default=2026)
+    ap.add_argument("--limit", type=int, default=3, help="max fixtures per date")
+    args = ap.parse_args()
+
+    if args.fixture:
+        probe(args.fixture, f"fixture {args.fixture}")
+        return
+    if not args.date:
+        sys.exit("Give --date YYYY-MM-DD or --fixture <id>.")
+
+    fixtures = fixtures_on(args.date, args.league, args.season)
+    if not fixtures:
+        sys.exit(f"No fixtures found for {args.date}.")
+    print(f"{len(fixtures)} fixture(s) on {args.date}; probing up to {args.limit}.")
+    for f in fixtures[:args.limit]:
+        t = f.get("teams", {})
+        probe(f["fixture"]["id"],
+              f"{t.get('home', {}).get('name')} vs {t.get('away', {}).get('name')}")
+
+
+if __name__ == "__main__":
+    main()
