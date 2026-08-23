@@ -6,12 +6,13 @@
     "build:css": "tailwindcss -i src.css -o styles.css --minify",
     "watch:css": "tailwindcss -i src.css -o styles.css --watch",
     "test": "node test_logic.js",
+    "test:push": "node test_webpush.mjs",
     "vendor:supabase": "cp node_modules/@supabase/supabase-js/dist/umd/supabase.js vendor/supabase.js",
     "build": "npm run build:css && npm run vendor:supabase && npm run bundle",
     "bundle": "node build.js",
     "build:dev": "npm run build:css && npm run vendor:supabase && BUILD_ENV=dev node build.js",
     "test:sql": "bash test_sql.sh",
-    "test:all": "node test_logic.js && bash test_sql.sh && playwright test",
+    "test:all": "node test_logic.js && node test_webpush.mjs && bash test_sql.sh && playwright test",
     "test:browser": "playwright test"
   },
   "devDependencies": {

@@ -47,6 +47,15 @@ jobs:
       - name: Logic tests
         run: node test_logic.js
 
+      # The only security-sensitive code in the app: Web Push payload
+      # encryption and the VAPID signature. Runs the SAME .mjs the edge
+      # function imports, not a copy, so a green run is about the shipped
+      # file. It cannot prove a real push service accepts the result --
+      # nothing offline can -- which is what the "Send a test" button in the
+      # alerts panel is for.
+      - name: Web Push crypto
+        run: node test_webpush.mjs
+
       # schema.sql and rls.sql against a real engine. The two worst regressions
       # this repo has had were both invisible to the logic suite: a schema.sql
       # re-run silently undoing the RLS lockdown, and `rounds` ending up with
