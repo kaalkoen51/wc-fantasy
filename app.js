@@ -4330,7 +4330,7 @@ function renderPool(force) {
   $("pool-sort").classList.toggle("hidden", !sortOn);
   if (!$("pool-sort").options.length) {
     $("pool-sort").innerHTML = '<option value="">Sort: default</option>' +
-      STAT_SORTS.map(([k, lbl]) => `<option value="${k}">Sort: ${lbl}</option>`).join("");
+      statSorts().map(([k, lbl]) => `<option value="${k}">Sort: ${lbl}</option>`).join("");
   }
   $("pool-sort").value = S.poolSort;
 
@@ -10988,16 +10988,60 @@ const pickedIdSet = () => {
   return _pickedSet;
 };
 
-// Stats-tab ranking options: label + the match_stats key to total. "points"
-// uses the full fantasy total; the rest are raw counts from existing
-// columns (no schema change — works on the running league immediately).
-const STAT_SORTS = [
-  ["points", "Points"], ["goals", "Goals"], ["assists", "Assists"],
-  ["defensive_actions", "Def. actions"], ["clean_sheet", "Clean sheets"],
-  ["saves", "Saves"], ["motm", "MOTM"], ["yellow_cards", "Yellow cards"],
-  ["red_cards", "Red cards"], ["penalty_saved", "Pens saved"],
-  ["penalty_missed", "Pens missed"],
-];
+/* Ranking options for every list that sorts players: label + the stat key.
+
+   Built from THE LEAGUE'S OWN SCORING RULES, because those are the stats
+   that mean anything here. It used to be a hand-written list of eleven
+   legacy match_stats columns, frozen at whatever the World Cup league
+   happened to score in 2026 -- so a league scoring key passes, pass
+   accuracy, shots on target, dribbles, fouls drawn or goals conceded could
+   not sort or filter by any of them. Reported from the app: "the watchlist
+   and player search view does not have all of the scoring stats available
+   to filter on." They were never available; they were never offered.
+
+   Rules order, not catalogue order, so the dropdown reads in the same
+   sequence as the league's own "Points by position" table. Deduped, because
+   a league can carry two rules on one stat (minutes >=1 and >=60) and
+   "Minutes played" twice reads as a bug.
+
+   Points stays first and is not a stat: it is the fantasy total, which is
+   what most people want and what every caller defaults to. */
+const AVERAGED_STATS = new Set(["passes.pct", "rating"]);   // means, not totals
+
+/* Short names for a list of TOTALS, where the catalogue's are written for the
+   scoring editor and describe one event: "Goal", "Save (GK)", "Defensive
+   action (tackle/block/int)", "Clean sheet (≥60 min)". Right where they are,
+   wrong in a dropdown that ranks a season -- singular, and long enough to
+   crowd a phone. These are the eleven the list already had, kept word for
+   word so nothing that reads well today starts reading worse, plus the ones
+   it was missing. Anything absent (a rugby stat, a key added later) falls
+   through to the catalogue, which is always a real name. */
+const SORT_LABEL = {
+  "goals.total": "Goals", "goals.assists": "Assists",
+  "defensive_actions": "Def. actions", "clean_sheet": "Clean sheets",
+  "goals.saves": "Saves", "motm": "MOTM",
+  "cards.yellow": "Yellow cards", "cards.red": "Red cards",
+  "penalty.saved": "Pens saved", "penalty.missed": "Pens missed",
+  "goals.conceded": "Goals conceded", "minutes": "Minutes",
+  "passes.key": "Key passes", "passes.pct": "Pass accuracy %",
+  "passes.accuracy": "Accurate passes", "passes.total": "Passes",
+  "shots.on": "Shots on target", "shots.total": "Shots",
+  "dribbles.success": "Dribbles", "duels.won": "Duels won",
+  "fouls.drawn": "Fouls drawn", "fouls.committed": "Fouls committed",
+  "offsides": "Offsides", "rating": "Rating",
+};
+
+function statSorts() {
+  const seen = new Set();
+  const out = [["points", "Points"]];
+  for (const rule of scoringRules()) {
+    const k = rule?.stat;
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push([k, SORT_LABEL[k] || STAT_LABEL[k] || k]);
+  }
+  return out;
+}
 
 const statRowsFor = (pid) =>
   (S.stats || []).filter((r) => r.player_id === pid);
@@ -11479,11 +11523,33 @@ function statsScopedRows(pid, team, round) {
   return label ? rows.filter((r) => r.match_label === label) : [];
 }
 
-// Sum one stat key over rows (clean_sheet/motm count as per-match booleans).
+/* One stat key totalled over rows, read through rawStatsOf -- the SAME map
+   the scoring engine evaluates rules against. It used to read r[key] off the
+   row, which only works for the eleven legacy match_stats columns; anything
+   a league scores that lives in `raw` (key passes, pass accuracy, shots on
+   target, dribbles, fouls drawn, goals conceded) totalled to nothing.
+
+   A stored sort preference can still name a legacy column ("yellow_cards"
+   rather than "cards.yellow"), so the row is the fallback. That keeps a
+   saved dropdown working instead of silently ranking everyone at zero.
+
+   PERCENTAGES ARE AVERAGED, not summed. Adding up pass accuracy would rank
+   whoever played most games -- three matches at 90% would total 270 and beat
+   one at 95 -- which is not a worse sort, it is a different and wrong
+   statistic wearing the right label. */
 function sumStatKey(rows, key) {
+  const val = (r) => {
+    const raw = rawStatsOf(r);
+    const v = key in raw ? raw[key] : r[key];
+    return typeof v === "boolean" ? (v ? 1 : 0) : (+v || 0);
+  };
+  if (AVERAGED_STATS.has(key)) {
+    const seen = rows.filter((r) => r.appeared !== false);
+    if (!seen.length) return 0;
+    return Math.round(seen.reduce((s, r) => s + val(r), 0) / seen.length);
+  }
   let n = 0;
-  for (const r of rows)
-    n += (key === "clean_sheet" || key === "motm") ? (r[key] ? 1 : 0) : (r[key] || 0);
+  for (const r of rows) n += val(r);
   return n;
 }
 
@@ -12018,7 +12084,7 @@ function renderStatsTab() {
   // before kickoff: by club, by position, by name.
   const sortOpts = scouting
     ? [["team", "By club"], ["pos", "By position"], ["name", "A–Z"]]
-    : [...STAT_SORTS, ["form", "Form · avg last 5"]];
+    : [...statSorts(), ["form", "Form · avg last 5"]];
   if (scouting && !sortOpts.some(([k]) => k === S.statsSort)) S.statsSort = "team";
   if (!scouting && sortOpts.every(([k]) => k !== S.statsSort)) S.statsSort = "points";
   $("stats-sort").innerHTML = sortOpts.map(([k, lbl]) =>
@@ -12026,7 +12092,10 @@ function renderStatsTab() {
 
   const sortKey = S.statsSort || "points";
   const isForm = !dream && sortKey === "form";  // form is inherently recent
-  const per90 = S.statsPer90 && !isForm;
+  /* A per-90 pass accuracy is not a thing: dividing a percentage by
+     minutes and multiplying by 90 answers no question. Averaged stats opt
+     out of the toggle rather than producing a confident wrong number. */
+  const per90 = S.statsPer90 && !isForm && !AVERAGED_STATS.has(sortKey);
   const round = isForm ? 0 : (S.statsRound || 0);
 
   // Round selector: each team's k-th match = "round k" (group MD1-3, then the
@@ -13300,7 +13369,7 @@ function renderSwapList() {
   $("swap-hideko").className = chipCls(S.swapHideKO);
   $("swap-hideko").textContent = "🚫 Hide KO";
   $("swap-hideko").classList.toggle("hidden", !isCupCompetition());
-  $("swap-sort").innerHTML = STAT_SORTS.map(([k, lbl]) =>
+  $("swap-sort").innerHTML = statSorts().map(([k, lbl]) =>
     `<option value="${k}" ${S.swapSort === k ? "selected" : ""}>${lbl}</option>`).join("");
 
   const sortKey = S.swapSort || "points";
@@ -14479,7 +14548,7 @@ function shortlistSectionHtml(me) {
           ${teams.map((tm) => `<option value="${esc(tm)}" ${S.wlTeam === tm ? "selected" : ""}>${esc(tm)}</option>`).join("")}
         </select>
         <select id="wl-sort" class="min-w-0 flex-1 rounded-lg bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
-          ${STAT_SORTS.map(([k, lbl]) => `<option value="${k}" ${sortKey === k ? "selected" : ""}>${lbl}</option>`).join("")}
+          ${statSorts().map(([k, lbl]) => `<option value="${k}" ${sortKey === k ? "selected" : ""}>${lbl}</option>`).join("")}
         </select>
       </div>` : ""}
     ${rows
@@ -14748,7 +14817,7 @@ function renderPlannerPick() {
   const anyPos = !!S.plannerAnyPos;
   $("planner-pos").className = chipCls(!anyPos);
   $("planner-pos").textContent = anyPos ? "⇄ any position" : `⇄ ${group} only`;
-  $("planner-sort").innerHTML = STAT_SORTS.map(([k, lbl]) =>
+  $("planner-sort").innerHTML = statSorts().map(([k, lbl]) =>
     `<option value="${k}" ${S.plannerSort === k ? "selected" : ""}>${lbl}</option>`).join("");
 
   const sortKey = S.plannerSort || "points";
