@@ -186,6 +186,53 @@ test("no player name is cut off on a pitch", async ({ page }) => {
     .toEqual([]);
 });
 
+test("the Dream XI names its owners with crests, not with words", async ({ page }) => {
+  /* Reported from the app with a screenshot of eleven manager names under
+     eleven shirts on a 390px pitch: "FeelingALittleKinsky" clipped to
+     "eelingALittleKinsky" and "HansaPilsener" ran into the shirt beside it.
+     A crest is the same fact in a sixth of the width, and it is how a
+     manager is identified everywhere else in the app.
+
+     The flex Ⓕ badge went with it, as asked: which slot a player filled is
+     an artefact of how this XI was ASSEMBLED, not a fact about the player
+     or the round.
+
+     The name-overflow sweep above already covers .pp-name; nothing covered
+     the owner line, which is the line that was actually overflowing. */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLeague(page, { managers: 5, played: 3 });
+
+  for (const view of ["dream", "nightmare"]) {
+    const seen = await page.evaluate((v) => {
+      showView("board"); setBoardTab("stats"); S.statsView = v; renderStatsTab();
+      const box = document.getElementById("stats-dream");
+      const chips = [...box.querySelectorAll(".pp")];
+      const owners = [...box.querySelectorAll(".pp-own")];
+      return {
+        chips: chips.length,
+        owners: owners.length,
+        // Every owner mark must be a real box, not an empty span.
+        sized: owners.every((o) => o.getBoundingClientRect().width > 0),
+        // ...and must say who it is, since the words are gone.
+        titled: owners.every((o) => !!o.querySelector("[title]")?.title.trim()),
+        flexBadges: [...box.querySelectorAll(".cap-badge")]
+          .map((b) => b.textContent.trim()).filter((t) => t === "F").length,
+        blurb: box.querySelector("p")?.textContent || "",
+        // Nothing may spill past the pitch, which is what the names did.
+        over: chips.filter((c) => c.getBoundingClientRect().right > 390).length,
+      };
+    }, view);
+
+    expect(seen.chips, `${view}: nothing rendered, so this asserts nothing`).toBeGreaterThan(0);
+    expect(seen.owners, `${view}: no owner crest was drawn`).toBeGreaterThan(0);
+    expect(seen.sized, `${view}: an owner crest has no size`).toBe(true);
+    expect(seen.titled, `${view}: a crest does not say whose it is`).toBe(true);
+    expect(seen.flexBadges, `${view}: the flex Ⓕ badge is still being drawn`).toBe(0);
+    expect(seen.blurb, `${view}: the blurb still promises the Ⓕ badge`).not.toMatch(/Ⓕ/);
+    expect(seen.over, `${view}: a shirt overflows the phone`).toBe(0);
+  }
+});
+
 test("the matchday card starts collapsed and every tab's content is above the fold", async ({ page }) => {
   /* Expanded, this card was 18 fixture rows — about 530px, 63% of a phone
      viewport — and it rendered identically above Team, League, Players and

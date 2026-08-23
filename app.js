@@ -389,6 +389,22 @@ const managerCrest = (m) => m?.crest || "";
 // empty box looks like a bug; an initial looks deliberate.
 const managerMark = (m) => managerCrest(m) || (m?.name || "?").trim().charAt(0).toUpperCase();
 
+/* A manager's crest ALONE — for the places with room for who, but not for
+   who-in-words. The Dream XI is the case that asked for it: eleven owner
+   names under eleven shirts on a 390px pitch, where "FeelingALittleKinsky"
+   clipped to "eelingALittleKinsky" and "HansaPilsener" ran into the shirt
+   beside it. A crest is the same fact in a sixth of the width, and it is
+   already how a manager is identified everywhere else in the app.
+
+   Carries the name as a title, so the fact is still readable rather than
+   merely present. */
+function managerMarkHtml(m, size = "w-5 h-5") {
+  const c = managerColor(m);
+  return `<span class="inline-flex items-center justify-center rounded-md ${size} text-[11px] leading-none"
+    style="background:${c}22;border:1px solid ${c}88;color:rgb(var(--mgr-mark-fg))"
+    title="${esc(m?.name ?? "?")}">${managerMark(m)}</span>`;
+}
+
 // A manager's name with their crest and accent, for lists and tables.
 function managerTag(m, opts = {}) {
   const c = managerColor(m), crest = managerCrest(m);
@@ -11787,14 +11803,22 @@ function renderDreamTeam(round, per90, worst) {
     return e ? S.managers.find((m) => m.id === e.manager.id) || e.manager : null;
   };
 
-  const flexN = leagueFlex();
-  const flexIds = new Set(dt.FLEX.map((x) => x.p.player_id));
   const byPos = listsByGroup();
   const entry = (x) => {
     const own = ownerOfP(x.p);
+    /* The owner as a CREST, not a name. Eleven manager names under eleven
+       shirts did not fit a 390px pitch -- "FeelingALittleKinsky" clipped and
+       "HansaPilsener" ran into the shirt next to it -- and the crest is how a
+       manager is identified everywhere else anyway. Free agents keep the word,
+       which is short enough never to collide and clearer than a blank.
+
+       The flex Ⓕ badge is gone with it. Which slot a player filled is an
+       artefact of how this XI was ASSEMBLED, not a fact about the player or
+       the round; it explained the algorithm rather than the team. */
     return { id: x.p.player_id, player_id: x.p.player_id, name: x.p.name, team: x.p.team,
-      note: x.val, opp: own ? shortName(own.name) : "free",
-      badge: flexIds.has(x.p.player_id) ? "F" : "" };
+      note: x.val,
+      oppHtml: own ? managerMarkHtml(own) : null,
+      opp: own ? "" : "free" };
   };
   for (const pos of playGroups()) {
     for (const x of dt[pos]) byPos[pos].push(entry(x));
@@ -11814,8 +11838,7 @@ function renderDreamTeam(round, per90, worst) {
       <div class="text-sm font-semibold">${title} · ${scope}${per90 ? " · per 90" : ""}</div>
       <div class="text-sm font-mono ${worst ? "text-danger" : "text-wcgold"}">${dt.total}p</div>
     </div>
-    <p class="text-xs text-slate-400">${blurb} The name under each shirt is who owns them${
-      flexN ? "; Ⓕ marks a flex slot" : ""}.</p>
+    <p class="text-xs text-slate-400">${blurb} The crest under each shirt is who owns them.</p>
     ${picked
       ? `<div class="${worst ? "pitch-cold" : ""}">${pitchHtml(byPos, { tapAttr: "data-sp", crests: true })}</div>`
       : '<p class="rounded-xl border border-slate-700 bg-slate-900 p-4 text-sm text-slate-400">Not enough minutes logged yet — this fills in once matches are played.</p>'}`;
@@ -12725,6 +12748,11 @@ function pitchRowsHtml(byPos, opts = {}) {
         ${pips && e.position ? `<span class="pp-pos pos-${e.position}">${esc(e.position)}</span>` : ""}
         <span class="pp-name${nameFit(shortName(e.name))}">${esc(shortName(e.name))}</span>
         ${gone ? `<span class="pp-opp text-red-300" title="No longer in this competition — this pick cannot score again.">✈ left</span>`
+               /* oppHtml is markup the CALLER built (the Dream XI's owner
+                  crest); opp is text and stays escaped. Two fields rather
+                  than one so the escaping rule is a property of the field
+                  and not something each caller has to remember. */
+               : e.oppHtml ? `<span class="pp-own">${e.oppHtml}</span>`
                : e.opp ? `<span class="pp-opp">${esc(e.opp)}</span>` : ""}
       </button>
     </div>`;

@@ -973,6 +973,10 @@ html[data-theme="sticker"] .pick-stamp {
         width: 62px; min-width: 0; background: none; border: 0; padding: 0; }
   .pp-opp { font-size: 10px; line-height: 1.1; color: var(--chip-opp-fg);
             text-shadow: 0 1px 2px rgba(0,0,0,.9); }
+  /* The owner's crest takes the same slot as the opponent line, but it is a
+     mark rather than words: no text-shadow to smear the emoji, and line-height
+     0 so the box is exactly the crest and the pitch row does not grow. */
+  .pp-own { display: inline-flex; line-height: 0; text-shadow: none; }
   /* Paints its own plate, so it must name its own ink. It used to inherit the
      body colour, which works only while the body text and the plate happen to
      contrast -- on a light theme both went dark and the names vanished. An
