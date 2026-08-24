@@ -6718,9 +6718,59 @@ const FINAL_STATUS = ["FT", "AET", "PEN"];
 
    Cups keep the count-based fallback: their round labels ("Round of 16") are
    names, not week numbers, and in a group stage everyone does play once. */
-let _roundIdx = null, _roundIdxFor = null;
+/* Has this club's match actually been played out?
+
+   THE ONE THING THIS ANSWERS, and it is load-bearing: `missedRound()` calls a
+   starter absent only when his club has FINISHED without him, and every
+   substitution and every captain armband hangs off that. Get it wrong in one
+   direction and the bench comes on while half the matchweek is still to kick
+   off; get it wrong in the other and nobody is ever confirmed absent, so no
+   sub ever comes on and the armband never passes to the vice.
+
+   Both of those have now happened. The second is why this exists.
+
+   `f.status` is the obvious answer and cannot be trusted: it is written into
+   competition_pools.fixtures ONCE, by the admin's "Load competition from API"
+   button, and no puller ever updates it. For a league loaded before the
+   season it says "not started" about every match, for ever. So the scoring
+   engine believed a finished match had not kicked off, while the banner three
+   inches above it said FT -- because the banner already applies the elapsed
+   rule below and this did not.
+
+   AND ELAPSED TIME ALONE IS NOT ENOUGH EITHER. A postponed match keeps its
+   original kick-off for ever (the fixture list is never refreshed), so a pure
+   clock would decide two and a half hours later that a game nobody played had
+   finished, and mark every player in it absent -- bringing substitutes on for
+   a fixture that did not happen.
+
+   So it takes EVIDENCE: the clock has to have run out AND the app has to hold
+   stats for the match, which only exist because somebody played in it. A
+   postponement has none and stays open; a real match has rows written during
+   play and settles on time; a pull that failed entirely leaves the round open,
+   which is the safe direction and what happens today anyway.
+
+   Monotonic, which is what makes a settled round stay settled: every input
+   only ever moves from false to true. A past round cannot be re-opened by
+   this, and a substitute who counted stays counted. */
+function matchIsOver(f, nowMs, hasStats) {
+  if (FINAL_STATUS.includes(f.status)) return true;
+  const t = kickoffMs(f);
+  return t != null && nowMs >= t + MATCH_MS && !!hasStats;
+}
+
+let _roundIdx = null, _roundIdxKey = null;
 function roundIndex() {
-  if (_roundIdxFor === S.fixtures) return _roundIdx;
+  /* Keyed on the clock as well as the data now, because the answer changes
+     with time. A minute bucket is finer than any deadline in the app and
+     coarse enough that this rebuilds at most once a minute -- the same
+     pattern autoWindowState() uses for the same reason. Without it the first
+     call of a session would be frozen for the whole session, and a round that
+     ended while the app was open would never settle. */
+  const bucket = Math.floor(Date.now() / 60000);
+  if (_roundIdxKey && _roundIdxKey.fx === S.fixtures
+      && _roundIdxKey.st === S.stats && _roundIdxKey.b === bucket) return _roundIdx;
+  const now = Date.now();
+  const withStats = new Set((S.stats || []).map((r) => r.match_label));
   const byLabel = {}, byTeamRound = {}, finished = {}, keyByLabel = {};
   for (const f of S.fixtures || []) {
     const n = Number(mwNo(f.round));
@@ -6735,14 +6785,14 @@ function roundIndex() {
     if (f.round != null && f.round !== "") keyByLabel[label] = String(f.round);
     if (!n) continue;
     byLabel[label] = n;
-    const done = FINAL_STATUS.includes(f.status);
+    const done = matchIsOver(f, now, withStats.has(label));
     for (const t of [f.home, f.away]) {
       ((byTeamRound[t] ||= {})[n] ||= []).push(label);
       if (!done) (finished[t] ||= {})[n] = false;
       else if ((finished[t] ||= {})[n] !== false) finished[t][n] = true;
     }
   }
-  _roundIdxFor = S.fixtures;
+  _roundIdxKey = { fx: S.fixtures, st: S.stats, b: bucket };
   return (_roundIdx = { byLabel, byTeamRound, finished, keyByLabel });
 }
 
