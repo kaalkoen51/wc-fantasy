@@ -243,6 +243,68 @@ check("partial starters config keeps defaults (DEF still 3)", starterQuota().DEF
   const allDecided = flexCounting(st442, bench2, waiting, B, 11, 5, new Set(["d4"]));
   check("flex: a settled round scores the same with or without the new set",
     [...noSet].sort(), [...allDecided].sort());
+
+  /* SUBS COME ON ONE AT A TIME, DOWN THE BENCH, and a position minimum that
+     can no longer be met does not stop the ones that could.
+
+     Reported from the app, and the numbers are the reason the rule changed:
+     a manager lost five starters, was left with two defenders against a
+     minimum of three, and had no defender on his bench who played. The old
+     engine searched every subset for one that left a LEGAL eleven, found
+     none, and therefore took NOTHING -- refusing four substitutes who had
+     nothing to do with defence. Six players scored out of eleven. Thirteen
+     points against sixty-seven.
+
+     A minimum describes a team you CHOOSE to field; once a man has not
+     turned out, nobody is choosing. The maximums still hold. */
+  const brexit = [P("gk", "GK"),
+    P("d1", "DEF"), P("d2", "DEF"), P("d3", "DEF"), P("d4", "DEF"),
+    P("m1", "MID"), P("m2", "MID"), P("m3", "MID"), P("m4", "MID"),
+    P("f1", "FWD"), P("f2", "FWD")];
+  const gone = new Set(["d3", "d4", "m1", "m3", "f2"]);       // five absentees
+  const survived = ["gk", "d1", "d2", "m2", "m4", "f1"];      // DEF 2, MID 2, FWD 1
+  const cover = (bench) => {
+    const played = new Set([...survived, ...bench.map((b) => b.player_id)]);
+    return flexCounting(brexit, bench, played, B, 11, 5, gone);
+  };
+
+  const noDef = cover([P("b1", "MID"), P("b2", "FWD"), P("b3", "MID"), P("b4", "FWD")]);
+  check("flex: an unreachable minimum no longer refuses every other sub",
+    ["b1", "b2", "b3", "b4"].map((id) => noDef.has(id)), [true, true, true, true]);
+  check("flex: ...so ten score, not six", noDef.size, 10);
+
+  /* The maximums are the constraint that survives: a bench of forwards fills
+     up to the ceiling and then stops, rather than fielding five of them. */
+  const allFwd = cover([P("x1", "FWD"), P("x2", "FWD"), P("x3", "FWD"), P("x4", "FWD")]);
+  check("flex: a bench of forwards stops at the position maximum",
+    ["x1", "x2", "x3", "x4"].map((id) => allFwd.has(id)), [true, true, false, false]);
+
+  /* Bench ORDER decides, including when it costs coverage. A midfielder
+     listed ahead of a defender takes the last slot even though the defender
+     would have repaired the shape -- which is the honest trade for following
+     the order the manager actually set rather than rearranging his bench for
+     him. */
+  const oneSlot = (bench) => {
+    const played = new Set([...survived, "m1", "m3", "f2", ...bench.map((b) => b.player_id)]);
+    // only d3 and d4 still missing -> one outfield slot, cap of 1
+    return flexCounting(brexit, bench, played, B, 11, 1, new Set(["d3", "d4"]));
+  };
+  const midFirst = oneSlot([P("bm", "MID"), P("bd", "DEF")]);
+  check("flex: the bench order is followed even when a later man fits better",
+    [midFirst.has("bm"), midFirst.has("bd")], [true, false]);
+  const defFirst = oneSlot([P("bd", "DEF"), P("bm", "MID")]);
+  check("flex: ...and reordering the bench changes who comes on",
+    [defFirst.has("bd"), defFirst.has("bm")], [true, false]);
+
+  /* Two separate ceilings, and they must not be confused for each other.
+     A bench of six that all FIT by position is stopped by the cap of five;
+     the same six weighted into one position would have been stopped by that
+     position's maximum long before the cap was reached. */
+  const spread = cover([P("bd1", "DEF"), P("bd2", "DEF"), P("bm1", "MID"),
+                        P("bm2", "MID"), P("bf1", "FWD"), P("bf2", "FWD")]);
+  check("flex: six who all fit are cut to the five-sub cap", spread.size, 6 + 5);
+  check("flex: ...and it is the LAST on the bench who misses out",
+    [spread.has("bf1"), spread.has("bf2")], [true, false]);
 }
 check("formationValid: 4-4-2 legal", formationValid({ GK: 1, DEF: 4, MID: 4, FWD: 2 }, DEFAULT_FORMATION), true);
 check("formationValid: 2-4-4 illegal (DEF<3, FWD>3)", formationValid({ GK: 1, DEF: 2, MID: 4, FWD: 4 }, DEFAULT_FORMATION), false);

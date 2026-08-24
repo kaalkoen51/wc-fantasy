@@ -5433,27 +5433,45 @@ function flexCounting(starters, bench, playedIds, bounds, totalStarters, maxSubs
   const gkSlots = (b.GK && b.GK[1] > 0) ? 1 : 0;
   const maxAdd = Math.min((total - gkSlots) - taken,   // genuinely empty outfield slots
     subCap - gkSubbed);                                // …within the sub cap
-  if (maxAdd > 0 && cand.length) {
-    // Pick the bench subset that maximizes coverage while keeping the formation
-    // valid, tie-broken toward earlier bench order (cand ≤ ~8, so enumerate).
-    let best = { ids: [], cov: -1, order: Infinity };
-    for (let mask = 0; mask < (1 << cand.length); mask++) {
-      const c = { ...base }; let size = 0, order = 0, over = false;
-      for (let i = 0; i < cand.length; i++) if (mask & (1 << i)) {
-        const p = cand[i].position; c[p]++; size++; order += i;
-        if (c[p] > (b[p]?.[1] ?? Infinity)) over = true;
-      }
-      if (over || size > maxAdd) continue;
-      const valid = ["DEF", "MID", "FWD"].every((p) =>
-        (c[p] || 0) >= (b[p]?.[0] ?? 0) && (c[p] || 0) <= (b[p]?.[1] ?? Infinity));
-      if (!valid) continue;
-      if (size > best.cov || (size === best.cov && order < best.order)) {
-        const ids = [];
-        for (let i = 0; i < cand.length; i++) if (mask & (1 << i)) ids.push(cand[i].player_id);
-        best = { ids, cov: size, order };
-      }
-    }
-    for (const id of best.ids) counting.add(id);
+  /* DOWN THE BENCH IN ORDER, one at a time: take each man who played unless
+     his position is already full, and stop at the cap or when the slots run
+     out. The order on the bench is the manager's own stated preference -- the
+     app labels it "in the order they come on" -- so it is what decides.
+
+     THE MINIMUMS ARE NOT ENFORCED HERE, and that is the change.
+
+     This used to search all 2^n subsets for the one that covered most slots
+     while leaving a LEGAL formation, and take nothing at all when no such
+     subset existed. Reported from the app: a manager lost five starters, had
+     two defenders left against a minimum of three, and no defender on his
+     bench had played -- so every subset was illegal, and the engine refused
+     all four of the substitutes who had nothing to do with defence. Six
+     players scored out of eleven. Thirteen points against sixty-seven.
+
+     The function's own comment already described the rule it should have
+     had: "if a no-show can't be validly covered its slot stays empty". That
+     is per-slot. The code was all-or-nothing across the whole eleven.
+
+     A minimum describes a team you CHOOSE to field, and once a player has
+     not turned out nobody is choosing. So a side can finish a round short at
+     the back -- which is what actually happened to it. The MAXIMUMS still
+     hold, because those stop a bench of four forwards piling into a shape
+     that has room for three.
+
+     Greedy also means a worse combination is possible than the old search
+     could find: a bench MID taken first can leave no room for the DEF behind
+     him. That is the trade, and it is the right way round -- it follows the
+     order the manager set rather than quietly rearranging his bench to
+     optimise a shape he can no longer field. */
+  let room = maxAdd;
+  const shape = { ...base };
+  for (const x of cand) {
+    if (room <= 0) break;
+    const max = b[x.position]?.[1] ?? Infinity;
+    if ((shape[x.position] || 0) >= max) continue;   // that position is full
+    shape[x.position]++;
+    counting.add(x.player_id);
+    room--;
   }
   return counting;
 }
