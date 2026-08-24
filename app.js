@@ -237,12 +237,30 @@ function lineupLockMessage() {
   const n = mwNo(w.upcoming.round);
   return `Lineups lock ${fmtWhen(w.lineupLockAt)}${n ? ` — 1h before Matchweek ${n}` : ""}.`;
 }
+/* The automatic windows, as one set of numbers rather than seven copies.
+ *
+ * TRADE OPEN was 1 hour and that was wrong, not merely tight: it is measured
+ * from a matchweek's LAST KICK-OFF, not its final whistle, so an hour later
+ * is roughly half-time of the round's closing game. Trading reopened while
+ * the week it was settling was still being played. Three hours clears a
+ * ninety-minute match, its half-time and its stoppage with room to spare.
+ *
+ * LINEUP LOCK stays at 1, and the difference is the whole point: that one is
+ * measured from the FIRST kick-off, where an hour before is exactly right.
+ * The two defaults looked interchangeable while they were both a bare `?? 1`
+ * seven lines apart, which is how one of them stayed wrong.
+ *
+ * A league that has set its own numbers keeps them; this only fills the gap
+ * for leagues that never said. */
+const WINDOW_DEFAULTS = { tradeOpenAfterH: 3, tradeCloseBeforeH: 24, lineupLockBeforeH: 1 };
+const windowOpt = (o, k) => (o?.[k] ?? WINDOW_DEFAULTS[k]);
+
 function tradeWindowMessage() {
   const w = autoWindowState();
   if (w.tradeOpen) return `Trade window open until ${fmtWhen(w.tradeWindow.closeAt)}.`;
   // Closed: find the next window that will open (next consecutive gap start).
   const now = Date.now(), H = 3600e3;
-  const openAfter = (cfgOf().windows?.tradeOpenAfterH ?? 1) * H;
+  const openAfter = windowOpt(cfgOf().windows, "tradeOpenAfterH") * H;
   const weeks = w.weeks || [];
   for (let i = 0; i + 1 < weeks.length; i++) {
     const openAt = weeks[i].last + openAfter;
@@ -5852,9 +5870,9 @@ const anyMatchLive = (fixtures, nowMs) => (fixtures || []).some((f) => {
 
 function fixtureWindows(fixtures, nowMs, opts) {
   const H = 3600e3, o = opts || {};
-  const openAfter = (o.tradeOpenAfterH ?? 1) * H;
-  const closeBefore = (o.tradeCloseBeforeH ?? 24) * H;
-  const lockBefore = (o.lineupLockBeforeH ?? 1) * H;
+  const openAfter = windowOpt(o, "tradeOpenAfterH") * H;
+  const closeBefore = windowOpt(o, "tradeCloseBeforeH") * H;
+  const lockBefore = windowOpt(o, "lineupLockBeforeH") * H;
   const weeks = matchweeksOf(fixtures);
   // Trade window: does `now` fall inside any consecutive-matchweek gap?
   let tradeOpen = false, tradeWindow = null;
@@ -5897,8 +5915,8 @@ function fixtureWindows(fixtures, nowMs, opts) {
    close together for the configured hours) and is not a window at all. */
 function closedTradeWindows(fixtures, nowMs, opts) {
   const H = 3600e3, o = opts || {};
-  const openAfter = (o.tradeOpenAfterH ?? 1) * H;
-  const closeBefore = (o.tradeCloseBeforeH ?? 24) * H;
+  const openAfter = windowOpt(o, "tradeOpenAfterH") * H;
+  const closeBefore = windowOpt(o, "tradeCloseBeforeH") * H;
   const weeks = matchweeksOf(fixtures);
   const out = [];
   for (let i = 0; i + 1 < weeks.length; i++) {
@@ -5933,7 +5951,7 @@ const waiverDue = (win, processedUntil) =>
    starts applying by arithmetic rather than because anything fired. */
 function nextLockMs(fixtures, nowMs, opts) {
   const o = opts || {};
-  const lockBefore = (o.lineupLockBeforeH ?? 1) * 3600e3;
+  const lockBefore = windowOpt(o, "lineupLockBeforeH") * 3600e3;
   for (const w of matchweeksOf(fixtures)) {
     const lockAt = w.first - lockBefore;
     if (lockAt > nowMs) return lockAt;
@@ -5968,7 +5986,7 @@ function roundKeyLockedAt(fixtures, atMs) {
    either way the matchweek scores with the squad the manager should have had. */
 function lockAfterWindow(fixtures, closeAtMs, opts) {
   const o = opts || {};
-  const lockBefore = (o.lineupLockBeforeH ?? 1) * 3600e3;
+  const lockBefore = windowOpt(o, "lineupLockBeforeH") * 3600e3;
   for (const w of matchweeksOf(fixtures)) {
     const lockAt = w.first - lockBefore;
     if (lockAt >= closeAtMs) return lockAt;
@@ -7677,7 +7695,10 @@ function draftFactCards() {
     + (maxSubsCapped() ? ` At most ${maxSubsPerRound()} sub${maxSubsPerRound() === 1 ? "" : "s"} can come on in a round.` : "")]);
 
   cards.push(["🔁", "Transfer windows", autoWindowsEnabled()
-    ? `Automatic: trading opens ${cfgOf().windows?.tradeOpenAfterH ?? 1}h after a matchweek ends and closes ${cfgOf().windows?.tradeCloseBeforeH ?? 24}h before the next; line-ups lock ${cfgOf().windows?.lineupLockBeforeH ?? 1}h before the first kick-off.`
+    /* "after a matchweek ends" was a description of something else: the
+       clock starts at the last KICK-OFF. Saying so is what makes 3 hours
+       read as deliberate rather than arbitrary. */
+    ? `Automatic: trading opens ${windowOpt(cfgOf().windows, "tradeOpenAfterH")}h after the last kick-off of a matchweek and closes ${windowOpt(cfgOf().windows, "tradeCloseBeforeH")}h before the next; line-ups lock ${windowOpt(cfgOf().windows, "lineupLockBeforeH")}h before the first kick-off.`
     : "The admin opens and closes trading between rounds. Each matchday scores against whatever line-up was locked at the time."]);
 
   const faCap = maxFaPerWindow() != null
@@ -8193,7 +8214,7 @@ function matchdayNow() {
   // In auto mode the next window open is the start of the gap after this round.
   let tradeOpensAt = null;
   if (auto && !w.tradeOpen) {
-    const H = 3600e3, after = (cfgOf().windows?.tradeOpenAfterH ?? 1) * H, now = Date.now();
+    const H = 3600e3, after = windowOpt(cfgOf().windows, "tradeOpenAfterH") * H, now = Date.now();
     for (const wk of (w.weeks || [])) { const t = wk.last + after; if (t > now) { tradeOpensAt = t; break; } }
   }
   return matchdayPlan({
