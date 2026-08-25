@@ -3839,3 +3839,42 @@ test("a league that has never resolved a waiver batch still shows its queue",
   expect(seen.mine, "your own seat disagrees with the list")
     .toBe(seen.worstFirst.indexOf("Mgr1") + 1);
 });
+
+test("a squads re-pull cannot reclassify a player somebody has drafted",
+  async ({ page }) => {
+  /* Two stores hold a player's position: `picks.position`, which per-position
+     scoring, the quota, formation validity and the auto-subs all read, and the
+     pool row, which the players list, Dream XI and the detail sheet read.
+     pickReconciliation already refuses to write a changed feed position onto a
+     pick -- it would re-score history -- but nothing stopped the POOL from
+     changing, so the same player showed one total on the pitch and another two
+     taps away, under a different position's rules. Reported from the app:
+     "de cuyper was a def, now suddenly a mid". */
+  await openLeague(page, { managers: 4, played: 2 });
+  const seen = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    const me = myManager();
+    const pk = managerPicks(me.id).find((p) => !p.is_sub && p.position === "DEF");
+    const before = playerPoints(pk.player_id, pk.position);
+    // The feed comes back having reclassified him. This is the shared pool
+    // row, exactly what "Load competition" rewrites.
+    S._poolBase = S._poolBase.map((p) =>
+      p.player_id === pk.player_id ? { ...p, position: "MID", pos_feed: undefined } : p);
+    applyPoolOverrides(); bustScores();
+    const pool = S.playerById[pk.player_id];
+    return { name: pk.player_name, drafted: pk.position,
+      poolPos: pool.position, feed: pool.pos_feed, before,
+      // The two screens, on the same player.
+      onPitch: playerPoints(pk.player_id,
+        managerPicks(me.id).find((p) => p.player_id === pk.player_id).position),
+      inList: playerPoints(pool.player_id, pool.position) };
+  });
+  expect(seen.drafted, "the seed gave us the wrong player to test with").toBe("DEF");
+  expect(seen.poolPos, "the feed's reclassification reached the pool").toBe("DEF");
+  expect(seen.feed, "what the feed actually said was thrown away").toBe("MID");
+  expect(seen.onPitch, "the pitch total moved").toBe(seen.before);
+  expect(seen.inList, "the same player is worth two different totals")
+    .toBe(seen.onPitch);
+});

@@ -5260,6 +5260,43 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
     S.players.map((p) => p.player_id), ["rug_1", "rug_2"]);
   check("...including the club it really is", S.playerById.rug_1.team, "Ulster");
 
+  /* A drafted player's position comes from the pick, not from the feed.
+
+     A squads re-pull can reclassify someone under a running league -- a
+     left-back who once filled in at left-mid comes back a midfielder -- and
+     the pool row changed while the pick, which is what scoring actually
+     reads, deliberately did not. So the same player showed one total on the
+     pitch and another in the players list, under a different position's
+     rules. Reported from the app. */
+  S._poolBase = null;
+  S.players = [
+    { player_id: "p_def", name: "A Fullback", team: "Brighton", position: "MID" },
+    { player_id: "p_free", name: "Undrafted", team: "Brighton", position: "MID" },
+    { player_id: "p_team", name: "Namesake", team: "Brighton", position: "FWD" },
+  ];
+  S.picks = [
+    { id: "k1", manager_id: "m1", player_id: "p_def", position: "DEF", slot: "DEF", is_sub: false },
+    // A club pick is not a player, whatever its id happens to collide with.
+    { id: "k2", manager_id: "m1", player_id: "p_team", position: "TEAM", slot: "TEAM", is_sub: false },
+  ];
+  S.league = { id: "L1", config: {} };
+  applyPoolOverrides();
+  check("a drafted player keeps the position his squad holds him in",
+    S.playerById.p_def.position, "DEF");
+  check("...and the feed's own answer is still recorded beside it",
+    S.playerById.p_def.pos_feed, "MID");
+  check("nobody owns this one, so the feed decides",
+    S.playerById.p_free.position, "MID");
+  check("a club pick never makes a player's position TEAM",
+    S.playerById.p_team.position, "FWD");
+  // A deliberate correction still wins -- savePositionFixes writes it onto the
+  // picks too, so the two cannot come apart.
+  S.league.config = { poolEdit: { p_def: { position: "FWD" } } };
+  applyPoolOverrides();
+  check("an explicit correction still outranks the squad",
+    S.playerById.p_def.position, "FWD");
+  S.picks = []; S.league = { id: "L1", config: {} }; S._poolBase = null;
+
   /* The legacy store, read as a fallback so a league that used it before the
      two were merged does not silently lose its corrections. */
   S.league.config = { positions: { rug_1: "LF" } };

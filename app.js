@@ -1831,18 +1831,49 @@ const poolEditsOf = () => {
    Rebuilt from `_poolBase` rather than from S.players, because a removal
    cannot be undone by re-running a function over a list it has already been
    removed from. */
+/* Where a DRAFTED player's position comes from: the pick.
+
+   Every player in a live league has two positions, and only one of them was
+   ever meant to decide anything. `picks.position` is what the manager drafted
+   him as, and it is what per-position scoring, the squad quota, formation
+   validity and the auto-sub engine all read. The pool carries the feed's
+   answer, which a squads re-pull can change under a running league -- a
+   left-back who once filled in at left-mid comes back a midfielder.
+
+   pickReconciliation already refuses to write a changed feed position onto a
+   pick, and says why: it would re-score history and could leave a manager
+   unable to field a legal XI. But nothing stopped the POOL row from changing,
+   and the players list, Dream XI and the detail sheet opened from either read
+   THAT -- so the same player showed one total on your pitch and a different
+   one two taps away, under a different position's rules. Reported from the
+   app: "de cuyper was a def, now suddenly a mid".
+
+   So the pick wins for anyone who is owned. TEAM picks are not players. */
+function pickPositions() {
+  const out = {};
+  for (const pk of (S.picks || []))
+    if (pk.slot !== "TEAM" && pk.position && pk.position !== "TEAM")
+      out[pk.player_id] = pk.position;
+  return out;
+}
+
 function applyPoolOverrides() {
   const cfg = S.league?.config || {};
   const base = (S._poolBase = S._poolBase || S.players || []);
   const drop = new Set(cfg.poolDrop || []);
   const edits = poolEditsOf();
+  const held = pickPositions();
   const out = [];
   const put = (p, added) => {
     if (drop.has(p.player_id)) return;
     const e = edits[p.player_id] || {};
     const feed = p.pos_feed ?? p.position;
+    /* An explicit correction first -- that is somebody's deliberate decision,
+       and savePositionFixes writes it onto the picks too so the two cannot
+       come apart. Then the squad that owns him. The feed only decides for
+       players nobody has drafted. */
     out.push({ ...p, ...e, added: added || undefined,
-               pos_feed: feed, position: e.position || feed });
+               pos_feed: feed, position: e.position || held[p.player_id] || feed });
   };
   for (const p of base) put(p, false);
   for (const p of (cfg.poolAdd || [])) put({ ...p, pos_starts: null }, true);
@@ -1958,6 +1989,10 @@ async function refetchAll({ initial = false } = {}) {
     const rd = await S.sb.from("rounds").select("*").eq("league_id", id);
     S.rounds = rd.error ? [] : (rd.data || []);
   } catch { S.rounds = []; }
+  /* Again, now the picks are in. The first call ran before them -- it has to,
+     the pool is loaded before the league row -- and a drafted player takes his
+     position from his pick, which was not knowable yet. */
+  applyPoolOverrides();
   bustScores();
   markConnection(true);
   route();
@@ -17093,9 +17128,30 @@ async function savePositionFixes() {
   if (error) return toast(/config|column|schema cache/.test(error.message)
     ? "Config needs a schema update — run schema.sql." : error.message);
   S.league.config = cfg;
+  /* ...and onto the picks, for anyone who is drafted. The pool row and the
+     pick are two separate stores of the same fact, and scoring reads the pick:
+     leaving it behind is what made an admin's correction show up on the
+     players list and change nothing at all on the pitch. The slot travels with
+     it, exactly as doSwap does, or the XI would be valued as whoever used to
+     hold the place. The confirm above has already said this re-reads past
+     rounds — that is the point of pressing it. */
+  const moved = (S.picks || []).filter((pk) => pk.slot !== "TEAM"
+    && fixes[pk.player_id] && fixes[pk.player_id] !== pk.position);
+  for (const pk of moved) {
+    const pos = fixes[pk.player_id];
+    const { error: e2 } = await S.sb.from("picks")
+      .update({ position: pos, slot: pk.is_sub ? "SUB_" + pos : pos }).eq("id", pk.id);
+    if (e2) continue;
+    pk.position = pos; pk.slot = pk.is_sub ? "SUB_" + pos : pos;   // locally at once
+  }
+  // A reclassified keeper can leave an XI that no longer adds up, and the
+  // manager was not here to see it happen.
+  for (const mid of new Set(moved.map((pk) => pk.manager_id)))
+    await repairLineupFor(mid).catch(() => {});
   applyPoolOverrides();
   bustScores();                            // past rounds may read differently
-  toast(n ? `${n} position${n === 1 ? "" : "s"} saved.` : "Positions back to the feed's own.");
+  toast(n ? `${n} position${n === 1 ? "" : "s"} saved${
+    moved.length ? `, ${moved.length} in a squad` : ""}.` : "Positions back to the feed's own.");
   renderAdmin(); renderBoard();
 }
 
