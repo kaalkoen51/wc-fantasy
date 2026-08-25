@@ -11542,6 +11542,35 @@ function teamPlayingNow(team) {
    wrongly too -- the badge is informational, so the cost is a wrong badge
    rather than a wrong score, but it is why this says LEFT and not something
    that sounds like a ruling. */
+/* How long since the shared pool was pulled, and whether that is long enough
+   to matter.
+
+   NOTHING refreshes it on a schedule. The daily cron writes competition_stats
+   and never touches competition_pools, so a league's clubs and positions are
+   frozen at the instant somebody first loaded the competition -- for the whole
+   season, unless an admin presses refresh. And the drift is invisible: a
+   player who has moved clubs quietly keeps showing the old one, and his chip
+   cheerfully shows that club's next fixture. Reported from the app: "rodri was
+   transferred ages ago".
+
+   So the admin card says it out loud. A week is about one transfer window's
+   worth of drift and more than one round of fixtures. Pure. */
+const POOL_STALE_DAYS = 7;
+function poolAge(updatedAt, nowMs) {
+  const t = updatedAt ? Date.parse(updatedAt) : NaN;
+  // Never stamped: pulled before updated_at existed, or written by something
+  // that did not set it. Either way it is old, and saying so is the truth.
+  if (isNaN(t)) return { days: null, stale: true,
+    text: "Squads have not been pulled since this competition was first loaded — "
+      + "any real-world transfer since then is not in the app yet." };
+  const days = Math.max(0, Math.floor((nowMs - t) / 864e5));
+  const when = days === 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
+  return { days, stale: days >= POOL_STALE_DAYS,
+    text: days >= POOL_STALE_DAYS
+      ? `Squads last pulled ${when} — any real-world transfer since then is not in the app yet.`
+      : `Squads last pulled ${when}.` };
+}
+
 const leftCompetition = (pid) =>
   !!pid && !String(pid).startsWith("team:")
   && (S.players?.length || 0) > 0 && !S.playerById?.[pid];
@@ -15970,7 +15999,10 @@ async function loadCompetition(opts = {}) {
     if (upd.error) throw new Error(upd.error.message);
     // Reflect locally without a reload.
     S.league.competition = competition;
-    S._compPool = { players, fixtures, round_order: roundOrder };
+    // updated_at too: the admin card reads it to say how stale the squads are,
+    // and dropping it here made a fresh pull look like it had never happened.
+    S._compPool = { players, fixtures, round_order: roundOrder,
+                    updated_at: new Date().toISOString() };
     S.roundOrder = roundOrder;
     // A new shared pool is a new base for this league's overrides to sit on.
     S.players = players; S._poolBase = players;
@@ -17382,6 +17414,14 @@ function renderAdmin() {
     && +$("adm-comp-season").value === curComp.season;
   $("adm-comp-refresh")?.classList.toggle("hidden", !onCur);
   $("adm-comp-refresh-note")?.classList.toggle("hidden", !onCur);
+  const ageEl = $("adm-comp-age");
+  if (ageEl) {
+    const age = curComp ? poolAge(S._compPool?.updated_at, Date.now()) : null;
+    ageEl.textContent = age ? age.text : "";
+    ageEl.classList.toggle("hidden", !age);
+    ageEl.classList.toggle("text-amber-300", !!age?.stale);
+    ageEl.classList.toggle("text-slate-400", !age?.stale);
+  }
   // The line-up probe is a rugby question, so it only appears for a rugby league.
   $("adm-lineups-wrap")?.classList.toggle("hidden", sportOf() !== "rugby");
   renderScheduleManager();

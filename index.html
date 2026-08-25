@@ -719,6 +719,9 @@
           for 2024/25; a tournament's year).</p>
         <input id="adm-api-key" placeholder="API-Football key (optional)" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
         <div id="adm-comp-current" class="text-xs text-wcgold"></div>
+        <!-- How stale the shared squad list is. Nothing refreshes it on a
+             schedule, so without this the drift is completely silent. -->
+        <div id="adm-comp-age" class="hidden text-xs text-slate-400"></div>
         <div class="flex gap-2">
           <select id="adm-comp-select" class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm"></select>
           <input id="adm-comp-season" type="number" placeholder="Season" class="w-24 shrink-0 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm">
