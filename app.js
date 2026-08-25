@@ -15898,7 +15898,26 @@ async function reconcilePicksToPool(players, log) {
   return { moved: done, moves, repositioned };
 }
 
-async function loadCompetition() {
+/* Pull the competition's teams, squads and fixtures.
+
+   Two jobs behind one button, and only one of them was reachable. SETTING the
+   competition is a change: it can orphan scored games, and reusing a pool
+   another league already loaded is the fast path. REFRESHING the one you are
+   already on is not a change at all -- it is how a real-world transfer reaches
+   the app, since reconcilePicksToPool is what moves a drafted player to his
+   new club and nothing else calls it.
+
+   Both confirms were asked either way, and both pointed the wrong way on a
+   refresh: one warned about orphaning games that nothing was going to touch,
+   and the other offered "reuse without re-pulling?" where OK -- the button a
+   person actually presses -- quietly does nothing and Cancel is the action.
+   Reported from the app: "there have been multiple real life transfers and I
+   cant get it to reflect".
+
+   So they are asked only when the competition is genuinely changing. Loading
+   the one you are already on re-pulls, which is the only thing it could
+   sensibly mean. */
+async function loadCompetition(opts = {}) {
   const apiKey = $("adm-api-key").value.trim();
   const apiLeagueId = +$("adm-comp-select").value;
   const season = +$("adm-comp-season").value;
@@ -15910,12 +15929,13 @@ async function loadCompetition() {
   const compKey = compKeyOf(competition);
   const log = (t) => { $("adm-comp-log").textContent = t; };
   if (!apiLeagueId || !season) return toast("Pick a competition and a season.");
-  if ((S.stats?.length || 0) &&
-      !confirm("This league already has scored games — changing competition can orphan them. Continue?")) return;
-  const btn = $("adm-comp-load");
   // A refresh of the SAME competition reconciles transfers; switching to a
   // different one must not, or every pick would look like it had moved club.
   const sameComp = competitionKey() === compKey;
+  const refreshing = !!opts.refresh || sameComp;
+  if (!refreshing && (S.stats?.length || 0) &&
+      !confirm("This league already has scored games — changing competition can orphan them. Continue?")) return;
+  const btn = $(opts.refresh ? "adm-comp-refresh" : "adm-comp-load");
   btn.disabled = true;
   try {
     log("Checking shared competition data…");
@@ -15923,7 +15943,7 @@ async function loadCompetition() {
       .eq("competition_key", compKey).maybeSingle();
     if (existing.error) throw new Error(existing.error.message);
     let players, fixtures, roundOrder = [];
-    if (existing.data?.players?.length &&
+    if (!refreshing && existing.data?.players?.length &&
         confirm(`${name} ${season} is already loaded (${existing.data.players.length} players shared across leagues). Reuse it without re-pulling?  (Cancel = re-pull fresh squads from the API.)`)) {
       players = existing.data.players;
       fixtures = existing.data.fixtures || [];
@@ -15956,28 +15976,29 @@ async function loadCompetition() {
     S.players = players; S._poolBase = players;
     applyPoolOverrides();
     S.fixtures = fixtures;
-    let note = "";
+    const lines = [];
     if (sameComp && S.picks.length) {
       const rec = await reconcilePicksToPool(players, null);
-      if (rec.moved) note = ` · ${rec.moved} squad player${rec.moved === 1 ? "" : "s"} moved club`;
-      if (rec.repositioned.length) note += ` · ${rec.repositioned.length} position change${
-        rec.repositioned.length === 1 ? "" : "s"} flagged (not applied)`;
-      if (rec.moved || rec.repositioned.length) {
-        // rec.moves is the list captured BEFORE the writes — recomputing here
-        // would find nothing, because the picks now agree with the pool.
-        const lines = [];
-        if (rec.moved) {
-          lines.push("Transfers applied — these players now play for their new club:");
-          for (const m of rec.moves) lines.push(`  ${m.name}: ${m.from} → ${m.to}`);
-        }
-        if (rec.repositioned.length) {
-          lines.push("Position changed upstream (left as drafted — change it by hand if you want it):");
-          for (const r of rec.repositioned) lines.push(`  ${r.name}: ${r.from} → ${r.to}`);
-        }
-        log(lines.join("\n"));
+      // rec.moves is the list captured BEFORE the writes — recomputing here
+      // would find nothing, because the picks now agree with the pool.
+      if (rec.moved) {
+        lines.push(`${rec.moved} transfer${rec.moved === 1 ? "" : "s"} applied — `
+          + `${rec.moved === 1 ? "this player" : "these players"} now play for their new club:`);
+        for (const m of rec.moves) lines.push(`  ${m.name}: ${m.from} → ${m.to}`);
+      } else {
+        lines.push("No squad player has changed club since the last pull.");
+      }
+      if (rec.repositioned.length) {
+        lines.push("Position changed upstream (left as drafted — the quota and every"
+          + " settled round were built on the old one):");
+        for (const r of rec.repositioned) lines.push(`  ${r.name}: ${r.from} → ${r.to}`);
       }
     }
-    log(`✅ ${name} ${season}: ${players.length} players, ${fixtures.length} fixtures${note}.`);
+    /* One write, at the end. The transfer list used to be logged and then
+       overwritten by the summary line on the very next statement, so the only
+       trace of who moved was a count nobody could check. */
+    log([`✅ ${name} ${season}: ${players.length} players, ${fixtures.length} fixtures.`,
+         ...lines].join("\n"));
     toast("Competition set.");
     renderAdmin(); renderBoard();
   } catch (e) {
@@ -17354,6 +17375,13 @@ function renderAdmin() {
   $("adm-comp-current").textContent = curComp
     ? `Current: ${curComp.name} ${curComp.season} — ${S.players.length} players`
     : "Current: built-in World Cup 2026 squads";
+  /* Refresh only means something once there is a competition to refresh, and
+     it re-reads the one the league is ON -- so it also has to follow the
+     select back if somebody has changed it to look at another. */
+  const onCur = !!curComp && +$("adm-comp-select").value === curComp.apiLeagueId
+    && +$("adm-comp-season").value === curComp.season;
+  $("adm-comp-refresh")?.classList.toggle("hidden", !onCur);
+  $("adm-comp-refresh-note")?.classList.toggle("hidden", !onCur);
   // The line-up probe is a rugby question, so it only appears for a rugby league.
   $("adm-lineups-wrap")?.classList.toggle("hidden", sportOf() !== "rugby");
   renderScheduleManager();
@@ -17881,6 +17909,14 @@ function wire() {
     $(id).oninput = admQuotaSizePreview);
   $("adm-pull-now").onclick = () => pullStatsNow().catch((e) => toast(e.message));
   $("adm-comp-load").onclick = () => loadCompetition().catch((e) => toast(e.message));
+  const cref = $("adm-comp-refresh");
+  if (cref) cref.onclick = () => loadCompetition({ refresh: true }).catch((e) => toast(e.message));
+  // The refresh button belongs to the competition the league is on, so it has
+  // to come and go with the select rather than only on a full admin render.
+  for (const id of ["adm-comp-select", "adm-comp-season"]) {
+    const el = $(id);
+    if (el) el.addEventListener("change", () => renderAdmin());
+  }
   $("adm-pos-q").oninput = () => { S._posQ = $("adm-pos-q").value; renderPositionEditor(); };
   $("adm-pos-guess").onclick = () => { S._posGuessOnly = !S._posGuessOnly; renderPositionEditor(); };
   $("adm-pos-save").onclick = () => savePositionFixes().catch((e) => toast(e.message));

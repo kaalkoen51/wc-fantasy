@@ -723,6 +723,14 @@
           <select id="adm-comp-select" class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm"></select>
           <input id="adm-comp-season" type="number" placeholder="Season" class="w-24 shrink-0 rounded-lg bg-slate-800 border border-slate-700 px-2 py-2 text-sm">
         </div>
+        <!-- Refreshing the competition you are already on is the routine job —
+             it is how a real-world transfer reaches the app — so it gets its
+             own button and does not look like the one that changes anything.
+             Shown only once a competition is set. -->
+        <button id="adm-comp-refresh" class="hidden w-full btn-primary rounded-lg px-4 py-2 text-sm font-semibold">Refresh squads &amp; fixtures</button>
+        <p id="adm-comp-refresh-note" class="hidden text-xs text-slate-400">Re-reads every squad from
+          API-Football and moves any drafted player who has changed club. Positions are reported but
+          left as drafted. Nothing already scored is touched.</p>
         <button id="adm-comp-load" class="w-full bg-wcred hover:bg-wcred-hov rounded-lg px-4 py-2 text-sm font-semibold">Load competition from API</button>
         <pre id="adm-comp-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
         <!-- Rugby only, and shown only for a rugby league: reads the next few

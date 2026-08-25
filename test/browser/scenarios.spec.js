@@ -3938,3 +3938,64 @@ test("the recap counts the points you LEFT on the bench, not the ones it banked"
   expect(q.missed, "an absent starter is being called the quietest")
     .not.toContain(q.worst);
 });
+
+test("refreshing the competition applies a real-world transfer, and asks nothing",
+  async ({ page }) => {
+  /* Two jobs sat behind one button and only one of them was reachable.
+     SETTING the competition is a change -- it can orphan scored games, and
+     reusing a pool another league loaded is the fast path. REFRESHING the one
+     you are already on is not a change: it is the only thing that moves a
+     drafted player to his new club, because reconcilePicksToPool has no other
+     caller. Both confirms were asked either way, and on a refresh both pointed
+     the wrong way -- one warned about orphaning games nothing was going to
+     touch, and the other's OK, the button a person actually presses, quietly
+     did nothing while Cancel was the action. Reported from the app:
+     "there have been multiple real life transfers and I cant get it to
+     reflect in the app". */
+  const seed = await openLeague(page, { managers: 4, played: 2 });
+  const asked = [];
+
+  const moved = await page.evaluate(async ([clubs]) => {
+    const me = myManager();
+    const pk = managerPicks(me.id).find((p) => !p.is_sub && p.slot !== "TEAM");
+    // Captured now: reconcilePicksToPool writes the new club onto this very
+    // object, so reading pk.team afterwards reports the answer, not the setup.
+    const from = pk.team;
+    const to = clubs.find((c) => c !== from);
+    window.__asked = [];
+    window.confirm = (t) => { window.__asked.push(t); return true; };
+    // The league is already on a competition, and the shared pool already has
+    // rows -- the exact state both dialogs used to fire in.
+    S.league.competition = { name: "Prem", apiLeagueId: 39, season: 2026, sport: "football" };
+    S.players = S.players.map((p) => ({ ...p }));
+    S._poolBase = S.players;
+    window.__db.tables.competition_pools = [{ competition_key: "39-2026",
+      players: S.players, fixtures: S.fixtures, round_order: [] }];
+    /* The feed comes back with him at a new club. fetchPoolFor is the only
+       thing that talks to the API here, so stubbing it is stubbing the pull. */
+    window.fetchPoolFor = async () => ({
+      players: S.players.map((p) =>
+          p.player_id === pk.player_id ? { ...p, team: to } : p),
+      teams: clubs, fixtures: S.fixtures, roundOrder: [] });
+    document.getElementById("adm-api-key").value = "k";
+    document.getElementById("adm-comp-select").innerHTML =
+      '<option value="39">Prem</option>';
+    document.getElementById("adm-comp-season").value = "2026";
+    await loadCompetition({ refresh: true });
+    return { id: pk.player_id, name: pk.player_name, from, to,
+      pickNow: managerPicks(me.id).find((p) => p.player_id === pk.player_id).team,
+      poolNow: S.playerById[pk.player_id].team,
+      asked: window.__asked,
+      log: document.getElementById("adm-comp-log").textContent };
+  }, [seed.clubs]);
+
+  expect(moved.to, "the seed has only one club, so nothing can move")
+    .not.toBe(moved.from);
+  expect(moved.asked, "a refresh is still stopping to ask something").toEqual([]);
+  expect(moved.pickNow, "the transfer never reached the pick").toBe(moved.to);
+  expect(moved.poolNow, "the transfer never reached the pool").toBe(moved.to);
+  // ...and it says who moved, rather than a count nobody can check. That line
+  // used to be written and overwritten by the summary on the next statement.
+  expect(moved.log).toContain(`${moved.name}: ${moved.from} → ${moved.to}`);
+  expect(moved.log).toContain("1 transfer applied");
+});
