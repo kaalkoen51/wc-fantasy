@@ -586,6 +586,69 @@ function simHistorySource() {
      ${order.length ? rows : '<p class="text-xs text-slate-500">No rounds with results yet.</p>'}`);
 }
 
+/* What the stored pool says about this league's squads, pulling nothing.
+
+   The refresh log reports what a pull CHANGED; this reports what the data
+   says now. That is the question when a refresh looks like it did nothing --
+   is the player still in the pool, and at which club -- and without it the
+   only way to tell a pull that failed from a feed that has not moved is to
+   guess. Read-only: it issues no request and writes nothing. */
+function simSquadCheck() {
+  const chk = squadCheck(S.picks, S.playerById);
+  const age = leagueCompetition() ? poolAge(S._compPool?.updated_at, Date.now()) : null;
+  const row = (cls, a, b) => `<div class="flex items-baseline gap-2 py-1 border-t border-slate-800 text-xs">
+      <span class="min-w-0 flex-1 truncate text-slate-300">${esc(a)}</span>
+      <span class="shrink-0 ${cls}">${esc(b)}</span></div>`;
+  const clean = !chk.gone.length && !chk.moved.length;
+  return simCard("🔎 What the squad list actually says",
+    "Read straight from the stored pool — nothing is pulled and nothing is written. "
+    + "If a transfer has happened and this still shows the old club, the pool has not been "
+    + "refreshed; if it shows the new one and the app does not, the problem is downstream.",
+    `<div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
+       <span><b class="text-slate-200">${esc(competitionKey() || "no competition")}</b></span>
+       <span><b class="text-slate-200">${(S.players || []).length}</b> in the pool</span>
+       <span><b class="text-slate-200">${chk.total}</b> drafted</span>
+     </div>
+     ${age ? `<p class="text-xs ${age.stale ? "text-amber-300" : "text-slate-400"}">${esc(age.text)}</p>` : ""}
+     ${chk.gone.length ? `<div><p class="text-xs font-semibold text-red-300 pt-1">${
+        chk.gone.length} not in the pool at all — ✈ LEFT, cannot score again</p>${
+        chk.gone.map((g) => row("text-red-300", g.name, `was ${g.team}`)).join("")}</div>` : ""}
+     ${chk.moved.length ? `<div><p class="text-xs font-semibold text-amber-300 pt-1">${
+        chk.moved.length} whose pick disagrees with the pool</p>${
+        chk.moved.map((m) => row("text-amber-300", m.name, `${m.from} → ${m.to}`)).join("")}</div>` : ""}
+     ${clean ? '<p class="text-xs text-emerald-400 pt-1">Every drafted player is in the pool, at the club his pick says. The pool and the app agree.</p>' : ""}
+     <div class="pt-1 border-t border-slate-800">
+       <input id="sim-pool-find" placeholder="Look a player up in the pool…"
+         class="w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs">
+       <div id="sim-pool-hits" class="text-xs"></div>
+     </div>`);
+}
+
+// Name lookup against the pool, so "where does it think Rodri is" is one box.
+function simPoolFind(q) {
+  const out = document.getElementById("sim-pool-hits");
+  if (!out) return;
+  const t = String(q || "").trim().toLowerCase();
+  if (t.length < 2) { out.innerHTML = ""; return; }
+  const owner = {};
+  for (const pk of (S.picks || [])) if (pk.player_id) owner[pk.player_id] = pk;
+  const hits = (S.players || []).filter((p) => String(p.name || "").toLowerCase().includes(t));
+  out.innerHTML = hits.length
+    ? hits.slice(0, 12).map((p) => {
+        const pk = owner[p.player_id];
+        return `<div class="flex items-baseline gap-2 py-1 border-t border-slate-800">
+          <span class="min-w-0 flex-1 truncate text-slate-300">${esc(p.name)}</span>
+          <span class="shrink-0 text-slate-400">${esc(p.position)} · ${esc(p.team)}</span>
+          <span class="shrink-0 ${pk ? "text-wcgold" : "text-slate-500"}">${
+            pk ? esc((S.managers || []).find((m) => m.id === pk.manager_id)?.name || "owned") : "free"}</span>
+        </div>`; }).join("")
+      + (hits.length > 12 ? `<p class="text-slate-500 pt-1">…and ${hits.length - 12} more</p>` : "")
+    /* Nobody by that name IS the answer when you are checking a transfer: he
+       is not in any squad in this competition any more. */
+    : `<p class="text-red-300 pt-1">Nobody in the pool matches “${esc(q)}”. If he used to be
+        here, the pull says he has left the competition.</p>`;
+}
+
 function renderTestTab() {
   const box = document.getElementById("board-test");
   const navBtn = document.getElementById("nav-test");
@@ -611,6 +674,8 @@ function renderTestTab() {
          <span class="text-sm ${on ? "text-emerald-400" : "text-slate-400"}">${on ? "● sandbox league" : "○ real league — writes refused"}</span>
          <button id="sim-enable" class="rounded-lg px-3 py-1.5 text-xs font-semibold ${on ? "bg-slate-800 border border-slate-700" : "bg-wcred"}">${on ? "Turn off" : "Turn on"}</button>
        </div>`)}
+
+    ${simSquadCheck()}
 
     ${simCard("📅 Build a calendar",
       "Generates a whole season over this league's clubs, moves the dates so <b>now</b> lands at the stage you pick, and plays every week that leaves behind you — so the results agree with the calendar instead of trailing it. <b>Play week</b> then plays the next one forward.",
@@ -706,6 +771,8 @@ function renderTestTab() {
     hs: num("sim-fx-hs"), as: num("sim-fx-as"),
   });
   box.querySelectorAll("[data-rmfx]").forEach((b) => b.onclick = () => simRemoveFixture(b.dataset.rmfx));
+  const find = document.getElementById("sim-pool-find");
+  if (find) find.oninput = () => simPoolFind(find.value);
   document.getElementById("sim-st-save").onclick = () =>
     simSetStat(val("sim-st-player"), val("sim-st-match"), {
       minutes: num("sim-st-min"), goals: num("sim-st-g"), assists: num("sim-st-a"),

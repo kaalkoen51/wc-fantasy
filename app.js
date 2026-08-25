@@ -15890,6 +15890,30 @@ function mapApiPlayer(team, shirt, apiName) {
        silently reclassifying a defender as a midfielder could leave a manager
        unable to field a legal XI and would re-score history. That is an
        admin's call, not a side effect of a data refresh.                    */
+/* What the STORED pool says about every drafted player, pulling nothing.
+
+   The refresh reports what a pull CHANGED. This reports what the data says
+   right now, which is the question when a refresh appears to have done
+   nothing: is the player still in the pool, and at which club? Without it the
+   only way to tell a pull that failed from a feed that has not moved is to
+   guess, and this week that guess has been wrong three times.
+
+   Read-only, and pure so it can be pinned. Returns the disagreements, not the
+   agreements -- a squad where everything matches is one line, not eighteen. */
+function squadCheck(picks, playerById) {
+  const out = { total: 0, gone: [], moved: [] };
+  for (const pk of (picks || [])) {
+    if (pk.slot === "TEAM" || !pk.player_id) continue;
+    out.total++;
+    const p = playerById?.[pk.player_id];
+    // Not in the pool at all: the pull says he has left the competition.
+    if (!p) { out.gone.push({ id: pk.player_id, name: pk.player_name, team: pk.team }); continue; }
+    if (p.team && p.team !== pk.team)
+      out.moved.push({ id: pk.player_id, name: pk.player_name, from: pk.team, to: p.team });
+  }
+  return out;
+}
+
 function pickReconciliation(picks, players) {
   const byId = new Map((players || []).map((p) => [p.player_id, p]));
   const moves = [], repositioned = [], gone = [];

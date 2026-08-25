@@ -4105,3 +4105,50 @@ test("the admin season box follows the league, not the calendar", async ({ page 
   expect(typed.refreshShown, "refresh still offers to re-pull a season the league is not on")
     .toBe(false);
 });
+
+test("the squad check says what the stored pool actually holds", async ({ page }) => {
+  /* Read-only, pulls nothing. The refresh log reports what a pull CHANGED;
+     this reports what the data says now, which is the question when a refresh
+     looks like it did nothing -- is the player still in the pool, and at which
+     club. Without it the only way to tell a failed pull from a feed that has
+     not moved is to guess. */
+  await openLeague(page, { managers: 4, played: 2 });
+  const seen = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    S.authUser = { id: "00000000-0000-4000-8000-000000000001", email: "koen.johan.c@gmail.com" };
+    S.league.competition = { name: "Prem", apiLeagueId: 39, season: 2026, sport: "football" };
+    S._compPool = { updated_at: new Date(Date.now() - 34 * 864e5).toISOString() };
+    const mine = S.picks.filter((p) => p.slot !== "TEAM");
+    const gone = mine[0], moved = mine[1];
+    // One player out of the pool entirely, one at a different club.
+    S._poolBase = S._poolBase.filter((p) => p.player_id !== gone.player_id)
+      .map((p) => p.player_id === moved.player_id ? { ...p, team: "Elsewhere" } : p);
+    applyPoolOverrides();
+    setBoardTab("test"); renderBoard();
+    const box = document.getElementById("board-test");
+    const surname = S.players[3].name.split(" ").pop();
+    const find = document.getElementById("sim-pool-find");
+    find.value = surname; find.dispatchEvent(new Event("input", { bubbles: true }));
+    const hits = document.getElementById("sim-pool-hits").textContent;
+    find.value = "zzzznobody"; find.dispatchEvent(new Event("input", { bubbles: true }));
+    return { text: box.textContent.replace(/\s+/g, " "),
+      gone: gone.player_name, goneClub: gone.team, moved: moved.player_name,
+      movedFrom: moved.team, surname, hits,
+      missing: document.getElementById("sim-pool-hits").textContent };
+  });
+  expect(seen.text, "a player who has left the pool is not called out")
+    .toContain(`${seen.gone}`);
+  expect(seen.text).toContain("not in the pool at all");
+  expect(seen.text, "a pick that disagrees with the pool is not called out")
+    .toContain(`${seen.movedFrom} → Elsewhere`);
+  expect(seen.text, "how stale the pool is has to be right here too")
+    .toContain("34 days ago");
+  // The lookup: where does the pool think a given player is?
+  expect(seen.hits, "the name lookup found nobody").toContain(seen.surname);
+  /* Nobody by that name IS the answer when you are chasing a transfer, so it
+     has to say so rather than going blank. */
+  expect(seen.missing, "an empty result reads as a broken box")
+    .toContain("has left the competition");
+});
