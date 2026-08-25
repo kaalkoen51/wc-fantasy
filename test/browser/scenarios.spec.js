@@ -3998,4 +3998,110 @@ test("refreshing the competition applies a real-world transfer, and asks nothing
   // used to be written and overwritten by the summary on the next statement.
   expect(moved.log).toContain(`${moved.name}: ${moved.from} → ${moved.to}`);
   expect(moved.log).toContain("1 transfer applied");
+
+  /* Two things the pull used to swallow whole.
+
+     A player in TWO squads at once is what the feed looks like mid-transfer --
+     the new club has him, the old one has not dropped him. The dedup kept
+     whichever came back first, which is team order and not recency, so a
+     transfer could be right there in the data and still never reach the app
+     with nothing anywhere saying a choice had been made.
+
+     And a player in NO squad has left the competition outright. His pick is
+     left alone on purpose, but it can never score again -- the one case here
+     a manager actually has to act on, and it read exactly like nothing had
+     happened. */
+  const quiet = await page.evaluate(async () => {
+    const me = myManager();
+    const picks = managerPicks(me.id).filter((p) => p.slot !== "TEAM");
+    const leaver = picks[0], twoClubs = picks[1];
+    const elsewhere = S.teams.find((t) => t !== twoClubs.team);
+    window.fetchPoolFor = async () => ({
+      // The leaver is in nobody's squad; the other is in two, old club first.
+      players: S.players.filter((p) => p.player_id !== leaver.player_id),
+      teams: S.teams, fixtures: S.fixtures, roundOrder: [],
+      dup: [{ name: twoClubs.player_name, kept: twoClubs.team, also: elsewhere }] });
+    await loadCompetition({ refresh: true });
+    return { leaver: leaver.player_name, leaverClub: leaver.team,
+      dupName: twoClubs.player_name, kept: twoClubs.team, also: elsewhere,
+      stillThere: !!managerPicks(me.id).find((p) => p.id === leaver.id),
+      clubKept: managerPicks(me.id).find((p) => p.id === leaver.id)?.team,
+      badge: availBadges(leaver.player_id),
+      log: document.getElementById("adm-comp-log").textContent };
+  });
+  expect(quiet.log, "a pick that can never score again is reported as nothing")
+    .toContain(`${quiet.leaver} (was ${quiet.leaverClub})`);
+  expect(quiet.log).toContain("no longer in this competition");
+  expect(quiet.log, "the feed contradicting itself is still silent")
+    .toContain(`${quiet.dupName}: kept ${quiet.kept}, also listed at ${quiet.also}`);
+  // He keeps his pick and his club — blanking it would strand his stat rows —
+  // and wears the badge that says he cannot score.
+  expect(quiet.stillThere, "the leaver was dropped from the squad").toBe(true);
+  expect(quiet.clubKept, "the leaver's club was blanked").toBe(quiet.leaverClub);
+  expect(quiet.badge, "no ✈ LEFT badge on a player who has left").toContain("LEFT");
+
+  // ...and the pull itself really does spot the two-squad case, rather than
+  // the test handing it a ready-made answer.
+  const built = await page.evaluate(async () => {
+    window.apiFootball = async (key, path, params) => {
+      if (path === "teams") return [
+        { team: { id: 1, name: "Old Club", code: "OLD" } },
+        { team: { id: 2, name: "New Club", code: "NEW" } }];
+      // The mover is on both lists; only the new club has the debutant.
+      return params.team === 1
+        ? [{ players: [{ id: 7, name: "Mover", position: "Midfielder", number: 7 }] }]
+        : [{ players: [
+            { id: 7, name: "Mover", position: "Midfielder", number: 7 },
+            { id: 8, name: "Debutant", position: "Attacker", number: 8 }] }];
+    };
+    const out = await fetchCompetitionPool("k", 39, 2026, null);
+    return { dup: out.dup, count: out.players.length,
+      moverAt: out.players.find((p) => p.player_id === "api_7").team };
+  });
+  expect(built.count, "the dedup dropped or duplicated somebody").toBe(2);
+  expect(built.moverAt, "first club listed no longer wins, so the rule changed")
+    .toBe("Old Club");
+  expect(built.dup, "a player in two squads at once is not being noticed")
+    .toEqual([{ name: "Mover", kept: "Old Club", also: "New Club" }]);
+});
+
+test("the admin season box follows the league, not the calendar", async ({ page }) => {
+  /* It only ever defaulted to the current YEAR, and nothing set it from the
+     competition the league is actually on. So a league on the 2025/26 season
+     -- API season key 2025 -- showed 2026 the moment the year turned, and both
+     buttons then meant something else: "Load competition" re-points the league
+     at a season with no pool and no stats, and a refresh is not a refresh,
+     because sameComp is false and the transfer reconcile is skipped entirely.
+     Reported from the app: "there are still no transfers coming through". */
+  await openLeague(page, { managers: 4, played: 2 });
+  const seen = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    // A league a season behind the calendar, which is every league from
+    // January until the next season is loaded.
+    S.league.competition = { name: "Prem", apiLeagueId: 39,
+      season: new Date().getFullYear() - 1, sport: "football" };
+    S._compSeeded = null;
+    showView("admin"); renderAdmin();
+    const box = document.getElementById("adm-comp-season");
+    return { season: box.value, thisYear: String(new Date().getFullYear()),
+      refreshShown: !document.getElementById("adm-comp-refresh").classList.contains("hidden") };
+  });
+  expect(seen.season, "the season box is still showing the calendar year")
+    .toBe(String(Number(seen.thisYear) - 1));
+  expect(seen.refreshShown, "refresh is hidden, so there is no way to pull squads at all")
+    .toBe(true);
+
+  // ...and an admin typing a DIFFERENT season is not overwritten mid-edit,
+  // which is what re-seeding on every render would do.
+  const typed = await page.evaluate(() => {
+    const box = document.getElementById("adm-comp-season");
+    box.value = "2030";
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    return { season: box.value,
+      refreshShown: !document.getElementById("adm-comp-refresh").classList.contains("hidden") };
+  });
+  expect(typed.season, "the box was reset while it was being typed into").toBe("2030");
+  // ...and refresh withdraws, because 2030 is not the competition it refreshes.
+  expect(typed.refreshShown, "refresh still offers to re-pull a season the league is not on")
+    .toBe(false);
 });

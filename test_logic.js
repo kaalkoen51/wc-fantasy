@@ -3159,6 +3159,19 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
     [pk_("k1", "a", "Liverpool", "FWD")], [pl_("a", "Liverpool", "FWD")]).moves, []);
   // Someone sold out of the competition drops out of the pool. Blanking their
   // club would break the fixture lookups that still reference it.
+  check("...and is reported, because that pick can never score again",
+    pickReconciliation(
+      [{ id: "k", slot: "MID", player_id: "api_1", player_name: "Gone", team: "City", position: "MID" }],
+      [{ player_id: "api_9", team: "Spurs", position: "MID" }]).gone
+      .map((g) => [g.name, g.team]), [["Gone", "City"]]);
+  check("a club pick is never reported as having left",
+    pickReconciliation(
+      [{ id: "t", slot: "TEAM", player_id: "ENG", player_name: "England", team: "England" }],
+      []).gone, []);
+  check("somebody still in the pool has not gone anywhere",
+    pickReconciliation(
+      [{ id: "k", slot: "MID", player_id: "api_1", player_name: "Here", team: "City", position: "MID" }],
+      [{ player_id: "api_1", team: "City", position: "MID" }]).gone, []);
   check("a player who left the competition keeps his club", pickReconciliation(
     [pk_("k1", "a", "Newcastle", "FWD")], []).moves, []);
   check("TEAM picks are not players", pickReconciliation(

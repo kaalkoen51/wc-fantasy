@@ -701,8 +701,16 @@ function parseApiFixture(f) {
 async function fetchCompetitionPool(key, apiLeagueId, season, onProgress) {
   const teams = await apiFootball(key, "teams", { league: apiLeagueId, season });
   if (!teams.length) throw new Error("No teams found — check the competition and season.");
-  const byId = {};   // dedup players who appear in two squads
+  const byId = {};
   const names = [];
+  /* A player listed in two clubs' squads at once. The feed does this around a
+     transfer -- the new club has him and the old one has not dropped him yet
+     -- and the dedup below quietly kept whichever club came back FIRST, which
+     is team order, not recency. So a transfer could be in the data and still
+     not reach the app, with nothing anywhere saying a choice had been made.
+     First still wins, because nothing in a squad row says which is newer; the
+     difference is that the conflict is now reported. */
+  const dup = [];
   let done = 0;
   for (const t of teams) {
     const teamName = decodeEntities(t.team.name), code = teamCodeFrom(teamName, t.team.code);
@@ -712,9 +720,11 @@ async function fetchCompetitionPool(key, apiLeagueId, season, onProgress) {
     for (const ap of (squads[0]?.players || [])) {
       const p = parseSquadPlayer(ap, teamName, code, t.team.id);
       if (!byId[p.player_id]) byId[p.player_id] = p;
+      else if (byId[p.player_id].team !== teamName)
+        dup.push({ name: p.name, kept: byId[p.player_id].team, also: teamName });
     }
   }
-  return { players: Object.values(byId), teams: [...new Set(names)].sort() };
+  return { players: Object.values(byId), teams: [...new Set(names)].sort(), dup };
 }
 async function fetchCompetitionFixtures(key, apiLeagueId, season) {
   return (await apiFootball(key, "fixtures", { league: apiLeagueId, season })).map(parseApiFixture);
@@ -2930,7 +2940,7 @@ async function fetchPoolFor(competition, apiKey, onProgress) {
   const { apiLeagueId, season } = competition;
   const built = await fetchCompetitionPool(apiKey, apiLeagueId, season, onProgress);
   return {
-    players: built.players, teams: built.teams,
+    players: built.players, teams: built.teams, dup: built.dup,
     fixtures: await fetchCompetitionFixtures(apiKey, apiLeagueId, season),
     roundOrder: await fetchCompetitionRounds(apiKey, apiLeagueId, season),
   };
@@ -15882,17 +15892,22 @@ function mapApiPlayer(team, shirt, apiName) {
        admin's call, not a side effect of a data refresh.                    */
 function pickReconciliation(picks, players) {
   const byId = new Map((players || []).map((p) => [p.player_id, p]));
-  const moves = [], repositioned = [];
+  const moves = [], repositioned = [], gone = [];
   for (const pk of (picks || [])) {
     if (pk.slot === "TEAM") continue;
     const p = byId.get(pk.player_id);
-    if (!p) continue;
+    /* Not in the pool at all: sold out of the competition, or dropped from
+       every squad in it. His club is left alone -- it is the last one he
+       actually played for, and blanking it would strand his stat rows -- but
+       it is REPORTED now, because a pick that can never score again is the one
+       thing here a manager has to do something about. */
+    if (!p) { gone.push({ id: pk.id, name: pk.player_name, team: pk.team }); continue; }
     if (p.team && p.team !== pk.team)
       moves.push({ id: pk.id, name: pk.player_name, from: pk.team, to: p.team });
     if (p.position && p.position !== pk.position)
       repositioned.push({ name: pk.player_name, from: pk.position, to: p.position });
   }
-  return { moves, repositioned };
+  return { moves, repositioned, gone };
 }
 
 /* Follow the player: when someone transfers within the competition they stay
@@ -15905,7 +15920,7 @@ function pickReconciliation(picks, players) {
    all of it. Past rounds are untouched: lineup snapshots carry the club as at
    lock time, which is the club they actually played for that round. */
 async function reconcilePicksToPool(players, log) {
-  const { moves, repositioned } = pickReconciliation(S.picks, players);
+  const { moves, repositioned, gone } = pickReconciliation(S.picks, players);
   let done = 0;
   for (const m of moves) {
     const { error } = await S.sb.from("picks").update({ team: m.to }).eq("id", m.id);
@@ -15924,7 +15939,7 @@ async function reconcilePicksToPool(players, log) {
       + repositioned.slice(0, 6).map((r) => `${r.name} ${r.from}→${r.to}`).join(", "));
     log(lines.join("\n"));
   }
-  return { moved: done, moves, repositioned };
+  return { moved: done, moves, repositioned, gone };
 }
 
 /* Pull the competition's teams, squads and fixtures.
@@ -15946,6 +15961,25 @@ async function reconcilePicksToPool(players, log) {
    So they are asked only when the competition is genuinely changing. Loading
    the one you are already on re-pulls, which is the only thing it could
    sensibly mean. */
+/* Show the refresh button only when the boxes still name the competition the
+   league is on -- refreshing means re-reading THAT one -- and say how stale
+   its squads are. Called on every admin render and whenever a box changes. */
+function syncCompRefresh() {
+  const curComp = leagueCompetition();
+  const onCur = !!curComp && +$("adm-comp-select").value === curComp.apiLeagueId
+    && +$("adm-comp-season").value === curComp.season;
+  $("adm-comp-refresh")?.classList.toggle("hidden", !onCur);
+  $("adm-comp-refresh-note")?.classList.toggle("hidden", !onCur);
+  const ageEl = $("adm-comp-age");
+  if (ageEl) {
+    const age = onCur ? poolAge(S._compPool?.updated_at, Date.now()) : null;
+    ageEl.textContent = age ? age.text : "";
+    ageEl.classList.toggle("hidden", !age);
+    ageEl.classList.toggle("text-amber-300", !!age?.stale);
+    ageEl.classList.toggle("text-slate-400", !age?.stale);
+  }
+}
+
 async function loadCompetition(opts = {}) {
   const apiKey = $("adm-api-key").value.trim();
   const apiLeagueId = +$("adm-comp-select").value;
@@ -15971,7 +16005,7 @@ async function loadCompetition(opts = {}) {
     const existing = await S.sb.from("competition_pools").select("*")
       .eq("competition_key", compKey).maybeSingle();
     if (existing.error) throw new Error(existing.error.message);
-    let players, fixtures, roundOrder = [];
+    let players, fixtures, roundOrder = [], dup = [];
     if (!refreshing && existing.data?.players?.length &&
         confirm(`${name} ${season} is already loaded (${existing.data.players.length} players shared across leagues). Reuse it without re-pulling?  (Cancel = re-pull fresh squads from the API.)`)) {
       players = existing.data.players;
@@ -15985,6 +16019,7 @@ async function loadCompetition(opts = {}) {
       const built = await fetchPoolFor(competition, apiKey,
         (d, t, tm) => log(`Loading squads ${d}/${t} — ${tm}`));
       players = built.players;
+      dup = built.dup || [];
       if (!players.length) throw new Error("No players returned — check the season for this competition.");
       log(`${players.length} players across ${built.teams.length} teams. Fetching fixtures…`);
       fixtures = built.fixtures;
@@ -16009,6 +16044,12 @@ async function loadCompetition(opts = {}) {
     applyPoolOverrides();
     S.fixtures = fixtures;
     const lines = [];
+    if (dup.length) {
+      lines.push(`${dup.length} player${dup.length === 1 ? " is" : "s are"} in two squads at once`
+        + " — the feed has not finished moving them, so the first club listed is used:");
+      for (const d of dup.slice(0, 8)) lines.push(`  ${d.name}: kept ${d.kept}, also listed at ${d.also}`);
+      if (dup.length > 8) lines.push(`  …and ${dup.length - 8} more`);
+    }
     if (sameComp && S.picks.length) {
       const rec = await reconcilePicksToPool(players, null);
       // rec.moves is the list captured BEFORE the writes — recomputing here
@@ -16024,6 +16065,17 @@ async function loadCompetition(opts = {}) {
         lines.push("Position changed upstream (left as drafted — the quota and every"
           + " settled round were built on the old one):");
         for (const r of rec.repositioned) lines.push(`  ${r.name}: ${r.from} → ${r.to}`);
+      }
+      /* Somebody's pick is no longer in the competition at all -- sold abroad,
+         or dropped from every squad. reconcile skips them on purpose (their
+         club is the last one they actually played for, and blanking it would
+         strand their stat rows), and they wear a ✈ LEFT badge everywhere
+         afterwards. But the refresh said nothing, so the one case where a
+         manager most needs to act read exactly like nothing had happened. */
+      if (rec.gone.length) {
+        lines.push(`${rec.gone.length} squad player${rec.gone.length === 1 ? "" : "s"} `
+          + "no longer in this competition — they cannot score again, and are marked ✈ LEFT:");
+        for (const g of rec.gone) lines.push(`  ${g.name} (was ${g.team})`);
       }
     }
     /* One write, at the end. The transfer list used to be logged and then
@@ -17397,31 +17449,39 @@ function renderAdmin() {
   renderConfigEditor();
   renderPositionEditor();
   renderPoolEditor();
-  // Competition selector + current-pool status.
+  // Competition selector + current-pool status.  (see syncCompRefresh)
   if (!$("adm-comp-select").options.length)
     $("adm-comp-select").innerHTML = competitionsFor().map((c) =>
       `<option value="${c.apiLeagueId}">${esc(c.name)}</option>`).join("");
-  if (!$("adm-comp-season").value) $("adm-comp-season").value = new Date().getFullYear();
   const curComp = leagueCompetition();
-  if (curComp) $("adm-comp-select").value = curComp.apiLeagueId;
+  /* The competition and season boxes follow the league, not the calendar --
+     but ONCE, not on every render.
+
+     The season only ever defaulted to the current YEAR, and nothing set it
+     from the competition the league is actually on, so a league on the 2025/26
+     season (API season key 2025) showed 2026 the moment the year turned. Two
+     consequences, both silent: "Load competition from API" then re-points the
+     league at a season with no pool and no stats, and a refresh is not a
+     refresh at all -- sameComp is false, so the transfer reconcile is skipped
+     entirely. Reported from the app: "there are still no transfers coming
+     through".
+
+     Seeded once per league because re-applying it on every pass would undo an
+     admin typing a new season, or picking a different competition, before they
+     could press anything. */
+  if (S._compSeeded !== S.league?.id) {
+    if (curComp) {
+      $("adm-comp-select").value = curComp.apiLeagueId;
+      $("adm-comp-season").value = curComp.season;
+    } else if (!$("adm-comp-season").value) {
+      $("adm-comp-season").value = new Date().getFullYear();
+    }
+    S._compSeeded = S.league?.id;
+  }
   $("adm-comp-current").textContent = curComp
     ? `Current: ${curComp.name} ${curComp.season} — ${S.players.length} players`
     : "Current: built-in World Cup 2026 squads";
-  /* Refresh only means something once there is a competition to refresh, and
-     it re-reads the one the league is ON -- so it also has to follow the
-     select back if somebody has changed it to look at another. */
-  const onCur = !!curComp && +$("adm-comp-select").value === curComp.apiLeagueId
-    && +$("adm-comp-season").value === curComp.season;
-  $("adm-comp-refresh")?.classList.toggle("hidden", !onCur);
-  $("adm-comp-refresh-note")?.classList.toggle("hidden", !onCur);
-  const ageEl = $("adm-comp-age");
-  if (ageEl) {
-    const age = curComp ? poolAge(S._compPool?.updated_at, Date.now()) : null;
-    ageEl.textContent = age ? age.text : "";
-    ageEl.classList.toggle("hidden", !age);
-    ageEl.classList.toggle("text-amber-300", !!age?.stale);
-    ageEl.classList.toggle("text-slate-400", !age?.stale);
-  }
+  syncCompRefresh();
   // The line-up probe is a rugby question, so it only appears for a rugby league.
   $("adm-lineups-wrap")?.classList.toggle("hidden", sportOf() !== "rugby");
   renderScheduleManager();
@@ -17951,11 +18011,12 @@ function wire() {
   $("adm-comp-load").onclick = () => loadCompetition().catch((e) => toast(e.message));
   const cref = $("adm-comp-refresh");
   if (cref) cref.onclick = () => loadCompetition({ refresh: true }).catch((e) => toast(e.message));
-  // The refresh button belongs to the competition the league is on, so it has
-  // to come and go with the select rather than only on a full admin render.
+  /* The refresh button belongs to the competition the league is ON, so it has
+     to come and go as the boxes change. Only that -- a full renderAdmin here
+     would re-seed the very inputs the admin is typing into. */
   for (const id of ["adm-comp-select", "adm-comp-season"]) {
     const el = $(id);
-    if (el) el.addEventListener("change", () => renderAdmin());
+    if (el) el.addEventListener("input", syncCompRefresh);
   }
   $("adm-pos-q").oninput = () => { S._posQ = $("adm-pos-q").value; renderPositionEditor(); };
   $("adm-pos-guess").onclick = () => { S._posGuessOnly = !S._posGuessOnly; renderPositionEditor(); };
