@@ -6144,7 +6144,22 @@ function roundRecap(round, leagueRound, h2h) {
   const scored = (round.items || []).filter((it) => it.pts != null);
   const starters = scored.filter((it) => !it.entry.is_sub);
   const bench = scored.filter((it) => it.entry.is_sub);
+  /* What a player EARNED, as against what counted for you. Older callers pass
+     items with only `pts`, where the two are the same thing. */
+  const got = (it) => it.scored ?? it.pts ?? 0;
+  /* Best pick = who earned you the most, so this is the counted figure with
+     the armband already in it -- that is the number on your total.
+
+     Quietest starter = who did the least, which is a different question and
+     wants the opposite number. It also excludes anyone who never turned out:
+     a starter whose bench cover came on was not quiet, he was absent, and it
+     cost you nothing. Naming him is how the card came to report a man at 0
+     while somebody who actually played 90 minutes did less. */
+  const out = new Set(round.missed || []);
+  const turnedOut = starters.filter((it) => !out.has(it.entry.player_id));
   const ranked = starters.slice().sort((a, b) => (b.pts || 0) - (a.pts || 0));
+  const quiet = (turnedOut.length ? turnedOut : starters).slice()
+    .sort((a, b) => got(a) - got(b));
   const all = Object.values(leagueRound || {});
   const score = round.subtotal || 0;
   return {
@@ -6154,8 +6169,18 @@ function roundRecap(round, leagueRound, h2h) {
     of: all.length,
     avg: all.length ? all.reduce((a, b) => a + b, 0) / all.length : 0,
     best: ranked[0] || null,
-    worst: ranked.length > 1 ? ranked[ranked.length - 1] : null,
-    benchPts: bench.reduce((s, it) => s + (it.pts || 0), 0),
+    worst: quiet.length > 1 ? quiet[0] : null,
+    // The number each of them is shown with, since the two answer different
+    // questions: what he banked you, and what he did.
+    bestPts: ranked[0] ? (ranked[0].pts || 0) : 0,
+    worstPts: quiet.length > 1 ? got(quiet[0]) : 0,
+    /* Points LEFT on the bench: what your substitutes earned that did NOT
+       count for you. A sub who came on banked his points, so he left nothing;
+       one who sat there left all of his. This used to sum the counted figure,
+       which is the same list with the answer inverted -- it reported the bench
+       as having left 1 point when it had left 27. */
+    benchPts: bench.reduce((s, it) =>
+      s + (it.counted ? 0 : Math.max(0, got(it) - (it.pts || 0))), 0),
     result: h2h ? (h2h.mine > h2h.theirs ? "W" : h2h.mine < h2h.theirs ? "L" : "D") : null,
     h2h: h2h || null,
   };
@@ -7327,9 +7352,17 @@ function managerHistory(mgrId) {
      the round view would still draw them on the bench with no hint they had
      come on. Recording it costs nothing and is what the pitch reads below. */
   const countedByRnd = {};
+  /* What each player actually EARNED that round, whether or not it counted for
+     you. periodPts holds the counted figure -- the one the subtotal is made of
+     -- and that is the only number the round view had. So "points left on the
+     bench" was reading the points your bench BANKED (a sub who came on) rather
+     than the ones you left there, which is the opposite of the question.
+     Reported from the app: "1 points left" against a bench that had 27. */
+  const rawByRnd = {};
   const matchPoints = (roster, label, rnd) => {
     const starters = roster.filter((e) => !e.is_sub && e.position !== "TEAM");
     const counted = rnd >= 1 ? (countedByRnd[rnd] ||= new Set()) : null;
+    const raw = rnd >= 1 ? (rawByRnd[rnd] ||= {}) : null;
     const out = {};
     for (const entry of roster) {
       if (entry.position === "TEAM") continue;
@@ -7352,6 +7385,7 @@ function managerHistory(mgrId) {
       }
       // Counting is not the same as scoring: a player who counts can score 0.
       if (did) { pts = scored; counted?.add(entry.player_id); }
+      if (raw) raw[entry.player_id] = (raw[entry.player_id] || 0) + scored;
       out[entry.player_id] = (out[entry.player_id] || 0) + pts;
     }
     return out;
@@ -7493,8 +7527,15 @@ function managerHistory(mgrId) {
       const pts = periodPts[rnd] || {};
       const shown = periodRoster[rnd] || [];
       const have = new Set(shown.map((e) => e.player_id));
+      const earned = rawByRnd[rnd] || {};
+      const did = countedByRnd[rnd] || new Set();
+      /* `pts` is what counted for you; `scored` is what the player earned. They
+         differ for exactly the people the recap is about -- a bench player who
+         never came on, whose points are the ones you left behind. */
       const roundItems = shown.map((e) => ({
         entry: e, pts: e.position === "TEAM" ? null : (pts[e.player_id] || 0),
+        scored: e.position === "TEAM" ? null : (earned[e.player_id] || 0),
+        counted: did.has(e.player_id),
       }));
       /* Anyone who scored this round but is not in the roster we are showing --
          traded away mid-week, or replaced at a waiver close. Without them the
@@ -7504,13 +7545,14 @@ function managerHistory(mgrId) {
         if (have.has(pid) || !pts[pid]) continue;
         const pl = S.playerById[pid] || { name: pid, position: "", team: "" };
         roundItems.push({ entry: { player_id: pid, player_name: pl.name,
-          position: pl.position, team: pl.team, slot: "—", is_sub: false }, pts: pts[pid] });
+          position: pl.position, team: pl.team, slot: "—", is_sub: false },
+          pts: pts[pid], scored: earned[pid] || pts[pid], counted: true });
       }
       /* Who came up off the bench, and which starters did not turn out. The
          round view draws the squad that actually played rather than the one
          that was named, which is the difference between "Kelleher: 7" sitting
          on the bench and Kelleher on the pitch with a ▲ against him. */
-      const counted = countedByRnd[rnd] || new Set();
+      const counted = did;
       const cameOn = shown.filter((e) => e.is_sub && counted.has(e.player_id))
         .map((e) => e.player_id);
       const missed = shown
@@ -9357,13 +9399,13 @@ function openRecap() {
       <div class="text-xs text-slate-400">${label}</div>
       <div class="text-lg font-bold text-slate-100">${val}</div>
       ${sub ? `<div class="text-xs text-slate-400">${sub}</div>` : ""}</div>`;
-    const pick = (it, label) => it ? `<div class="flex items-center gap-2 rounded-lg bg-slate-800/40 px-2 py-1.5">
+    const pick = (it, label, val) => it ? `<div class="flex items-center gap-2 rounded-lg bg-slate-800/40 px-2 py-1.5">
       ${avatarHtml(it.entry.player_id, it.entry.team, "w-7 h-7")}
       <div class="min-w-0 flex-1">
         <div class="text-xs text-slate-400">${label}</div>
         <div class="text-sm truncate">${esc(it.entry.player_name)}</div>
       </div>
-      <div class="font-mono font-bold ${(it.pts || 0) >= 0 ? "text-wcgold" : "text-red-400"}">${it.pts ?? 0}</div>
+      <div class="font-mono font-bold ${val >= 0 ? "text-wcgold" : "text-red-400"}">${val}</div>
     </div>` : "";
     const res = r.result
       ? `<div class="rounded-xl border ${r.result === "W" ? "border-emerald-500/60 bg-emerald-500/10"
@@ -9384,7 +9426,7 @@ function openRecap() {
         ${one("League avg", Math.round(r.avg), r.score >= r.avg ? "you beat it" : "below")}
         ${one("On the bench", r.benchPts, "points left")}
       </div>
-      <div class="space-y-1.5">${pick(r.best, "Best pick")}${pick(r.worst, "Quietest starter")}</div>
+      <div class="space-y-1.5">${pick(r.best, "Best pick", r.bestPts)}${pick(r.worst, "Quietest starter", r.worstPts)}</div>
       <button id="recap-share" class="w-full rounded-lg border border-wcgold/60 text-wcgold py-2 text-sm font-semibold">📤 Share this round</button>`;
     setTimeout(() => {
       const sb = document.getElementById("recap-share");
@@ -9428,7 +9470,7 @@ async function shareRecap() {
   }
   centre(`Rank ${r.rank} of ${r.of} this round · league average ${Math.round(r.avg)}`,
     720, "500 32px system-ui, sans-serif", "#cbd5e1");
-  if (r.best) centre(`Best pick: ${r.best.entry.player_name} (${r.best.pts})`,
+  if (r.best) centre(`Best pick: ${r.best.entry.player_name} (${r.bestPts})`,
     790, "600 34px system-ui, sans-serif", "#e2e8f0");
   centre(`${r.benchPts} points left on the bench`, 850, "500 30px system-ui, sans-serif", "#94a3b8");
   centre("DraftBaron", Hh - 70, "700 30px system-ui, sans-serif", "#FFC72C");

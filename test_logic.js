@@ -754,18 +754,46 @@ S.league = {};
   check("roundup: empty input is safe", transferRoundup([]), []);
 }
 
-/* Round recap: the results moment, composed from one round's items. */
+/* Round recap: the results moment, composed from one round's items.
+
+   Two numbers live on every item: `pts`, what counted for you, and `scored`,
+   what the player actually earned. They differ for exactly the people this
+   card is about -- a substitute who never came on, whose points are the ones
+   you left behind. */
 {
-  const it = (name, pts, sub) => ({ entry: { player_id: "p" + name, player_name: name, is_sub: !!sub }, pts });
+  const it = (name, pts, sub, scored) => ({
+    entry: { player_id: "p" + name, player_name: name, is_sub: !!sub },
+    pts, scored: scored == null ? pts : scored, counted: pts > 0 });
   const round = { n: 7, subtotal: 41,
-    items: [it("Saka", 22), it("Rice", 5), it("Raya", 14), it("Sub A", 9, true), it("TEAM", null)] };
+    items: [it("Saka", 22), it("Rice", 5), it("Raya", 14),
+            // Came on, so his 9 counted and he left nothing behind...
+            it("Sub A", 9, true),
+            // ...while this one sat there with 18 of his own.
+            it("Sub B", 0, true, 18), it("TEAM", null)] };
   const league = { me: 41, a: 55, b: 30, c: 20 };
   const r = roundRecap(round, league, { oppName: "Sam", mine: 41, theirs: 30 });
   check("recap: score + round rank", [r.n, r.score, r.rank, r.of], [7, 41, 2, 4]);
   check("recap: league average", Math.round(r.avg), 37);
   check("recap: best starter", r.best.entry.player_name, "Saka");
+  check("recap: ...shown with what he banked you", r.bestPts, 22);
   check("recap: quietest starter", r.worst.entry.player_name, "Rice");
-  check("recap: points left on the bench", r.benchPts, 9);
+  check("recap: ...shown with what he actually did", r.worstPts, 5);
+  check("recap: points left on the bench are the ones that did NOT count",
+    r.benchPts, 18);
+  /* A starter who never turned out is not the quietest man on the pitch -- his
+     cover came on and it cost nothing. Naming him is how the card reported a
+     0 while somebody who played ninety minutes had done less. */
+  check("recap: an absent starter is not the quietest",
+    roundRecap({ ...round, missed: ["pGhost"],
+      items: [...round.items, it("Ghost", 0)] }, league, null).worst.entry.player_name,
+    "Rice");
+  check("recap: ...but if nobody turned out, one of them is still named",
+    roundRecap({ n: 7, subtotal: 0, missed: ["pRice", "pSaka"],
+      items: [it("Saka", 0), it("Rice", 0)] }, league, null).worst.entry.player_name,
+    "Saka");
+  check("recap: a starter who played is still ranked by what he did",
+    roundRecap({ ...round, items: [...round.items, it("Cameo", 0, false, 1)] },
+      league, null).worst.entry.player_name, "Cameo");
   check("recap: head-to-head win", r.result, "W");
   check("recap: no h2h → no result", roundRecap(round, league, null).result, null);
   check("recap: a draw reads as a draw",

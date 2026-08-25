@@ -3878,3 +3878,63 @@ test("a squads re-pull cannot reclassify a player somebody has drafted",
   expect(seen.inList, "the same player is worth two different totals")
     .toBe(seen.onPitch);
 });
+
+test("the recap counts the points you LEFT on the bench, not the ones it banked",
+  async ({ page }) => {
+  /* Every round item carries two numbers: `pts`, what counted for you, and
+     `scored`, what the player earned. The card read `pts` for the bench --
+     which is zero for anyone who never came on, and the full amount for a sub
+     who did. So it reported the points your bench BANKED as the points you
+     left there. Reported from the app: "1 points left" against a bench that
+     had 27 on it. */
+  await openLeague(page, { managers: 4, played: 2 });
+  const r = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    const h = managerHistory(myManager().id);
+    const round = h.rounds[h.rounds.length - 1];
+    const bench = round.items.filter((it) => it.entry.is_sub);
+    return {
+      n: round.n,
+      benchPts: myRecap().benchPts,
+      // Nobody was absent in this seed, so no sub came on and every bench
+      // point is a point left behind.
+      cameOn: round.cameOn.length,
+      benchScored: bench.reduce((s, it) => s + (it.scored || 0), 0),
+      benchCounted: bench.reduce((s, it) => s + (it.pts || 0), 0),
+      shape: bench.map((it) => [it.scored, it.pts, it.counted]),
+    };
+  });
+  expect(r.cameOn, "a sub came on, so this seed cannot test what was left").toBe(0);
+  expect(r.benchScored, "the bench scored nothing at all — nothing to leave")
+    .toBeGreaterThan(0);
+  expect(r.benchCounted, "an unused bench somehow counted for something").toBe(0);
+  expect(r.benchPts, "the recap is still reading the counted figure")
+    .toBe(r.benchScored);
+  // ...and the two numbers really are carried separately, not aliased.
+  expect(r.shape.some(([sc, pts]) => sc !== pts),
+    "scored and pts are the same number, so nothing was actually measured")
+    .toBe(true);
+
+  /* ...and a starter who never turned out is not the quietest man on the
+     pitch. His cover came on and it cost nothing; naming him reported a 0
+     while somebody who played ninety minutes had done less. */
+  const seed = await openLeague(page, { managers: 4, played: 2, missingStarters: 2 });
+  const q = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    const h = managerHistory(myManager().id);
+    const round = h.rounds[h.rounds.length - 1];
+    const rc = myRecap();
+    return { missed: round.missed, worst: rc.worst.entry.player_id,
+             cameOn: round.cameOn };
+  });
+  expect(q.missed, "the seed's absentees never reached the round")
+    .toEqual(seed.absent);
+  expect(q.cameOn.length, "nobody came on, so nothing was covered")
+    .toBeGreaterThan(0);
+  expect(q.missed, "an absent starter is being called the quietest")
+    .not.toContain(q.worst);
+});
