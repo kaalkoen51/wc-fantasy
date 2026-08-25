@@ -390,14 +390,33 @@ declare
     a picks%rowtype;
     b picks%rowtype;
     v_open boolean;
+    v_auto boolean;
 begin
-    -- Window guard: a pending proposal can only be accepted while the league's
-    -- trading window is open. Mirrors the client check so a stale/raced tab
-    -- can't slip an acceptance through after the admin closes trading.
-    select l.trading_open into v_open
+    /* Window guard: a pending proposal can only be accepted while the league's
+       trading window is open. Mirrors the client check so a stale or raced tab
+       cannot slip an acceptance through after the admin closes trading.
+
+       MANUAL LEAGUES ONLY, and that is a real limit rather than an oversight.
+       `trading_open` is the manual toggle. An auto-window league never writes
+       it -- its window is arithmetic over the fixture list, recomputed in the
+       client every minute -- so the column sits at its creation default of
+       false for the life of the league and this guard refused EVERY trade.
+       Proved against a real engine in test/sql/trades.sql, which is why that
+       file exists.
+
+       What auto leagues are left with is the client check, and it is worth
+       being precise about how strong that is: tradingOpen() is derived from
+       the fixture list and the clock, not from a flag fetched at page load, so
+       a tab that has been open for three days still knows the window has shut.
+       It is not a stale-state hole. It is an unauthenticated-request hole, and
+       closing that properly means teaching this function to group fixtures
+       into matchweeks -- the same arithmetic fixtureWindows() does -- which is
+       a bigger change than the one that unblocks a live league today. */
+    select l.trading_open, coalesce((l.config->>'autoWindows')::boolean, false)
+      into v_open, v_auto
         from trades t join leagues l on l.id = t.league_id
         where t.id = p_trade_id;
-    if v_open is distinct from true then
+    if not v_auto and v_open is distinct from true then
         raise exception 'the trading window is closed';
     end if;
     update trades set status = 'accepted', updated_at = now()

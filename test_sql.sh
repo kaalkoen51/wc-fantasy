@@ -70,4 +70,7 @@ step "rls.sql again (it claims to be idempotent)"
 step "settlement claim semantics"
 "${PSQL[@]}" -f "$ROOT/test/sql/rounds.sql"
 
+step "accept_trade window guard"
+"${PSQL[@]}" -f "$ROOT/test/sql/trades.sql"
+
 echo "all sql checks passed"

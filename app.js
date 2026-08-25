@@ -13907,6 +13907,16 @@ function swapOrClaim(pick, entry) {
 async function submitFaClaim(pick, entry) {
   const me = myManager();
   if (!me) return toast("Join as a manager first.");
+  /* Re-checked HERE, not only where the sheet was opened.
+
+     openSwap() gates on the window, but the gate ran when the sheet opened and
+     nothing looked again when it was confirmed. Leave the picker sitting open
+     over the deadline -- put the phone down, come back to it -- and the claim
+     queued into a window that had already shut, which nobody would ever see
+     happen. doSwap has always re-checked on its own terms for exactly this
+     reason; this is the other half of the same rule. */
+  if (!tradingOpen()) return toast(autoWindowsEnabled()
+    ? tradeWindowMessage() : "Trading window is closed.");
   const mine = myClaims();
   const rank = mine.length ? Math.max(...mine.map((c) => c.rank)) + 1 : 0;
   const { error } = await S.sb.from("fa_claims").insert({

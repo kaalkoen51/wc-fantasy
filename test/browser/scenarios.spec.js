@@ -4178,3 +4178,39 @@ test("the squad check says what the stored pool actually holds", async ({ page }
   expect(seen.missing, "an empty result reads as a broken box")
     .toContain("has left the competition");
 });
+
+test("a claim confirmed after the deadline does not queue", async ({ page }) => {
+  /* openSwap() gates on the window, but that gate ran when the sheet OPENED
+     and nothing looked again when it was confirmed. Leave the picker sitting
+     open over the deadline -- put the phone down, come back to it -- and the
+     claim queued into a window that had already shut, which nobody would ever
+     see happen. */
+  await openLeague(page, { managers: 4, played: 2 });
+  const at = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    return fixtureWindows(S.fixtures, Date.now(), cfgOf().windows || {}).tradeWindow.closeAt;
+  });
+  const before = await page.evaluate(() => ({
+    open: tradingOpen(), claims: (S.faClaims || []).length }));
+  expect(before.open, "the seed is not mid-window, so this proves nothing").toBe(true);
+
+  // The deadline passes while the picker is open. Nothing is refetched — this
+  // is the tab that has been sitting there, which is the whole point.
+  await page.clock.setFixedTime(new Date(at + 60e3));
+  const after = await page.evaluate(async () => {
+    const me = myManager();
+    const pick = managerPicks(me.id).find((p) => !p.is_sub && p.slot !== "TEAM");
+    const owned = new Set(S.picks.map((p) => p.player_id));
+    const free = S.players.find((p) => !owned.has(p.player_id) && p.position === pick.position);
+    await submitFaClaim(pick, free);
+    return { open: tradingOpen(), claims: (S.faClaims || []).length,
+             rows: window.__db.tables.fa_claims.length };
+  });
+  /* The window closing is arithmetic on the fixture list and the clock, so an
+     un-refreshed tab still knows -- that is what makes this checkable at all. */
+  expect(after.open, "a tab that has not refetched still thinks the window is open")
+    .toBe(false);
+  expect(after.rows, "a claim was queued after the window shut").toBe(0);
+});
