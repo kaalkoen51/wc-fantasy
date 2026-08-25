@@ -703,14 +703,17 @@ async function fetchCompetitionPool(key, apiLeagueId, season, onProgress) {
   if (!teams.length) throw new Error("No teams found — check the competition and season.");
   const byId = {};
   const names = [];
-  /* A player listed in two clubs' squads at once. The feed does this around a
-     transfer -- the new club has him and the old one has not dropped him yet
-     -- and the dedup below quietly kept whichever club came back FIRST, which
-     is team order, not recency. So a transfer could be in the data and still
-     not reach the app, with nothing anywhere saying a choice had been made.
-     First still wins, because nothing in a squad row says which is newer; the
-     difference is that the conflict is now reported. */
-  const dup = [];
+  /* A player listed in two clubs' squads at once. This is exactly what the
+     feed looks like around a transfer: the new club has him and the old one
+     has not dropped him yet. Team order then decided it -- first one wins --
+     which is not recency and not anything, so a transfer could be right there
+     in the data and still never reach the app. Observed live: "T. Awoniyi:
+     kept Nottingham Forest, also listed at Coventry" on a pull where the app
+     also reported that nobody had changed club.
+
+     Collected here with both clubs' API ids, and settled below by asking what
+     his transfer history says. */
+  const clash = {};
   let done = 0;
   for (const t of teams) {
     const teamName = decodeEntities(t.team.name), code = teamCodeFrom(teamName, t.team.code);
@@ -720,11 +723,56 @@ async function fetchCompetitionPool(key, apiLeagueId, season, onProgress) {
     for (const ap of (squads[0]?.players || [])) {
       const p = parseSquadPlayer(ap, teamName, code, t.team.id);
       if (!byId[p.player_id]) byId[p.player_id] = p;
-      else if (byId[p.player_id].team !== teamName)
-        dup.push({ name: p.name, kept: byId[p.player_id].team, also: teamName });
+      else if (byId[p.player_id].team !== teamName) {
+        const c = (clash[p.player_id] ||= { apiId: ap.id, name: p.name, options: [] });
+        if (!c.options.length) c.options.push({ teamId: byId[p.player_id].team_logo,
+                                                team: byId[p.player_id].team, entry: byId[p.player_id] });
+        c.options.push({ teamId: t.team.id, team: teamName, entry: p });
+      }
     }
   }
+  const dup = await resolveSquadClashes(key, Object.values(clash), byId, onProgress);
   return { players: Object.values(byId), teams: [...new Set(names)].sort(), dup };
+}
+
+/* Which club a player actually plays for now, out of the ones whose squads
+   both list him -- read off his transfer history rather than guessed.
+
+   The newest transfer INTO one of the candidate clubs is the answer. Matching
+   on the API's team id rather than the club's name, because the name arrives
+   spelled two different ways often enough that this is the kind of comparison
+   that silently never matches. Pure. */
+function pickCurrentClub(transfers, options) {
+  const byTeam = new Map((options || []).map((o) => [o.teamId, o]));
+  const rows = (transfers || [])
+    .filter((t) => t?.teams?.in?.id != null && byTeam.has(t.teams.in.id))
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+  return rows.length ? byTeam.get(rows[0].teams.in.id) : null;
+}
+
+/* Settle each clash, one cheap call each -- there was exactly one in a whole
+   Premier League pull, so this is not a per-player cost.
+
+   Swallows its own failure: the transfers endpoint may not be in the proxy's
+   allow-list yet, and a pull that died because an optional lookup 404'd would
+   lose all six hundred squads with it. Unresolved means first-listed stands,
+   which is the behaviour this replaces, and the report says which happened. */
+async function resolveSquadClashes(key, clashes, byId, onProgress) {
+  const out = [];
+  for (const c of clashes) {
+    onProgress && onProgress(null, null, `checking ${c.name}'s transfer history`);
+    let picked = null;
+    try {
+      const r = await apiFootball(key, "transfers", { player: c.apiId });
+      picked = pickCurrentClub(r?.[0]?.transfers, c.options);
+    } catch { picked = null; }
+    const kept = byId[c.options[0].entry.player_id]?.team;
+    if (picked && picked.entry) byId[picked.entry.player_id] = picked.entry;
+    out.push({ name: c.name, kept: picked ? picked.team : kept,
+               also: c.options.map((o) => o.team).filter((t) => t !== (picked ? picked.team : kept)).join(", "),
+               resolved: !!picked });
+  }
+  return out;
 }
 async function fetchCompetitionFixtures(key, apiLeagueId, season) {
   return (await apiFootball(key, "fixtures", { league: apiLeagueId, season })).map(parseApiFixture);
@@ -16070,8 +16118,11 @@ async function loadCompetition(opts = {}) {
     const lines = [];
     if (dup.length) {
       lines.push(`${dup.length} player${dup.length === 1 ? " is" : "s are"} in two squads at once`
-        + " — the feed has not finished moving them, so the first club listed is used:");
-      for (const d of dup.slice(0, 8)) lines.push(`  ${d.name}: kept ${d.kept}, also listed at ${d.also}`);
+        + " — which is what the feed looks like mid-transfer:");
+      for (const d of dup.slice(0, 8)) lines.push(`  ${d.name}: ${d.kept}`
+        + (d.also ? ` (also listed at ${d.also})` : "")
+        + (d.resolved ? " — from his transfer history"
+                      : " — could not check his transfers, so first listed stands"));
       if (dup.length > 8) lines.push(`  …and ${dup.length - 8} more`);
     }
     if (sameComp && S.picks.length) {

@@ -4020,7 +4020,8 @@ test("refreshing the competition applies a real-world transfer, and asks nothing
       // The leaver is in nobody's squad; the other is in two, old club first.
       players: S.players.filter((p) => p.player_id !== leaver.player_id),
       teams: S.teams, fixtures: S.fixtures, roundOrder: [],
-      dup: [{ name: twoClubs.player_name, kept: twoClubs.team, also: elsewhere }] });
+      dup: [{ name: twoClubs.player_name, kept: twoClubs.team, also: elsewhere,
+              resolved: false }] });
     await loadCompetition({ refresh: true });
     return { leaver: leaver.player_name, leaverClub: leaver.team,
       dupName: twoClubs.player_name, kept: twoClubs.team, also: elsewhere,
@@ -4033,7 +4034,9 @@ test("refreshing the competition applies a real-world transfer, and asks nothing
     .toContain(`${quiet.leaver} (was ${quiet.leaverClub})`);
   expect(quiet.log).toContain("no longer in this competition");
   expect(quiet.log, "the feed contradicting itself is still silent")
-    .toContain(`${quiet.dupName}: kept ${quiet.kept}, also listed at ${quiet.also}`);
+    .toContain(`${quiet.dupName}: ${quiet.kept} (also listed at ${quiet.also})`);
+  expect(quiet.log, "an unchecked clash does not say it went unchecked")
+    .toContain("could not check his transfers");
   // He keeps his pick and his club — blanking it would strand his stat rows —
   // and wears the badge that says he cannot score.
   expect(quiet.stillThere, "the leaver was dropped from the squad").toBe(true);
@@ -4047,6 +4050,11 @@ test("refreshing the competition applies a real-world transfer, and asks nothing
       if (path === "teams") return [
         { team: { id: 1, name: "Old Club", code: "OLD" } },
         { team: { id: 2, name: "New Club", code: "NEW" } }];
+      /* His history says he moved to the new club last week. Team 1 is listed
+         first by `teams`, so first-wins would keep the old one. */
+      if (path === "transfers") return [{ transfers: [
+        { date: "2024-07-01", teams: { in: { id: 1 }, out: { id: 99 } } },
+        { date: "2026-08-14", teams: { in: { id: 2 }, out: { id: 1 } } }] }];
       // The mover is on both lists; only the new club has the debutant.
       return params.team === 1
         ? [{ players: [{ id: 7, name: "Mover", position: "Midfielder", number: 7 }] }]
@@ -4059,10 +4067,28 @@ test("refreshing the competition applies a real-world transfer, and asks nothing
       moverAt: out.players.find((p) => p.player_id === "api_7").team };
   });
   expect(built.count, "the dedup dropped or duplicated somebody").toBe(2);
-  expect(built.moverAt, "first club listed no longer wins, so the rule changed")
-    .toBe("Old Club");
-  expect(built.dup, "a player in two squads at once is not being noticed")
-    .toEqual([{ name: "Mover", kept: "Old Club", also: "New Club" }]);
+  /* The transfer history settles it, so the club the feed happens to list
+     FIRST does not. Observed live: "T. Awoniyi: kept Nottingham Forest, also
+     listed at Coventry", on the same pull that reported nobody had moved. */
+  expect(built.moverAt, "the old club still wins on team order").toBe("New Club");
+  expect(built.dup, "the clash is not reported, or not reported as settled")
+    .toEqual([{ name: "Mover", kept: "New Club", also: "Old Club", resolved: true }]);
+
+  // ...and when the transfers lookup cannot be had -- the proxy has not been
+  // redeployed with it -- the pull survives and says it could not check.
+  const blind = await page.evaluate(async () => {
+    const base = window.apiFootball;
+    window.apiFootball = async (k, path, params) => {
+      if (path === "transfers") throw new Error("Unsupported path: transfers");
+      return base(k, path, params);
+    };
+    const out = await fetchCompetitionPool("k", 39, 2026, null);
+    return { dup: out.dup, moverAt: out.players.find((p) => p.player_id === "api_7").team,
+             count: out.players.length };
+  });
+  expect(blind.count, "one optional lookup failing lost the whole pull").toBe(2);
+  expect(blind.moverAt, "with nothing to go on, first listed has to stand").toBe("Old Club");
+  expect(blind.dup[0].resolved, "an unchecked clash is being reported as settled").toBe(false);
 });
 
 test("the admin season box follows the league, not the calendar", async ({ page }) => {

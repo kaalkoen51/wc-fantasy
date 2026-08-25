@@ -35,6 +35,13 @@ const ALLOWED = new Set([
      kickoff -- which is the inference it was written to replace, because
      moving a knockout tie ahead of a group game reorders the season. */
   "fixtures/rounds",
+  /* Which club a player actually plays for now, when two squads both list
+     him. That is what the feed looks like around a transfer -- the new club
+     has him, the old one has not dropped him -- and without this the pool
+     builder settled it by team order, which is not recency and dropped real
+     transfers on the floor. Called only for the handful of players in
+     conflict, never per player. */
+  "transfers",
 ]);
 
 const CORS: Record<string, string> = {
