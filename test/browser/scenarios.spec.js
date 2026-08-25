@@ -3810,15 +3810,26 @@ test("the round recap can be opened, not only waited for", async ({ page }) => {
   expect(none, "a league with nothing to recap still offers a recap").toBe(false);
 });
 
-test("a league that has never resolved a waiver batch still shows its queue",
+test("waiver priority is the table, reset every window, whatever is stored",
   async ({ page }) => {
   await openLeague(page, { managers: 6, played: 2, h2h: true });
-  /* resetWaiverOrder() is called from the manual open-the-window tap only, and
-     that returns early in auto-window mode -- so managers.waiver_order stays
-     null for everyone until the first batch resolves, and the screen showed
-     nothing at all. Reported from the app: "I can't see the waiver order?". */
+  /* Two bugs in one rule. The order used to be READ from
+     managers.waiver_order, and the only thing that ever wrote it was
+     resetWaiverOrder(), called from the manual open-the-window tap -- which
+     returns early in auto-window mode. So an auto league's queue was null for
+     everyone and the screen had nothing to draw at all ("I can't see the waiver
+     order?"), and once a batch did write it, the queue would have frozen a
+     half-season-old table into place for good.
+
+     It is derived now: worst-placed first, off the table, every window. The
+     stored column is read by nobody, which is what this seeds a contradiction
+     into to prove. */
   const seen = await page.evaluate(() => {
-    for (const m of S.managers) m.waiver_order = null;
+    // Exactly the order the table does NOT give: best-placed first.
+    standingsOrder().forEach((id, i) => {
+      const m = S.managers.find((x) => x.id === id);
+      if (m) m.waiver_order = i;
+    });
     const name = (id) => S.managers.find((m) => m.id === id).name;
     const worstFirst = standingsOrder().slice().reverse().map(name);
     document.getElementById("reveal-sheet")?.classList.add("hidden");
@@ -3829,15 +3840,47 @@ test("a league that has never resolved a waiver batch still shows its queue",
     return { worstFirst,
       shown: [...box.querySelectorAll("details ol li")]
         .map((li) => /Mgr\d+/.exec(li.textContent)?.[0]),
-      unset: box.textContent.includes("priority set at window open"),
+      unset: box.textContent.includes("not in the league table yet"),
       mine: Number(/You're #(\d+)/.exec(box.textContent)?.[1]) };
   });
   expect(seen.shown.length, "the waiver queue is not on screen at all").toBe(6);
-  // Worst-placed first: the same rule processFaClaims resolves the batch with.
+  /* Worst-placed first — the same rule processFaClaims resolves with, and NOT
+     the contradictory order sitting in the column. */
   expect(seen.shown).toEqual(seen.worstFirst);
-  expect(seen.unset, "still promising a priority that never gets set").toBe(false);
+  expect(seen.unset, "your seat is being reported as undecided").toBe(false);
   expect(seen.mine, "your own seat disagrees with the list")
     .toBe(seen.worstFirst.indexOf("Mgr1") + 1);
+
+  /* ...and resolving a batch leaves nothing behind. A contested win reorders
+     the turns INSIDE the batch, which is what stops one manager taking
+     everything, but next window starts from the table again. */
+  const after = await page.evaluate(async () => {
+    const wrote = [];
+    const orig = S.sb.from.bind(S.sb);
+    S.sb.from = (t) => t === "managers"
+      ? { update: (v) => { wrote.push(v); return { eq: async () => ({}) }; } }
+      : orig(t);
+    const me = myManager(), other = activeManagers().find((m) => m.id !== me.id);
+    const owned = new Set(S.picks.map((p) => p.player_id));
+    const mine = managerPicks(me.id).find((p) => !p.is_sub && p.slot !== "TEAM");
+    const theirs = managerPicks(other.id).find((p) => p.position === mine.position && !p.is_sub);
+    // Both chasing the same free agent: a genuine contest.
+    const target = S.players.find((p) => !owned.has(p.player_id) && p.position === mine.position);
+    S.faClaims = [
+      { id: "q1", manager_id: me.id, rank: 0, status: "pending", pick_id: mine.id,
+        out_player_id: mine.player_id, in_player_id: target.player_id,
+        in_player_name: target.name, out_player_name: mine.player_name },
+      { id: "q2", manager_id: other.id, rank: 0, status: "pending", pick_id: theirs.id,
+        out_player_id: theirs.player_id, in_player_id: target.player_id,
+        in_player_name: target.name, out_player_name: theirs.player_name },
+    ];
+    await processFaClaims();
+    S.sb.from = orig;
+    return { wrote, name: (id) => id };
+  });
+  expect(after.wrote.some((v) => "waiver_order" in v),
+    "the batch wrote a waiver order back, so next window inherits this one")
+    .toBe(false);
 });
 
 test("a squads re-pull cannot reclassify a player somebody has drafted",

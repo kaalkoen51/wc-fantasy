@@ -5825,29 +5825,32 @@ function h2hTable(mgrIds, scoresByMgr, fixtures, cfg, placement) {
 
 /* ---------- waiver-order free-agent claims (mechanics-notes §1) ---------- */
 
-/* The waiver priority that will ACTUALLY be applied.
+/* The waiver priority for the window about to resolve: WORST-PLACED FIRST,
+   every window, derived from the table as it stands.
 
-   The stored `managers.waiver_order` where a manager has one, and
-   worst-placed-first for everyone who does not. That fallback is not new --
-   processFaClaims has always resolved with it -- but it lived inside the
-   resolver, so the SCREEN showed nothing until a batch had run. And
-   resetWaiverOrder(), the only thing that seeds the column, is called from the
-   manual open-the-window tap, which returns early in auto-window mode. So an
-   auto-window league had a null order for everyone, for good: no list, and
-   "priority set at window open" promising something that never happened.
-   Reported from the app: "I can't see the waiver order?".
+   It resets rather than rolls. Within a batch the order still shuffles -- win a
+   contested player and you go to the back, which is what stops one manager
+   taking everything -- but that shuffle belongs to the batch and dies with it.
+   Next window starts from the table again, so the side propping up the league
+   always has right of refusal.
 
-   One rule, read by both the screen and the resolver, so the order you are
-   shown is the order that runs.
-     ids        = [managerId, …]              who is in the running
-     stored     = { managerId: waiver_order } nulls simply absent
-     worstFirst = [managerId, …]              worst-placed first
+   Derived, never stored, and that is the point. `managers.waiver_order` used to
+   hold it, which meant the order was only as fresh as the last thing that wrote
+   the column -- and in an auto-window league nothing ever did, because
+   resetWaiverOrder() was called from the manual open-the-window tap and that
+   returns early in auto mode. So the queue was null for everyone, the screen
+   had nothing to draw, and the first batch to run would have frozen a
+   half-season-old table into place for good. Nothing to seed, nothing to
+   migrate, nothing to go stale: the column is left in the schema and read by
+   nobody.
+
+     ids        = [managerId, …]   who is in the running
+     worstFirst = [managerId, …]   worst-placed first
    Returns { order, ids } -- the map the resolver wants and the list the screen
    wants. Pure. */
-function waiverPriorityOrder(ids, stored, worstFirst) {
+function waiverPriorityOrder(ids, worstFirst) {
   const order = {};
-  for (const id of ids) if (stored?.[id] != null) order[id] = stored[id];
-  let maxo = Math.max(-1, ...Object.values(order));
+  let maxo = -1;
   const know = new Set(ids);
   for (const id of worstFirst || []) if (know.has(id) && order[id] == null) order[id] = ++maxo;
   // Anyone the standings do not mention at all still needs a place in the queue.
@@ -13988,21 +13991,12 @@ async function cancelClaim(id) {
   scheduleRefetch();
 }
 
-/* The live league's waiver priority, derived rather than read: see
-   waiverPriorityOrder. Every screen and the resolver go through here, so a
-   league that has never run a batch still shows a real queue. */
+/* The live league's waiver priority: see waiverPriorityOrder. Every screen and
+   the resolver go through here, so what you are shown is what runs -- and
+   because it is derived from the table each time, it follows the table right up
+   until the window shuts. */
 const waiverPriorityFor = (mgrs) => waiverPriorityOrder(
-  mgrs.map((m) => m.id),
-  Object.fromEntries(mgrs.filter((m) => m.waiver_order != null)
-    .map((m) => [m.id, m.waiver_order])),
-  standingsOrder().slice().reverse());
-
-// Seed waiver priority from reverse standings (worst-placed picks first = 0).
-async function resetWaiverOrder() {
-  const worstFirst = standingsOrder().slice().reverse();
-  await Promise.all(worstFirst.map((id, i) =>
-    S.sb.from("managers").update({ waiver_order: i }).eq("id", id)));
-}
+  mgrs.map((m) => m.id), standingsOrder().slice().reverse());
 
 // Resolve every queued claim at window close, in waiver priority (uses the pure
 // resolveFaClaims), applies awards to picks, and writes back the waiver order.
@@ -14012,7 +14006,10 @@ async function processFaClaims() {
   const { order } = waiverPriorityFor(S.managers);
   const taken = S.picks.map((p) => p.player_id);
   const holds = Object.fromEntries(S.picks.map((p) => [p.id, p.player_id]));
-  const { awards, failed, order: newOrder } =
+  /* The shuffled order the resolver returns is NOT written back. It is how the
+     turns were taken inside this batch, not a standing the next window
+     inherits -- priority resets to the table every window. */
+  const { awards, failed } =
     resolveFaClaims(pending, order, taken, maxFaPerWindow(), holds);
   // Same reason as saveLineup: pin the played rounds before the squads move.
   for (const mid of new Set(awards.map((c) => c.manager_id)))
@@ -14054,9 +14051,6 @@ async function processFaClaims() {
     await repairLineupFor(mid).catch(() => {});
   if (awards.length) await S.sb.from("fa_claims").update({ status: "awarded" }).in("id", awards.map((c) => c.id));
   if (failed.length) await S.sb.from("fa_claims").update({ status: "failed" }).in("id", failed);
-  for (const m of S.managers)
-    if (newOrder[m.id] != null && newOrder[m.id] !== m.waiver_order)
-      await S.sb.from("managers").update({ waiver_order: newOrder[m.id] }).eq("id", m.id);
   toast(`Waivers processed: ${awards.length} awarded, ${failed.length} failed.`);
 }
 
@@ -15331,18 +15325,20 @@ function wireClaimControls(box) {
 // Your queued waiver claims, in preference order, with reorder + cancel.
 function faClaimsSectionHtml(me) {
   const mine = myClaims();
-  /* Where you are in the queue that will actually run -- derived, not read off
-     the column, which is null until a league's first batch resolves. */
+  /* Where you are in the queue that will actually run -- derived from the
+     table, so it is right before a batch has ever run and it follows the table
+     until the window shuts. The fallback is for a manager the standings cannot
+     place at all, which is not the same as "not decided yet". */
   const seat = waiverPriorityFor(activeManagers()).ids.indexOf(me.id);
   const priority = seat >= 0
     ? `You're <b class="text-wcgold">#${seat + 1}</b>`
-    : "priority set at window open";
+    : "not in the league table yet";
   return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2">
     <div class="flex items-center justify-between gap-2">
       <h3 class="font-semibold text-sm">⏳ Waiver claims</h3>
       <span class="text-xs text-slate-400">${priority}</span>
     </div>
-    <p class="text-xs text-slate-400">These resolve when the window closes, in waiver order (worst-placed picks first). Order yours by preference — the first still-available one lands.</p>
+    <p class="text-xs text-slate-400">These resolve when the window closes, in waiver order — worst-placed first, off the table, every window. Order yours by preference: the first still-available one lands. Win a player somebody else was chasing and you drop to the back for the rest of this batch.</p>
     ${waiverOrderHtml(me)}
     <div id="fa-claim-list" class="space-y-1">${faClaimRowsHtml()}</div>
     ${mine.length > 1 ? '<p class="text-xs text-slate-400">Hold a row to drag it anywhere in the queue.</p>' : ""}
@@ -17711,10 +17707,10 @@ async function toggleTrading() {
   const { error } = await S.sb.from("leagues")
     .update({ trading_open: next }).eq("id", S.league.id);
   if (error) return toast(error.message);
-  if (next && waiver) {
-    await S.sb.from("fa_claims").delete().eq("league_id", S.league.id);  // fresh window
-    await resetWaiverOrder();                                            // seed from standings
-  }
+  // Fresh window, fresh queue. Priority needs no seeding -- it is derived from
+  // the table every time it is asked for (see waiverPriorityOrder).
+  if (next && waiver)
+    await S.sb.from("fa_claims").delete().eq("league_id", S.league.id);
   /* Closing trading no longer locks line-ups by itself: they are separate
      deadlines now (see lineupOpen). Opening trading unlocks both, because
      opening a window that leaves team selection shut would be a trap. */

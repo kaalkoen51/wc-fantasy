@@ -923,24 +923,20 @@ S.league = {};
 {
   const ids = ["a", "b", "c", "d"];
   const worstFirst = ["d", "c", "b", "a"];      // d is bottom of the table
-  check("waiver order: nothing stored → worst-placed first",
-    waiverPriorityOrder(ids, {}, worstFirst).ids, ["d", "c", "b", "a"]);
-  check("waiver order: a stored order wins over the standings",
-    waiverPriorityOrder(ids, { a: 0, b: 1, c: 2, d: 3 }, worstFirst).ids,
-    ["a", "b", "c", "d"]);
-  // Half-seeded: whoever has a number keeps it and the rest queue behind them,
-  // which is the rule processFaClaims has always resolved with.
-  check("waiver order: those without a number queue behind those with one",
-    waiverPriorityOrder(ids, { b: 0, a: 1 }, worstFirst).ids, ["b", "a", "d", "c"]);
+  check("waiver order: worst-placed first, straight off the table",
+    waiverPriorityOrder(ids, worstFirst).ids, ["d", "c", "b", "a"]);
   check("waiver order: the map the resolver reads agrees with the list",
-    ids.map((id) => waiverPriorityOrder(ids, { b: 0, a: 1 }, worstFirst).order[id]),
-    [1, 0, 3, 2]);
-  // A manager the standings do not mention at all still gets a seat, at the
-  // back -- better than Infinity, which is what the resolver used to see.
-  check("waiver order: someone missing from the standings still queues",
-    waiverPriorityOrder(ids, {}, ["d", "c"]).ids, ["d", "c", "a", "b"]);
+    ids.map((id) => waiverPriorityOrder(ids, worstFirst).order[id]), [3, 2, 1, 0]);
+  /* It RESETS every window rather than rolling, so nothing is carried in from
+     last time -- the table is the only input. A manager the standings do not
+     mention at all still gets a seat, at the back, rather than Infinity, which
+     is what the resolver used to see. */
+  check("waiver order: someone missing from the standings still queues, last",
+    waiverPriorityOrder(ids, ["d", "c"]).ids, ["d", "c", "a", "b"]);
+  check("waiver order: the table changing changes the queue, with nothing sticky",
+    waiverPriorityOrder(ids, ["a", "b", "c", "d"]).ids, ["a", "b", "c", "d"]);
   check("waiver order: nobody in the league → an empty queue, not a crash",
-    waiverPriorityOrder([], {}, worstFirst).ids, []);
+    waiverPriorityOrder([], worstFirst).ids, []);
 }
 /* Per-window free-agent cap (instant + waiver): count moves since the window
    opened. Manual mode → the newest lineup snapshot marks the window start. */
