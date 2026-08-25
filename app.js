@@ -5730,8 +5730,39 @@ function h2hTable(mgrIds, scoresByMgr, fixtures, cfg, placement) {
   return { rows, order };
 }
 
-/* ---------- waiver-order free-agent claims (mechanics-notes §1) ----------
-   Resolve queued free-agent claims at window close in waiver priority. Pure:
+/* ---------- waiver-order free-agent claims (mechanics-notes §1) ---------- */
+
+/* The waiver priority that will ACTUALLY be applied.
+
+   The stored `managers.waiver_order` where a manager has one, and
+   worst-placed-first for everyone who does not. That fallback is not new --
+   processFaClaims has always resolved with it -- but it lived inside the
+   resolver, so the SCREEN showed nothing until a batch had run. And
+   resetWaiverOrder(), the only thing that seeds the column, is called from the
+   manual open-the-window tap, which returns early in auto-window mode. So an
+   auto-window league had a null order for everyone, for good: no list, and
+   "priority set at window open" promising something that never happened.
+   Reported from the app: "I can't see the waiver order?".
+
+   One rule, read by both the screen and the resolver, so the order you are
+   shown is the order that runs.
+     ids        = [managerId, …]              who is in the running
+     stored     = { managerId: waiver_order } nulls simply absent
+     worstFirst = [managerId, …]              worst-placed first
+   Returns { order, ids } -- the map the resolver wants and the list the screen
+   wants. Pure. */
+function waiverPriorityOrder(ids, stored, worstFirst) {
+  const order = {};
+  for (const id of ids) if (stored?.[id] != null) order[id] = stored[id];
+  let maxo = Math.max(-1, ...Object.values(order));
+  const know = new Set(ids);
+  for (const id of worstFirst || []) if (know.has(id) && order[id] == null) order[id] = ++maxo;
+  // Anyone the standings do not mention at all still needs a place in the queue.
+  for (const id of ids) if (order[id] == null) order[id] = ++maxo;
+  return { order, ids: ids.slice().sort((a, b) => order[a] - order[b]) };
+}
+
+/* Resolve queued free-agent claims at window close in waiver priority. Pure:
    given claims (each manager's ordered preference list), the waiver order, the
    currently-rostered players, a per-manager cap, and each pick's held player,
    returns { awards, failed, order }. See the spec for the exact rules.
@@ -7366,11 +7397,19 @@ function managerHistory(mgrId) {
   // Current view: live roster (credited-for-you) + TEAM/champion + former.
   const picks = managerPicks(mgrId);
   const pickIds = new Set(picks.map((pk) => pk.player_id));
-  // Current round = the furthest round anyone has stats for (each team's Nth
-  // match). Its per-player points and appearances feed the home round toggle
-  // and the "played this round" highlight; credited to the live roster.
+  /* Current round = the round THIS line-up is for (lineupRoundNo), because
+     that is the squad these numbers are being drawn against. Falls back to the
+     furthest round with stats — each team's Nth match — wherever the calendar
+     cannot place a round, which is cups and the legacy pool.
+
+     Its per-player points and appearances feed the home round toggle and the
+     "played this round" highlight; credited to the live roster. Between two
+     matchweeks it has no labels at all, and that is the correct answer: the
+     round has not been played, so nothing has been scored in it. */
   const roundOfLabel = (l) => roundByLabel(l);
-  const curRound = statLabels.reduce((m, l) => Math.max(m, roundOfLabel(l)), 0);
+  const statRound = statLabels.reduce((m, l) => Math.max(m, roundOfLabel(l)), 0);
+  const plannedRound = lineupRoundNo(matchweeksOf(S.fixtures || []), Date.now());
+  const curRound = plannedRound != null ? plannedRound : statRound;
   const curRoundLabels = statLabels.filter((l) => roundOfLabel(l) === curRound);
   const roundByPlayer = {};
   const playedRoundSet = new Set();
@@ -7478,6 +7517,9 @@ function managerHistory(mgrId) {
       ? (mgr.frozen_points || 0) + (managerTeamBonus(mgrId)?.pts || 0)
       : computedTotal,
     curRound,
+    // Has that round produced any results yet? A round nobody has played has
+    // nothing to total, so the This round toggle has nothing to offer.
+    curRoundPlayed: curRoundLabels.length > 0,
     current: { items, former }, rounds,
   };
 }
@@ -8033,9 +8075,15 @@ function historyViewHtml(mgrId) {
   const onCurrent = idx === 0;
   const round = onCurrent ? null : h.rounds[h.rounds.length - idx];
 
-  // Current-lineup view can toggle between cumulative and this-round points.
-  const roundMode = onCurrent && !h.eliminated && S.homeScoreMode === "round";
-  const hasRound = onCurrent && !h.eliminated && (h.curRound || 0) >= 1;
+  /* Current-lineup view can toggle between cumulative and this-round points --
+     but only once this round has actually been played. Between two matchweeks
+     there is nothing to total, and offering the toggle anyway is what let a
+     finished round's points be read against the next round's squad. roundMode
+     follows hasRound rather than standing on its own, or a remembered "round"
+     preference would show a bare 0 with no toggle to escape it. */
+  const hasRound = onCurrent && !h.eliminated
+    && (h.curRound || 0) >= 1 && h.curRoundPlayed;
+  const roundMode = hasRound && S.homeScoreMode === "round";
 
   let body;
   if (onCurrent && h.eliminated) {
@@ -8783,13 +8831,32 @@ function matchdayCardHtml(me) {
   const cta = p.cta
     ? `<button id="md-cta" data-act="${p.cta.act}" class="mt-3 w-full btn-primary rounded-lg py-2.5 text-sm font-semibold">${esc(p.cta.label)}</button>`
     : "";
+  /* The round recap, always reachable.
+
+     It had exactly one button -- matchdayPlan's `results` stage -- and that
+     stage cannot happen: `lineupOpen` is tested before it and stays true for
+     the whole gap between two matchweeks, so an auto-window league goes
+     straight from "locked" to "transfers" and never passes through it. The
+     only other way in was the auto-open, which fires once per round and is
+     then suppressed for good by a localStorage stamp. Miss it -- app opened on
+     another device, sheet dismissed by a stray tap, anything -- and the round
+     was simply gone. Reported from the app: "I did not get a round recap".
+
+     A quiet link, not a second primary button: setting your line-up is what
+     this card is for, and last week's result must not compete with it. */
+  const rec = p.cta?.act === "recap" ? null : myRecap();
+  const recap = rec
+    ? `<button id="md-recap" data-act="recap"
+         class="mt-2 w-full rounded-lg border border-slate-600 py-2 text-xs font-semibold text-slate-300"
+         >Round ${esc(rec.n)} recap ›</button>`
+    : "";
   return `<div class="rounded-xl border border-wcgold/60 bg-wcred/10 p-4">
     <div class="flex items-center justify-between gap-2">${strip}</div>
     <div class="mt-2 flex items-baseline justify-between gap-2">
       <div class="font-semibold">${esc(p.title)}</div>
       ${p.matchweek ? `<div class="text-xs text-slate-400 shrink-0">Matchweek ${esc(p.matchweek)}</div>` : ""}
     </div>
-    ${clock}${todo}${cta}
+    ${clock}${todo}${cta}${recap}
   </div>`;
 }
 
@@ -9160,6 +9227,25 @@ const roundStillPlaying = (roundNo, weeks, nowMs) =>
   && (weeks || []).some((w) => Number(mwNo(w.round)) === roundNo)
   && !roundsEndedBy(weeks, nowMs).has(roundNo);
 
+/* Which round the line-up on screen right now is FOR: the one being played if
+   there is one, else the next one on the calendar.
+
+   Not the same thing as "the newest round with results", which is what the
+   home pager's This round toggle used to mean. Between two matchweeks those
+   two answers differ, and the toggle then tallied the FINISHED round's points
+   against the squad you had just picked for the NEXT one. Reported from the
+   app: "round 1 finished, I have edited my lineup for round 2, and the current
+   lineup has a this-round tab tallying round 1".
+
+   null when the calendar cannot say -- a cup, whose round labels are names
+   rather than week numbers, or a league with no fixture list. Callers keep
+   their old behaviour there rather than guessing. Pure. */
+const lineupRoundNo = (weeks, nowMs) => {
+  const w = weekInPlay(weeks, nowMs) || (weeks || []).find((x) => x.first > nowMs);
+  const n = w ? Number(mwNo(w.round)) : NaN;
+  return n >= 1 ? n : null;
+};
+
 // The rounds a recap may offer: finished ones, plus any the calendar cannot
 // place at all. A round with no matchweek to compare against keeps the old
 // behaviour rather than silently never being recapped.
@@ -9170,7 +9256,21 @@ function recappableRounds(rounds, weeks, nowMs) {
   return (rounds || []).filter((r) => !placed.has(r.n) || ended.has(r.n));
 }
 
+/* Memoized on the data it reads, plus a minute bucket for the clock, exactly
+   as roundIndex() is. It digests every manager's history, and the matchday
+   card and the auto-open both ask for it on the same render. */
+let _recap = null, _recapKey = null;
 function myRecap() {
+  const key = { st: S.stats, pk: S.picks, sn: S.snapshots, fx: S.fixtures,
+                mg: S.managers, me: myManager()?.id,
+                b: Math.floor(Date.now() / 60000) };
+  if (_recapKey && Object.keys(key).every((k) => _recapKey[k] === key[k])) return _recap;
+  const r = myRecapUncached();          // key set only on success, never on a throw
+  _recapKey = key;
+  return (_recap = r);
+}
+
+function myRecapUncached() {
   const me = myManager();
   if (!me) return null;
   const hist = managerHistory(me.id);
@@ -9439,6 +9539,8 @@ function renderHomeTab() {
     else if (act === "recap") openRecap();
     else if (act === "live") setBoardTab("lb");
   };
+  const recapBtn = box.querySelector("#md-recap");
+  if (recapBtn) recapBtn.onclick = () => openRecap();
   // A warning you can tap is a warning that gets acted on. "captain" lands in
   // the armband picker with the pitch already lit, so the job is one more tap.
   box.querySelectorAll("[data-todo]").forEach((b) => b.onclick = () =>
@@ -13689,6 +13791,15 @@ async function cancelClaim(id) {
   scheduleRefetch();
 }
 
+/* The live league's waiver priority, derived rather than read: see
+   waiverPriorityOrder. Every screen and the resolver go through here, so a
+   league that has never run a batch still shows a real queue. */
+const waiverPriorityFor = (mgrs) => waiverPriorityOrder(
+  mgrs.map((m) => m.id),
+  Object.fromEntries(mgrs.filter((m) => m.waiver_order != null)
+    .map((m) => [m.id, m.waiver_order])),
+  standingsOrder().slice().reverse());
+
 // Seed waiver priority from reverse standings (worst-placed picks first = 0).
 async function resetWaiverOrder() {
   const worstFirst = standingsOrder().slice().reverse();
@@ -13701,10 +13812,7 @@ async function resetWaiverOrder() {
 async function processFaClaims() {
   const pending = (S.faClaims || []).filter((c) => c.status === "pending");
   if (!pending.length) return;
-  const order = {};
-  for (const m of S.managers) if (m.waiver_order != null) order[m.id] = m.waiver_order;
-  let maxo = Math.max(-1, ...Object.values(order));
-  for (const id of standingsOrder().slice().reverse()) if (order[id] == null) order[id] = ++maxo;
+  const { order } = waiverPriorityFor(S.managers);
   const taken = S.picks.map((p) => p.player_id);
   const holds = Object.fromEntries(S.picks.map((p) => [p.id, p.player_id]));
   const { awards, failed, order: newOrder } =
@@ -14212,9 +14320,9 @@ function squadChooserHtml(mgrId, opts = {}) {
    an order is a ranking and a horizontal strip that scrolls off the edge hides
    exactly the part you want — who is ahead of you. Folded away by default. */
 function waiverOrderHtml(me) {
-  const ranked = activeManagers()
-    .filter((m) => m.waiver_order != null)
-    .sort((a, b) => a.waiver_order - b.waiver_order);
+  const live = activeManagers();
+  const byId = Object.fromEntries(live.map((m) => [m.id, m]));
+  const ranked = waiverPriorityFor(live).ids.map((id) => byId[id]);
   if (!ranked.length) return "";
   const mine = ranked.findIndex((m) => m.id === me?.id) + 1;
   return `<details class="rounded-lg border border-slate-700 bg-slate-800/40">
@@ -15026,8 +15134,11 @@ function wireClaimControls(box) {
 // Your queued waiver claims, in preference order, with reorder + cancel.
 function faClaimsSectionHtml(me) {
   const mine = myClaims();
-  const priority = me.waiver_order != null
-    ? `You're <b class="text-wcgold">#${me.waiver_order + 1}</b>`
+  /* Where you are in the queue that will actually run -- derived, not read off
+     the column, which is null until a league's first batch resolves. */
+  const seat = waiverPriorityFor(activeManagers()).ids.indexOf(me.id);
+  const priority = seat >= 0
+    ? `You're <b class="text-wcgold">#${seat + 1}</b>`
     : "priority set at window open";
   return `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-2">
     <div class="flex items-center justify-between gap-2">

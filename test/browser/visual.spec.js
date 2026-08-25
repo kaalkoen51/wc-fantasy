@@ -710,8 +710,19 @@ test("the team page opens on this round, with it first", async ({ page }) => {
      It defaulted to Total and put Total on the left. */
   await page.setViewportSize({ width: 390, height: 844 });
   await openLeague(page, { managers: 4, played: 3 });
+  /* An hour into the newest round, because that is the only time the toggle
+     is offered at all now: between two matchweeks "this round" has not been
+     played, and totalling it against the squad you just picked for the NEXT
+     one is the bug the scenario suite covers. The seed's default instant is
+     mid-gap. */
+  await page.clock.setFixedTime(new Date(await page.evaluate(() => {
+    const weeks = matchweeksOf(S.fixtures);
+    return weeks[weeks.length - 2].first + 3600e3;
+  })));
   const t = await page.evaluate(() => {
-    showView("board"); setBoardTab("home");
+    // renderBoard by hand: setBoardTab is a no-op when the tab is already
+    // showing, and the page first drew before the clock moved.
+    showView("board"); setBoardTab("home"); renderBoard();
     // Every manager's card carries this toggle and they all exist in the DOM,
     // so it has to be scoped to the Team pane.
     const bs = [...document.querySelectorAll("#board-home [data-scoremode]")];

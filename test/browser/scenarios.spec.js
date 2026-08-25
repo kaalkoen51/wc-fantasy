@@ -3714,3 +3714,128 @@ test("resetting scoring resets scoring, not the whole league", async ({ page }) 
   expect(wrote.config.scoring, "reset left the custom scoring in place").toBeUndefined();
   expect(wrote.config.stageBonus, "reset left a custom stage bonus in place").toBeUndefined();
 });
+
+/* ---------- what a manager sees BETWEEN two matchweeks ----------
+   The seeded league sits exactly there: the newest round finished three and a
+   half days ago, the next is three and a half days out, the trade window is
+   open. Three separate complaints came from that one state. */
+
+test("a finished round's points are not tallied against the next round's lineup",
+  async ({ page }) => {
+  await openLeague(page, { managers: 6, played: 2, h2h: true });
+
+  const gap = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    S.homeScoreMode = "round";       // a manager who used the toggle last week
+    setBoardTab("home"); renderBoard();
+    const box = document.getElementById("board-home");
+    const h = managerHistory(myManager().id);
+    return {
+      curRound: h.curRound, played: h.curRoundPlayed,
+      roundPts: h.current.items.reduce((s, i) => s + (i.roundPts || 0), 0),
+      toggle: !!box.querySelector("[data-scoremode]"),
+      head: box.querySelector('[data-hist="older"]')?.parentElement
+              ?.textContent.replace(/\s+/g, " ").trim(),
+      total: h.total,
+    };
+  });
+  /* "This round" used to mean the newest round with RESULTS, so between two
+     matchweeks it drew the finished round's points against the squad you had
+     just picked for the next one. Reported from the app. */
+  expect(gap.curRound, "the current lineup is still filed under the old round").toBe(3);
+  expect(gap.played, "a round nobody has played is being called played").toBe(false);
+  expect(gap.roundPts, "last round's points leaked into the new round").toBe(0);
+  expect(gap.toggle, "This round is on offer with nothing to total").toBe(false);
+  expect(gap.head, "the header still claims a round total").toContain("season to date");
+  expect(gap.total, "the season total was collateral damage").toBeGreaterThan(0);
+
+  // Positive control: mid-round the toggle is back, and it totals THAT round.
+  const mid = await page.evaluate(async () => {
+    const weeks = matchweeksOf(S.fixtures);
+    return weeks[weeks.length - 2].first + 3600e3;      // an hour into round 2
+  });
+  await page.clock.setFixedTime(new Date(mid));
+  const live = await page.evaluate(() => {
+    S.homeScoreMode = "round";
+    setBoardTab("home"); renderBoard();
+    const box = document.getElementById("board-home");
+    const h = managerHistory(myManager().id);
+    return {
+      curRound: h.curRound, played: h.curRoundPlayed,
+      roundPts: h.current.items.reduce((s, i) => s + (i.roundPts || 0), 0),
+      toggle: !!box.querySelector("[data-scoremode]"),
+      head: box.querySelector('[data-hist="older"]')?.parentElement
+              ?.textContent.replace(/\s+/g, " ").trim(),
+    };
+  });
+  expect(live.curRound, "the round being played is not the current round").toBe(2);
+  expect(live.played, "a round with results is not being counted").toBe(true);
+  expect(live.toggle, "This round vanished during a round").toBe(true);
+  expect(live.roundPts, "the round in progress totals nothing").toBeGreaterThan(0);
+  expect(live.head).toContain("round 2");
+});
+
+test("the round recap can be opened, not only waited for", async ({ page }) => {
+  await openLeague(page, { managers: 6, played: 2, h2h: true });
+  /* Its only button lived in matchdayPlan's `results` stage, which cannot
+     occur: lineupOpen is tested first and is true for the whole gap between
+     matchweeks. The auto-open was the only real way in, and it fires once and
+     is then suppressed by a localStorage stamp for good. */
+  const shown = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    localStorage.setItem("wcf_recap_" + S.league.id, "99");   // already seen
+    setBoardTab("home"); renderBoard();
+    const btn = document.getElementById("md-recap");
+    btn?.click();
+    return {
+      label: btn?.textContent.replace(/\s+/g, " ").trim(),
+      opened: !document.getElementById("recap-sheet").classList.contains("hidden"),
+      body: document.getElementById("recap-body").textContent.replace(/\s+/g, " ").trim(),
+    };
+  });
+  expect(shown.label, "no way to reach the recap at all").toBe("Round 2 recap ›");
+  expect(shown.opened, "the link does not open the sheet").toBe(true);
+  expect(shown.body).toContain("Round 2 complete");
+
+  // No finished round, no link: it is an offer, not furniture.
+  const none = await page.evaluate(() => {
+    S.stats = []; bustScores(); S.histIdxByMgr = {};
+    setBoardTab("home"); renderBoard();
+    return !!document.getElementById("md-recap");
+  });
+  expect(none, "a league with nothing to recap still offers a recap").toBe(false);
+});
+
+test("a league that has never resolved a waiver batch still shows its queue",
+  async ({ page }) => {
+  await openLeague(page, { managers: 6, played: 2, h2h: true });
+  /* resetWaiverOrder() is called from the manual open-the-window tap only, and
+     that returns early in auto-window mode -- so managers.waiver_order stays
+     null for everyone until the first batch resolves, and the screen showed
+     nothing at all. Reported from the app: "I can't see the waiver order?". */
+  const seen = await page.evaluate(() => {
+    for (const m of S.managers) m.waiver_order = null;
+    const name = (id) => S.managers.find((m) => m.id === id).name;
+    const worstFirst = standingsOrder().slice().reverse().map(name);
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    setBoardTab("trades"); S.tradeTab = "deals"; renderBoard();
+    const box = document.getElementById("board-trades");
+    return { worstFirst,
+      shown: [...box.querySelectorAll("details ol li")]
+        .map((li) => /Mgr\d+/.exec(li.textContent)?.[0]),
+      unset: box.textContent.includes("priority set at window open"),
+      mine: Number(/You're #(\d+)/.exec(box.textContent)?.[1]) };
+  });
+  expect(seen.shown.length, "the waiver queue is not on screen at all").toBe(6);
+  // Worst-placed first: the same rule processFaClaims resolves the batch with.
+  expect(seen.shown).toEqual(seen.worstFirst);
+  expect(seen.unset, "still promising a priority that never gets set").toBe(false);
+  expect(seen.mine, "your own seat disagrees with the list")
+    .toBe(seen.worstFirst.indexOf("Mgr1") + 1);
+});
