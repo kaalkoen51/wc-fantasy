@@ -871,6 +871,50 @@ S.league = {};
   const r3 = resolveFaClaims(fb, { M1: 0 }, ["O1", "P1"], Infinity, { pk1: "O1" });
   check("waiver: infeasible top claim falls back to next preference",
     [r3.awards.map((c) => c.id), r3.failed], [["y"], ["x"]]);
+
+  /* Winning UNCONTESTED does not pass the turn on. Priority is unchanged, so
+     the same manager is still top of the order and takes his next preference
+     before anyone below him moves. Only a contested win costs you the turn. */
+  {
+    const cl = [
+      { id: "a1", manager_id: "A", rank: 0, out_player_id: "O1", in_player_id: "X", pick_id: "pA1" },
+      { id: "a2", manager_id: "A", rank: 1, out_player_id: "O2", in_player_id: "Y", pick_id: "pA2" },
+      { id: "b1", manager_id: "B", rank: 0, out_player_id: "O3", in_player_id: "Z", pick_id: "pB" },
+    ];
+    const r = resolveFaClaims(cl, { A: 0, B: 1 }, ["O1", "O2", "O3"], 2,
+      { pA1: "O1", pA2: "O2", pB: "O3" });
+    check("waiver: an uncontested win keeps the turn, so both of A's land first",
+      r.awards.map((c) => c.id), ["a1", "a2", "b1"]);
+    check("waiver: ...and A's priority never moved", [r.order.A, r.order.B], [0, 1]);
+  }
+
+  /* A rival's claim only CONTESTS you if it could actually have been executed.
+
+     Reported after a read-through of the rules: A queues "Semenyo for Mateta"
+     then "Wissa for Mateta", and wins Semenyo. Mateta's slot is spent, so A's
+     Wissa claim can never fire -- yet it still counted as a rival, and C was
+     demoted for winning a player nobody could have taken from him. */
+  {
+    const cl = [
+      { id: "a1", manager_id: "A", rank: 0, out_player_id: "Mateta", in_player_id: "Semenyo", pick_id: "pA" },
+      { id: "a2", manager_id: "A", rank: 1, out_player_id: "Mateta", in_player_id: "Wissa", pick_id: "pA" },
+      { id: "b1", manager_id: "B", rank: 0, out_player_id: "Bowen", in_player_id: "Semenyo", pick_id: "pB" },
+      { id: "b2", manager_id: "B", rank: 1, out_player_id: "Bowen", in_player_id: "Gakpo", pick_id: "pB" },
+      { id: "c1", manager_id: "C", rank: 0, out_player_id: "Sarr", in_player_id: "Wissa", pick_id: "pC" },
+    ];
+    const r = resolveFaClaims(cl, { A: 0, B: 1, C: 2 }, ["Mateta", "Bowen", "Sarr"], 2,
+      { pA: "Mateta", pB: "Bowen", pC: "Sarr" });
+    check("waiver: everyone still gets the player they were always going to get",
+      r.awards.map((c) => c.id).sort(), ["a1", "b2", "c1"]);
+    // A genuinely lost a contest -- B wanted Semenyo and could have had him.
+    check("waiver: a real contest still costs the winner his place",
+      r.order.A > r.order.B && r.order.A > r.order.C, true);
+    check("waiver: an uncontested win costs B nothing", r.order.B, 1);
+    /* The one this is about: A's Wissa claim was dead the moment Mateta's slot
+       was spent, so C beat nobody for him and keeps his place. */
+    check("waiver: a rival claim that could never have fired does not contest",
+      r.order.C, 2);
+  }
 }
 /* The priority itself, which the screen and the resolver now share. A league
    that has never resolved a batch has waiver_order null for everyone -- and in

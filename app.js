@@ -5872,21 +5872,44 @@ function resolveFaClaims(claims, waiverOrder, taken, tradeLimit, pickHolds) {
   for (const c of claims) (byMgr[c.manager_id] ||= []).push(c);
   for (const m in byMgr) byMgr[m].sort((a, b) =>
     (a.rank - b.rank) || String(a.created_at || "").localeCompare(String(b.created_at || "")));
-  const wanters = {};
-  for (const c of claims) (wanters[c.in_player_id] ||= new Set()).add(c.manager_id);
-  const contested = (pid) => (wanters[pid]?.size || 0) > 1;
   const ptr = {}, count = {}, done = {};
   for (const m in byMgr) { ptr[m] = 0; count[m] = 0; done[m] = false; }
   const prio = (m) => order[m] == null ? Infinity : order[m];
   const active = () => Object.keys(byMgr).filter((m) => !done[m]);
   const capOut = (m) => {
     done[m] = true;
-    for (let i = ptr[m]; i < byMgr[m].length; i++) {
-      wanters[byMgr[m][i].in_player_id]?.delete(m);   // ignored → no longer contests
-      failed.push(byMgr[m][i].id);
-    }
+    for (let i = ptr[m]; i < byMgr[m].length; i++) failed.push(byMgr[m][i].id);
     ptr[m] = byMgr[m].length;
   };
+  /* Did anybody else actually have a shot at this player?
+
+     Not "did anybody list him", which is what this used to ask. A claim can
+     only fire while the pick it drops from still holds the player it promised
+     to drop -- so a manager who has already spent that slot on an earlier
+     preference is not a rival any more, and a player he was never going to get
+     must not cost somebody else their place in the queue.
+
+     Reported after a read-through of the rules: A queues Semenyo and then
+     Wissa, both out of Mateta's slot, and wins Semenyo. Mateta's slot is spent
+     and A's Wissa claim is dead -- but it still counted, so C was demoted for
+     winning a player nobody could have taken from him.
+
+     Asked at the moment of the award, over what each rival has LEFT to
+     process, so it sees the same board the resolver does. Deliberately does
+     NOT consult `rostered`: the winner has just been added to it, and asking
+     whether a rival could still take a player who is now owned would make
+     every contest in the batch vanish.
+
+     The three conditions overlap: today, a rival who is finished or capped has
+     had his remaining claims failed and his pointer run to the end, and every
+     claim already passed over fails the holds test anyway. They are kept as
+     three because each is the true statement of a different reason a rival is
+     out of the running, and only the holds test is pinned by a case the suite
+     can reach. */
+  const contestedBy = (pid, winner) => Object.keys(byMgr).some((m) =>
+    m !== winner && !done[m] && count[m] < limit
+    && byMgr[m].slice(ptr[m]).some((c) =>
+      c.in_player_id === pid && holds[c.pick_id] === c.out_player_id));
   let act;
   while ((act = active()).length) {
     const m = act.sort((x, y) => prio(x) - prio(y) || String(x).localeCompare(String(y)))[0];
@@ -5902,7 +5925,7 @@ function resolveFaClaims(claims, waiverOrder, taken, tradeLimit, pickHolds) {
       break;
     }
     if (!executed) { done[m] = true; continue; }
-    if (contested(executed.in_player_id)) { maxOrder++; order[m] = maxOrder; }  // yield
+    if (contestedBy(executed.in_player_id, m)) { maxOrder++; order[m] = maxOrder; }  // yield
     if (count[m] >= limit) capOut(m);
   }
   const seen = new Set([...awards.map((c) => c.id), ...failed]);
