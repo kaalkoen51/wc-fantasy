@@ -625,7 +625,16 @@ const competitionKey = () => compKeyOf(leagueCompetition());
 
 // --- pure API transforms (unit-tested) ---
 const API_POS = { Goalkeeper: "GK", Defender: "DEF", Midfielder: "MID", Attacker: "FWD" };
+/* The feed's four position words, mapped.
+
+   The fallback is deliberate and it STAYS: if the feed ever renames a word --
+   "Attacker" to "Forward" -- refusing the unmapped ones would delete every
+   forward in the competition, which is a far worse failure than putting them
+   somewhere wrong. But it is a confident wrong answer, so anything that builds
+   a pool asks knownApiPos() first and reports what it had to absorb, rather
+   than letting a keeper quietly become a midfielder. */
 const apiPosToSlot = (pos) => API_POS[pos] || "MID";
+const knownApiPos = (pos) => Object.prototype.hasOwnProperty.call(API_POS, pos);
 const teamCodeFrom = (name, code) =>
   code || String(name || "").replace(/[^A-Za-z]/g, "").slice(0, 3).toUpperCase() || "TBD";
 
@@ -732,6 +741,11 @@ async function fetchCompetitionPool(key, apiLeagueId, season, onProgress, prev) 
      Collected here with both clubs' API ids, and settled below by asking what
      his transfer history says. */
   const clash = {};
+  /* A squad row whose position is not one of the feed's four words. It still
+     goes in -- as a midfielder, which is what apiPosToSlot has always done --
+     but it is named, because that default is the last place in this pull where
+     a missing value becomes a confident wrong answer. */
+  const unmapped = [];
   let done = 0;
   for (const t of teams) {
     const teamName = decodeEntities(t.team.name), code = teamCodeFrom(teamName, t.team.code);
@@ -739,6 +753,8 @@ async function fetchCompetitionPool(key, apiLeagueId, season, onProgress, prev) 
     onProgress && onProgress(++done, teams.length, teamName);
     const squads = await apiFootball(key, "players/squads", { team: t.team.id });
     for (const ap of (squads[0]?.players || [])) {
+      if (!knownApiPos(ap.position))
+        unmapped.push({ name: ap.name, team: teamName, said: ap.position || "nothing" });
       const p = parseSquadPlayer(ap, teamName, code, t.team.id);
       if (!byId[p.player_id]) byId[p.player_id] = p;
       else if (byId[p.player_id].team !== teamName) {
@@ -765,11 +781,12 @@ async function fetchCompetitionPool(key, apiLeagueId, season, onProgress, prev) 
     const arrivals = await fetchArrivals(key, applied.unplaced, season, teamsById, onProgress);
     players = players.concat(arrivals.rows);
     tx = { ...applied, checked: true,
-           signed: arrivals.rows.map((r) => ({ name: r.name, to: r.team, position: r.position })),
+           signed: arrivals.rows.map((r) => ({ name: r.name, to: r.team,
+                                               position: r.position, from: r.pos_season || null })),
            unknown: arrivals.unknown };
     delete tx.players; delete tx.unplaced;
   }
-  return { players, teams: [...new Set(names)].sort(), dup, tx };
+  return { players, teams: [...new Set(names)].sort(), dup, tx, unmapped };
 }
 
 /* Look up the handful of players who have signed INTO the competition from
@@ -790,16 +807,28 @@ async function fetchArrivals(key, unplaced, season, teamsById, onProgress) {
   const list = (unplaced || []).slice(0, MAX_ARRIVAL_LOOKUPS);
   for (const u of (unplaced || []).slice(MAX_ARRIVAL_LOOKUPS))
     unknown.push({ apiId: u.apiId, team: u.team, why: "too many arrivals to look up" });
+  const club = (u) => teamsById.get(u.teamId);
+  const look = async (u, yr) => {
+    const r = await apiFootball(key, "players", { id: u.apiId, season: yr });
+    return arrivalRow(r?.[0], club(u), u.teamId);
+  };
   for (const u of list) {
     onProgress && onProgress(null, null, `new signing at ${u.team}`);
-    try {
-      const r = await apiFootball(key, "players", { id: u.apiId, season });
-      const row = arrivalRow(r?.[0], teamsById.get(u.teamId), u.teamId);
-      if (row) rows.push(row);
-      else unknown.push({ apiId: u.apiId, team: u.team, why: "no position on record" });
-    } catch {
-      unknown.push({ apiId: u.apiId, team: u.team, why: "lookup failed" });
+    let row = null, failed = false, stale = false;
+    try { row = await look(u, season); } catch { failed = true; }
+    /* Nothing on record THIS season is the ordinary state of a summer signing
+       who has not played yet -- and last season is exactly where his position
+       is. Positions barely move, and where one has, the admin position editor
+       is the answer; a year-old position beats leaving the best free agent in
+       the window out of the pool entirely. Only for the ones we would
+       otherwise drop, so it costs nothing in the common case. */
+    if (!row) {
+      try { row = await look(u, season - 1); stale = !!row; }
+      catch { failed = true; }
     }
+    if (row) rows.push(stale ? { ...row, pos_season: season - 1 } : row);
+    else unknown.push({ apiId: u.apiId, team: u.team,
+                        why: failed ? "lookup failed" : "no position on record" });
   }
   return { rows, unknown };
 }
@@ -3174,6 +3203,7 @@ async function fetchPoolFor(competition, apiKey, onProgress, prev) {
   const built = await fetchCompetitionPool(apiKey, apiLeagueId, season, onProgress, prev);
   return {
     players: built.players, teams: built.teams, dup: built.dup, tx: built.tx,
+    unmapped: built.unmapped,
     fixtures: await fetchCompetitionFixtures(apiKey, apiLeagueId, season),
     roundOrder: await fetchCompetitionRounds(apiKey, apiLeagueId, season),
   };
@@ -16292,7 +16322,9 @@ async function loadCompetition(opts = {}) {
       .eq("competition_key", compKey).maybeSingle();
     if (existing.error) throw new Error(existing.error.message);
     let players, fixtures, roundOrder = [], dup = [];
-    let tx = { moved: [], carried: [], left: [], skipped: [], checked: false };
+    let tx = { moved: [], carried: [], left: [], skipped: [],
+               signed: [], unknown: [], checked: false };
+    let unmapped = [];
     if (!refreshing && existing.data?.players?.length &&
         confirm(`${name} ${season} is already loaded (${existing.data.players.length} players shared across leagues). Reuse it without re-pulling?  (Cancel = re-pull fresh squads from the API.)`)) {
       players = existing.data.players;
@@ -16313,6 +16345,7 @@ async function loadCompetition(opts = {}) {
       players = built.players;
       dup = built.dup || [];
       tx = built.tx || tx;
+      unmapped = built.unmapped || [];
       if (!players.length) throw new Error("No players returned — check the season for this competition.");
       log(`${players.length} players across ${built.teams.length} teams. Fetching fixtures…`);
       fixtures = built.fixtures;
@@ -16352,7 +16385,8 @@ async function loadCompetition(opts = {}) {
       list("no longer in this competition, per the transfer record", tx.left,
         (r) => `${r.name} (was ${r.team})`);
       list("signed from outside the competition and added to the pool", tx.signed,
-        (r) => `${r.name} → ${r.to} (${r.position})`);
+        (r) => `${r.name} → ${r.to} (${r.position}${
+          r.from ? `, position from ${r.from}` : ""})`);
       list("signed from outside but could not be added", tx.unknown,
         (r) => `player ${r.apiId} → ${r.team} — ${r.why}`);
       if (tx.skipped.length) lines.push(`${tx.skipped.length} players looked like they had left`
@@ -16363,6 +16397,12 @@ async function loadCompetition(opts = {}) {
     } else {
       lines.push("Transfer record NOT checked — the transfers endpoint was unavailable,"
         + " so squad lists are the only source. Redeploy the api-football function.");
+    }
+    if (unmapped.length) {
+      lines.push(`${unmapped.length} squad row${unmapped.length === 1 ? " has a position" : "s have positions"}`
+        + " the app does not recognise — they are in the pool as MID, which may be wrong:");
+      for (const u of unmapped.slice(0, 8)) lines.push(`  ${u.name} (${u.team}): feed said "${u.said}"`);
+      if (unmapped.length > 8) lines.push(`  …and ${unmapped.length - 8} more`);
     }
     if (dup.length) {
       lines.push(`${dup.length} player${dup.length === 1 ? " is" : "s are"} in two squads at once`

@@ -4289,21 +4289,34 @@ test("the transfer record catches what a stale squad list cannot", async ({ page
         // ...one the lookup cannot place, who must not be invented...
         { player: { id: 16, name: "Prospect" }, transfers: [
           { date: "2026-08-17", teams: { in: { id: 2 }, out: { id: 900 } } } ] },
-        // ...and one whose lookup falls over, which must not take the pull
-        // with it. Six hundred squads for one optional call is a bad trade.
+        // ...one whose lookup falls over, which must not take the pull with
+        // it. Six hundred squads for one optional call is a bad trade...
         { player: { id: 17, name: "Unlucky" }, transfers: [
-          { date: "2026-08-17", teams: { in: { id: 2 }, out: { id: 900 } } } ] }];
+          { date: "2026-08-17", teams: { in: { id: 2 }, out: { id: 900 } } } ] },
+        // ...and a summer signing with no game this season anywhere, whose
+        // position is a season old. That is the ordinary state of a July
+        // arrival, and dropping him loses the best free agent in the window.
+        { player: { id: 18, name: "Newcomer" }, transfers: [
+          { date: "2026-07-02", teams: { in: { id: 2 }, out: { id: 900 } } } ] }];
       if (path === "players") {
         if (params.id === 17) throw new Error("rate limited");
-        return params.id === 15
-          ? [{ player: { id: 15, name: "Import", photo: "i.png" },
-               statistics: [{ team: { id: 900 }, games: { position: "Attacker", number: 9 } }] }]
-          : [{ player: { id: 16, name: "Prospect" }, statistics: [{ games: {} }] }];
+        if (params.id === 15) return [{ player: { id: 15, name: "Import", photo: "i.png" },
+          statistics: [{ team: { id: 900 }, games: { position: "Attacker", number: 9 } }] }];
+        /* A summer signing who has not played a game anywhere THIS season --
+           nothing on record now, a position last season. */
+        if (params.id === 18) return params.season === 2026
+          ? [{ player: { id: 18, name: "Newcomer" }, statistics: [{ games: {} }] }]
+          : [{ player: { id: 18, name: "Newcomer" },
+               statistics: [{ team: { id: 900 }, games: { position: "Goalkeeper" } }] }];
+        return [{ player: { id: 16, name: "Prospect" }, statistics: [{ games: {} }] }];
       }
       return params?.team === 1
         ? [{ players: [
             { id: 11, name: "Switcher", position: "Defender", number: 11 },
-            { id: 12, name: "Leaver", position: "Midfielder", number: 12 }] }]
+            { id: 12, name: "Leaver", position: "Midfielder", number: 12 },
+            // A word the app has never seen. It must not vanish, and it must
+            // not pass unremarked either.
+            { id: 19, name: "Oddity", position: "Wing-back", number: 19 }] }]
         : [{ players: [{ id: 14, name: "Settled", position: "Attacker", number: 14 }] }];
     };
     // The pool as it stood: it is what makes the unlisted arrival placeable.
@@ -4316,7 +4329,8 @@ test("the transfer record catches what a stale squad list cannot", async ({ page
              leaver: !!at("api_12"),
              arrival: at("api_13")?.team, arrivalPos: at("api_13")?.position,
              settled: at("api_14")?.team,
-             importer: at("api_15"), prospect: !!at("api_16") };
+             importer: at("api_15"), prospect: !!at("api_16"),
+             newcomer: at("api_18"), oddity: at("api_19"), unmapped: out.unmapped };
   });
   expect(second.tx.checked, "the transfer pass did not run at all").toBe(true);
   expect(second.switcher, "a move inside the league never reached the pool").toBe("New Club");
@@ -4339,14 +4353,31 @@ test("the transfer record catches what a stale squad list cannot", async ({ page
   expect([second.importer.team, second.importer.position, second.importer.player_id],
     "the looked-up row does not match the shape every other pool row has")
     .toEqual(["New Club", "FWD", "api_15"]);
-  expect(second.tx.signed.map((r) => r.name)).toEqual(["Import"]);
+  expect(second.tx.signed.map((r) => r.name).sort()).toEqual(["Import", "Newcomer"]);
   /* ...and one the endpoint cannot place is NOT invented at a default
      position. The quota and the formation read that field. */
   expect(second.prospect, "a player with no position on record was made up").toBe(false);
   expect(second.tx.unknown.map((r) => [r.apiId, r.why]))
     .toEqual([[16, "no position on record"], [17, "lookup failed"]]);
+
+  /* A signing with nothing on record this season falls back to last season,
+     which is where a July arrival's position actually lives. */
+  expect(second.newcomer, "a summer signing with no games yet was dropped")
+    .toBeTruthy();
+  expect(second.newcomer.position, "his position came from the wrong season").toBe("GK");
+  expect(second.tx.signed.find((r) => r.name === "Newcomer")?.from,
+    "the log does not say the position is a season old").toBe(2025);
+
+  /* The last silent default in the pull. apiPosToSlot still absorbs an
+     unrecognised word -- refusing them would delete a whole position group if
+     the feed renamed one -- but it is named now instead of passing as fact. */
+  expect(second.oddity, "an unrecognised position dropped the player").toBeTruthy();
+  expect(second.oddity.position, "the fallback stopped being MID").toBe("MID");
+  expect(second.unmapped.map((u) => [u.name, u.said]),
+    "a position the app does not recognise passed unremarked")
+    .toEqual([["Oddity", "Wing-back"]]);
   expect(second.tx.signed.length, "one lookup falling over took the others with it")
-    .toBe(1);
+    .toBe(2);
 
   // ...and if the endpoint is not reachable, the pull is exactly what it was
   // before any of this existed, and says the check did not happen.
