@@ -4258,96 +4258,109 @@ test("a claim confirmed after the deadline does not queue", async ({ page }) => 
   expect(after.rows, "a claim was queued after the window shut").toBe(0);
 });
 
-test("the transfer record is trusted only where it has been right", async ({ page }) => {
-  /* Two live runs, wrong in opposite directions, settled by asking the feed
-     itself (probe_feed.py --player):
+test("the whole-competition transfer pass is gone, and one player can still be asked",
+  async ({ page }) => {
+  /* Three wrong answers and a direct probe ended it. transfers?team= returns
+     334 player blocks for Manchester City and Rodri IS one of them, carrying
+     only his 2019 arrival -- his move to Barcelona on 2026-08-17, which
+     transfers?player=44 shows plainly, is not in the team-scoped answer.
 
-       Rodri     squads say Manchester City; transfers say 17 Aug to Barcelona.
-                 The SQUAD LIST is stale.
-       Gelhardt  squads say Hull City, correctly; the newest transfer on record
-                 is a 30 June return from loan to Leeds. The RECORD is stale.
-       Konsa     squads say Aston Villa; transfers say nothing since 2019. The
-                 feed does not know about his move at all.
-
-     The split that fits all three is direction, and it has a mechanical cause:
-     a return from loan is always INTO the parent club, so loan artefacts only
-     ever pollute the in-competition direction. */
+     So the pass that read it for every club is gone. It cost twenty calls a
+     refresh, moved J. Gelhardt to the club he had just left, filled the pool
+     with three dozen loan returns dated 30 June, and could not see the one
+     departure anybody wanted. */
   await openLeague(page, { managers: 4, played: 2 });
 
   const seen = await page.evaluate(async () => {
+    const asked = [];
     window.apiFootball = async (key, path, params) => {
+      asked.push([path, params]);
       if (path === "teams") return [
         { team: { id: 1, name: "Old Club", code: "OLD" } },
         { team: { id: 2, name: "New Club", code: "NEW" } }];
-      if (path === "transfers") return [
-        // Gone abroad, and his club has not dropped him. Acted on.
-        { player: { id: 12, name: "Leaver" }, transfers: [
-          { date: "2026-08-12", teams: { in: { id: 777 }, out: { id: 1 } } } ] },
-        // Says he moved WITHIN the league. This is the Gelhardt shape, so it
-        // is reported and not applied.
-        { player: { id: 11, name: "Switcher" }, transfers: [
-          { date: "2026-06-30", teams: { in: { id: 2 }, out: { id: 1 } } } ] },
-        // ...and an "arrival" nobody's squad has: a loan return, reported.
-        { player: { id: 13, name: "Returnee" }, transfers: [
-          { date: "2026-06-30", teams: { in: { id: 2 }, out: { id: 900 } } } ] },
-        // Older than the season floor. Not news at all.
-        { player: { id: 20, name: "Arthur" }, transfers: [
-          { date: "2022-09-01", teams: { in: { id: 2 }, out: { id: 900 } } } ] }];
+      if (path === "transfers") return [{ transfers: [
+        { date: "2019-07-04", teams: { in: { id: 1, name: "Old Club" }, out: { id: 900 } } },
+        { date: "2026-08-17", teams: { in: { id: 777, name: "Barcelona" }, out: { id: 1 } } }] }];
       return params?.team === 1
-        ? [{ players: [
-            { id: 11, name: "Switcher", position: "Defender", number: 11 },
-            { id: 12, name: "Leaver", position: "Midfielder", number: 12 },
-            // A word the app has never seen: absorbed as MID, but named.
-            { id: 19, name: "Oddity", position: "Wing-back", number: 19 }] }]
-        : [{ players: [{ id: 14, name: "Settled", position: "Attacker", number: 14 }] }];
+        ? [{ players: [{ id: 11, name: "Stayer", position: "Defender", number: 3 }] }]
+        : [{ players: [{ id: 14, name: "Settled", position: "Attacker", number: 9 }] }];
     };
     const out = await fetchCompetitionPool("k", 39, 2026, null);
-    const at = (id) => out.players.find((p) => p.player_id === id);
-    return { tx: out.tx, unmapped: out.unmapped, count: out.players.length,
-             leaver: !!at("api_12"), switcher: at("api_11")?.team,
-             returnee: !!at("api_13"), arthur: !!at("api_20"),
-             settled: at("api_14")?.team, oddity: at("api_19")?.position };
+    return { asked, count: out.players.length, has: "tx" in out,
+             stayer: out.players.find((p) => p.player_id === "api_11")?.team };
   });
+  // No clash in this squad set, so the pull asks about transfers not at all.
+  expect(seen.asked.filter(([p]) => p === "transfers").length,
+    "the pull is still reading transfers for every club").toBe(0);
+  expect(seen.asked.length, "the pull costs more than teams + one call per club").toBe(3);
+  expect(seen.has, "the pool builder still reports a transfer pass").toBe(false);
+  expect(seen.count, "the squad build changed").toBe(2);
+  expect(seen.stayer, "somebody was moved with no evidence at all").toBe("Old Club");
 
-  expect(seen.tx.checked, "the transfer pass did not run").toBe(true);
-  expect(seen.tx.since, "the season floor is not being applied").toBe("2026-06-01");
+  // ...and the one question it does answer, asked about one player.
+  const asked = await page.evaluate(async () => {
+    const inLeague = new Set([1, 2]);
+    return { gone: await playerWhereabouts("k", 44, inLeague),
+             stays: await playerWhereabouts("k", 44, new Set([1, 2, 777])) };
+  });
+  expect(asked.gone, "the departure was not found").toEqual(
+    { date: "2026-08-17", to: "Barcelona", gone: true });
+  expect(asked.stays.gone, "a club inside the competition reads as a departure").toBe(false);
+});
 
-  // ACTED ON: the one direction the record has been right about.
-  expect(seen.leaver, "a player who has gone abroad is still in the pool").toBe(false);
-  expect(seen.tx.left.map((r) => [r.name, r.team, r.date]))
-    .toEqual([["Leaver", "Old Club", "2026-08-12"]]);
+test("a player you are suspicious of can be asked about, one at a time", async ({ page }) => {
+  /* The pull cannot find a Rodri: his club's squad list still had him nine days
+     after he signed for Barcelona, and the team-scoped transfer feed does not
+     carry the move. transfers?player= does -- but asking it about six hundred
+     players every refresh is not affordable. So it is asked here, about the one
+     name you typed, from the squad check. */
+  await openLeague(page, { managers: 4, played: 2 });
 
-  /* REPORTED ONLY: this is the direction that moved Gelhardt to the club he
-     had just left, and the one that filled a pool with loan returnees. */
-  expect(seen.switcher, "a within-league move was applied, which is the Gelhardt bug")
-    .toBe("Old Club");
-  expect(seen.tx.suggestedMove.map((r) => [r.name, r.from, r.to]))
-    .toEqual([["Switcher", "Old Club", "New Club"]]);
-  expect(seen.returnee, "a loan returnee was added to the pool").toBe(false);
-  expect(seen.tx.suggestedIn.map((r) => r.name)).toEqual(["Returnee"]);
+  const seen = await page.evaluate(async () => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    S.authUser = { id: "00000000-0000-4000-8000-000000000001", email: "koen.johan.c@gmail.com" };
+    S.league.competition = { name: "Prem", apiLeagueId: 39, season: 2026, sport: "football" };
+    // A pool that came from the API: every player has a club id, two have an
+    // API id, so the button has something to ask about.
+    S._poolBase = S._poolBase.map((p, i) => ({
+      ...p, team_logo: 1 + (i % 2), ...(i === 0 ? { api_id: 44 } : i === 1 ? { api_id: 55 } : {}) }));
+    applyPoolOverrides();
+    const leaver = S.players[0], stayer = S.players[1];
 
-  // Older than the season floor: not news, not even reported.
-  expect(seen.arthur, "a three-season-old loan is in the pool").toBe(false);
-  expect(seen.tx.suggestedIn.map((r) => r.name), "an ancient move is being reported as news")
-    .not.toContain("Arthur");
+    window.apiFootball = async (key, path, params) => path !== "transfers" ? [] : [{
+      transfers: params.player === 44
+        // Out of the competition entirely.
+        ? [{ date: "2026-08-17", teams: { in: { id: 777, name: "Barcelona" }, out: { id: 1 } } }]
+        // Between two clubs that are both in it.
+        : [{ date: "2026-08-11", teams: { in: { id: 2, name: "Arsenal" }, out: { id: 1 } } }] }];
 
-  expect(seen.settled, "somebody with no transfer on record was disturbed").toBe("New Club");
-  // The last silent default in the pull: absorbed, but named.
-  expect(seen.oddity, "the MID fallback stopped absorbing an unknown word").toBe("MID");
-  expect(seen.unmapped.map((u) => [u.name, u.said])).toEqual([["Oddity", "Wing-back"]]);
-
-  // ...and if the endpoint cannot be reached, the pool is what it always was.
-  const blind = await page.evaluate(async () => {
-    const base = window.apiFootball;
-    window.apiFootball = async (k, path, params) => {
-      if (path === "transfers") throw new Error("Unsupported path: transfers");
-      return base(k, path, params);
+    setBoardTab("test"); renderBoard();
+    const ask = async (name) => {
+      const find = document.getElementById("sim-pool-find");
+      find.value = name; find.dispatchEvent(new Event("input", { bubbles: true }));
+      const btn = document.querySelector("#sim-pool-hits [data-askapi]");
+      if (!btn) return { missing: true };
+      btn.click();
+      await new Promise((r) => setTimeout(r, 20));
+      return { row: document.getElementById("sim-pool-hits").textContent.replace(/\s+/g, " "),
+               log: document.getElementById("sim-log")?.textContent || "" };
     };
-    const out = await fetchCompetitionPool("k", 39, 2026, null);
-    return { checked: out.tx.checked, count: out.players.length,
-             leaver: !!out.players.find((p) => p.player_id === "api_12") };
+    return { leaver: await ask(leaver.name), stayer: await ask(stayer.name),
+             leaverName: leaver.name };
   });
-  expect(blind.checked, "an unreachable endpoint reports as a clean check").toBe(false);
-  expect(blind.count, "losing the transfer pass lost the squads with it").toBe(4);
-  expect(blind.leaver, "somebody was removed with no second source at all").toBe(true);
+
+  expect(seen.leaver.missing, "no ask button was rendered, so this proves nothing")
+    .toBeUndefined();
+  expect(seen.leaver.row, "the departure the squad list cannot see was not reported")
+    .toContain("left for Barcelona on 2026-08-17");
+  /* Finding him is only half of it -- the pool still has him, so it has to say
+     what to do about that. */
+  expect(seen.leaver.log, "it found the move and said nothing about fixing it")
+    .toContain("Drop him from the pool");
+  // A move WITHIN the competition is not a departure, and must not read as one.
+  expect(seen.stayer.row, "a transfer between two clubs in the league reads as leaving")
+    .toContain("still here");
+  expect(seen.stayer.row).not.toContain("left for");
 });

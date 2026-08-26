@@ -35,7 +35,7 @@ const lsStub = {
 globalThis.appended = appended;
 const api = new Function(
   "document", "localStorage", "window", "crypto", "navigator",
-  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, WINDOW_DEFAULTS, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, pickCurrentClub, latestTransfers, applyTransfers, knownApiPos, transferFloor, MAX_TRANSFER_REMOVALS, compKeyOf, competitionKey, scoringRules, rugbyMatchSettled, rugbyTeamKnown, firstArray, RUGBY_BENCH_POS, noCandidatesReason, lineupSwapValid, crestUrlFor, rugbyTeamCrest, rugbyPlayerCrest, crestFields, rugbyCrestUrl, rugbyTeamCode, clubHue, initialsOf, markSvg, teamCodeOf, teamCrestHtml, avatarHtml, loadedCompetitions, practiceCompetition, practiceNote, resolveRugbyPosition, canonicalTeamNames, crestBadgeHtml, leftCompetition, availBadges, availText, riskOf, lineupRisks, riskNames, lineupTodo, decodeEntities, cleanPlayerNames, esc, installHint, anyMatchLive, weekInPlay, MATCH_MS, matchIsOver, roundsEndedBy, recappableRounds, roundStillPlaying, lineupRoundNo, waiverPriorityOrder, pushState, ALERT_KINDS, defaultAlertPrefs, subscriptionRow, urlBase64ToUint8Array, rugbySeasonWindow, rugbyDataWindow, rugbyRoundOrder, positionsCsv, parsePositionsCsv, csvSplit, positionRows, positionEvidence, applyPoolOverrides, poolEditsOf, poolAge, POOL_STALE_DAYS, scoredMatchCount, poolCsv, parsePoolCsv, mergePoolCsv, manualPlayerId, preDraftPoolNote, PHASE1_STARTERS, sportNeedsApiKey, summariseLineupSample, lineupObservationText, RUGBY_QUOTA, RUGBY_STARTERS, RUGBY_PLAY_GROUPS, RUGBY_PITCH_BANDS, RUGBY_RULES, RUGBY_STAT_CATALOG, RUGBY_SLOTS, slotMapsFor, sumGroups, zeroByGroup, outfieldGroups, squadSize, flexComplete, flexLeft, fixedRoundSubs, SLOT_POS, SLOT_RANK, rugbyPosCode, isRugbyBenchSlot, parseRugbyPlayer, parseRugbyMatch, usableRugbyMatches, rugbyStatRows, rugbyStatsOf, RUGBY_STAT_KEYS, RUGBY_COMPETITIONS, rugbyBody, parseCompKey, competitionsFor, SPORTS, sportOf, sportDef, posGroups, playGroups, slotPosMap, slotRankMap, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, passAccuracyPct, rawStatsOf, normaliseEvents, concededMinutes, concededMinutesByTeam, onPitchWindow, concededWhileOn, ON_PITCH_END, suspendedNext, yellowBanCount, yellowWindow, injuryFeedNote, effectiveCaptain, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, queueWindow, freshQueueIds, moveShortlistTop, scoringHtml, smallPrintHtml, CRESTS, CRESTS_MORE, MGR_COLORS, authErrorText, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, statSorts, AVERAGED_STATS, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid, pitchHtml, pitchFacingHtml, pitchRowsHtml, squadBoardHtml, historyViewHtml, benchInOrder, moveBench, orderedRoster, flipRows, wireLineupControls, markQueueMoved, matchdayCtaAct, matchdayCardHtml, renderLineup, renderHomeTab, openH2HPreview, openH2HFixture, lineupRowHtml, dugoutHtml, renderFixturesTab, h2hRoundFixtures, h2hTotalRounds, h2hFormOf, h2hStandingsHtml, seasonChartHtml, renderScoutList, renderStatsTab, renderPredraftShortlist, preDraftBrowsing, shortlistCoverage, coverageHint, scoringByPositionHtml, openScoringSheet, animateReorder, applyLocalOverrides, queueManagerWrite, wireStars, starHtml, draftFactCards, draftRulesHtml, lobbyRulesHtml, scoringHtml, applyVisibleOrder, makeReorderable, refetchAll, markConnection, enterLeagueWithFeedback, route, showView, dragActive, afterDrag, overrideStillWins, queueManagerWrite, applyLocalOverrides, keepLocalPick, autoPickStale, autoPickTurn, makePick, autoPick, tickTimer, mergeOptimisticPicks, pickKey, queueFieldWrite, OVERRIDE_TABLES, setPlanner, saveLineup, toggleKeeper, setFinalPick, txWindowStarts, txWhen, txShell, txAvatar, txMgrChip, tradeTxCard, swapTxCard, transactionsLogHtml, renderTrades, builderHtml, faClaimsSectionHtml, waiverOrderHtml, shortlistSectionHtml, plannerSectionHtml, plannerMoveHtml, squadChooserHtml, tradeSectionHtml, setClaimOrder, reorderClaim, tradeForShortlisted, submitTrade, TRADE_TABS, tradeTabBodyHtml, faClaimRowHtml, faClaimRowsHtml, renderClaimList, wireClaimControls, ROW_ATTRS, plannerMoveChoice, plannerSetChoiceOrder, plannerPickPool, renderPlannerPick, setWindowMode, toggleLineups, squadPitchHtml, squadShape, renderDreamTeam, dreamTeam, renderChat, chatThreads, interacting, markInteracting, scheduleDeferredFlush, INTERACT_MS, animateReorder, flipRows, flushDeferredRender, currentSeasonFor, seasonOptions, seasonLabel, backtestSeason, createCompKind, createPreviewSeason, loadScoringPreviewData, pullCreateHistory, renderCreateBalance, updateCreatePullStatus, renderCreateForm, pickReconciliation, squadCheck, reconcilePicksToPool, mapApiPlayer, loadCompetition, roundResolvers, roundIndex, mwNo, FINAL_STATUS, draftOrderMode, lobbyOrderManagers, shuffled, setDraftOrder, renderLobbyOrder, lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow, nextLockMs, lockAfterWindow, snapshotAt, snapshotForNextLock, rosterAtFor, setSession, getSession, repairStarters, lineupShape, repairLineupFor, faWindowKey, roundToSettle, closedWindowRound, closedWindowRounds, closedTradeWindows, roundsOwedSettlement, isRoundSettled, matchFixture, matchTimeFor, computeScoresUncached, bustScores, roundKeyLockedAt, roundKeyOfLabel, roundLabelShort, roundIndex, rosterAtFor, snapshotsByManager, advanceRound, maybeAdvanceRounds };"
+  src + "\nreturn { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores, stageBonuses, stageOrder, finalPickBonus, phaseOneQuota, phaseOneStarters, starterQuota, effectiveConfig, flexCounting, formationValid, DEFAULT_FORMATION, roundRobin, h2hResult, h2hTable, h2hFixturesFor, resolveFaClaims, h2hSchedulePlan, rumblePlacement, matchdayPlan, fmtCountdown, roundRecap, deadlineCrossed, managerStreaks, seasonAwards, transferRoundup, picksUntilTurn, autoPickPreview, navGroups, groupOfTab, isCupCompetition, CREATE_PRESETS, scoringBalance, pointsHistogram, statSummary, rowPointsWith, buildFixtureStatRows, fixtureWindows, matchweeksOf, WINDOW_DEFAULTS, maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs, apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture, fetchCompetitionPool, fetchCompetitionFixtures, pickCurrentClub, departureFrom, knownApiPos, compKeyOf, competitionKey, scoringRules, rugbyMatchSettled, rugbyTeamKnown, firstArray, RUGBY_BENCH_POS, noCandidatesReason, lineupSwapValid, crestUrlFor, rugbyTeamCrest, rugbyPlayerCrest, crestFields, rugbyCrestUrl, rugbyTeamCode, clubHue, initialsOf, markSvg, teamCodeOf, teamCrestHtml, avatarHtml, loadedCompetitions, practiceCompetition, practiceNote, resolveRugbyPosition, canonicalTeamNames, crestBadgeHtml, leftCompetition, availBadges, availText, riskOf, lineupRisks, riskNames, lineupTodo, decodeEntities, cleanPlayerNames, esc, installHint, anyMatchLive, weekInPlay, MATCH_MS, matchIsOver, roundsEndedBy, recappableRounds, roundStillPlaying, lineupRoundNo, waiverPriorityOrder, pushState, ALERT_KINDS, defaultAlertPrefs, subscriptionRow, urlBase64ToUint8Array, rugbySeasonWindow, rugbyDataWindow, rugbyRoundOrder, positionsCsv, parsePositionsCsv, csvSplit, positionRows, positionEvidence, applyPoolOverrides, poolEditsOf, poolAge, POOL_STALE_DAYS, scoredMatchCount, poolCsv, parsePoolCsv, mergePoolCsv, manualPlayerId, preDraftPoolNote, PHASE1_STARTERS, sportNeedsApiKey, summariseLineupSample, lineupObservationText, RUGBY_QUOTA, RUGBY_STARTERS, RUGBY_PLAY_GROUPS, RUGBY_PITCH_BANDS, RUGBY_RULES, RUGBY_STAT_CATALOG, RUGBY_SLOTS, slotMapsFor, sumGroups, zeroByGroup, outfieldGroups, squadSize, flexComplete, flexLeft, fixedRoundSubs, SLOT_POS, SLOT_RANK, rugbyPosCode, isRugbyBenchSlot, parseRugbyPlayer, parseRugbyMatch, usableRugbyMatches, rugbyStatRows, rugbyStatsOf, RUGBY_STAT_KEYS, RUGBY_COMPETITIONS, rugbyBody, parseCompKey, competitionsFor, SPORTS, sportOf, sportDef, posGroups, playGroups, slotPosMap, slotRankMap, slotGroup, pairValid, tradeError, quotaLeft, leagueFlex, slotForNewPick, posQuota, picksPerManager, totalPicks, playerBreakdown, playerPoints, passAccuracyPct, rawStatsOf, normaliseEvents, concededMinutes, concededMinutesByTeam, onPitchWindow, concededWhileOn, ON_PITCH_END, suspendedNext, yellowBanCount, yellowWindow, injuryFeedNote, effectiveCaptain, resilientWrite, playerStatTotal, teamMatchLabels, entryForManagerAt, ownerEntryAt, slotLabel, managerHistory, poolEntries, availableForGroup, isEliminated, computeYetToPlay, showView, plannerChoiceRank, choiceStatus, plannerPickPool, autoPickCandidates, entryForId, botChoice, botThinkMs, queuePlan, queueWindow, freshQueueIds, moveShortlistTop, scoringHtml, smallPrintHtml, CRESTS, CRESTS_MORE, MGR_COLORS, authErrorText, flashPick, announceNewPicks, renderDraftQueue, renderDraft, statsScopedRows, sumStatKey, statSorts, AVERAGED_STATS, sumMinutes, formAvg, formLog, dreamTeam, formDotColor, shortlistCleaned, standingsMovement, roundMVPs, seasonSeries, headToHead, currentRoundNo, currentRoundDreamIds, chatThreads, messagesForThread, threadUnread, markThreadSeen, koRoundOf, knockoutBracket, needsSummary, lineupValid, pitchHtml, pitchFacingHtml, pitchRowsHtml, squadBoardHtml, historyViewHtml, benchInOrder, moveBench, orderedRoster, flipRows, wireLineupControls, markQueueMoved, matchdayCtaAct, matchdayCardHtml, renderLineup, renderHomeTab, openH2HPreview, openH2HFixture, lineupRowHtml, dugoutHtml, renderFixturesTab, h2hRoundFixtures, h2hTotalRounds, h2hFormOf, h2hStandingsHtml, seasonChartHtml, renderScoutList, renderStatsTab, renderPredraftShortlist, preDraftBrowsing, shortlistCoverage, coverageHint, scoringByPositionHtml, openScoringSheet, animateReorder, applyLocalOverrides, queueManagerWrite, wireStars, starHtml, draftFactCards, draftRulesHtml, lobbyRulesHtml, scoringHtml, applyVisibleOrder, makeReorderable, refetchAll, markConnection, enterLeagueWithFeedback, route, showView, dragActive, afterDrag, overrideStillWins, queueManagerWrite, applyLocalOverrides, keepLocalPick, autoPickStale, autoPickTurn, makePick, autoPick, tickTimer, mergeOptimisticPicks, pickKey, queueFieldWrite, OVERRIDE_TABLES, setPlanner, saveLineup, toggleKeeper, setFinalPick, txWindowStarts, txWhen, txShell, txAvatar, txMgrChip, tradeTxCard, swapTxCard, transactionsLogHtml, renderTrades, builderHtml, faClaimsSectionHtml, waiverOrderHtml, shortlistSectionHtml, plannerSectionHtml, plannerMoveHtml, squadChooserHtml, tradeSectionHtml, setClaimOrder, reorderClaim, tradeForShortlisted, submitTrade, TRADE_TABS, tradeTabBodyHtml, faClaimRowHtml, faClaimRowsHtml, renderClaimList, wireClaimControls, ROW_ATTRS, plannerMoveChoice, plannerSetChoiceOrder, plannerPickPool, renderPlannerPick, setWindowMode, toggleLineups, squadPitchHtml, squadShape, renderDreamTeam, dreamTeam, renderChat, chatThreads, interacting, markInteracting, scheduleDeferredFlush, INTERACT_MS, animateReorder, flipRows, flushDeferredRender, currentSeasonFor, seasonOptions, seasonLabel, backtestSeason, createCompKind, createPreviewSeason, loadScoringPreviewData, pullCreateHistory, renderCreateBalance, updateCreatePullStatus, renderCreateForm, pickReconciliation, squadCheck, reconcilePicksToPool, mapApiPlayer, loadCompetition, roundResolvers, roundIndex, mwNo, FINAL_STATUS, draftOrderMode, lobbyOrderManagers, shuffled, setDraftOrder, renderLobbyOrder, lastClosedTradeWindow, waiverDue, maybeProcessAutoWaivers, processWaiversNow, nextLockMs, lockAfterWindow, snapshotAt, snapshotForNextLock, rosterAtFor, setSession, getSession, repairStarters, lineupShape, repairLineupFor, faWindowKey, roundToSettle, closedWindowRound, closedWindowRounds, closedTradeWindows, roundsOwedSettlement, isRoundSettled, matchFixture, matchTimeFor, computeScoresUncached, bustScores, roundKeyLockedAt, roundKeyOfLabel, roundLabelShort, roundIndex, rosterAtFor, snapshotsByManager, advanceRound, maybeAdvanceRounds };"
 )(stubDoc, lsStub, winStub, {}, {});
 
 const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcTeamPoints, computeScores,
@@ -50,7 +50,7 @@ const { S, pickInfo, myManager, isAdmin, boardRulesNote, calcPlayerPoints, calcT
         overrideStillWins, keepLocalPick, autoPickStale, autoPickTurn, mergeOptimisticPicks,
         maxFaPerWindow, faMovesThisWindow, faMovesLeft, faWindowStartMs,
         apiPosToSlot, teamCodeFrom, parseSquadPlayer, parseApiFixture,
-        fetchCompetitionPool, fetchCompetitionFixtures, pickCurrentClub, latestTransfers, applyTransfers, knownApiPos, transferFloor, MAX_TRANSFER_REMOVALS, compKeyOf, competitionKey,
+        fetchCompetitionPool, fetchCompetitionFixtures, pickCurrentClub, departureFrom, knownApiPos, compKeyOf, competitionKey,
         rugbyPosCode, isRugbyBenchSlot, parseRugbyPlayer, parseRugbyMatch, usableRugbyMatches, rugbyStatRows, rugbyStatsOf, RUGBY_STAT_KEYS, RUGBY_COMPETITIONS, rugbyBody, 
         parseCompKey, competitionsFor, SPORTS, sportOf, sportDef, posGroups, playGroups, slotPosMap, slotRankMap, scoringRules, pitchRowsHtml, 
         rugbyMatchSettled, rugbyTeamKnown, firstArray, RUGBY_BENCH_POS, noCandidatesReason, lineupSwapValid, crestUrlFor, rugbyTeamCrest, rugbyPlayerCrest, crestFields, rugbyCrestUrl, rugbyTeamCode, clubHue, initialsOf, markSvg, teamCodeOf, teamCrestHtml, avatarHtml, loadedCompetitions, practiceCompetition, practiceNote, resolveRugbyPosition, canonicalTeamNames, crestBadgeHtml, leftCompetition, availBadges, availText, riskOf, lineupRisks, riskNames, lineupTodo, decodeEntities, cleanPlayerNames, esc, installHint, anyMatchLive, weekInPlay, MATCH_MS, matchIsOver, roundsEndedBy, recappableRounds, roundStillPlaying, lineupRoundNo, waiverPriorityOrder, pushState, ALERT_KINDS, defaultAlertPrefs, subscriptionRow, urlBase64ToUint8Array, rugbySeasonWindow, rugbyDataWindow, rugbyRoundOrder, positionsCsv, parsePositionsCsv, csvSplit, positionRows, positionEvidence, applyPoolOverrides, poolEditsOf, poolAge, POOL_STALE_DAYS, scoredMatchCount, poolCsv, parsePoolCsv, mergePoolCsv, manualPlayerId, preDraftPoolNote, PHASE1_STARTERS, sportNeedsApiKey, summariseLineupSample, lineupObservationText,
@@ -3250,113 +3250,40 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
       pickCurrentClub([{ date: "2026-08-20" }, { teams: {} }, ...tx], opts)?.team, "Coventry");
   }
 
-  /* The transfer record as a second source.
+  /* Which club a player is at NOW, from his own transfer history.
 
-     The squad endpoint asks one question -- "who is in your squad?" -- twenty
-     times, and a stale answer to it is indistinguishable from a correct one
-     because nothing else in the pull can disagree. Both reported live, same
-     cause: Konsa moves Villa to Arsenal and Arsenal have not listed him, so
-     the pool keeps him at Villa; Rodri leaves the league and City have not
-     dropped him, so the pool keeps him at City. */
+     `transfers?player=<id>` is the only thing in this feed that answers this
+     correctly, and it took three wrong answers and a direct probe to find out:
+
+       transfers?team=<Manchester City> returns 334 player blocks and Rodri IS
+       one of them -- carrying only his 2019 arrival. His move to Barcelona on
+       2026-08-17, which transfers?player=44 shows plainly, is not in the
+       team-scoped answer at all.
+
+     So the whole-competition pass is gone, and this is what replaced it: one
+     call, one player, asked when somebody has a reason to ask. */
   {
-    const teams = new Map([[66, { name: "Aston Villa", code: "AVL" }],
-                           [42, { name: "Arsenal", code: "ARS" }],
-                           [50, { name: "Manchester City", code: "MCI" }]]);
-    const rows = [
-      { player: { id: 1, name: "E. Konsa" }, transfers: [
-        { date: "2023-07-01", teams: { in: { id: 66 }, out: { id: 40 } } },
-        { date: "2026-08-15", teams: { in: { id: 42 }, out: { id: 66 } } } ] },
-      { player: { id: 2, name: "Rodri" }, transfers: [
-        { date: "2026-08-12", teams: { in: { id: 900 }, out: { id: 50 } } } ] },
-      // The same move arrives twice, once per club. It must dedupe.
-      { player: { id: 1, name: "E. Konsa" }, transfers: [
-        { date: "2026-08-15", teams: { in: { id: 42 }, out: { id: 66 } } } ] },
+    const inLeague = new Set([42, 50, 66]);          // Arsenal, City, Villa
+    const rodri = [
+      { date: "2019-07-04", teams: { in: { id: 50, name: "Manchester City" }, out: { id: 530 } } },
+      { date: "2026-08-17", teams: { in: { id: 529, name: "Barcelona" }, out: { id: 50 } } },
+      { date: "2026-08-16", teams: { in: { id: 529, name: "Barcelona" }, out: { id: 50 } } },
     ];
-    const latest = latestTransfers(rows);
-    check("transfers: the newest move per player wins",
-      [latest[1].inId, latest[1].date], [42, "2026-08-15"]);
-    check("transfers: the same move from both clubs is still one move",
-      Object.keys(latest).length, 2);
-    check("transfers: a row with no date or no incoming club is ignored",
-      Object.keys(latestTransfers([{ player: { id: 9 }, transfers: [
-        { teams: { in: { id: 42 } } }, { date: "2026-01-01", teams: {} }] }])).length, 0);
-    check("transfers: nothing at all is not a crash",
-      [Object.keys(latestTransfers(null)).length, Object.keys(latestTransfers([])).length], [0, 0]);
-
-    /* A club's transfer history is HISTORY, and neither source is reliably
-       newer than the other. Settled by asking the feed (probe_feed.py):
-
-         Rodri     squads say Manchester City; transfers say 2026-08-17 to
-                   Barcelona. The squad list is stale.
-         Gelhardt  squads say Hull City, correctly; the newest transfer is a
-                   30 June return from loan to Leeds. The record is stale.
-         Konsa     squads say Aston Villa; transfers say nothing since 2019.
-                   The feed does not know about the move at all.
-
-       The split that fits all three is direction: a return from loan is always
-       INTO the parent club, so loan artefacts only ever pollute the
-       in-competition direction. */
-    check("the floor is the June before the season, on the API's own convention",
-      [transferFloor(2026), transferFloor(2025)], ["2026-06-01", "2025-06-01"]);
-    const stale = [{ player: { id: 3, name: "Arthur" }, transfers: [
-      { date: "2022-09-01", teams: { in: { id: 42 }, out: { id: 700 } } } ] }];
-    check("a loan from three seasons ago is not news",
-      Object.keys(latestTransfers(stale, transferFloor(2026))).length, 0);
-    check("a June signing counts as this season's",
-      Object.keys(latestTransfers([{ player: { id: 4 }, transfers: [
-        { date: "2026-06-14", teams: { in: { id: 42 } } }] }], transferFloor(2026))).length, 1);
-    check("...and the May before it does not",
-      Object.keys(latestTransfers([{ player: { id: 4 }, transfers: [
-        { date: "2026-05-30", teams: { in: { id: 42 } } }] }], transferFloor(2026))).length, 0);
-    check("the player's name is carried, so the report can name him",
-      latestTransfers(rows, transferFloor(2026))[1]?.name, "E. Konsa");
-
-    const squads = [
-      { player_id: "api_1", name: "E. Konsa", position: "DEF", team: "Aston Villa", team_code: "AVL", team_logo: 66 },
-      { player_id: "api_2", name: "Rodri", position: "MID", team: "Manchester City", team_code: "MCI", team_logo: 50 },
-      { player_id: "api_3", name: "Stayer", position: "FWD", team: "Arsenal", team_code: "ARS", team_logo: 42 },
-    ];
-    const r = applyTransfers(squads, latest, teams);
-
-    /* ACTED ON. Rodri is still in City's squad list and the record says he
-       went to a club outside the competition. Sale or loan out, he cannot play
-       here -- and this is the one direction the record has been right about. */
-    check("a move OUT of the competition removes him from the pool",
-      r.players.some((p) => p.player_id === "api_2"), false);
-    check("...and says who, where he was, and when he went",
-      r.left.map((g) => [g.name, g.team, g.date]), [["Rodri", "Manchester City", "2026-08-12"]]);
-
-    /* REPORTED ONLY. This is the direction that moved J. Gelhardt to the club
-       he had just left, so it is never applied. */
-    check("a move WITHIN the competition is reported, not applied",
-      [r.players.find((p) => p.player_id === "api_1").team,
-       r.suggestedMove.map((m) => [m.name, m.from, m.to])],
-      ["Aston Villa", [["E. Konsa", "Aston Villa", "Arsenal"]]]);
-    check("somebody with no transfer on record is untouched",
-      r.players.find((p) => p.player_id === "api_3").team, "Arsenal");
-
-    /* ...and so is an arrival nobody's squad has. Twenty-four of these in one
-       run were loan returns to parent clubs, none of them really in a squad. */
-    const arriving = applyTransfers(squads,
-      { 7: { date: "2026-08-18", inId: 42, outId: 500, name: "A Returnee" } }, teams);
-    check("an apparent arrival is reported, not added",
-      [arriving.players.length, arriving.suggestedIn.map((x) => [x.name, x.to])],
-      [squads.length, [["A Returnee", "Arsenal"]]]);
-    check("...and is never mistaken for a departure", arriving.left.length, 0);
-
-    /* Removals are capped. Emptying squads on the strength of a feed that has
-       now been wrong twice is the one mistake that costs a manager something. */
-    const many = [], manyLatest = {};
-    for (let i = 0; i < MAX_TRANSFER_REMOVALS + 1; i++) {
-      many.push({ player_id: "api_" + (100 + i), name: "P" + i, position: "MID",
-                  team: "Arsenal", team_code: "ARS", team_logo: 42 });
-      manyLatest[100 + i] = { date: "2026-08-11", inId: 900, outId: 42 };
-    }
-    const capped = applyTransfers(many, manyLatest, teams);
-    check("an implausible number of departures is not applied",
-      capped.players.length, many.length);
-    check("...and is reported as skipped rather than as done",
-      [capped.left.length, capped.skipped.length], [0, many.length]);
+    const d = departureFrom(rodri, inLeague);
+    check("the newest transfer decides, whatever order they arrive in",
+      [d.date, d.to], ["2026-08-17", "Barcelona"]);
+    check("...and a club outside the competition means he has gone", d.gone, true);
+    check("a move to another club IN the competition is not a departure",
+      departureFrom([{ date: "2026-08-01", teams: { in: { id: 42, name: "Arsenal" } } }],
+        inLeague).gone, false);
+    /* Nothing on record is NOT the same answer as "he is still here", and the
+       caller reports it as its own thing rather than as a clean bill. */
+    check("no history at all says nothing", [departureFrom([], inLeague),
+      departureFrom(null, inLeague)], [null, null]);
+    check("rows with no date or no destination are ignored, not obeyed",
+      departureFrom([{ teams: { in: { id: 529 } } }, { date: "2026-01-01" }], inLeague), null);
+    check("...and are skipped without hiding a good row",
+      departureFrom([{ teams: { in: { id: 529 } } }, ...rodri], inLeague).date, "2026-08-17");
   }
 
 

@@ -624,6 +624,44 @@ function simSquadCheck() {
      </div>`);
 }
 
+/* One call, one player: has he left the competition?
+
+   The pool is built from squad lists, and a squad list can be a fortnight
+   behind -- Rodri sat in Manchester City's for nine days after he signed for
+   Barcelona. `transfers?player=<id>` is the only thing in this feed that
+   showed that, and it is far too expensive to ask about six hundred players,
+   so it is asked here: about the one you are suspicious of, when you are
+   suspicious of him. */
+async function simAskApi(btn) {
+  const apiId = Number(btn.dataset.askapi), name = btn.dataset.askname;
+  const key = (document.getElementById("adm-api-key")?.value || "").trim()
+    || localStorage.getItem("wcf_apikey") || "";
+  btn.disabled = true; btn.textContent = "asking…";
+  try {
+    // Every club in this competition, by API id -- `team_logo` is the team's
+    // API id (the pool's own `teams` list is names only). A move to a club not
+    // in this set is a move out of the competition.
+    const ids = new Set((S.players || []).map((p) => p.team_logo).filter((x) => x != null));
+    const d = await playerWhereabouts(key, apiId, ids);
+    btn.outerHTML = !d
+      ? '<span class="shrink-0 text-[10px] text-slate-500">no transfer on record</span>'
+      : d.gone
+        ? `<span class="shrink-0 text-[10px] font-semibold text-red-300">left for ${
+            esc(d.to)} on ${esc(d.date)}</span>`
+        : `<span class="shrink-0 text-[10px] text-emerald-400">still here (${esc(d.to)}, ${esc(d.date)})</span>`;
+    if (d?.gone) simToast(`${name} left for ${d.to} on ${d.date}. Drop him from the pool`
+      + " to mark him ✈ LEFT for everyone.");
+  } catch (e) {
+    btn.disabled = false; btn.textContent = "ask API";
+    simToast(e.message || "The lookup failed.");
+  }
+}
+
+function wirePoolAsk() {
+  document.querySelectorAll("[data-askapi]").forEach((b) =>
+    b.onclick = () => simAskApi(b));
+}
+
 // Name lookup against the pool, so "where does it think Rodri is" is one box.
 function simPoolFind(q) {
   const out = document.getElementById("sim-pool-hits");
@@ -636,11 +674,19 @@ function simPoolFind(q) {
   out.innerHTML = hits.length
     ? hits.slice(0, 12).map((p) => {
         const pk = owner[p.player_id];
-        return `<div class="flex items-baseline gap-2 py-1 border-t border-slate-800">
-          <span class="min-w-0 flex-1 truncate text-slate-300">${esc(p.name)}</span>
-          <span class="shrink-0 text-slate-400">${esc(p.position)} · ${esc(p.team)}</span>
-          <span class="shrink-0 ${pk ? "text-wcgold" : "text-slate-500"}">${
-            pk ? esc((S.managers || []).find((m) => m.id === pk.manager_id)?.name || "owned") : "free"}</span>
+        /* Two lines rather than four columns: at 390px a name, a club, an owner
+           and a button on one row leave the name about eight characters. */
+        return `<div class="py-1.5 border-t border-slate-800">
+          <div class="flex items-baseline gap-2">
+            <span class="min-w-0 flex-1 truncate text-slate-300">${esc(p.name)}</span>
+            <span class="shrink-0 ${pk ? "text-wcgold" : "text-slate-500"}">${
+              pk ? esc((S.managers || []).find((m) => m.id === pk.manager_id)?.name || "owned") : "free"}</span>
+          </div>
+          <div class="flex items-center gap-2 pt-0.5 min-h-[18px]">
+            <span class="min-w-0 flex-1 truncate text-slate-400">${esc(p.position)} · ${esc(p.team)}</span>
+            ${p.api_id ? `<button data-askapi="${p.api_id}" data-askname="${esc(p.name)}"
+              class="shrink-0 rounded border border-slate-600 px-1.5 py-0.5 text-[10px] font-semibold text-slate-300">ask API</button>` : ""}
+          </div>
         </div>`; }).join("")
       + (hits.length > 12 ? `<p class="text-slate-500 pt-1">…and ${hits.length - 12} more</p>` : "")
     /* Nobody by that name IS the answer when you are checking a transfer: he
@@ -772,7 +818,8 @@ function renderTestTab() {
   });
   box.querySelectorAll("[data-rmfx]").forEach((b) => b.onclick = () => simRemoveFixture(b.dataset.rmfx));
   const find = document.getElementById("sim-pool-find");
-  if (find) find.oninput = () => simPoolFind(find.value);
+  if (find) find.oninput = () => { simPoolFind(find.value); wirePoolAsk(); };
+  wirePoolAsk();
   document.getElementById("sim-st-save").onclick = () =>
     simSetStat(val("sim-st-player"), val("sim-st-match"), {
       minutes: num("sim-st-min"), goals: num("sim-st-g"), assists: num("sim-st-a"),
