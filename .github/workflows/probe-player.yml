@@ -1,0 +1,59 @@
+name: Where does the feed say a player is
+
+# Read-only. Asks API-Football two independent questions about one player and
+# prints both answers to the run log:
+#
+#   1. which club's squad list contains him (the ONLY thing the app's pool is
+#      built from, which is why a stale answer to it is invisible), and
+#   2. what his transfer history says, newest first.
+#
+# This exists because those two disagreed twice in one week -- once because a
+# squad list was stale, once because a transfer record was -- and there was no
+# way to settle it except by guessing. It writes nothing, anywhere.
+#
+# Costs one call for the club list, one per club searched, and one for the
+# history. Naming clubs keeps it to a handful; leaving them blank searches all
+# twenty, which on a small plan is most of a day's quota.
+on:
+  workflow_dispatch:
+    inputs:
+      player:
+        description: "Player name, or several separated by commas (substring match)"
+        required: true
+        default: "Rodri"
+      clubs:
+        description: "Clubs to search, comma-separated. Blank = every club (20 calls)"
+        required: false
+        default: ""
+      league:
+        description: "API-Football league id (39 = Premier League)"
+        required: false
+        default: "39"
+      season:
+        description: "API-Football season (the season's START year)"
+        required: false
+        default: "2026"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Ask the feed
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+        run: |
+          python probe_feed.py \
+            --player "${{ inputs.player }}" \
+            --clubs "${{ inputs.clubs }}" \
+            --league "${{ inputs.league }}" \
+            --season "${{ inputs.season }}"

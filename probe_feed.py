@@ -4,6 +4,7 @@
     python probe_feed.py --date 2026-08-23
     python probe_feed.py --fixture 1234567
     python probe_feed.py --date 2026-08-23 --league 39 --season 2026
+    python probe_feed.py --player Rodri --clubs "Manchester City"
 
 Needs API_FOOTBALL_KEY. Reads only; writes nothing, anywhere.
 
@@ -30,6 +31,10 @@ It answers four questions and will grow as more come up:
   2. Does a penalty WON also show up as an assist?
   3. Which side of a `subst` event holds the player coming on?
   4. Is `passes.accuracy` a count or a percentage?
+  5. Which club's squad list holds a given player, and what does his transfer
+     history say? Those two disagreed twice in one week -- once because a
+     squad list was stale, once because a transfer record was -- and there was
+     no way to settle it except by guessing.
 """
 import argparse
 import sys
@@ -136,20 +141,85 @@ def probe(fid, label):
           f"— {'so it is a COUNT' if over100 else 'inconclusive from this match'}")
 
 
+def probe_player(name, league, season, clubs):
+    """Where does the feed say this player is? Reads two independent things.
+
+    The app builds its pool from `players/squads`, one call per club, and that
+    is the ONLY question it asks -- so a stale answer to it is invisible.
+    Twice now a manager has said a player is at the wrong club and there has
+    been no way to settle it except by guessing at what the feed holds.
+
+    This asks the feed directly and prints both answers side by side:
+
+      1. Which club's squad list actually contains him, if any.
+      2. What his transfer history says, newest first.
+
+    Read-only, and cheap: one call for the club list, one per club searched,
+    one for the history. Nothing is written anywhere.
+    """
+    want = name.strip().lower()
+    teams = api_get("teams", {"league": league, "season": season}).get("response", [])
+    print(f"\n=== {name} · league {league} season {season} ===")
+    print(f"{len(teams)} clubs in the competition.")
+    if not teams:
+        return
+
+    wanted = [t for t in teams
+              if not clubs or any(c.strip().lower() in (t["team"]["name"] or "").lower()
+                                  for c in clubs)]
+    if clubs and not wanted:
+        print(f"No club matched {clubs}. Names are: "
+              + ", ".join(sorted(t["team"]["name"] for t in teams)))
+        return
+    print(f"Searching {len(wanted)} squad list(s): "
+          + ", ".join(t["team"]["name"] for t in wanted))
+
+    found = []
+    for t in wanted:
+        squad = api_get("players/squads", {"team": t["team"]["id"]}).get("response", [])
+        for p in (squad[0].get("players") if squad else []) or []:
+            if want in (p.get("name") or "").lower():
+                found.append((t["team"]["name"], p))
+                print(f"  IN SQUAD · {t['team']['name']}: {p.get('name')} "
+                      f"(id {p.get('id')}, {p.get('position')}, no. {p.get('number')})")
+    if not found:
+        print("  NOT in any of those squad lists.")
+
+    # The other source, for whoever we managed to identify.
+    for pid in sorted({p.get("id") for _, p in found if p.get("id")}):
+        hist = api_get("transfers", {"player": pid}).get("response", [])
+        rows = hist[0].get("transfers", []) if hist else []
+        rows = sorted(rows, key=lambda r: str(r.get("date") or ""), reverse=True)
+        print(f"  TRANSFERS · id {pid}: {len(rows)} on record"
+              + ("" if rows else " — the feed has no transfer history for him"))
+        for r in rows[:6]:
+            teams_ = r.get("teams") or {}
+            print(f"      {r.get('date')}  {(teams_.get('out') or {}).get('name')}"
+                  f"  ->  {(teams_.get('in') or {}).get('name')}   [{r.get('type')}]")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", help="probe every fixture on this date")
     ap.add_argument("--fixture", type=int, help="probe one fixture by id")
+    ap.add_argument("--player", help="probe where a player is, by name substring")
+    ap.add_argument("--clubs", default="",
+                    help="comma-separated club names to search (blank = every club)")
     ap.add_argument("--league", type=int, default=39)
     ap.add_argument("--season", type=int, default=2026)
     ap.add_argument("--limit", type=int, default=3, help="max fixtures per date")
     args = ap.parse_args()
 
+    if args.player:
+        for who in [w for w in args.player.split(",") if w.strip()]:
+            probe_player(who, args.league, args.season,
+                         [c for c in args.clubs.split(",") if c.strip()])
+        return
     if args.fixture:
         probe(args.fixture, f"fixture {args.fixture}")
         return
     if not args.date:
-        sys.exit("Give --date YYYY-MM-DD or --fixture <id>.")
+        sys.exit("Give --date YYYY-MM-DD, --fixture <id>, or --player <name>.")
 
     fixtures = fixtures_on(args.date, args.league, args.season)
     if not fixtures:
