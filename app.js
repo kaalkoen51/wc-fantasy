@@ -770,13 +770,15 @@ async function fetchCompetitionPool(key, apiLeagueId, season, onProgress, prev) 
   /* Second source. Everything above is one question asked twenty times; this
      is the only thing in the pull that can contradict the answer. */
   let players = Object.values(byId);
-  let tx = { moved: [], carried: [], left: [], skipped: [], signed: [], unknown: [], checked: false };
+  let tx = { moved: [], carried: [], left: [], skipped: [], flooded: [],
+             signed: [], unknown: [], checked: false };
   const rows = await fetchCompetitionTransfers(key, teams, onProgress);
   if (rows) {
     const teamsById = new Map(teams.map((t) =>
       [t.team.id, { name: decodeEntities(t.team.name),
                     code: teamCodeFrom(decodeEntities(t.team.name), t.team.code) }]));
-    const applied = applyTransfers(players, prev, latestTransfers(rows), teamsById);
+    const applied = applyTransfers(players, prev,
+      latestTransfers(rows, transferFloor(season)), teamsById);
     players = applied.players;
     const arrivals = await fetchArrivals(key, applied.unplaced, season, teamsById, onProgress);
     players = players.concat(arrivals.rows);
@@ -806,7 +808,8 @@ async function fetchArrivals(key, unplaced, season, teamsById, onProgress) {
   const rows = [], unknown = [];
   const list = (unplaced || []).slice(0, MAX_ARRIVAL_LOOKUPS);
   for (const u of (unplaced || []).slice(MAX_ARRIVAL_LOOKUPS))
-    unknown.push({ apiId: u.apiId, team: u.team, why: "too many arrivals to look up" });
+    unknown.push({ apiId: u.apiId, name: u.name || `player ${u.apiId}`, team: u.team,
+                   why: "too many arrivals to look up" });
   const club = (u) => teamsById.get(u.teamId);
   const look = async (u, yr) => {
     const r = await apiFootball(key, "players", { id: u.apiId, season: yr });
@@ -814,6 +817,7 @@ async function fetchArrivals(key, unplaced, season, teamsById, onProgress) {
   };
   for (const u of list) {
     onProgress && onProgress(null, null, `new signing at ${u.team}`);
+    const who = u.name || `player ${u.apiId}`;
     let row = null, failed = false, stale = false;
     try { row = await look(u, season); } catch { failed = true; }
     /* Nothing on record THIS season is the ordinary state of a summer signing
@@ -827,7 +831,7 @@ async function fetchArrivals(key, unplaced, season, teamsById, onProgress) {
       catch { failed = true; }
     }
     if (row) rows.push(stale ? { ...row, pos_season: season - 1 } : row);
-    else unknown.push({ apiId: u.apiId, team: u.team,
+    else unknown.push({ apiId: u.apiId, name: who, team: u.team,
                         why: failed ? "lookup failed" : "no position on record" });
   }
   return { rows, unknown };
@@ -842,21 +846,44 @@ async function fetchArrivals(key, unplaced, season, teamsById, onProgress) {
    Pure, and defensive about shape: this is the one endpoint in the pull whose
    response nobody here has ever seen, and a missing field must leave a player
    alone rather than throw the pull away. */
-function latestTransfers(rows) {
+function latestTransfers(rows, since) {
   const out = {};
+  const floor = String(since || "");
   for (const r of (rows || [])) {
     const id = r?.player?.id;
     if (id == null) continue;
+    const name = r.player.name || null;
     for (const t of (r.transfers || [])) {
       const inId = t?.teams?.in?.id, date = String(t?.date || "");
       if (inId == null || !date) continue;
+      if (floor && date < floor) continue;      // history, not news -- see below
       const prev = out[id];
       if (!prev || date > prev.date)
-        out[id] = { date, inId, outId: t?.teams?.out?.id ?? null };
+        out[id] = { date, inId, outId: t?.teams?.out?.id ?? null, name };
     }
   }
   return out;
 }
+
+/* Transfers older than this are history, not news.
+
+   `transfers?team=` answers with a club's WHOLE transfer history, and the
+   newest row for a player is not the same thing as where he plays now: the
+   feed records arrivals far more completely than departures, so a loan that
+   ended three years ago can still be the last thing on record about him.
+   Without a floor, that read as "he has just signed".
+
+   Observed on a live pull: six hundred and six players "signed from outside
+   the competition", among them Arthur at Liverpool -- a loan from several
+   seasons ago -- Milner at Brighton and Kurzawa at Fulham. Every one of them
+   an old move mistaken for a new one.
+
+   The floor is the June before the season starts, which is API-Football's own
+   season convention (season 2026 = 2026/27) plus a month of slack, because a
+   summer signing is often dated before the window formally opens. Anything
+   inside it is this season's business; anything outside it cannot tell us
+   where a player is today. */
+const transferFloor = (season) => `${Number(season) || 0}-06-01`;
 
 /* Reconcile a freshly pulled squad list against that transfer record.
 
@@ -886,6 +913,7 @@ function latestTransfers(rows) {
    something, so an implausible number of them is treated as bad data and
    reported instead of applied. Pure. */
 const MAX_TRANSFER_REMOVALS = 8;
+const MAX_TRANSFER_ARRIVALS = 40;
 function applyTransfers(players, prev, latest, teamsById) {
   const byId = new Map((players || []).map((p) => [p.player_id, { ...p }]));
   const inComp = (tid) => tid != null && teamsById.has(tid);
@@ -903,7 +931,7 @@ function applyTransfers(players, prev, latest, teamsById) {
        the caller to look up; unlike everything else here that needs a call. */
     if (!src) {
       if (inComp(t.inId)) unplaced.push({ apiId: Number(apiId), teamId: t.inId,
-                                          team: clubOf(t.inId).name });
+                                          team: clubOf(t.inId).name, name: t.name });
       continue;
     }
     if (inComp(t.inId)) {
@@ -920,7 +948,15 @@ function applyTransfers(players, prev, latest, teamsById) {
      misread. Keep everyone, and say so. */
   const tooMany = left.length > MAX_TRANSFER_REMOVALS;
   if (!tooMany) for (const g of left) byId.delete(g.id);
-  return { players: [...byId.values()], moved, carried, unplaced,
+  /* And the same judgement about arrivals, for the same reason and with a
+     bigger number: a transfer window moves tens of players into a league, not
+     hundreds. Past this, the feed is telling us about history rather than
+     about now, and the right answer is to look none of them up -- each one
+     costs an API call, and six hundred of them would spend a day's quota
+     proving the data wrong. */
+  const flood = unplaced.length > MAX_TRANSFER_ARRIVALS;
+  return { players: [...byId.values()], moved, carried,
+           unplaced: flood ? [] : unplaced, flooded: flood ? unplaced : [],
            left: tooMany ? [] : left, skipped: tooMany ? left : [] };
 }
 
@@ -16322,7 +16358,7 @@ async function loadCompetition(opts = {}) {
       .eq("competition_key", compKey).maybeSingle();
     if (existing.error) throw new Error(existing.error.message);
     let players, fixtures, roundOrder = [], dup = [];
-    let tx = { moved: [], carried: [], left: [], skipped: [],
+    let tx = { moved: [], carried: [], left: [], skipped: [], flooded: [],
                signed: [], unknown: [], checked: false };
     let unmapped = [];
     if (!refreshing && existing.data?.players?.length &&
@@ -16388,11 +16424,14 @@ async function loadCompetition(opts = {}) {
         (r) => `${r.name} → ${r.to} (${r.position}${
           r.from ? `, position from ${r.from}` : ""})`);
       list("signed from outside but could not be added", tx.unknown,
-        (r) => `player ${r.apiId} → ${r.team} — ${r.why}`);
+        (r) => `${r.name || "player " + r.apiId} → ${r.team} — ${r.why}`);
+      if (tx.flooded.length) lines.push(`${tx.flooded.length} players looked like new signings`
+        + " — far more than a transfer window produces, so none were looked up."
+        + " The transfer feed is answering with history rather than recent moves.");
       if (tx.skipped.length) lines.push(`${tx.skipped.length} players looked like they had left`
         + " — too many to believe, so none were removed. Check the transfer feed.");
       if (!tx.moved.length && !tx.carried.length && !tx.left.length && !tx.skipped.length
-          && !tx.signed.length && !tx.unknown.length)
+          && !tx.signed.length && !tx.unknown.length && !tx.flooded.length)
         lines.push("Transfer record checked: it agrees with every squad list.");
     } else {
       lines.push("Transfer record NOT checked — the transfers endpoint was unavailable,"
