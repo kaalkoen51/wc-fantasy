@@ -198,8 +198,63 @@ def probe_player(name, league, season, clubs):
                   f"  ->  {(teams_.get('in') or {}).get('name')}   [{r.get('type')}]")
 
 
+def probe_team_transfers(club, league, season, want):
+    """What does `transfers?team=` actually ANSWER with?
+
+    The pool's departure rule reads this endpoint for every club and looks for
+    a newest transfer INTO somewhere outside the competition. It never finds
+    one -- every row that comes back has an in-club inside the league -- and
+    Rodri, whose own history plainly shows Manchester City -> Barcelona, is not
+    reported as having left. Either the endpoint answers only with arrivals, or
+    it is paginated and we are reading page one, or he is simply not in it.
+
+    So print the envelope, not just the rows: paging, results, how many players
+    came back, which direction their newest rows point, and whether the named
+    player is in there at all.
+    """
+    teams = api_get("teams", {"league": league, "season": season}).get("response", [])
+    ids = {t["team"]["id"] for t in teams}
+    match = [t for t in teams if club.strip().lower() in (t["team"]["name"] or "").lower()]
+    if not match:
+        print(f"No club matched {club!r}. Names: "
+              + ", ".join(sorted(t["team"]["name"] for t in teams)))
+        return
+    t = match[0]["team"]
+    data = api_get("transfers", {"team": t["id"]})
+    rows = data.get("response", [])
+    print(f"\n=== transfers?team={t['id']} ({t['name']}) ===")
+    print(f"  results={data.get('results')}  paging={data.get('paging')}")
+    print(f"  {len(rows)} player blocks in the response")
+
+    # Which way do the newest rows point? That is the whole question.
+    into_league = out_of_league = 0
+    for r in rows:
+        newest = max((x for x in (r.get("transfers") or []) if x.get("date")),
+                     key=lambda x: x["date"], default=None)
+        if not newest:
+            continue
+        in_id = ((newest.get("teams") or {}).get("in") or {}).get("id")
+        if in_id in ids:
+            into_league += 1
+        else:
+            out_of_league += 1
+    print(f"  newest row points INTO the competition for {into_league} of them, "
+          f"OUT of it for {out_of_league}")
+
+    if want:
+        hits = [r for r in rows if want.lower() in (r.get("player", {}).get("name") or "").lower()]
+        print(f"  {want}: {'FOUND' if hits else 'NOT in this response'}")
+        for r in hits:
+            for x in sorted(r.get("transfers") or [],
+                            key=lambda y: str(y.get("date")), reverse=True)[:6]:
+                tm = x.get("teams") or {}
+                print(f"      {x.get('date')}  {(tm.get('out') or {}).get('name')}"
+                      f"  ->  {(tm.get('in') or {}).get('name')}   [{x.get('type')}]")
+
+
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--team-transfers", help="club name: dump what transfers?team= answers with")
     ap.add_argument("--date", help="probe every fixture on this date")
     ap.add_argument("--fixture", type=int, help="probe one fixture by id")
     ap.add_argument("--player", help="probe where a player is, by name substring")
@@ -210,6 +265,9 @@ def main():
     ap.add_argument("--limit", type=int, default=3, help="max fixtures per date")
     args = ap.parse_args()
 
+    if args.team_transfers:
+        probe_team_transfers(args.team_transfers, args.league, args.season, args.player)
+        return
     if args.player:
         for who in [w for w in args.player.split(",") if w.strip()]:
             probe_player(who, args.league, args.season,
