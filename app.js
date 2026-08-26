@@ -698,7 +698,25 @@ function parseApiFixture(f) {
 
 // Fetch a competition's whole pool: teams → each team's squad (thin wrapper
 // around the pure transforms above; onProgress(done, total, team) for the UI).
-async function fetchCompetitionPool(key, apiLeagueId, season, onProgress) {
+/* Every transfer in or out of any club in the competition. Twenty calls,
+   which roughly doubles the pull -- the price of having a second source at
+   all. Swallows its own failure: without it the pool is exactly what it was
+   before this existed, and losing six hundred squads because one optional
+   lookup 404'd would be a far worse trade. */
+async function fetchCompetitionTransfers(key, teams, onProgress) {
+  const rows = [];
+  let done = 0;
+  for (const t of teams) {
+    onProgress && onProgress(++done, teams.length, `transfers · ${t.team.name}`);
+    try {
+      const r = await apiFootball(key, "transfers", { team: t.team.id });
+      if (Array.isArray(r)) rows.push(...r);
+    } catch { return null; }        // endpoint unavailable → skip the whole pass
+  }
+  return rows;
+}
+
+async function fetchCompetitionPool(key, apiLeagueId, season, onProgress, prev) {
   const teams = await apiFootball(key, "teams", { league: apiLeagueId, season });
   if (!teams.length) throw new Error("No teams found — check the competition and season.");
   const byId = {};
@@ -732,7 +750,104 @@ async function fetchCompetitionPool(key, apiLeagueId, season, onProgress) {
     }
   }
   const dup = await resolveSquadClashes(key, Object.values(clash), byId, onProgress);
-  return { players: Object.values(byId), teams: [...new Set(names)].sort(), dup };
+
+  /* Second source. Everything above is one question asked twenty times; this
+     is the only thing in the pull that can contradict the answer. */
+  let players = Object.values(byId);
+  let tx = { moved: [], carried: [], left: [], skipped: [], checked: false };
+  const rows = await fetchCompetitionTransfers(key, teams, onProgress);
+  if (rows) {
+    const teamsById = new Map(teams.map((t) =>
+      [t.team.id, { name: decodeEntities(t.team.name),
+                    code: teamCodeFrom(decodeEntities(t.team.name), t.team.code) }]));
+    const applied = applyTransfers(players, prev, latestTransfers(rows), teamsById);
+    players = applied.players;
+    tx = { ...applied, checked: true };
+    delete tx.players;
+  }
+  return { players, teams: [...new Set(names)].sort(), dup, tx };
+}
+
+/* The newest transfer on record for each player, keyed by API player id.
+
+   Fed the concatenated `transfers?team=` responses for every club in the
+   competition -- so the same move arrives twice, once as an IN and once as an
+   OUT, and dedupes to one row by being the same date on the same player.
+
+   Pure, and defensive about shape: this is the one endpoint in the pull whose
+   response nobody here has ever seen, and a missing field must leave a player
+   alone rather than throw the pull away. */
+function latestTransfers(rows) {
+  const out = {};
+  for (const r of (rows || [])) {
+    const id = r?.player?.id;
+    if (id == null) continue;
+    for (const t of (r.transfers || [])) {
+      const inId = t?.teams?.in?.id, date = String(t?.date || "");
+      if (inId == null || !date) continue;
+      const prev = out[id];
+      if (!prev || date > prev.date)
+        out[id] = { date, inId, outId: t?.teams?.out?.id ?? null };
+    }
+  }
+  return out;
+}
+
+/* Reconcile a freshly pulled squad list against that transfer record.
+
+   The squad endpoint is the only thing the pool was ever built from, and it
+   asks one question -- "who is in your squad?" -- twenty times. A stale answer
+   to it is indistinguishable from a correct one, because nothing else in the
+   pull can disagree. Two live cases, one cause:
+
+     · a player moves WITHIN the competition and his new club has not listed
+       him yet, so the pool keeps him at his old club (or, if the old club has
+       already dropped him, loses him entirely);
+     · a player leaves the competition and his old club has not dropped him,
+       so the pool keeps him somewhere he does not play.
+
+   The transfer record is the second source. It carries a date, so where the
+   two disagree it is newer information by construction. Newest transfer wins:
+   into another club in the competition means move him, out of the competition
+   means he is gone.
+
+   `prev` is the pool as it stood before this pull, and it is what makes an
+   arrival placeable: a player nobody's squad lists yet still has a name and a
+   position on his old row, so he is carried forward to his new club rather
+   than vanishing.
+
+   REMOVALS ARE CAPPED. Emptying somebody's squad on the strength of a feed we
+   have never seen a response from is the one mistake here that costs a manager
+   something, so an implausible number of them is treated as bad data and
+   reported instead of applied. Pure. */
+const MAX_TRANSFER_REMOVALS = 8;
+function applyTransfers(players, prev, latest, teamsById) {
+  const byId = new Map((players || []).map((p) => [p.player_id, { ...p }]));
+  const inComp = (tid) => tid != null && teamsById.has(tid);
+  const moved = [], left = [], carried = [];
+  const clubOf = (tid) => teamsById.get(tid);
+
+  for (const [apiId, t] of Object.entries(latest || {})) {
+    const pid = "api_" + apiId;
+    const here = byId.get(pid);
+    const src = here || (prev || []).find((p) => p.player_id === pid);
+    if (!src) continue;                     // never been in this competition
+    if (inComp(t.inId)) {
+      const club = clubOf(t.inId);
+      if (here && here.team === club.name) continue;          // already right
+      const row = { ...src, team: club.name, team_code: club.code, team_logo: t.inId };
+      byId.set(pid, row);
+      (here ? moved : carried).push({ name: src.name, from: src.team, to: club.name });
+    } else if (here) {
+      left.push({ id: pid, name: here.name, team: here.team });
+    }
+  }
+  /* Too many at once is not twenty transfers, it is a response we have
+     misread. Keep everyone, and say so. */
+  const tooMany = left.length > MAX_TRANSFER_REMOVALS;
+  if (!tooMany) for (const g of left) byId.delete(g.id);
+  return { players: [...byId.values()], moved, carried,
+           left: tooMany ? [] : left, skipped: tooMany ? left : [] };
 }
 
 /* Which club a player actually plays for now, out of the ones whose squads
@@ -2973,7 +3088,7 @@ function renderCreateForm() {
    into: both loaders below called the API-Football pair unconditionally, so a
    rugby league could be designed in the create form and then not loaded --
    the pull either asked for a key the feed does not use or came back empty. */
-async function fetchPoolFor(competition, apiKey, onProgress) {
+async function fetchPoolFor(competition, apiKey, onProgress, prev) {
   if (competition.sport === "rugby") {
     const built = await fetchRugbyPool(competition.apiLeagueId, onProgress);
     const fixtures = await fetchRugbyFixtures(competition);
@@ -2986,9 +3101,9 @@ async function fetchPoolFor(competition, apiKey, onProgress) {
     };
   }
   const { apiLeagueId, season } = competition;
-  const built = await fetchCompetitionPool(apiKey, apiLeagueId, season, onProgress);
+  const built = await fetchCompetitionPool(apiKey, apiLeagueId, season, onProgress, prev);
   return {
-    players: built.players, teams: built.teams, dup: built.dup,
+    players: built.players, teams: built.teams, dup: built.dup, tx: built.tx,
     fixtures: await fetchCompetitionFixtures(apiKey, apiLeagueId, season),
     roundOrder: await fetchCompetitionRounds(apiKey, apiLeagueId, season),
   };
@@ -16107,6 +16222,7 @@ async function loadCompetition(opts = {}) {
       .eq("competition_key", compKey).maybeSingle();
     if (existing.error) throw new Error(existing.error.message);
     let players, fixtures, roundOrder = [], dup = [];
+    let tx = { moved: [], carried: [], left: [], skipped: [], checked: false };
     if (!refreshing && existing.data?.players?.length &&
         confirm(`${name} ${season} is already loaded (${existing.data.players.length} players shared across leagues). Reuse it without re-pulling?  (Cancel = re-pull fresh squads from the API.)`)) {
       players = existing.data.players;
@@ -16117,10 +16233,16 @@ async function loadCompetition(opts = {}) {
       
       localStorage.setItem("wcf_apikey", apiKey);
       log("Fetching teams…");
+      /* The pool as it stands goes IN as well as out: a player whose new club
+         has not listed him yet still has a name and a position on his old row,
+         and that is what lets the transfer record place him rather than lose
+         him. */
       const built = await fetchPoolFor(competition, apiKey,
-        (d, t, tm) => log(`Loading squads ${d}/${t} — ${tm}`));
+        (d, t, tm) => log(d == null ? tm : `Loading squads ${d}/${t} — ${tm}`),
+        existing.data?.players || []);
       players = built.players;
       dup = built.dup || [];
+      tx = built.tx || tx;
       if (!players.length) throw new Error("No players returned — check the season for this competition.");
       log(`${players.length} players across ${built.teams.length} teams. Fetching fixtures…`);
       fixtures = built.fixtures;
@@ -16145,6 +16267,28 @@ async function loadCompetition(opts = {}) {
     applyPoolOverrides();
     S.fixtures = fixtures;
     const lines = [];
+    /* The transfer pass, reported before the squad reconcile, because it is
+       what the reconcile is now reading. */
+    if (tx.checked) {
+      const list = (label, rows, fmt) => {
+        if (!rows.length) return;
+        lines.push(`${rows.length} ${label}:`);
+        for (const r of rows.slice(0, 10)) lines.push("  " + fmt(r));
+        if (rows.length > 10) lines.push(`  …and ${rows.length - 10} more`);
+      };
+      list("moved club per the transfer record", tx.moved, (r) => `${r.name}: ${r.from} → ${r.to}`);
+      list("placed at a new club no squad list has them at yet", tx.carried,
+        (r) => `${r.name}: ${r.from} → ${r.to}`);
+      list("no longer in this competition, per the transfer record", tx.left,
+        (r) => `${r.name} (was ${r.team})`);
+      if (tx.skipped.length) lines.push(`${tx.skipped.length} players looked like they had left`
+        + " — too many to believe, so none were removed. Check the transfer feed.");
+      if (!tx.moved.length && !tx.carried.length && !tx.left.length && !tx.skipped.length)
+        lines.push("Transfer record checked: it agrees with every squad list.");
+    } else {
+      lines.push("Transfer record NOT checked — the transfers endpoint was unavailable,"
+        + " so squad lists are the only source. Redeploy the api-football function.");
+    }
     if (dup.length) {
       lines.push(`${dup.length} player${dup.length === 1 ? " is" : "s are"} in two squads at once`
         + " — which is what the feed looks like mid-transfer:");

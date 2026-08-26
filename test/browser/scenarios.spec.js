@@ -4099,7 +4099,7 @@ test("refreshing the competition applies a real-world transfer, and asks nothing
         { date: "2024-07-01", teams: { in: { id: 1 }, out: { id: 99 } } },
         { date: "2026-08-14", teams: { in: { id: 2 }, out: { id: 1 } } }] }];
       // The mover is on both lists; only the new club has the debutant.
-      return params.team === 1
+      return params?.team === 1
         ? [{ players: [{ id: 7, name: "Mover", position: "Midfielder", number: 7 }] }]
         : [{ players: [
             { id: 7, name: "Mover", position: "Midfielder", number: 7 },
@@ -4256,4 +4256,85 @@ test("a claim confirmed after the deadline does not queue", async ({ page }) => 
   expect(after.open, "a tab that has not refetched still thinks the window is open")
     .toBe(false);
   expect(after.rows, "a claim was queued after the window shut").toBe(0);
+});
+
+test("the transfer record catches what a stale squad list cannot", async ({ page }) => {
+  await openLeague(page, { managers: 4, played: 2 });
+  /* The transfer record as a second source, end to end through the real pull.
+
+     The squad endpoint asks one question -- "who is in your squad?" -- once per
+     club, and a stale answer is indistinguishable from a correct one because
+     nothing else in the pull can disagree. Both live cases, one cause: a player
+     moves within the league and his new club has not listed him yet, or leaves
+     the league and his old club has not dropped him. */
+  const second = await page.evaluate(async () => {
+    window.apiFootball = async (key, path, params) => {
+      if (path === "teams") return [
+        { team: { id: 1, name: "Old Club", code: "OLD" } },
+        { team: { id: 2, name: "New Club", code: "NEW" } }];
+      if (path === "transfers") return [
+        // Moved inside the competition; only the old club still lists him.
+        { player: { id: 11, name: "Switcher" }, transfers: [
+          { date: "2026-08-15", teams: { in: { id: 2 }, out: { id: 1 } } } ] },
+        // Left the competition; the old club still lists him anyway.
+        { player: { id: 12, name: "Leaver" }, transfers: [
+          { date: "2026-08-12", teams: { in: { id: 777 }, out: { id: 1 } } } ] },
+        // Arrived, and NOBODY lists him yet.
+        { player: { id: 13, name: "Arrival" }, transfers: [
+          { date: "2026-08-16", teams: { in: { id: 2 }, out: { id: 1 } } } ] }];
+      return params?.team === 1
+        ? [{ players: [
+            { id: 11, name: "Switcher", position: "Defender", number: 11 },
+            { id: 12, name: "Leaver", position: "Midfielder", number: 12 }] }]
+        : [{ players: [{ id: 14, name: "Settled", position: "Attacker", number: 14 }] }];
+    };
+    // The pool as it stood: it is what makes the unlisted arrival placeable.
+    const prev = [{ player_id: "api_13", api_id: 13, name: "Arrival",
+                    position: "MID", team: "Old Club", team_code: "OLD", team_logo: 1 }];
+    const out = await fetchCompetitionPool("k", 39, 2026, null, prev);
+    const at = (id) => out.players.find((p) => p.player_id === id);
+    return { tx: out.tx, count: out.players.length,
+             switcher: at("api_11")?.team, switcherCode: at("api_11")?.team_code,
+             leaver: !!at("api_12"),
+             arrival: at("api_13")?.team, arrivalPos: at("api_13")?.position,
+             settled: at("api_14")?.team };
+  });
+  expect(second.tx.checked, "the transfer pass did not run at all").toBe(true);
+  expect(second.switcher, "a move inside the league never reached the pool").toBe("New Club");
+  expect(second.switcherCode, "the club code did not follow, so his crest is wrong").toBe("NEW");
+  expect(second.leaver, "a player who left the league is still in the pool").toBe(false);
+  expect(second.arrival, "an arrival nobody lists yet was lost instead of placed")
+    .toBe("New Club");
+  expect(second.arrivalPos, "the carried row lost the position only the old pool knew")
+    .toBe("MID");
+  expect(second.settled, "somebody with no transfer on record was disturbed").toBe("New Club");
+  expect(second.tx.moved.map((m) => m.name)).toEqual(["Switcher"]);
+  expect(second.tx.carried.map((m) => m.name)).toEqual(["Arrival"]);
+  expect(second.tx.left.map((m) => m.name)).toEqual(["Leaver"]);
+
+  // ...and if the endpoint is not reachable, the pull is exactly what it was
+  // before any of this existed, and says the check did not happen.
+  const noTx = await page.evaluate(async () => {
+    // A whole stub rather than a wrapper: the point is a pull with no second
+    // source at all, which is what every league has until the proxy is
+    // redeployed with the transfers path.
+    window.apiFootball = async (key, path, params) => {
+      if (path === "teams") return [
+        { team: { id: 1, name: "Old Club", code: "OLD" } },
+        { team: { id: 2, name: "New Club", code: "NEW" } }];
+      if (path === "transfers") throw new Error("Unsupported path: transfers");
+      return params?.team === 1
+        ? [{ players: [
+            { id: 11, name: "Switcher", position: "Defender", number: 11 },
+            { id: 12, name: "Leaver", position: "Midfielder", number: 12 }] }]
+        : [{ players: [{ id: 14, name: "Settled", position: "Attacker", number: 14 }] }];
+    };
+    const out = await fetchCompetitionPool("k", 39, 2026, null, []);
+    return { checked: out.tx.checked, count: out.players.length,
+             switcher: out.players.find((p) => p.player_id === "api_11")?.team };
+  });
+  expect(noTx.checked, "an unreachable endpoint is being reported as a clean check")
+    .toBe(false);
+  expect(noTx.count, "losing the transfer pass lost the squads with it").toBe(3);
+  expect(noTx.switcher, "the pool changed despite having no second source")
 });
