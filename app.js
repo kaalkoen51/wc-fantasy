@@ -725,7 +725,7 @@ async function fetchCompetitionTransfers(key, teams, onProgress) {
   return rows;
 }
 
-async function fetchCompetitionPool(key, apiLeagueId, season, onProgress, prev) {
+async function fetchCompetitionPool(key, apiLeagueId, season, onProgress, prev, prevAt) {
   const teams = await apiFootball(key, "teams", { league: apiLeagueId, season });
   if (!teams.length) throw new Error("No teams found — check the competition and season.");
   const byId = {};
@@ -772,22 +772,23 @@ async function fetchCompetitionPool(key, apiLeagueId, season, onProgress, prev) 
   let players = Object.values(byId);
   let tx = { moved: [], carried: [], left: [], skipped: [], flooded: [],
              signed: [], unknown: [], checked: false };
-  const rows = await fetchCompetitionTransfers(key, teams, onProgress);
+  const since = transferSince(season, prevAt);
+  const rows = since ? await fetchCompetitionTransfers(key, teams, onProgress) : null;
   if (rows) {
     const teamsById = new Map(teams.map((t) =>
       [t.team.id, { name: decodeEntities(t.team.name),
                     code: teamCodeFrom(decodeEntities(t.team.name), t.team.code) }]));
-    const applied = applyTransfers(players, prev,
-      latestTransfers(rows, transferFloor(season)), teamsById);
+    const applied = applyTransfers(players, prev, latestTransfers(rows, since), teamsById);
     players = applied.players;
     const arrivals = await fetchArrivals(key, applied.unplaced, season, teamsById, onProgress);
     players = players.concat(arrivals.rows);
-    tx = { ...applied, checked: true,
+    tx = { ...applied, checked: true, since,
            signed: arrivals.rows.map((r) => ({ name: r.name, to: r.team,
                                                position: r.position, from: r.pos_season || null })),
            unknown: arrivals.unknown };
     delete tx.players; delete tx.unplaced;
   }
+  if (!since) tx.noBaseline = true;
   return { players, teams: [...new Set(names)].sort(), dup, tx, unmapped };
 }
 
@@ -878,12 +879,32 @@ function latestTransfers(rows, since) {
    seasons ago -- Milner at Brighton and Kurzawa at Fulham. Every one of them
    an old move mistaken for a new one.
 
-   The floor is the June before the season starts, which is API-Football's own
-   season convention (season 2026 = 2026/27) plus a month of slack, because a
-   summer signing is often dated before the window formally opens. Anything
-   inside it is this season's business; anything outside it cannot tell us
-   where a player is today. */
+   The season floor below was the first attempt and it is not enough. A second
+   live run moved J. Gelhardt from Hull City to Leeds; he had gone Leeds to
+   Hull, permanently, in August. What the record's newest row for him actually
+   was is a RETURN FROM LOAN to Leeds dated 30 June -- the August move had not
+   been ingested yet. So a transfer's date is when the move happened, not when
+   the feed learned of it, and "the dated record is newer information" is
+   simply false. Twenty-four of that run's "signings" were the same thing:
+   Disasi, Jaroš, Wilson-Esbrand, Pembélé -- loan returns to parent clubs, all
+   dated 30 June, none of them in anybody's squad.
+
+   What IS true is that the squad list is a snapshot with a timestamp. A
+   transfer dated before that snapshot is already baked into it, whichever way
+   round the two happen to disagree. So the real floor is the last time we
+   pulled squads, and the only transfers worth acting on are the ones that
+   happened since. transferSince() picks whichever of the two is later.
+
+   With no previous pull to compare against, nothing is newer than the squad
+   list and nothing is acted on -- which is the right answer rather than a
+   missing feature. */
 const transferFloor = (season) => `${Number(season) || 0}-06-01`;
+const transferSince = (season, lastPulledAt) => {
+  const pulled = String(lastPulledAt || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(pulled)) return null;   // never pulled: act on nothing
+  const floor = transferFloor(season);
+  return pulled > floor ? pulled : floor;
+};
 
 /* Reconcile a freshly pulled squad list against that transfer record.
 
@@ -3223,7 +3244,7 @@ function renderCreateForm() {
    into: both loaders below called the API-Football pair unconditionally, so a
    rugby league could be designed in the create form and then not loaded --
    the pull either asked for a key the feed does not use or came back empty. */
-async function fetchPoolFor(competition, apiKey, onProgress, prev) {
+async function fetchPoolFor(competition, apiKey, onProgress, prev, prevAt) {
   if (competition.sport === "rugby") {
     const built = await fetchRugbyPool(competition.apiLeagueId, onProgress);
     const fixtures = await fetchRugbyFixtures(competition);
@@ -3236,7 +3257,7 @@ async function fetchPoolFor(competition, apiKey, onProgress, prev) {
     };
   }
   const { apiLeagueId, season } = competition;
-  const built = await fetchCompetitionPool(apiKey, apiLeagueId, season, onProgress, prev);
+  const built = await fetchCompetitionPool(apiKey, apiLeagueId, season, onProgress, prev, prevAt);
   return {
     players: built.players, teams: built.teams, dup: built.dup, tx: built.tx,
     unmapped: built.unmapped,
@@ -16377,7 +16398,7 @@ async function loadCompetition(opts = {}) {
          him. */
       const built = await fetchPoolFor(competition, apiKey,
         (d, t, tm) => log(d == null ? tm : `Loading squads ${d}/${t} — ${tm}`),
-        existing.data?.players || []);
+        existing.data?.players || [], existing.data?.updated_at);
       players = built.players;
       dup = built.dup || [];
       tx = built.tx || tx;
@@ -16415,6 +16436,9 @@ async function loadCompetition(opts = {}) {
         for (const r of rows.slice(0, 10)) lines.push("  " + fmt(r));
         if (rows.length > 10) lines.push(`  …and ${rows.length - 10} more`);
       };
+      lines.push(`Transfer record checked for moves since ${tx.since},`
+        + " which is when the squads were last pulled — anything older than that is"
+        + " already in the squad lists.");
       list("moved club per the transfer record", tx.moved, (r) => `${r.name}: ${r.from} → ${r.to}`);
       list("placed at a new club no squad list has them at yet", tx.carried,
         (r) => `${r.name}: ${r.from} → ${r.to}`);
@@ -16432,10 +16456,14 @@ async function loadCompetition(opts = {}) {
         + " — too many to believe, so none were removed. Check the transfer feed.");
       if (!tx.moved.length && !tx.carried.length && !tx.left.length && !tx.skipped.length
           && !tx.signed.length && !tx.unknown.length && !tx.flooded.length)
-        lines.push("Transfer record checked: it agrees with every squad list.");
+        lines.push("  Nothing has moved since then.");
+    } else if (tx.noBaseline) {
+      lines.push("Transfer record not consulted — there is no earlier squad pull to"
+        + " compare against, so nothing in it is newer than the squads just read."
+        + " The next refresh will have one.");
     } else {
-      lines.push("Transfer record NOT checked — the transfers endpoint was unavailable,"
-        + " so squad lists are the only source. Redeploy the api-football function.");
+      lines.push("Transfer record NOT checked — the transfers endpoint could not be"
+        + " reached, so squad lists are the only source.");
     }
     if (unmapped.length) {
       lines.push(`${unmapped.length} squad row${unmapped.length === 1 ? " has a position" : "s have positions"}`

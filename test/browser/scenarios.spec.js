@@ -4322,7 +4322,9 @@ test("the transfer record catches what a stale squad list cannot", async ({ page
     // The pool as it stood: it is what makes the unlisted arrival placeable.
     const prev = [{ player_id: "api_13", api_id: 13, name: "Arrival",
                     position: "MID", team: "Old Club", team_code: "OLD", team_logo: 1 }];
-    const out = await fetchCompetitionPool("k", 39, 2026, null, prev);
+    /* The squads were last pulled on 1 July, so anything dated after that is
+       news and anything before it is already in the lists we just read. */
+    const out = await fetchCompetitionPool("k", 39, 2026, null, prev, "2026-07-01T00:00:00Z");
     const at = (id) => out.players.find((p) => p.player_id === id);
     return { tx: out.tx, count: out.players.length,
              switcher: at("api_11")?.team, switcherCode: at("api_11")?.team_code,
@@ -4396,7 +4398,7 @@ test("the transfer record catches what a stale squad list cannot", async ({ page
             { id: 12, name: "Leaver", position: "Midfielder", number: 12 }] }]
         : [{ players: [{ id: 14, name: "Settled", position: "Attacker", number: 14 }] }];
     };
-    const out = await fetchCompetitionPool("k", 39, 2026, null, []);
+    const out = await fetchCompetitionPool("k", 39, 2026, null, [], "2026-07-01T00:00:00Z");
     return { checked: out.tx.checked, count: out.players.length,
              switcher: out.players.find((p) => p.player_id === "api_11")?.team };
   });
@@ -4404,4 +4406,18 @@ test("the transfer record catches what a stale squad list cannot", async ({ page
     .toBe(false);
   expect(noTx.count, "losing the transfer pass lost the squads with it").toBe(3);
   expect(noTx.switcher, "the pool changed despite having no second source")
+    .toBe("Old Club");
+
+  /* ...and with no earlier pull to compare against, the record is not consulted
+     at all. Nothing in it is newer than squads read a moment ago, and acting on
+     it anyway is what moved J. Gelhardt to the club he had just left. */
+  const cold = await page.evaluate(async () => {
+    const out = await fetchCompetitionPool("k", 39, 2026, null, [], null);
+    return { checked: out.tx.checked, noBaseline: !!out.tx.noBaseline,
+             switcher: out.players.find((p) => p.player_id === "api_11")?.team };
+  });
+  expect(cold.noBaseline, "a first pull is not saying why it skipped the record").toBe(true);
+  expect(cold.checked, "the record was consulted with nothing to compare it to").toBe(false);
+  expect(cold.switcher, "a first pull moved somebody on evidence it cannot date")
+    .toBe("Old Club");
 });
