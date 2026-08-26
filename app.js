@@ -754,7 +754,7 @@ async function fetchCompetitionPool(key, apiLeagueId, season, onProgress, prev) 
   /* Second source. Everything above is one question asked twenty times; this
      is the only thing in the pull that can contradict the answer. */
   let players = Object.values(byId);
-  let tx = { moved: [], carried: [], left: [], skipped: [], checked: false };
+  let tx = { moved: [], carried: [], left: [], skipped: [], signed: [], unknown: [], checked: false };
   const rows = await fetchCompetitionTransfers(key, teams, onProgress);
   if (rows) {
     const teamsById = new Map(teams.map((t) =>
@@ -762,10 +762,46 @@ async function fetchCompetitionPool(key, apiLeagueId, season, onProgress, prev) 
                     code: teamCodeFrom(decodeEntities(t.team.name), t.team.code) }]));
     const applied = applyTransfers(players, prev, latestTransfers(rows), teamsById);
     players = applied.players;
-    tx = { ...applied, checked: true };
-    delete tx.players;
+    const arrivals = await fetchArrivals(key, applied.unplaced, season, teamsById, onProgress);
+    players = players.concat(arrivals.rows);
+    tx = { ...applied, checked: true,
+           signed: arrivals.rows.map((r) => ({ name: r.name, to: r.team, position: r.position })),
+           unknown: arrivals.unknown };
+    delete tx.players; delete tx.unplaced;
   }
   return { players, teams: [...new Set(names)].sort(), dup, tx };
+}
+
+/* Look up the handful of players who have signed INTO the competition from
+   somewhere else and are not in any squad list yet.
+
+   One call each, and capped, because this is the only part of the pull whose
+   size is set by how busy the transfer window was rather than by the size of
+   the league. Past the cap they are reported instead of fetched -- a slow pull
+   that never finishes is worse than a pool that is short a few free agents and
+   says so.
+
+   A player the endpoint cannot give a position for is NOT added. The quota,
+   the formation and every per-position rule read that field, so a row without
+   one would be a player nobody can legally field. */
+const MAX_ARRIVAL_LOOKUPS = 25;
+async function fetchArrivals(key, unplaced, season, teamsById, onProgress) {
+  const rows = [], unknown = [];
+  const list = (unplaced || []).slice(0, MAX_ARRIVAL_LOOKUPS);
+  for (const u of (unplaced || []).slice(MAX_ARRIVAL_LOOKUPS))
+    unknown.push({ apiId: u.apiId, team: u.team, why: "too many arrivals to look up" });
+  for (const u of list) {
+    onProgress && onProgress(null, null, `new signing at ${u.team}`);
+    try {
+      const r = await apiFootball(key, "players", { id: u.apiId, season });
+      const row = arrivalRow(r?.[0], teamsById.get(u.teamId), u.teamId);
+      if (row) rows.push(row);
+      else unknown.push({ apiId: u.apiId, team: u.team, why: "no position on record" });
+    } catch {
+      unknown.push({ apiId: u.apiId, team: u.team, why: "lookup failed" });
+    }
+  }
+  return { rows, unknown };
 }
 
 /* The newest transfer on record for each player, keyed by API player id.
@@ -824,14 +860,23 @@ const MAX_TRANSFER_REMOVALS = 8;
 function applyTransfers(players, prev, latest, teamsById) {
   const byId = new Map((players || []).map((p) => [p.player_id, { ...p }]));
   const inComp = (tid) => tid != null && teamsById.has(tid);
-  const moved = [], left = [], carried = [];
+  const moved = [], left = [], carried = [], unplaced = [];
   const clubOf = (tid) => teamsById.get(tid);
 
   for (const [apiId, t] of Object.entries(latest || {})) {
     const pid = "api_" + apiId;
     const here = byId.get(pid);
     const src = here || (prev || []).find((p) => p.player_id === pid);
-    if (!src) continue;                     // never been in this competition
+    /* Signed from OUTSIDE the competition, and his new club has not listed him
+       yet -- so there is no squad row to move and no old row to carry. The
+       transfer names him and says where he went, but not what he plays, and a
+       pool row without a position is worse than no row at all. Handed back for
+       the caller to look up; unlike everything else here that needs a call. */
+    if (!src) {
+      if (inComp(t.inId)) unplaced.push({ apiId: Number(apiId), teamId: t.inId,
+                                          team: clubOf(t.inId).name });
+      continue;
+    }
     if (inComp(t.inId)) {
       const club = clubOf(t.inId);
       if (here && here.team === club.name) continue;          // already right
@@ -846,8 +891,33 @@ function applyTransfers(players, prev, latest, teamsById) {
      misread. Keep everyone, and say so. */
   const tooMany = left.length > MAX_TRANSFER_REMOVALS;
   if (!tooMany) for (const g of left) byId.delete(g.id);
-  return { players: [...byId.values()], moved, carried,
+  return { players: [...byId.values()], moved, carried, unplaced,
            left: tooMany ? [] : left, skipped: tooMany ? left : [] };
+}
+
+/* A pool row for a player the squad lists do not have, from the one-player
+   endpoint. Prefers the statistics block for the club he has just joined --
+   he may have played for two clubs this season and only one of them is here --
+   and falls back to any block that names a position at all, because a summer
+   signing who has not played yet still has to be draftable. Pure. */
+function arrivalRow(apiPlayer, club, teamId) {
+  const id = apiPlayer?.player?.id;
+  if (id == null) return null;
+  const stats = apiPlayer.statistics || [];
+  const withPos = stats.filter((st) => st?.games?.position);
+  const best = withPos.find((st) => st?.team?.id === teamId) || withPos[0];
+  /* Guarded on what the FEED said, not on what apiPosToSlot returns: it
+     defaults an unknown to MID, which is right for a squad row (the squad
+     endpoint always names one) and quietly invents a position here. */
+  if (!best?.games?.position) return null;  // unplaceable is not draftable
+  const position = apiPosToSlot(best.games.position);
+  return {
+    player_id: "api_" + id, api_id: id,
+    name: decodeEntities(apiPlayer.player.name || ""),
+    position, team: club.name, team_code: club.code,
+    number: best?.games?.number ?? null,
+    photo: apiPlayer.player.photo || null, team_logo: teamId,
+  };
 }
 
 /* Which club a player actually plays for now, out of the ones whose squads
@@ -16281,9 +16351,14 @@ async function loadCompetition(opts = {}) {
         (r) => `${r.name}: ${r.from} → ${r.to}`);
       list("no longer in this competition, per the transfer record", tx.left,
         (r) => `${r.name} (was ${r.team})`);
+      list("signed from outside the competition and added to the pool", tx.signed,
+        (r) => `${r.name} → ${r.to} (${r.position})`);
+      list("signed from outside but could not be added", tx.unknown,
+        (r) => `player ${r.apiId} → ${r.team} — ${r.why}`);
       if (tx.skipped.length) lines.push(`${tx.skipped.length} players looked like they had left`
         + " — too many to believe, so none were removed. Check the transfer feed.");
-      if (!tx.moved.length && !tx.carried.length && !tx.left.length && !tx.skipped.length)
+      if (!tx.moved.length && !tx.carried.length && !tx.left.length && !tx.skipped.length
+          && !tx.signed.length && !tx.unknown.length)
         lines.push("Transfer record checked: it agrees with every squad list.");
     } else {
       lines.push("Transfer record NOT checked — the transfers endpoint was unavailable,"

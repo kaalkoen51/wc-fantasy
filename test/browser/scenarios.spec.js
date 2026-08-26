@@ -4279,9 +4279,27 @@ test("the transfer record catches what a stale squad list cannot", async ({ page
         // Left the competition; the old club still lists him anyway.
         { player: { id: 12, name: "Leaver" }, transfers: [
           { date: "2026-08-12", teams: { in: { id: 777 }, out: { id: 1 } } } ] },
-        // Arrived, and NOBODY lists him yet.
+        // Arrived from inside the league, and NOBODY lists him yet.
         { player: { id: 13, name: "Arrival" }, transfers: [
-          { date: "2026-08-16", teams: { in: { id: 2 }, out: { id: 1 } } } ] }];
+          { date: "2026-08-16", teams: { in: { id: 2 }, out: { id: 1 } } } ] },
+        // Signed from OUTSIDE the league. Never been here, so there is no old
+        // row to carry -- he has to be looked up or he simply does not exist.
+        { player: { id: 15, name: "Import" }, transfers: [
+          { date: "2026-08-17", teams: { in: { id: 2 }, out: { id: 900 } } } ] },
+        // ...one the lookup cannot place, who must not be invented...
+        { player: { id: 16, name: "Prospect" }, transfers: [
+          { date: "2026-08-17", teams: { in: { id: 2 }, out: { id: 900 } } } ] },
+        // ...and one whose lookup falls over, which must not take the pull
+        // with it. Six hundred squads for one optional call is a bad trade.
+        { player: { id: 17, name: "Unlucky" }, transfers: [
+          { date: "2026-08-17", teams: { in: { id: 2 }, out: { id: 900 } } } ] }];
+      if (path === "players") {
+        if (params.id === 17) throw new Error("rate limited");
+        return params.id === 15
+          ? [{ player: { id: 15, name: "Import", photo: "i.png" },
+               statistics: [{ team: { id: 900 }, games: { position: "Attacker", number: 9 } }] }]
+          : [{ player: { id: 16, name: "Prospect" }, statistics: [{ games: {} }] }];
+      }
       return params?.team === 1
         ? [{ players: [
             { id: 11, name: "Switcher", position: "Defender", number: 11 },
@@ -4297,7 +4315,8 @@ test("the transfer record catches what a stale squad list cannot", async ({ page
              switcher: at("api_11")?.team, switcherCode: at("api_11")?.team_code,
              leaver: !!at("api_12"),
              arrival: at("api_13")?.team, arrivalPos: at("api_13")?.position,
-             settled: at("api_14")?.team };
+             settled: at("api_14")?.team,
+             importer: at("api_15"), prospect: !!at("api_16") };
   });
   expect(second.tx.checked, "the transfer pass did not run at all").toBe(true);
   expect(second.switcher, "a move inside the league never reached the pool").toBe("New Club");
@@ -4311,6 +4330,23 @@ test("the transfer record catches what a stale squad list cannot", async ({ page
   expect(second.tx.moved.map((m) => m.name)).toEqual(["Switcher"]);
   expect(second.tx.carried.map((m) => m.name)).toEqual(["Arrival"]);
   expect(second.tx.left.map((m) => m.name)).toEqual(["Leaver"]);
+
+  /* A signing from OUTSIDE the competition has no old row to carry, so without
+     a lookup he does not exist and nobody can draft him -- which in a transfer
+     window is the best free agent going missing. */
+  expect(second.importer, "a signing from another league never made it in")
+    .toBeTruthy();
+  expect([second.importer.team, second.importer.position, second.importer.player_id],
+    "the looked-up row does not match the shape every other pool row has")
+    .toEqual(["New Club", "FWD", "api_15"]);
+  expect(second.tx.signed.map((r) => r.name)).toEqual(["Import"]);
+  /* ...and one the endpoint cannot place is NOT invented at a default
+     position. The quota and the formation read that field. */
+  expect(second.prospect, "a player with no position on record was made up").toBe(false);
+  expect(second.tx.unknown.map((r) => [r.apiId, r.why]))
+    .toEqual([[16, "no position on record"], [17, "lookup failed"]]);
+  expect(second.tx.signed.length, "one lookup falling over took the others with it")
+    .toBe(1);
 
   // ...and if the endpoint is not reachable, the pull is exactly what it was
   // before any of this existed, and says the check did not happen.
