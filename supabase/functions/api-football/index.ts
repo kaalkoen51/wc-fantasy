@@ -42,13 +42,6 @@ const ALLOWED = new Set([
      transfers on the floor. Called only for the handful of players in
      conflict, never per player. */
   "transfers",
-  /* One player by id, for somebody who has just signed from OUTSIDE the
-     competition and whose new club has not listed him in a squad yet. The
-     transfer record names him and says where he went; it does not say what
-     position he plays, and a pool row without one is worse than no row --
-     position drives the quota, the formation and every per-position rule.
-     Called only for those arrivals, never per player. */
-  "players",
 ]);
 
 const CORS: Record<string, string> = {

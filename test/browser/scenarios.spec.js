@@ -4258,166 +4258,96 @@ test("a claim confirmed after the deadline does not queue", async ({ page }) => 
   expect(after.rows, "a claim was queued after the window shut").toBe(0);
 });
 
-test("the transfer record catches what a stale squad list cannot", async ({ page }) => {
-  await openLeague(page, { managers: 4, played: 2 });
-  /* The transfer record as a second source, end to end through the real pull.
+test("the transfer record is trusted only where it has been right", async ({ page }) => {
+  /* Two live runs, wrong in opposite directions, settled by asking the feed
+     itself (probe_feed.py --player):
 
-     The squad endpoint asks one question -- "who is in your squad?" -- once per
-     club, and a stale answer is indistinguishable from a correct one because
-     nothing else in the pull can disagree. Both live cases, one cause: a player
-     moves within the league and his new club has not listed him yet, or leaves
-     the league and his old club has not dropped him. */
-  const second = await page.evaluate(async () => {
+       Rodri     squads say Manchester City; transfers say 17 Aug to Barcelona.
+                 The SQUAD LIST is stale.
+       Gelhardt  squads say Hull City, correctly; the newest transfer on record
+                 is a 30 June return from loan to Leeds. The RECORD is stale.
+       Konsa     squads say Aston Villa; transfers say nothing since 2019. The
+                 feed does not know about his move at all.
+
+     The split that fits all three is direction, and it has a mechanical cause:
+     a return from loan is always INTO the parent club, so loan artefacts only
+     ever pollute the in-competition direction. */
+  await openLeague(page, { managers: 4, played: 2 });
+
+  const seen = await page.evaluate(async () => {
     window.apiFootball = async (key, path, params) => {
       if (path === "teams") return [
         { team: { id: 1, name: "Old Club", code: "OLD" } },
         { team: { id: 2, name: "New Club", code: "NEW" } }];
       if (path === "transfers") return [
-        // Moved inside the competition; only the old club still lists him.
-        { player: { id: 11, name: "Switcher" }, transfers: [
-          { date: "2026-08-15", teams: { in: { id: 2 }, out: { id: 1 } } } ] },
-        // Left the competition; the old club still lists him anyway.
+        // Gone abroad, and his club has not dropped him. Acted on.
         { player: { id: 12, name: "Leaver" }, transfers: [
           { date: "2026-08-12", teams: { in: { id: 777 }, out: { id: 1 } } } ] },
-        // Arrived from inside the league, and NOBODY lists him yet.
-        { player: { id: 13, name: "Arrival" }, transfers: [
-          { date: "2026-08-16", teams: { in: { id: 2 }, out: { id: 1 } } } ] },
-        // Signed from OUTSIDE the league. Never been here, so there is no old
-        // row to carry -- he has to be looked up or he simply does not exist.
-        { player: { id: 15, name: "Import" }, transfers: [
-          { date: "2026-08-17", teams: { in: { id: 2 }, out: { id: 900 } } } ] },
-        // ...one the lookup cannot place, who must not be invented...
-        { player: { id: 16, name: "Prospect" }, transfers: [
-          { date: "2026-08-17", teams: { in: { id: 2 }, out: { id: 900 } } } ] },
-        // ...one whose lookup falls over, which must not take the pull with
-        // it. Six hundred squads for one optional call is a bad trade...
-        { player: { id: 17, name: "Unlucky" }, transfers: [
-          { date: "2026-08-17", teams: { in: { id: 2 }, out: { id: 900 } } } ] },
-        // ...and a summer signing with no game this season anywhere, whose
-        // position is a season old. That is the ordinary state of a July
-        // arrival, and dropping him loses the best free agent in the window.
-        { player: { id: 18, name: "Newcomer" }, transfers: [
-          { date: "2026-07-02", teams: { in: { id: 2 }, out: { id: 900 } } } ] }];
-      if (path === "players") {
-        if (params.id === 17) throw new Error("rate limited");
-        if (params.id === 15) return [{ player: { id: 15, name: "Import", photo: "i.png" },
-          statistics: [{ team: { id: 900 }, games: { position: "Attacker", number: 9 } }] }];
-        /* A summer signing who has not played a game anywhere THIS season --
-           nothing on record now, a position last season. */
-        if (params.id === 18) return params.season === 2026
-          ? [{ player: { id: 18, name: "Newcomer" }, statistics: [{ games: {} }] }]
-          : [{ player: { id: 18, name: "Newcomer" },
-               statistics: [{ team: { id: 900 }, games: { position: "Goalkeeper" } }] }];
-        return [{ player: { id: 16, name: "Prospect" }, statistics: [{ games: {} }] }];
-      }
+        // Says he moved WITHIN the league. This is the Gelhardt shape, so it
+        // is reported and not applied.
+        { player: { id: 11, name: "Switcher" }, transfers: [
+          { date: "2026-06-30", teams: { in: { id: 2 }, out: { id: 1 } } } ] },
+        // ...and an "arrival" nobody's squad has: a loan return, reported.
+        { player: { id: 13, name: "Returnee" }, transfers: [
+          { date: "2026-06-30", teams: { in: { id: 2 }, out: { id: 900 } } } ] },
+        // Older than the season floor. Not news at all.
+        { player: { id: 20, name: "Arthur" }, transfers: [
+          { date: "2022-09-01", teams: { in: { id: 2 }, out: { id: 900 } } } ] }];
       return params?.team === 1
         ? [{ players: [
             { id: 11, name: "Switcher", position: "Defender", number: 11 },
             { id: 12, name: "Leaver", position: "Midfielder", number: 12 },
-            // A word the app has never seen. It must not vanish, and it must
-            // not pass unremarked either.
+            // A word the app has never seen: absorbed as MID, but named.
             { id: 19, name: "Oddity", position: "Wing-back", number: 19 }] }]
         : [{ players: [{ id: 14, name: "Settled", position: "Attacker", number: 14 }] }];
     };
-    // The pool as it stood: it is what makes the unlisted arrival placeable.
-    const prev = [{ player_id: "api_13", api_id: 13, name: "Arrival",
-                    position: "MID", team: "Old Club", team_code: "OLD", team_logo: 1 }];
-    /* The squads were last pulled on 1 July, so anything dated after that is
-       news and anything before it is already in the lists we just read. */
-    const out = await fetchCompetitionPool("k", 39, 2026, null, prev, "2026-07-01T00:00:00Z");
+    const out = await fetchCompetitionPool("k", 39, 2026, null);
     const at = (id) => out.players.find((p) => p.player_id === id);
-    return { tx: out.tx, count: out.players.length,
-             switcher: at("api_11")?.team, switcherCode: at("api_11")?.team_code,
-             leaver: !!at("api_12"),
-             arrival: at("api_13")?.team, arrivalPos: at("api_13")?.position,
-             settled: at("api_14")?.team,
-             importer: at("api_15"), prospect: !!at("api_16"),
-             newcomer: at("api_18"), oddity: at("api_19"), unmapped: out.unmapped };
+    return { tx: out.tx, unmapped: out.unmapped, count: out.players.length,
+             leaver: !!at("api_12"), switcher: at("api_11")?.team,
+             returnee: !!at("api_13"), arthur: !!at("api_20"),
+             settled: at("api_14")?.team, oddity: at("api_19")?.position };
   });
-  expect(second.tx.checked, "the transfer pass did not run at all").toBe(true);
-  expect(second.switcher, "a move inside the league never reached the pool").toBe("New Club");
-  expect(second.switcherCode, "the club code did not follow, so his crest is wrong").toBe("NEW");
-  expect(second.leaver, "a player who left the league is still in the pool").toBe(false);
-  expect(second.arrival, "an arrival nobody lists yet was lost instead of placed")
-    .toBe("New Club");
-  expect(second.arrivalPos, "the carried row lost the position only the old pool knew")
-    .toBe("MID");
-  expect(second.settled, "somebody with no transfer on record was disturbed").toBe("New Club");
-  expect(second.tx.moved.map((m) => m.name)).toEqual(["Switcher"]);
-  expect(second.tx.carried.map((m) => m.name)).toEqual(["Arrival"]);
-  expect(second.tx.left.map((m) => m.name)).toEqual(["Leaver"]);
 
-  /* A signing from OUTSIDE the competition has no old row to carry, so without
-     a lookup he does not exist and nobody can draft him -- which in a transfer
-     window is the best free agent going missing. */
-  expect(second.importer, "a signing from another league never made it in")
-    .toBeTruthy();
-  expect([second.importer.team, second.importer.position, second.importer.player_id],
-    "the looked-up row does not match the shape every other pool row has")
-    .toEqual(["New Club", "FWD", "api_15"]);
-  expect(second.tx.signed.map((r) => r.name).sort()).toEqual(["Import", "Newcomer"]);
-  /* ...and one the endpoint cannot place is NOT invented at a default
-     position. The quota and the formation read that field. */
-  expect(second.prospect, "a player with no position on record was made up").toBe(false);
-  expect(second.tx.unknown.map((r) => [r.apiId, r.why]))
-    .toEqual([[16, "no position on record"], [17, "lookup failed"]]);
+  expect(seen.tx.checked, "the transfer pass did not run").toBe(true);
+  expect(seen.tx.since, "the season floor is not being applied").toBe("2026-06-01");
 
-  /* A signing with nothing on record this season falls back to last season,
-     which is where a July arrival's position actually lives. */
-  expect(second.newcomer, "a summer signing with no games yet was dropped")
-    .toBeTruthy();
-  expect(second.newcomer.position, "his position came from the wrong season").toBe("GK");
-  expect(second.tx.signed.find((r) => r.name === "Newcomer")?.from,
-    "the log does not say the position is a season old").toBe(2025);
+  // ACTED ON: the one direction the record has been right about.
+  expect(seen.leaver, "a player who has gone abroad is still in the pool").toBe(false);
+  expect(seen.tx.left.map((r) => [r.name, r.team, r.date]))
+    .toEqual([["Leaver", "Old Club", "2026-08-12"]]);
 
-  /* The last silent default in the pull. apiPosToSlot still absorbs an
-     unrecognised word -- refusing them would delete a whole position group if
-     the feed renamed one -- but it is named now instead of passing as fact. */
-  expect(second.oddity, "an unrecognised position dropped the player").toBeTruthy();
-  expect(second.oddity.position, "the fallback stopped being MID").toBe("MID");
-  expect(second.unmapped.map((u) => [u.name, u.said]),
-    "a position the app does not recognise passed unremarked")
-    .toEqual([["Oddity", "Wing-back"]]);
-  expect(second.tx.signed.length, "one lookup falling over took the others with it")
-    .toBe(2);
+  /* REPORTED ONLY: this is the direction that moved Gelhardt to the club he
+     had just left, and the one that filled a pool with loan returnees. */
+  expect(seen.switcher, "a within-league move was applied, which is the Gelhardt bug")
+    .toBe("Old Club");
+  expect(seen.tx.suggestedMove.map((r) => [r.name, r.from, r.to]))
+    .toEqual([["Switcher", "Old Club", "New Club"]]);
+  expect(seen.returnee, "a loan returnee was added to the pool").toBe(false);
+  expect(seen.tx.suggestedIn.map((r) => r.name)).toEqual(["Returnee"]);
 
-  // ...and if the endpoint is not reachable, the pull is exactly what it was
-  // before any of this existed, and says the check did not happen.
-  const noTx = await page.evaluate(async () => {
-    // A whole stub rather than a wrapper: the point is a pull with no second
-    // source at all, which is what every league has until the proxy is
-    // redeployed with the transfers path.
-    window.apiFootball = async (key, path, params) => {
-      if (path === "teams") return [
-        { team: { id: 1, name: "Old Club", code: "OLD" } },
-        { team: { id: 2, name: "New Club", code: "NEW" } }];
+  // Older than the season floor: not news, not even reported.
+  expect(seen.arthur, "a three-season-old loan is in the pool").toBe(false);
+  expect(seen.tx.suggestedIn.map((r) => r.name), "an ancient move is being reported as news")
+    .not.toContain("Arthur");
+
+  expect(seen.settled, "somebody with no transfer on record was disturbed").toBe("New Club");
+  // The last silent default in the pull: absorbed, but named.
+  expect(seen.oddity, "the MID fallback stopped absorbing an unknown word").toBe("MID");
+  expect(seen.unmapped.map((u) => [u.name, u.said])).toEqual([["Oddity", "Wing-back"]]);
+
+  // ...and if the endpoint cannot be reached, the pool is what it always was.
+  const blind = await page.evaluate(async () => {
+    const base = window.apiFootball;
+    window.apiFootball = async (k, path, params) => {
       if (path === "transfers") throw new Error("Unsupported path: transfers");
-      return params?.team === 1
-        ? [{ players: [
-            { id: 11, name: "Switcher", position: "Defender", number: 11 },
-            { id: 12, name: "Leaver", position: "Midfielder", number: 12 }] }]
-        : [{ players: [{ id: 14, name: "Settled", position: "Attacker", number: 14 }] }];
+      return base(k, path, params);
     };
-    const out = await fetchCompetitionPool("k", 39, 2026, null, [], "2026-07-01T00:00:00Z");
+    const out = await fetchCompetitionPool("k", 39, 2026, null);
     return { checked: out.tx.checked, count: out.players.length,
-             switcher: out.players.find((p) => p.player_id === "api_11")?.team };
+             leaver: !!out.players.find((p) => p.player_id === "api_12") };
   });
-  expect(noTx.checked, "an unreachable endpoint is being reported as a clean check")
-    .toBe(false);
-  expect(noTx.count, "losing the transfer pass lost the squads with it").toBe(3);
-  expect(noTx.switcher, "the pool changed despite having no second source")
-    .toBe("Old Club");
-
-  /* ...and with no earlier pull to compare against, the record is not consulted
-     at all. Nothing in it is newer than squads read a moment ago, and acting on
-     it anyway is what moved J. Gelhardt to the club he had just left. */
-  const cold = await page.evaluate(async () => {
-    const out = await fetchCompetitionPool("k", 39, 2026, null, [], null);
-    return { checked: out.tx.checked, noBaseline: !!out.tx.noBaseline,
-             switcher: out.players.find((p) => p.player_id === "api_11")?.team };
-  });
-  expect(cold.noBaseline, "a first pull is not saying why it skipped the record").toBe(true);
-  expect(cold.checked, "the record was consulted with nothing to compare it to").toBe(false);
-  expect(cold.switcher, "a first pull moved somebody on evidence it cannot date")
-    .toBe("Old Club");
+  expect(blind.checked, "an unreachable endpoint reports as a clean check").toBe(false);
+  expect(blind.count, "losing the transfer pass lost the squads with it").toBe(4);
+  expect(blind.leaver, "somebody was removed with no second source at all").toBe(true);
 });

@@ -725,7 +725,7 @@ async function fetchCompetitionTransfers(key, teams, onProgress) {
   return rows;
 }
 
-async function fetchCompetitionPool(key, apiLeagueId, season, onProgress, prev, prevAt) {
+async function fetchCompetitionPool(key, apiLeagueId, season, onProgress) {
   const teams = await apiFootball(key, "teams", { league: apiLeagueId, season });
   if (!teams.length) throw new Error("No teams found — check the competition and season.");
   const byId = {};
@@ -770,72 +770,19 @@ async function fetchCompetitionPool(key, apiLeagueId, season, onProgress, prev, 
   /* Second source. Everything above is one question asked twenty times; this
      is the only thing in the pull that can contradict the answer. */
   let players = Object.values(byId);
-  let tx = { moved: [], carried: [], left: [], skipped: [], flooded: [],
-             signed: [], unknown: [], checked: false };
-  const since = transferSince(season, prevAt);
-  const rows = since ? await fetchCompetitionTransfers(key, teams, onProgress) : null;
+  let tx = { left: [], skipped: [], suggestedMove: [], suggestedIn: [], checked: false };
+  const since = transferFloor(season);
+  const rows = await fetchCompetitionTransfers(key, teams, onProgress);
   if (rows) {
     const teamsById = new Map(teams.map((t) =>
       [t.team.id, { name: decodeEntities(t.team.name),
                     code: teamCodeFrom(decodeEntities(t.team.name), t.team.code) }]));
-    const applied = applyTransfers(players, prev, latestTransfers(rows, since), teamsById);
+    const applied = applyTransfers(players, latestTransfers(rows, since), teamsById);
     players = applied.players;
-    const arrivals = await fetchArrivals(key, applied.unplaced, season, teamsById, onProgress);
-    players = players.concat(arrivals.rows);
-    tx = { ...applied, checked: true, since,
-           signed: arrivals.rows.map((r) => ({ name: r.name, to: r.team,
-                                               position: r.position, from: r.pos_season || null })),
-           unknown: arrivals.unknown };
-    delete tx.players; delete tx.unplaced;
+    tx = { ...applied, checked: true, since };
+    delete tx.players;
   }
-  if (!since) tx.noBaseline = true;
   return { players, teams: [...new Set(names)].sort(), dup, tx, unmapped };
-}
-
-/* Look up the handful of players who have signed INTO the competition from
-   somewhere else and are not in any squad list yet.
-
-   One call each, and capped, because this is the only part of the pull whose
-   size is set by how busy the transfer window was rather than by the size of
-   the league. Past the cap they are reported instead of fetched -- a slow pull
-   that never finishes is worse than a pool that is short a few free agents and
-   says so.
-
-   A player the endpoint cannot give a position for is NOT added. The quota,
-   the formation and every per-position rule read that field, so a row without
-   one would be a player nobody can legally field. */
-const MAX_ARRIVAL_LOOKUPS = 25;
-async function fetchArrivals(key, unplaced, season, teamsById, onProgress) {
-  const rows = [], unknown = [];
-  const list = (unplaced || []).slice(0, MAX_ARRIVAL_LOOKUPS);
-  for (const u of (unplaced || []).slice(MAX_ARRIVAL_LOOKUPS))
-    unknown.push({ apiId: u.apiId, name: u.name || `player ${u.apiId}`, team: u.team,
-                   why: "too many arrivals to look up" });
-  const club = (u) => teamsById.get(u.teamId);
-  const look = async (u, yr) => {
-    const r = await apiFootball(key, "players", { id: u.apiId, season: yr });
-    return arrivalRow(r?.[0], club(u), u.teamId);
-  };
-  for (const u of list) {
-    onProgress && onProgress(null, null, `new signing at ${u.team}`);
-    const who = u.name || `player ${u.apiId}`;
-    let row = null, failed = false, stale = false;
-    try { row = await look(u, season); } catch { failed = true; }
-    /* Nothing on record THIS season is the ordinary state of a summer signing
-       who has not played yet -- and last season is exactly where his position
-       is. Positions barely move, and where one has, the admin position editor
-       is the answer; a year-old position beats leaving the best free agent in
-       the window out of the pool entirely. Only for the ones we would
-       otherwise drop, so it costs nothing in the common case. */
-    if (!row) {
-      try { row = await look(u, season - 1); stale = !!row; }
-      catch { failed = true; }
-    }
-    if (row) rows.push(stale ? { ...row, pos_season: season - 1 } : row);
-    else unknown.push({ apiId: u.apiId, name: who, team: u.team,
-                        why: failed ? "lookup failed" : "no position on record" });
-  }
-  return { rows, unknown };
 }
 
 /* The newest transfer on record for each player, keyed by API player id.
@@ -866,144 +813,67 @@ function latestTransfers(rows, since) {
   return out;
 }
 
-/* Transfers older than this are history, not news.
+/* What the transfer record can and cannot be trusted to say.
 
-   `transfers?team=` answers with a club's WHOLE transfer history, and the
-   newest row for a player is not the same thing as where he plays now: the
-   feed records arrivals far more completely than departures, so a loan that
-   ended three years ago can still be the last thing on record about him.
-   Without a floor, that read as "he has just signed".
+   Settled by asking API-Football directly (probe_feed.py --player), after two
+   live runs got it wrong in opposite directions:
 
-   Observed on a live pull: six hundred and six players "signed from outside
-   the competition", among them Arthur at Liverpool -- a loan from several
-   seasons ago -- Milner at Brighton and Kurzawa at Fulham. Every one of them
-   an old move mistaken for a new one.
+     Rodri     squad list says Manchester City. Transfers say 2026-08-17,
+               Manchester City -> Barcelona. The SQUAD LIST is stale.
+     Gelhardt  squad list says Hull City, correctly. The newest transfer on
+               record is a return from loan to Leeds dated 30 June -- his
+               actual August move to Hull has not been ingested. The TRANSFER
+               RECORD is stale.
+     Konsa     squad list says Aston Villa. Transfers say nothing since 2019.
+               The feed does not know about his move at all, so nothing
+               automatic can fix him; that is a pool-editor job.
 
-   The season floor below was the first attempt and it is not enough. A second
-   live run moved J. Gelhardt from Hull City to Leeds; he had gone Leeds to
-   Hull, permanently, in August. What the record's newest row for him actually
-   was is a RETURN FROM LOAN to Leeds dated 30 June -- the August move had not
-   been ingested yet. So a transfer's date is when the move happened, not when
-   the feed learned of it, and "the dated record is newer information" is
-   simply false. Twenty-four of that run's "signings" were the same thing:
-   Disasi, Jaroš, Wilson-Esbrand, Pembélé -- loan returns to parent clubs, all
-   dated 30 June, none of them in anybody's squad.
+   The split that fits all three is DIRECTION, and it has a mechanical cause: a
+   return from loan is always INTO the parent club, which is usually a club in
+   the competition, so loan artefacts pollute the in-competition direction and
+   only that one.
 
-   What IS true is that the squad list is a snapshot with a timestamp. A
-   transfer dated before that snapshot is already baked into it, whichever way
-   round the two happen to disagree. So the real floor is the last time we
-   pulled squads, and the only transfers worth acting on are the ones that
-   happened since. transferSince() picks whichever of the two is later.
+     · newest transfer INTO a club OUTSIDE the competition -> he has gone.
+       Acted on. Sale or loan out, he cannot play here either way.
+     · newest transfer INTO another club in the competition -> reported, never
+       applied. Every observed instance was a loan-return artefact.
+     · a player no squad list has, arriving from anywhere -> reported, never
+       applied. Twenty-four of these in one run were loan returns.
 
-   With no previous pull to compare against, nothing is newer than the squad
-   list and nothing is acted on -- which is the right answer rather than a
-   missing feature. */
+   The season floor stays: a departure from three seasons ago is not news
+   either. What does NOT work is dating transfers against the last squad pull.
+   Rodri's move predates the pull that still listed him, which is the whole
+   point -- the squad list is not a snapshot of anything, it is a curated list
+   that lags by an unknown amount. */
 const transferFloor = (season) => `${Number(season) || 0}-06-01`;
-const transferSince = (season, lastPulledAt) => {
-  const pulled = String(lastPulledAt || "").slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(pulled)) return null;   // never pulled: act on nothing
-  const floor = transferFloor(season);
-  return pulled > floor ? pulled : floor;
-};
 
-/* Reconcile a freshly pulled squad list against that transfer record.
+/* Too many departures at once is not a transfer window, it is a response we
+   have misread. A summer can genuinely take a dozen players out of a league,
+   so this is generous; what it guards is a shape change turning the whole pool
+   into leavers. */
+const MAX_TRANSFER_REMOVALS = 25;
 
-   The squad endpoint is the only thing the pool was ever built from, and it
-   asks one question -- "who is in your squad?" -- twenty times. A stale answer
-   to it is indistinguishable from a correct one, because nothing else in the
-   pull can disagree. Two live cases, one cause:
-
-     · a player moves WITHIN the competition and his new club has not listed
-       him yet, so the pool keeps him at his old club (or, if the old club has
-       already dropped him, loses him entirely);
-     · a player leaves the competition and his old club has not dropped him,
-       so the pool keeps him somewhere he does not play.
-
-   The transfer record is the second source. It carries a date, so where the
-   two disagree it is newer information by construction. Newest transfer wins:
-   into another club in the competition means move him, out of the competition
-   means he is gone.
-
-   `prev` is the pool as it stood before this pull, and it is what makes an
-   arrival placeable: a player nobody's squad lists yet still has a name and a
-   position on his old row, so he is carried forward to his new club rather
-   than vanishing.
-
-   REMOVALS ARE CAPPED. Emptying somebody's squad on the strength of a feed we
-   have never seen a response from is the one mistake here that costs a manager
-   something, so an implausible number of them is treated as bad data and
-   reported instead of applied. Pure. */
-const MAX_TRANSFER_REMOVALS = 8;
-const MAX_TRANSFER_ARRIVALS = 40;
-function applyTransfers(players, prev, latest, teamsById) {
+function applyTransfers(players, latest, teamsById) {
   const byId = new Map((players || []).map((p) => [p.player_id, { ...p }]));
   const inComp = (tid) => tid != null && teamsById.has(tid);
-  const moved = [], left = [], carried = [], unplaced = [];
   const clubOf = (tid) => teamsById.get(tid);
+  const left = [], suggestedMove = [], suggestedIn = [];
 
   for (const [apiId, t] of Object.entries(latest || {})) {
-    const pid = "api_" + apiId;
-    const here = byId.get(pid);
-    const src = here || (prev || []).find((p) => p.player_id === pid);
-    /* Signed from OUTSIDE the competition, and his new club has not listed him
-       yet -- so there is no squad row to move and no old row to carry. The
-       transfer names him and says where he went, but not what he plays, and a
-       pool row without a position is worse than no row at all. Handed back for
-       the caller to look up; unlike everything else here that needs a call. */
-    if (!src) {
-      if (inComp(t.inId)) unplaced.push({ apiId: Number(apiId), teamId: t.inId,
-                                          team: clubOf(t.inId).name, name: t.name });
-      continue;
-    }
-    if (inComp(t.inId)) {
-      const club = clubOf(t.inId);
-      if (here && here.team === club.name) continue;          // already right
-      const row = { ...src, team: club.name, team_code: club.code, team_logo: t.inId };
-      byId.set(pid, row);
-      (here ? moved : carried).push({ name: src.name, from: src.team, to: club.name });
-    } else if (here) {
-      left.push({ id: pid, name: here.name, team: here.team });
+    const here = byId.get("api_" + apiId);
+    const who = t.name || `player ${apiId}`;
+    if (!inComp(t.inId)) {
+      if (here) left.push({ id: "api_" + apiId, name: here.name, team: here.team, date: t.date });
+    } else if (!here) {
+      suggestedIn.push({ name: who, to: clubOf(t.inId).name, date: t.date });
+    } else if (here.team !== clubOf(t.inId).name) {
+      suggestedMove.push({ name: who, from: here.team, to: clubOf(t.inId).name, date: t.date });
     }
   }
-  /* Too many at once is not twenty transfers, it is a response we have
-     misread. Keep everyone, and say so. */
   const tooMany = left.length > MAX_TRANSFER_REMOVALS;
   if (!tooMany) for (const g of left) byId.delete(g.id);
-  /* And the same judgement about arrivals, for the same reason and with a
-     bigger number: a transfer window moves tens of players into a league, not
-     hundreds. Past this, the feed is telling us about history rather than
-     about now, and the right answer is to look none of them up -- each one
-     costs an API call, and six hundred of them would spend a day's quota
-     proving the data wrong. */
-  const flood = unplaced.length > MAX_TRANSFER_ARRIVALS;
-  return { players: [...byId.values()], moved, carried,
-           unplaced: flood ? [] : unplaced, flooded: flood ? unplaced : [],
+  return { players: [...byId.values()], suggestedMove, suggestedIn,
            left: tooMany ? [] : left, skipped: tooMany ? left : [] };
-}
-
-/* A pool row for a player the squad lists do not have, from the one-player
-   endpoint. Prefers the statistics block for the club he has just joined --
-   he may have played for two clubs this season and only one of them is here --
-   and falls back to any block that names a position at all, because a summer
-   signing who has not played yet still has to be draftable. Pure. */
-function arrivalRow(apiPlayer, club, teamId) {
-  const id = apiPlayer?.player?.id;
-  if (id == null) return null;
-  const stats = apiPlayer.statistics || [];
-  const withPos = stats.filter((st) => st?.games?.position);
-  const best = withPos.find((st) => st?.team?.id === teamId) || withPos[0];
-  /* Guarded on what the FEED said, not on what apiPosToSlot returns: it
-     defaults an unknown to MID, which is right for a squad row (the squad
-     endpoint always names one) and quietly invents a position here. */
-  if (!best?.games?.position) return null;  // unplaceable is not draftable
-  const position = apiPosToSlot(best.games.position);
-  return {
-    player_id: "api_" + id, api_id: id,
-    name: decodeEntities(apiPlayer.player.name || ""),
-    position, team: club.name, team_code: club.code,
-    number: best?.games?.number ?? null,
-    photo: apiPlayer.player.photo || null, team_logo: teamId,
-  };
 }
 
 /* Which club a player actually plays for now, out of the ones whose squads
@@ -3244,7 +3114,7 @@ function renderCreateForm() {
    into: both loaders below called the API-Football pair unconditionally, so a
    rugby league could be designed in the create form and then not loaded --
    the pull either asked for a key the feed does not use or came back empty. */
-async function fetchPoolFor(competition, apiKey, onProgress, prev, prevAt) {
+async function fetchPoolFor(competition, apiKey, onProgress) {
   if (competition.sport === "rugby") {
     const built = await fetchRugbyPool(competition.apiLeagueId, onProgress);
     const fixtures = await fetchRugbyFixtures(competition);
@@ -3257,7 +3127,7 @@ async function fetchPoolFor(competition, apiKey, onProgress, prev, prevAt) {
     };
   }
   const { apiLeagueId, season } = competition;
-  const built = await fetchCompetitionPool(apiKey, apiLeagueId, season, onProgress, prev, prevAt);
+  const built = await fetchCompetitionPool(apiKey, apiLeagueId, season, onProgress);
   return {
     players: built.players, teams: built.teams, dup: built.dup, tx: built.tx,
     unmapped: built.unmapped,
@@ -16379,8 +16249,7 @@ async function loadCompetition(opts = {}) {
       .eq("competition_key", compKey).maybeSingle();
     if (existing.error) throw new Error(existing.error.message);
     let players, fixtures, roundOrder = [], dup = [];
-    let tx = { moved: [], carried: [], left: [], skipped: [], flooded: [],
-               signed: [], unknown: [], checked: false };
+    let tx = { left: [], skipped: [], suggestedMove: [], suggestedIn: [], checked: false };
     let unmapped = [];
     if (!refreshing && existing.data?.players?.length &&
         confirm(`${name} ${season} is already loaded (${existing.data.players.length} players shared across leagues). Reuse it without re-pulling?  (Cancel = re-pull fresh squads from the API.)`)) {
@@ -16392,13 +16261,8 @@ async function loadCompetition(opts = {}) {
       
       localStorage.setItem("wcf_apikey", apiKey);
       log("Fetching teams…");
-      /* The pool as it stands goes IN as well as out: a player whose new club
-         has not listed him yet still has a name and a position on his old row,
-         and that is what lets the transfer record place him rather than lose
-         him. */
       const built = await fetchPoolFor(competition, apiKey,
-        (d, t, tm) => log(d == null ? tm : `Loading squads ${d}/${t} — ${tm}`),
-        existing.data?.players || [], existing.data?.updated_at);
+        (d, t, tm) => log(d == null ? tm : `Loading squads ${d}/${t} — ${tm}`));
       players = built.players;
       dup = built.dup || [];
       tx = built.tx || tx;
@@ -16436,31 +16300,21 @@ async function loadCompetition(opts = {}) {
         for (const r of rows.slice(0, 10)) lines.push("  " + fmt(r));
         if (rows.length > 10) lines.push(`  …and ${rows.length - 10} more`);
       };
-      lines.push(`Transfer record checked for moves since ${tx.since},`
-        + " which is when the squads were last pulled — anything older than that is"
-        + " already in the squad lists.");
-      list("moved club per the transfer record", tx.moved, (r) => `${r.name}: ${r.from} → ${r.to}`);
-      list("placed at a new club no squad list has them at yet", tx.carried,
-        (r) => `${r.name}: ${r.from} → ${r.to}`);
-      list("no longer in this competition, per the transfer record", tx.left,
-        (r) => `${r.name} (was ${r.team})`);
-      list("signed from outside the competition and added to the pool", tx.signed,
-        (r) => `${r.name} → ${r.to} (${r.position}${
-          r.from ? `, position from ${r.from}` : ""})`);
-      list("signed from outside but could not be added", tx.unknown,
-        (r) => `${r.name || "player " + r.apiId} → ${r.team} — ${r.why}`);
-      if (tx.flooded.length) lines.push(`${tx.flooded.length} players looked like new signings`
-        + " — far more than a transfer window produces, so none were looked up."
-        + " The transfer feed is answering with history rather than recent moves.");
-      if (tx.skipped.length) lines.push(`${tx.skipped.length} players looked like they had left`
-        + " — too many to believe, so none were removed. Check the transfer feed.");
-      if (!tx.moved.length && !tx.carried.length && !tx.left.length && !tx.skipped.length
-          && !tx.signed.length && !tx.unknown.length && !tx.flooded.length)
-        lines.push("  Nothing has moved since then.");
-    } else if (tx.noBaseline) {
-      lines.push("Transfer record not consulted — there is no earlier squad pull to"
-        + " compare against, so nothing in it is newer than the squads just read."
-        + " The next refresh will have one.");
+      lines.push(`Transfer record checked, for moves since ${tx.since}.`);
+      list("no longer in this competition — removed from the pool", tx.left,
+        (r) => `${r.name} (was ${r.team}, left ${r.date})`);
+      if (tx.skipped.length) lines.push(`  ${tx.skipped.length} players looked like they had`
+        + " left — too many to believe, so none were removed. Check the transfer feed.");
+      /* Reported, never applied: every observed instance of either was a
+         return from loan dated the 30th of June, which is an artefact of how
+         the feed records loans rather than a move that has happened. */
+      list("MAY have moved within the competition — NOT applied, check first",
+        tx.suggestedMove, (r) => `${r.name}: ${r.from} → ${r.to} (${r.date})`);
+      list("MAY have arrived — NOT applied, and usually a return from loan",
+        tx.suggestedIn, (r) => `${r.name} → ${r.to} (${r.date})`);
+      if (!tx.left.length && !tx.skipped.length
+          && !tx.suggestedMove.length && !tx.suggestedIn.length)
+        lines.push("  It agrees with every squad list.");
     } else {
       lines.push("Transfer record NOT checked — the transfers endpoint could not be"
         + " reached, so squad lists are the only source.");
