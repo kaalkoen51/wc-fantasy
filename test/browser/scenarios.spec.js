@@ -4661,3 +4661,116 @@ test("changing today's captain does not move the armband on rounds already playe
   // The other half: the live squad must still follow the new choice.
   expect(seen.live, "the live pitch ignored the captain just picked").toBe(seen.now);
 });
+
+test("a contested waiver batch resolves in reverse-standings order when the window shuts",
+  async ({ page }) => {
+  /* The one-shot question, asked with a live window about to close: when the
+     timer hits zero, does the batch actually run, and does it run in the right
+     order?
+
+     The resolver's arithmetic is unit-tested to death. What is thin is the
+     INTEGRATION -- the path the real event takes: refetch notices the window
+     shut, advanceRound claims the round, settleRound calls processFaClaims,
+     and the picks actually move. The existing browser coverage for that is two
+     managers with two uncontested claims, which cannot see an order at all.
+
+     So: four managers, one player two of them want, and a manager over the
+     two-move cap. */
+  const seed = await openLeague(page, { managers: 4, played: 3 });
+
+  const out = await page.evaluate(async () => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    S.league.config = { ...(S.league.config || {}),
+      autoWindows: true, fa_defer_to_close: true, max_fa_per_window: 2 };
+
+    /* Worst-placed first, derived straight from the table rather than from
+       waiverPriorityFor -- otherwise this test would be asking the code under
+       test what the right answer is. */
+    const worstFirst = standingsOrder().slice().reverse();
+    const [first, second] = worstFirst;          // first pick, second pick
+    const owned = new Set(S.picks.map((p) => p.player_id));
+    const freeIn = (pos) => S.players.filter(
+      (p) => p.position === pos && !owned.has(p.player_id));
+
+    const starterOf = (mid, n) => managerPicks(mid)
+      .filter((p) => !p.is_sub && p.slot !== "TEAM")[n];
+    const a0 = starterOf(first, 0), a1 = starterOf(first, 1), a2 = starterOf(first, 2);
+    const b0 = starterOf(second, 0);
+
+    // One player both of the top two priorities want.
+    const prize = freeIn(a0.position).find((p) => p.position === b0.position)
+      || freeIn(a0.position)[0];
+    const spare1 = freeIn(a1.position).find((p) => p.player_id !== prize.player_id);
+    const spare2 = freeIn(a2.position).find(
+      (p) => p.player_id !== prize.player_id && p.player_id !== spare1.player_id);
+
+    const claim = (id, mid, rank, pick, target) => ({
+      id, league_id: S.league.id, manager_id: mid, rank, status: "pending",
+      pick_id: pick.id, out_player_id: pick.player_id,
+      out_player_name: pick.player_name,
+      in_player_id: target.player_id, in_player_name: target.name });
+
+    const rows = [
+      // The worst-placed manager: the contested prize, then two more. The cap
+      // is two, so his third must never fire.
+      claim("c1", first, 0, a0, prize),
+      claim("c2", first, 1, a1, spare1),
+      claim("c3", first, 2, a2, spare2),
+      // Second priority, chasing the same prize out of a slot he really holds.
+      claim("c4", second, 0, b0, prize),
+    ];
+    window.__db.tables.fa_claims = rows.map((r) => ({ ...r }));
+    S.faClaims = rows.map((r) => ({ ...r }));
+
+    /* Opening the league already ran settlement once, so put the round back to
+       where it stands the moment the timer actually hits zero: window shut,
+       claims queued, nothing settled yet. Without this advanceRound finds
+       nothing owed and the batch never runs -- which is what this test caught
+       on its first attempt. */
+    window.__db.tables.rounds = [];
+    S.rounds = [];
+
+    // The window shuts and a client notices. This is the real trigger.
+    await advanceRound();
+    await refetchAll();
+
+    const status = {};
+    for (const c of window.__db.tables.fa_claims) status[c.id] = c.status;
+    const holder = (pid) => window.__db.tables.picks.find((p) => p.id === pid).player_id;
+    return { status, worstFirst, first, second,
+      prize: prize.player_id, spare1: spare1.player_id, spare2: spare2.player_id,
+      a0Now: holder(a0.id), a1Now: holder(a1.id), a2Now: holder(a2.id),
+      b0Now: holder(b0.id), b0Was: b0.player_id,
+      awarded: Object.values(status).filter((s) => s === "awarded").length,
+      settled: (S.rounds || []).filter((r) => r.status === "settled").length,
+      stalled: typeof advanceStalled === "string" ? advanceStalled : null };
+  });
+
+  expect(out.stalled, "settlement refused to run at all").toBe(null);
+  expect(out.settled, "the round never settled, so nothing ran").toBeGreaterThan(0);
+
+  // 1 · The contested player goes to whoever is higher in the waiver order.
+  expect(out.status.c1, "the worst-placed manager lost a contest he had priority in")
+    .toBe("awarded");
+  expect(out.a0Now, "the prize did not actually land on his pick").toBe(out.prize);
+  expect(out.status.c4, "the same player was awarded to two managers").toBe("failed");
+  expect(out.b0Now, "the loser's squad was changed anyway").toBe(out.b0Was);
+
+  // 2 · Winning a contest costs him his turn, but his second claim still lands
+  //     — he is under the cap and nobody else wanted that player.
+  expect(out.status.c2, "his uncontested second claim did not fire").toBe("awarded");
+  expect(out.a1Now).toBe(out.spare1);
+
+  // 3 · The cap is two. The third must not fire, and must be recorded as
+  //     failed rather than left pending for the next window to pick up.
+  expect(out.status.c3, "the two-move cap was not enforced").toBe("failed");
+  expect(out.a2Now, "a third move landed despite the cap").not.toBe(out.spare2);
+  expect(out.awarded, "the wrong number of claims were awarded").toBe(2);
+
+  // 4 · Nothing is left pending: a claim that did not fire must not silently
+  //     survive into next week's batch.
+  expect(Object.values(out.status).filter((s) => s === "pending").length,
+    "claims were left pending after the window shut").toBe(0);
+});
