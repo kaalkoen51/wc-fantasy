@@ -4364,3 +4364,90 @@ test("a player you are suspicious of can be asked about, one at a time", async (
     .toContain("still here");
   expect(seen.stayer.row).not.toContain("left for");
 });
+
+test("one failed request must not swap in a different competition's players",
+  async ({ page }) => {
+  /* Reported from a phone, with a screenshot: "11 starters won't play --
+     Szoboszlai (left the competition), Rogers (left the competition), Guéhi
+     (left the competition), +8 more", above a perfectly correct Crystal
+     Palace v Manchester City fixture bar. A reload fixed it every time.
+
+     Both halves of that screenshot come from one bug. loadCompetitionPool()
+     wrote its memo only AFTER the await, and enterLeague starts loadPlayers()
+     and loadFixtures() together -- so each fired its own copy of the query and
+     used its own answer. A failure was swallowed and returned as null, which
+     reads as "this league has no competition", and a football league with no
+     competition falls back to players.json, the built-in World Cup squad list.
+     Fixtures from the request that worked; a different sport's players from
+     the one that did not. */
+  await openLeague(page, { managers: 4, played: 2 });
+
+  const setup = () => {
+    S._compPool = undefined; S.players = []; S._poolBase = null; S.fixtures = null;
+    S.league.competition = { name: "Prem", apiLeagueId: 39, season: 2026, sport: "football" };
+    window.__db.tables.competition_pools = [{
+      competition_key: "39-2026", updated_at: new Date().toISOString(),
+      players: [{ player_id: "api_1", name: "Real Player", position: "MID", team: "Arsenal" }],
+      fixtures: [{ home: "Arsenal", away: "Chelsea", kickoff_utc: "2026-08-28T19:00:00+00:00",
+                   status: "NS", round: "Regular Season - 2" }],
+      round_order: [] }];
+    // Every read of this table is counted, and the first `failFor` of them come
+    // back the way an expired token does: an error, not an exception.
+    window.__reads = [];
+    const real = S.sb.from.bind(S.sb);
+    S.sb.from = (t) => {
+      if (t !== "competition_pools") return real(t);
+      window.__reads.push(t);
+      if (window.__reads.length > (window.__failFor || 0)) return real(t);
+      const dead = { data: null, error: { message: "JWT expired" } };
+      const chain = new Proxy({}, { get: (_, k) =>
+        k === "then" ? (res) => Promise.resolve(dead).then(res) : () => chain });
+      return chain;
+    };
+  };
+
+  // 1. Two callers, nothing failing: one question, asked once.
+  const shared = await page.evaluate(async (fn) => {
+    eval(`(${fn})()`); window.__failFor = 0;
+    await Promise.all([loadPlayers(), loadFixtures()]);
+    return { reads: window.__reads.length, players: S.players.map((p) => p.player_id),
+             fixtures: S.fixtures.length };
+  }, setup.toString());
+  expect(shared.reads, "the two loaders still each ask the database separately").toBe(1);
+  expect(shared.players, "the pool did not load").toEqual(["api_1"]);
+
+  // 2. The first read fails, as it does when a token is being refreshed. The
+  //    retry rescues it, and both loaders land on the SAME pool.
+  const flaky = await page.evaluate(async (fn) => {
+    eval(`(${fn})()`); window.__failFor = 1;
+    await Promise.all([loadPlayers(), loadFixtures()]);
+    return { players: S.players.map((p) => p.player_id),
+             fixtures: S.fixtures.map((f) => f.home) };
+  }, setup.toString());
+  expect(flaky.players, "a transient failure still swaps in the World Cup squad list")
+    .toEqual(["api_1"]);
+  expect(flaky.fixtures, "fixtures and players came from different answers")
+    .toEqual(["Arsenal"]);
+
+  // 3. It keeps failing. That is an error to show, never a different league to
+  //    quietly play instead.
+  const dead = await page.evaluate(async (fn) => {
+    eval(`(${fn})()`); window.__failFor = 99;
+    let msg = null;
+    try { await loadPlayers(); } catch (e) { msg = String(e.message || e); }
+    const after = { msg, players: S.players.length, memo: S._compPool };
+    // Now the connection comes back. Trying again has to actually try again.
+    window.__failFor = 0;
+    await loadPlayers();
+    after.recovered = S.players.map((p) => p.player_id);
+    return after;
+  }, setup.toString());
+  expect(dead.msg, "a dead connection was reported as 'this league has no competition'")
+    .toContain("Could not load");
+  expect(dead.players, "the app booted with somebody else's players in it").toBe(0);
+  /* And the failure is not remembered as the answer -- otherwise the next
+     attempt is handed the same rejection for the rest of the session. */
+  expect(dead.memo, "a failure was cached as the pool").toBeUndefined();
+  expect(dead.recovered, "the failure was remembered, so the retry never asked again")
+    .toEqual(["api_1"]);
+});

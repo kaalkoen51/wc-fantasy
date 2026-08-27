@@ -1728,6 +1728,7 @@ check("an empty feed names the reasons it could be empty",
                 managers: S.managers, fixtures: S.fixtures };
   S.league = { competition: { sport: "football", apiLeagueId: 39, season: 2026 } };
   S.fixtures = []; S.stats = []; S.managers = [{ id: "m1", name: "Me" }];
+  S.picks = [];
   const pool = ["p1", "p2", "p3", "p4", "p5"].map((id) => ({ player_id: id, team: "Arsenal" }));
   S.players = pool;
   S.playerById = Object.fromEntries(pool.map((p) => [p.player_id, p]));
@@ -1847,6 +1848,34 @@ check("an empty feed names the reasons it could be empty",
   S.injuryByPid = {};
   check("a clean XI raises neither",
     lineupTodo(S.managers[0]).some((r) => /starter/.test(r.text)), false);
+
+  /* The wrong pool entirely. Reported from a phone: "11 starters won't play --
+     Szoboszlai (left the competition), Rogers (left the competition)", gone
+     again after a reload. A failed pool query had been read as "this league
+     has no competition", and a football league with no competition falls back
+     to the built-in World Cup squad list -- so the app was holding a pool in
+     which not one Premier League player exists, and said so, eleven times.
+
+     Not one drafted player present is not a transfer story. */
+  const realPool = S.players, realById = S.playerById;
+  const strangers = ["wc_1", "wc_2"].map((id) => ({ player_id: id, team: "Algeria" }));
+  S.players = strangers;
+  S.playerById = Object.fromEntries(strangers.map((p) => [p.player_id, p]));
+  check("a pool with none of the drafted players in it is not evidence of a transfer",
+    leftCompetition("p1"), false);
+  check("...so the front page does not report the whole XI as gone",
+    lineupTodo(S.managers[0]).some((r) => /starter/.test(r.text)), false);
+
+  /* The guard is exactly as narrow as it claims: one player found is enough to
+     believe the pool, and the genuine departure is still reported. */
+  S.players = strangers.concat([{ player_id: "p1", team: "Arsenal" }]);
+  S.playerById = Object.fromEntries(S.players.map((p) => [p.player_id, p]));
+  check("one drafted player found is enough to trust the pool",
+    leftCompetition("p2"), true);
+
+  S.players = realPool; S.playerById = realById;
+  check("and with the right pool loaded, a real departure still reads as one",
+    riskOf("gone")?.why, "left the competition");
 
   Object.assign(S, { league: was.league, players: was.players, playerById: was.byId,
     picks: was.picks, stats: was.stats, injuryByPid: was.inj,

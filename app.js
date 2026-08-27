@@ -1657,30 +1657,74 @@ async function fetchRugbyFixtures(competition) {
 
 // The league's competition key, resolving it from the DB when S.league isn't
 // populated yet (loadPlayers runs before refetchAll sets S.league).
+/* Ask, and insist on an answer.
+
+   Both queries below used to swallow every failure and return null, which the
+   caller reads as "this league has no competition" -- and a football league
+   with no competition falls back to players.json, the built-in World Cup
+   squad list. So one failed request silently replaced the Premier League with
+   a different sport's worth of strangers, and every pick in the league then
+   correctly reported that its player was not in the pool: "11 starters won't
+   play -- Szoboszlai (left the competition), Rogers (left the competition)".
+   Reported from a phone, on open, and gone again on a reload -- because on
+   the reload the request worked.
+
+   A failure is not an answer. Retried twice (opening the app after a few
+   hours means an expired token being refreshed while these fire, and the
+   request that loses that race comes back an error), then raised, so the
+   loading screen says what went wrong instead of the app booting with the
+   wrong league in it. */
+async function askDb(what, run) {
+  let last;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt) await new Promise((r) => setTimeout(r, 300 * attempt));
+    try {
+      const { data, error } = await run();
+      if (!error) return data;
+      last = error;
+    } catch (e) { last = e; }
+  }
+  throw new Error(`Could not load ${what} — ${last?.message || "the request failed"}.`
+    + " Check your connection and try again.");
+}
+
 async function resolveCompetition() {
   const comp = leagueCompetition();
   if (comp) return comp;
   const id = S.league?.id || getSession()?.leagueId;
   if (!id || !S.sb) return null;
-  try {
-    const { data } = await S.sb.from("leagues").select("competition").eq("id", id).maybeSingle();
-    return data?.competition || null;
-  } catch { return null; }
+  const data = await askDb("this league",
+    () => S.sb.from("leagues").select("competition").eq("id", id).maybeSingle());
+  return data?.competition || null;
 }
 async function resolveCompetitionKey() {
   return compKeyOf(await resolveCompetition());
 }
 
-// The SHARED competition pool (one row in competition_pools), fetched once per
-// session. undefined = not yet checked; null = none (legacy static-file league).
+/* The SHARED competition pool (one row in competition_pools), fetched once per
+   session. undefined = not yet checked; null = none (legacy static-file league).
+
+   `_compPending` is the other half of the same bug. The memo is only written
+   AFTER the await, and enterLeague starts loadPlayers() and loadFixtures()
+   together -- so both fired their own copy of this query, and each used its
+   own answer. When only one of the two failed the app booted half right:
+   Crystal Palace v Manchester City across the top, above a warning that all
+   eleven of your starters had left the competition. One request now, one
+   answer, shared. */
+let _compPending = null;
 async function loadCompetitionPool() {
   if (S._compPool !== undefined) return S._compPool;
-  const key = await resolveCompetitionKey();
-  if (!key || !S.sb) return (S._compPool = null);
-  try {
-    const { data } = await S.sb.from("competition_pools").select("*").eq("competition_key", key).maybeSingle();
+  if (_compPending) return _compPending;
+  _compPending = (async () => {
+    const key = await resolveCompetitionKey();
+    if (!key || !S.sb) return (S._compPool = null);
+    const data = await askDb("the squad list", () => S.sb.from("competition_pools")
+      .select("*").eq("competition_key", key).maybeSingle());
     return (S._compPool = data || null);
-  } catch { return (S._compPool = null); }
+  })();
+  // Cleared either way: a failure must not be remembered as the answer, or a
+  // retry would keep being handed the same rejection for the whole session.
+  try { return await _compPending; } finally { _compPending = null; }
 }
 
 async function loadPlayers() {
@@ -11703,9 +11747,35 @@ function poolAge(updatedAt, nowMs) {
       : `Squads last pulled ${when}.` };
 }
 
+/* Does the loaded pool even belong to this league?
+
+   Second line of defence, and cheap. "He is not in the pool" only means "he
+   has left the competition" if the pool is the right one -- load somebody
+   else's and the honest reading is that every player in the league has
+   emigrated, which is what the app went and said. Zero drafted players found
+   in a non-empty pool is not a transfer story; it is the wrong pool, and no
+   ✈ LEFT badge drawn from it is worth anything.
+
+   Deliberately zero, not a fraction: a real pool always contains at least one
+   of a hundred-odd drafted players, so there is no threshold to argue about.
+   Memoised on the two arrays' identity -- both are replaced wholesale, never
+   mutated, so this recomputes exactly when either actually changes. */
+let _fitOf = null, _fitOk = true;
+function poolFitsPicks() {
+  const players = S.players, picks = S.picks;
+  if (_fitOf && _fitOf[0] === players && _fitOf[1] === picks) return _fitOk;
+  _fitOf = [players, picks];
+  const drafted = (picks || []).filter(
+    (p) => p.player_id && !String(p.player_id).startsWith("team:"));
+  // Nothing drafted yet, or no pool yet: nothing for the two to disagree about.
+  _fitOk = !drafted.length || !(players?.length || 0)
+    || drafted.some((p) => !!S.playerById?.[p.player_id]);
+  return _fitOk;
+}
+
 const leftCompetition = (pid) =>
   !!pid && !String(pid).startsWith("team:")
-  && (S.players?.length || 0) > 0 && !S.playerById?.[pid];
+  && (S.players?.length || 0) > 0 && !S.playerById?.[pid] && poolFitsPicks();
 
 // ⚡ playing now · 🚫 team knocked out · ✈ left the competition · 🟥 suspended
 // next · 🤕 out · ⚠️ doubtful
