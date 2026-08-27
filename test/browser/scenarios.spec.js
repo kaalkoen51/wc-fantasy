@@ -4774,3 +4774,60 @@ test("a contested waiver batch resolves in reverse-standings order when the wind
   expect(Object.values(out.status).filter((s) => s === "pending").length,
     "claims were left pending after the window shut").toBe(0);
 });
+
+test("the transfer roundup waits for the window's own waivers", async ({ page }) => {
+  /* refetchAll renders before it settles: route() -- and so maybeRoundup --
+     runs, and only then does maybeAdvanceRounds resolve the claims. So the
+     first manager to open the app after a window shut got a roundup built from
+     the trades alone, with none of that window's awards in it, and it stamped
+     itself seen on the way out so the real one never came. The one screen
+     whose whole job is "what the window did" was the one guaranteed to miss
+     half of it, and only for whoever got there first. */
+  await openLeague(page, { managers: 4, played: 3, claims: 2 });
+
+  const seen = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    // Window shut, waiver mode on -- the state at 21:00.
+    S.league.config = { ...(S.league.config || {}),
+      fa_defer_to_close: true, autoWindows: false };
+    S.league.trading_open = false;
+    localStorage.removeItem("wcf_roundup_" + S.league.id);
+
+    // The state the first opener lands in: window shut, claims not yet run.
+    S.faClaims = (window.__db.tables.fa_claims || []).map((c) => ({ ...c, status: "pending" }));
+    S._roundupChecked = false;
+    maybeRoundup();
+    const early = {
+      open: !document.getElementById("recap-sheet").classList.contains("hidden"),
+      stamped: localStorage.getItem("wcf_roundup_" + S.league.id) != null,
+      checked: S._roundupChecked };
+
+    /* ...and the beat after settlement: claims awarded, and the transactions
+       the awards wrote now in the log, which is what the roundup is built from. */
+    S.faClaims = S.faClaims.map((c) => ({ ...c, status: "awarded" }));
+    S.transactions = S.faClaims.map((c, i) => ({
+      id: "tx" + i, league_id: S.league.id, manager_id: c.manager_id,
+      kind: "waiver", created_at: new Date().toISOString(),
+      in_player_id: c.in_player_id, in_player_name: c.in_player_name,
+      out_player_id: c.out_player_id, out_player_name: c.out_player_name }));
+    maybeRoundup();
+    const after = {
+      open: !document.getElementById("recap-sheet").classList.contains("hidden"),
+      text: document.getElementById("recap-body").textContent.replace(/\s+/g, " ") };
+    return { early, after, closed: !tradingOpen() };
+  });
+
+  expect(seen.closed, "the window is still open, so this proves nothing").toBe(true);
+  expect(seen.early.open, "the roundup opened before the window's waivers had run")
+    .toBe(false);
+  /* The important half: standing down must not mark it seen, or the complete
+     roundup is lost for good rather than merely delayed. */
+  expect(seen.early.stamped, "it stamped itself seen while standing down").toBe(false);
+  expect(seen.early.checked, "it stood down for the whole session, not just this pass")
+    .toBe(false);
+  expect(seen.after.open, "the roundup never came back once the claims resolved")
+    .toBe(true);
+  expect(seen.after.text).toContain("Transfer roundup");
+});

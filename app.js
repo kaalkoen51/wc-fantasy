@@ -9425,6 +9425,20 @@ function maybeRoundup() {
   if (tradingOpen()) return;                       // only once the window has shut
   if (!$("reveal-sheet")?.classList.contains("hidden")) return;
   if (!$("recap-sheet")?.classList.contains("hidden")) return;
+  /* Not while the window's own business is still outstanding.
+
+     refetchAll renders -- which lands here -- BEFORE maybeAdvanceRounds()
+     resolves the waivers, so the first person to open the app after a window
+     shuts used to get a roundup built from the trades alone, with none of that
+     window's awards in it. Worse, it stamped itself seen on the way out, so
+     the real roundup never appeared: the one screen whose whole job is "what
+     the window did" was the one guaranteed to miss the half of it everybody
+     was waiting for, and only for the manager who got there first.
+
+     Standing down costs nothing. Settlement writes transactions, that echoes
+     back over realtime, and the refetch it triggers arrives here again with
+     the awards in hand -- so the roundup opens a beat later, complete. */
+  if (faDeferToClose() && (S.faClaims || []).some((c) => c.status === "pending")) return;
   S._roundupChecked = true;
   const seen = localStorage.getItem("wcf_roundup_" + S.league.id);
   if (seen === String(windowStamp())) return;
