@@ -14143,7 +14143,23 @@ async function processFaClaims() {
     if (pos) { upd.position = pos; upd.slot = outPick?.is_sub ? "SUB_" + pos : pos; }
     const { error } = await S.sb.from("picks").update(upd)
       .eq("id", c.pick_id).eq("player_id", c.out_player_id);
-    if (!error) S.sb.from("transactions").insert({
+    if (error) continue;
+    /* The local row too, and BEFORE the repair pass below runs.
+
+       repairLineupFor reads S.picks, and a squad that still shows the player
+       who has just been replaced is the wrong squad to repair: it recomputes
+       the old XI and writes the old slot straight back over the one stored a
+       moment ago. Claim a defender to replace a departed keeper and the pick
+       ended up `position: DEF, slot: GK` -- a defender standing in goal, with
+       scoring reading one half of that and the pitch the other. Position and
+       slot are two halves of one fact; two passes disagreeing about which
+       squad they are describing is how they came apart.
+
+       Mutated in place, so S.picks is the same array it was and the scores
+       memo cannot see the change. Only saying so tells it. */
+    if (outPick) Object.assign(outPick, upd);
+    bustScores();
+    S.sb.from("transactions").insert({
       league_id: S.league.id, manager_id: c.manager_id, kind: "waiver",
       window_key: faWindowKey(),
       out_player_id: c.out_player_id, out_player_name: c.out_player_name,

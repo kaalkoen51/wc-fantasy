@@ -1222,10 +1222,20 @@ test("waiver claims resolve when the window shuts, and the squad changes", async
      the way was silent. */
   const seed = await openLeague(page, { managers: 2, played: 3, claims: 2 });
 
-  const before = await page.evaluate(() => ({
-    pending: S.faClaims.filter((c) => c.status === "pending").length,
-    squad: managerPicks(myManager().id).map((p) => p.player_id).sort(),
-  }));
+  /* Measured from the SEED, not from the app after it has opened.
+
+     The window has already shut by the time the league is seeded, so the first
+     refetch resolves the claims -- opening the app is what runs them. Reading
+     "before" out of S.picks therefore only worked while processFaClaims left
+     the local rows stale, and the squad it reported was one that had already
+     been superseded in the database. When that staleness was fixed, this test
+     started comparing the post-award squad with itself. The seeded roster is
+     the only honest "before" here. */
+  const before = {
+    pending: seed.tables.fa_claims.filter((c) => c.status === "pending").length,
+    squad: seed.tables.picks.filter((p) => p.manager_id === seed.mgrIds[0])
+      .map((p) => p.player_id).sort(),
+  };
   expect(before.pending, "the scenario queued no claims").toBe(2);
 
   const after = await page.evaluate(async () => {
@@ -1235,8 +1245,10 @@ test("waiver claims resolve when the window shuts, and the squad changes", async
       pending: S.faClaims.filter((c) => c.status === "pending").length,
       squad: managerPicks(myManager().id).map((p) => p.player_id).sort(),
       settled: (S.rounds || []).filter((r) => r.status === "settled").length,
+      awarded: (window.__db.tables.fa_claims || []).filter((c) => c.status === "awarded").length,
     };
   });
+  expect(after.awarded, "no claim was recorded as awarded").toBe(2);
 
   expect(after.settled, "no round was recorded as settled").toBeGreaterThan(0);
   expect(after.pending, "claims were left pending after the window shut").toBe(0);
@@ -4450,4 +4462,134 @@ test("one failed request must not swap in a different competition's players",
   expect(dead.memo, "a failure was cached as the pool").toBeUndefined();
   expect(dead.recovered, "the failure was remembered, so the retry never asked again")
     .toEqual(["api_1"]);
+});
+
+test("a player who has left the competition can still be swapped for a free agent",
+  async ({ page }) => {
+  /* Rodri signed for Barcelona and reads ✈ LEFT. The question that follows is
+     the one that matters with a window about to shut: can he actually be
+     replaced, and does the batch survive a claim whose OUTGOING player is not
+     in the pool at all?
+
+     Everything on the out side has to come off the pick row -- name, club,
+     slot, position -- because the pool no longer has a row to read. Anything
+     that reaches for S.playerById[out] gets undefined, and the interesting
+     failures are the quiet ones: a claim that queues and then silently fails
+     to resolve, or an award that writes `position: null` onto the pick and
+     takes the manager's XI apart. So this drives the whole path, from the
+     picker opening to the window closing. */
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(String(e.message)));
+  await openLeague(page, { managers: 4, played: 2 });
+
+  const gone = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    const me = myManager();
+    const pk = managerPicks(me.id).find((p) => !p.is_sub && p.slot !== "TEAM");
+    // The pool, re-pulled after he has gone: he is simply not in it any more.
+    S._poolBase = S._poolBase.filter((p) => p.player_id !== pk.player_id);
+    applyPoolOverrides();
+    const counts = {};
+    for (const p of managerPicks(me.id))
+      if (!p.is_sub && p.slot !== "TEAM") counts[p.position] = (counts[p.position] || 0) + 1;
+    return { pickId: pk.id, pid: pk.player_id, name: pk.player_name,
+             pos: pk.position, slot: pk.slot, counts,
+             badge: availBadges(pk.player_id), inPool: !!S.playerById[pk.player_id] };
+  });
+  expect(gone.inPool, "he is still in the pool, so this is not the reported state")
+    .toBe(false);
+  expect(gone.badge, "he is not being flagged as gone at all").toContain("LEFT");
+
+  // 1. The picker opens on a player the pool has never heard of, and still
+  //    knows who he is and which position needs filling.
+  const sheet = await page.evaluate((g) => {
+    const pk = S.picks.find((p) => p.id === g.pickId);
+    openSwap(pk);
+    const open = !document.getElementById("swap-sheet").classList.contains("hidden");
+    const title = document.getElementById("swap-title").textContent.replace(/\s+/g, " ");
+    const owned = new Set(S.picks.map((p) => p.player_id));
+    const free = S.players.filter((p) => p.position === g.pos && !owned.has(p.player_id));
+    return { open, title, offered: free.length, target: free[0] };
+  }, gone);
+  expect(sheet.open, "the picker refused to open for a departed player").toBe(true);
+  expect(sheet.title, "the sheet cannot say who is being replaced").toContain(gone.name);
+  expect(sheet.offered, "there is nobody to replace him with, so this proves nothing")
+    .toBeGreaterThan(0);
+
+  /* 2. The claim queues -- for a player in a DIFFERENT position, which the
+        picker allows ("⇄ any position") and which is the case that actually
+        pins the rule below. A like-for-like swap proves nothing about where
+        the position came from: leave it unwritten and the pick keeps the right
+        one by accident. */
+  const queued = await page.evaluate(async (g) => {
+    const pk = S.picks.find((p) => p.id === g.pickId);
+    const owned = new Set(S.picks.map((p) => p.player_id));
+    const target = S.players.find(
+      (p) => p.position !== g.pos && p.position !== "TEAM" && !owned.has(p.player_id));
+    await submitFaClaim(pk, target);
+    const rows = window.__db.tables.fa_claims || [];
+    return { rows: rows.length, row: rows[0], target: target.player_id,
+             name: target.name, pos: target.position };
+  }, gone);
+  expect(queued.rows, "the claim never queued").toBe(1);
+  expect(queued.row.out_player_id, "the claim forgot who it was replacing")
+    .toBe(gone.pid);
+
+  // 3. The window shuts and the batch resolves. This is the moment asked about.
+  const done = await page.evaluate(async (g) => {
+    S.faClaims = (window.__db.tables.fa_claims || []).map(
+      (c) => ({ ...c, status: "pending" }));
+    await processFaClaims();
+    // processFaClaims writes; the squad in front of the manager is what the
+    // next read brings back, so that is what this checks.
+    await refetchAll();
+    const pk = S.picks.find((p) => p.id === g.pickId);
+    const claim = (window.__db.tables.fa_claims || [])[0];
+    const me = myManager();
+    const counts = {};
+    for (const p of managerPicks(me.id))
+      if (!p.is_sub && p.slot !== "TEAM") counts[p.position] = (counts[p.position] || 0) + 1;
+    return { holder: pk.player_id, name: pk.player_name, pos: pk.position,
+             slot: pk.slot, team: pk.team, status: claim.status,
+             badge: availBadges(pk.player_id), counts,
+             valid: lineupValid(counts), told: lineupTodo(me).map((t) => t.text),
+             tx: (window.__db.tables.transactions || []).filter((t) => t.kind === "waiver") };
+  }, gone);
+
+  expect(done.status, "the claim did not resolve").toBe("awarded");
+  expect(done.holder, "the pick still holds the player who left the competition")
+    .toBe(queued.target);
+  expect(done.name).toBe(queued.name);
+  /* The position travels with the INCOMING player -- read from the pool row he
+     has, not the one the departed player no longer has. Get this wrong and the
+     pick is labelled MID while holding a forward, and every per-position
+     scoring rule and auto-sub reads him as the wrong thing. */
+  expect(done.pos, "the pick did not take the incoming player's position")
+    .toBe(queued.pos);
+  expect(done.slot, "the slot did not follow the position").toBe(queued.pos);
+  expect(done.team, "the pick kept the departed player's old club").toBeTruthy();
+  /* And the side's shape moves by exactly that one man: one out of the old
+     position, one into the new. Nothing else shifts. */
+  const want = { ...gone.counts };
+  want[gone.pos]--; want[queued.pos] = (want[queued.pos] || 0) + 1;
+  for (const k in want) if (!want[k]) delete want[k];   // an empty position has no key
+  expect(done.counts, "the swap moved more than the one player it was given")
+    .toEqual(want);
+
+  /* And if that one man's move left the side illegal -- claiming a defender to
+     replace your only keeper does exactly that, and no bench reshuffle can
+     invent a goalkeeper -- the manager has to be TOLD, not left to find out on
+     Saturday. This is the safety net under every cross-position claim. */
+  if (!done.valid)
+    expect(done.told.join(" | "), "the XI came out illegal and nothing said so")
+      .toContain("isn't valid yet");
+  expect(done.badge, "the replacement is being flagged as gone too")
+    .not.toContain("LEFT");
+  // The log has to show it, or nobody can see what the window did.
+  expect(done.tx.length, "the award was not written to the transaction log").toBe(1);
+  expect(done.tx[0].out_player_id).toBe(gone.pid);
+
+  expect(errors, "something threw while resolving the batch").toEqual([]);
 });
