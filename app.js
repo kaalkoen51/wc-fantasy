@@ -8581,16 +8581,34 @@ function h2hOpponentFor(me, roundNo) {
   return S.managers.find((m) => m.id === oppId) || null;
 }
 
-// The round the fixture card should be about: the one in progress, else the
-// first one, so a fixture is visible before any points exist.
+// How many rounds have PRODUCED POINTS. What the standings, the "Final"
+// labels and the schedule length all want; not what the fixture card wants.
 function h2hCurrentRound() {
   const scores = h2hRoundScores();
   return Math.max(1, ...Object.values(scores).map((a) => a.length));
 }
 
+/* The round the FIXTURE CARD is about: the one being played, else the next one
+   on the calendar.
+
+   Deliberately not h2hCurrentRound(). That counts rounds with points in them,
+   which is a different question, and between the last whistle of one round and
+   the first goal of the next it answers with the round just finished -- so
+   leading into matchweek 2 the card showed matchweek 1's result and no sign of
+   who you play next. Reported from the app.
+
+   Same source of truth as the line-up card: the fixture calendar and the
+   clock, which is knowable the moment the season is loaded rather than only
+   once somebody has scored. Falls back to the count when there are no fixtures
+   to read, which is the case the old behaviour was actually right for. */
+function h2hCardRound() {
+  const n = lineupRoundNo(matchweeksOf(S.fixtures || []), Date.now());
+  return n >= 1 ? n : h2hCurrentRound();
+}
+
 function h2hFixtureCardHtml(me) {
   if (!h2hEnabled() || !me) return "";
-  const rnd = h2hCurrentRound();
+  const rnd = h2hCardRound();
   const opp = h2hOpponentFor(me, rnd);
   if (!opp) return h2hEnabled()
     ? `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 text-xs text-slate-400">
@@ -8617,7 +8635,9 @@ function h2hFixtureCardHtml(me) {
 function openH2HPreview() {
   const me = myManager();
   if (!me) return;
-  const rnd = h2hCurrentRound();
+  // The card and what it opens must be the same round, or tapping a fixture
+  // shows you a different one.
+  const rnd = h2hCardRound();
   const opp = h2hOpponentFor(me, rnd);
   if (opp) openH2HFixture(rnd, me.id, opp.id);
 }

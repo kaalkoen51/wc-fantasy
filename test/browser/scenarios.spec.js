@@ -4954,3 +4954,54 @@ test("the roundup is reachable from History, and opening it there does not consu
   expect(seen.stamped, "opening it from History consumed the automatic showing")
     .toBe(null);
 });
+
+test("between rounds, the fixture card shows who you play next, not who you just played",
+  async ({ page }) => {
+  /* Reported leading into matchweek 2: the card on the Team page still read
+     "Round 1 · head to head" with last week's 78-43, and nothing anywhere said
+     who the next opponent was.
+
+     h2hCurrentRound() counts rounds that have PRODUCED POINTS -- which the
+     standings, the "Final" labels and the schedule length all legitimately
+     want -- so between the last whistle of one round and the first goal of the
+     next it answers with the round just finished. The card was asking the
+     wrong question of the right function. */
+  await openLeague(page, { managers: 4, played: 1, h2h: true });
+
+  const seen = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    const me = myManager();
+    const weeks = matchweeksOf(S.fixtures || []);
+    return {
+      played: h2hCurrentRound(),
+      card: h2hCardRound(),
+      calendar: lineupRoundNo(weeks, Date.now()),
+      html: h2hFixtureCardHtml(me).replace(/\s+/g, " "),
+      weeks: weeks.length,
+    };
+  });
+
+  expect(seen.weeks, "the seed has no calendar to read, so this proves nothing")
+    .toBeGreaterThan(1);
+  /* The precondition: round 1 has points, round 2 is the one coming. If these
+     agreed there would be no bug to catch. */
+  expect(seen.played, "round 1 has not been played in this fixture").toBe(1);
+  expect(seen.calendar, "the calendar does not say round 2 is next").toBe(2);
+
+  expect(seen.card, "the card is still about the round that just finished").toBe(2);
+  expect(seen.html, "the card names the wrong round").toContain("Round 2");
+  expect(seen.html, "it is still showing last round's result").not.toContain("Round 1");
+  /* No points yet, so it reads as a fixture rather than a scoreline -- which
+     is the whole point of showing it early. */
+  expect(seen.html, "an unplayed round is being shown with a score").toContain(">vs<");
+
+  // ...and tapping it must open the same round the card names.
+  const opened = await page.evaluate(() => {
+    openH2HPreview();
+    return document.getElementById("recap-body").textContent.replace(/\s+/g, " ");
+  });
+  expect(opened, "the card and the sheet it opens disagree about the round")
+    .toContain("Round 2");
+});
