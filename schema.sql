@@ -376,6 +376,26 @@ create table if not exists transactions (
 -- dragging an earlier window's moves into the current one. Additive; rows
 -- without it fall back to the timestamp comparison.
 alter table transactions add column if not exists window_key text;
+
+/* The audit trail on a waiver win: did it have to beat anyone, who, and from
+   what place in the queue.
+
+   Recorded here because resolveFaClaims is the only thing that can answer it.
+   It already works the contest out -- it has to, since a contested win is what
+   costs the winner his turn -- and then threw the answer away, so a week later
+   nobody could say whether a claim was won or merely unopposed. It is not
+   recoverable afterwards either: "who else listed him" is a broader set than
+   the resolver's test, which only counts rivals whose claim could still have
+   fired, and the waiver order is derived from a league table that has since
+   moved on.
+
+   All three additive and nullable, so adding them rewrites no rows and takes
+   no meaningful lock. Rows written before this read as unknown rather than as
+   uncontested -- the writer distinguishes them, and so does the display. */
+alter table transactions add column if not exists contested boolean;
+alter table transactions add column if not exists rivals jsonb;     -- manager ids
+alter table transactions add column if not exists waiver_pos int;   -- 1-based
+
 create index if not exists transactions_league_idx
     on transactions (league_id, created_at);
 

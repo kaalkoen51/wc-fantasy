@@ -4810,6 +4810,8 @@ test("the transfer roundup waits for the window's own waivers", async ({ page })
     S.transactions = S.faClaims.map((c, i) => ({
       id: "tx" + i, league_id: S.league.id, manager_id: c.manager_id,
       kind: "waiver", created_at: new Date().toISOString(),
+      // The roundup is scoped by window_key, which every award records.
+      window_key: faWindowKey(),
       in_player_id: c.in_player_id, in_player_name: c.in_player_name,
       out_player_id: c.out_player_id, out_player_name: c.out_player_name }));
     maybeRoundup();
@@ -4829,5 +4831,126 @@ test("the transfer roundup waits for the window's own waivers", async ({ page })
     .toBe(false);
   expect(seen.after.open, "the roundup never came back once the claims resolved")
     .toBe(true);
-  expect(seen.after.text).toContain("Transfer roundup");
+  expect(seen.after.text).toContain("Waivers settled");
+  /* These fixture rows carry no `contested`, which is what a row written
+     before the audit columns existed looks like. It must read as unknown, not
+     be quietly reported as uncontested. */
+  expect(seen.after.text, "an award with no audit trail is being called uncontested")
+    .toContain("not recorded");
+});
+
+test("the waiver roundup shows every award in queue order, with yours picked out",
+  async ({ page }) => {
+  /* The sheet that answers "what did the window do". It used to rank by points
+     swing and drop anyone on zero -- which after one matchweek is most new
+     signings -- so a waiver roundup showed almost no waivers, capped at six,
+     with no way to tell which were yours and no way back to it once dismissed. */
+  await openLeague(page, { managers: 4, played: 2 });
+
+  const seen = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    S.league.config = { ...(S.league.config || {}),
+      fa_defer_to_close: true, max_fa_per_window: 2, autoWindows: false };
+    S.league.trading_open = false;
+
+    const me = myManager();
+    const [a, b, c] = S.managers.filter((m) => m.id !== me.id);
+    const key = faWindowKey();
+    const tx = (mid, inN, outN, pos, contested, rivals, wkey) => ({
+      id: "t" + inN, league_id: S.league.id, manager_id: mid, kind: "waiver",
+      window_key: wkey || key, created_at: new Date().toISOString(),
+      in_player_id: "in_" + inN, in_player_name: inN,
+      out_player_id: "out_" + outN, out_player_name: outN,
+      contested, rivals, waiver_pos: pos });
+
+    S.transactions = [
+      // Deliberately out of order, to prove the sheet sorts by the queue.
+      tx(b.id, "Wissa", "Florentino", 3, true, [c.id]),
+      tx(me.id, "Minteh", "Ndoye", 2, false, []),
+      tx(a.id, "Semenyo", "Mateta", 1, true, [b.id, c.id]),
+      // Last window's award: must not appear at all.
+      tx(c.id, "Ghost", "Old", 1, false, [], "some-older-window"),
+    ];
+    // A player I claimed and someone else took.
+    S.faClaims = [{ id: "f1", manager_id: me.id, status: "failed",
+      in_player_id: "in_Wissa", in_player_name: "Wissa",
+      out_player_id: "x", pick_id: "y", rank: 1 }];
+
+    const html = roundupHtml();
+    /* Read the ORDERED LIST only. The personal block above it draws the same
+       swap markup, so matching the whole sheet counts your own awards twice. */
+    const list = html.split("In waiver order")[1] || "";
+    const order = [...list.matchAll(/>([A-Z][a-z]+)<\/span>\s*<span class="shrink-0 text-slate-500 text-xs">◀/g)]
+      .map((m) => m[1]);
+    return { html, order, meName: me.name, aName: a.name,
+             bName: b.name, cName: c.name };
+  });
+
+  // 1 · Queue order, not points swing, and scoped to this window.
+  expect(seen.order, "the awards are not in waiver order")
+    .toEqual(["Semenyo", "Minteh", "Wissa"]);
+  expect(seen.html, "an award from an earlier window leaked in")
+    .not.toContain("Ghost");
+
+  // 2 · Mine is marked, and the rail is on the row rather than a separate card.
+  expect(seen.html, "your own award is not picked out").toContain("YOU");
+  expect((seen.html.match(/YOU</g) || []).length,
+    "more than one row is claiming to be yours").toBe(1);
+
+  // 3 · The audit trail, from both sides.
+  expect(seen.html, "a contested win is not labelled").toContain("CONTESTED");
+  expect(seen.html, "an unopposed win is not labelled").toContain("UNCONTESTED");
+  expect(seen.html, "the beaten rivals are not named").toContain(seen.cName);
+
+  // 4 · The personal block: what I won, and what was taken off me.
+  expect(seen.html, "there is no personal summary").toContain("Your window");
+  expect(seen.html, "a player somebody took off me is not reported")
+    .toMatch(new RegExp(`Wissa[\\s\\S]{0,80}${seen.bName}`));
+});
+
+test("the roundup is reachable from History, and opening it there does not consume it",
+  async ({ page }) => {
+  /* It existed only as a sheet that opened itself once per window. Miss it --
+     be on another tab when it fired -- and the summary was gone for good,
+     while the individual rows that make it up sat in the log the whole time. */
+  await openLeague(page, { managers: 4, played: 2 });
+
+  const seen = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    S.league.config = { ...(S.league.config || {}), fa_defer_to_close: true,
+      autoWindows: false };
+    S.league.trading_open = false;
+    const me = myManager();
+    S.transactions = [{ id: "t1", league_id: S.league.id, manager_id: me.id,
+      kind: "waiver", window_key: faWindowKey(), created_at: new Date().toISOString(),
+      in_player_id: "in_1", in_player_name: "Minteh",
+      out_player_id: "out_1", out_player_name: "Ndoye",
+      contested: false, rivals: [], waiver_pos: 2 }];
+    localStorage.removeItem("wcf_roundup_" + S.league.id);
+    /* Stand the automatic showing down: renderBoard runs it, and this test is
+       about the manual route back. */
+    S._roundupChecked = true;
+
+    S.tradeTab = "history";
+    setBoardTab("trades"); renderBoard();
+    const btn = document.querySelector("#board-trades [data-roundup]");
+    if (!btn) return { missing: true };
+    btn.click();
+    return {
+      open: !document.getElementById("recap-sheet").classList.contains("hidden"),
+      text: document.getElementById("recap-body").textContent.replace(/\s+/g, " "),
+      stamped: localStorage.getItem("wcf_roundup_" + S.league.id) };
+  });
+
+  expect(seen.missing, "History offers no way back to the roundup").toBeUndefined();
+  expect(seen.open, "the button did not open the sheet").toBe(true);
+  expect(seen.text, "the sheet opened empty").toContain("Minteh");
+  /* Opening it by hand must NOT mark the window seen, or reading it early
+     from History would cancel the automatic showing for everyone's real one. */
+  expect(seen.stamped, "opening it from History consumed the automatic showing")
+    .toBe(null);
 });

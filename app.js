@@ -5967,8 +5967,15 @@ function resolveFaClaims(claims, waiverOrder, taken, tradeLimit, pickHolds) {
   for (const c of claims) (byMgr[c.manager_id] ||= []).push(c);
   for (const m in byMgr) byMgr[m].sort((a, b) =>
     (a.rank - b.rank) || String(a.created_at || "").localeCompare(String(b.created_at || "")));
-  const ptr = {}, count = {}, done = {};
+  const ptr = {}, count = {}, done = {}, contest = {};
   for (const m in byMgr) { ptr[m] = 0; count[m] = 0; done[m] = false; }
+  /* Where each manager stood when the window opened, 1-based, off the ORDER
+     PASSED IN rather than the copy above -- that one is rewritten as contested
+     wins yield, so reading it after the fact would report where a manager
+     ended up, not the seat he claimed from. */
+  const startPos = {};
+  Object.keys(waiverOrder || {}).sort((a, b) => waiverOrder[a] - waiverOrder[b])
+    .forEach((m, i) => { startPos[m] = i + 1; });
   const prio = (m) => order[m] == null ? Infinity : order[m];
   const active = () => Object.keys(byMgr).filter((m) => !done[m]);
   const capOut = (m) => {
@@ -6001,7 +6008,7 @@ function resolveFaClaims(claims, waiverOrder, taken, tradeLimit, pickHolds) {
      three because each is the true statement of a different reason a rival is
      out of the running, and only the holds test is pinned by a case the suite
      can reach. */
-  const contestedBy = (pid, winner) => Object.keys(byMgr).some((m) =>
+  const rivalsFor = (pid, winner) => Object.keys(byMgr).filter((m) =>
     m !== winner && !done[m] && count[m] < limit
     && byMgr[m].slice(ptr[m]).some((c) =>
       c.in_player_id === pid && holds[c.pick_id] === c.out_player_id));
@@ -6020,12 +6027,20 @@ function resolveFaClaims(claims, waiverOrder, taken, tradeLimit, pickHolds) {
       break;
     }
     if (!executed) { done[m] = true; continue; }
-    if (contestedBy(executed.in_player_id, m)) { maxOrder++; order[m] = maxOrder; }  // yield
+    /* The same question, asked once and now kept. It decides whether the
+       winner yields his turn, and it is also the only moment anyone can say
+       whether the claim was won or merely unopposed -- afterwards the queue
+       has moved and the rivals' claims have been marked failed for reasons
+       that no longer distinguish "beaten" from "never reached". */
+    const rivals = rivalsFor(executed.in_player_id, m);
+    contest[executed.id] = { contested: rivals.length > 0, rivals,
+                             pos: startPos[m] ?? null };
+    if (rivals.length) { maxOrder++; order[m] = maxOrder; }              // yield
     if (count[m] >= limit) capOut(m);
   }
   const seen = new Set([...awards.map((c) => c.id), ...failed]);
   for (const c of claims) if (!seen.has(c.id)) failed.push(c.id);
-  return { awards, failed, order };
+  return { awards, failed, order, contest };
 }
 
 // Automatic trade/lineup windows driven by the competition fixture list
@@ -6429,25 +6444,6 @@ function seasonAwards(entries) {
   pick("Strongest finish", "highest final round",
     (e) => e.rounds[e.rounds.length - 1], gt);
   return out;
-}
-
-/* The biggest moves once a trade window closes. Manager-to-manager trades are
-   ranked above free-agent pickups at equal weight, because a trade needed two
-   people to agree and is the more interesting story.
-     moves = [{ kind:"trade"|"swap"|"waiver", manager, with?, inName, outName,
-                inPts, outPts }]
-   Weight is the points that actually changed hands; a trade counts both sides. */
-function transferRoundup(moves, limit) {
-  const scored = (moves || []).map((m) => {
-    const isTrade = m.kind === "trade";
-    const swing = isTrade ? (m.inPts || 0) + (m.outPts || 0)
-                          : Math.max(m.inPts || 0, m.outPts || 0);
-    return { ...m, isTrade, swing, weight: swing * (isTrade ? 1.5 : 1) };
-  }).filter((m) => m.swing > 0);
-  scored.sort((a, b) => b.weight - a.weight
-    || (b.isTrade ? 1 : 0) - (a.isTrade ? 1 : 0)
-    || String(a.inName || "").localeCompare(String(b.inName || "")));
-  return scored.slice(0, limit || 5);
 }
 
 // "2d 04h 11m" · "3h 12m 40s" · "4m 09s" — the countdown on the card.
@@ -9360,59 +9356,137 @@ function maybeSquadReveal() {
   openReveal();
 }
 
-/* ---------- transfer roundup ----------
-   When a window closes, who actually moved the needle. Built from the
-   transactions log plus accepted trades; ranked by transferRoundup(), which
-   favours manager-to-manager deals. */
-function collectMoves(sinceMs) {
-  const nameOf = (id) => S.managers.find((m) => m.id === id)?.name || "?";
-  const pts = (pid, pos, team) => { try { return playerPoints(pid, pos) || 0; } catch { return 0; } };
-  const posOf = (pid) => S.playerById[pid]?.position || "MID";
-  const moves = [];
-  for (const t of S.transactions || []) {
-    if (sinceMs && Date.parse(t.created_at || 0) < sinceMs) continue;
-    moves.push({ kind: t.kind, manager: nameOf(t.manager_id),
-      inName: t.in_player_name, outName: t.out_player_name,
-      inPts: pts(t.in_player_id, posOf(t.in_player_id)),
-      outPts: pts(t.out_player_id, posOf(t.out_player_id)) });
-  }
-  for (const t of S.trades || []) {
-    if (t.status !== "accepted") continue;
-    if (sinceMs && Date.parse(t.created_at || 0) < sinceMs) continue;
-    for (const it of (t.trade_items || [])) {
-      const inId = it.requested_player_id, outId = it.offered_player_id;
-      moves.push({ kind: "trade", manager: nameOf(t.from_manager_id), with: nameOf(t.target_manager_id),
-        inName: it.requested_player_name, outName: it.offered_player_name,
-        inPts: pts(inId, posOf(inId)), outPts: pts(outId, posOf(outId)) });
-    }
-  }
-  return moves;
+/* One window's waiver awards, newest window by default.
+
+   Keyed on `window_key`, which every award has recorded since the per-window
+   cap needed it -- NOT on a timestamp cut, because the boundary a timestamp
+   would be compared against is derived from the fixture list and moves when a
+   game is rescheduled, dragging last window's moves into this one. */
+function windowAwards(key) {
+  const k = key || faWindowKey();
+  return (S.transactions || []).filter((x) => x.kind === "waiver" && x.window_key === k);
 }
 
-function openRoundup() {
+/* What THIS manager's window came to: what landed, and what was taken off him.
+
+   A window produces far more failures than awards -- 57 claims resolving to 14
+   awards was the first real one -- and almost all of them are the queue simply
+   working: preferences below the one that fired, never reached. Listing them
+   league-wide is a wall of noise nobody reads.
+
+   A failure is only worth reporting when it was a LOSS: somebody else took the
+   player. That is the one thing a manager could not have predicted, and it is
+   already half-told from the winner's side ("beat MojoJojo to him"). This is
+   the other half, and only your own. */
+function myWindowStory(key) {
+  const me = myManager();
+  if (!me) return null;
+  const awards = windowAwards(key);
+  const mine = awards.filter((a) => a.manager_id === me.id);
+  const takenBy = {};
+  for (const a of awards) if (a.manager_id !== me.id) takenBy[a.in_player_id] = a;
+  const lost = [];
+  const seen = new Set();
+  for (const c of (S.faClaims || [])) {
+    if (c.manager_id !== me.id || c.status !== "failed") continue;
+    const won = takenBy[c.in_player_id];
+    if (!won || seen.has(c.in_player_id)) continue;
+    seen.add(c.in_player_id);
+    lost.push({ name: c.in_player_name, to: won.manager_id });
+  }
+  const cap = maxFaPerWindow();
+  return { mine, lost, cap, capped: cap != null && mine.length >= cap };
+}
+
+const AUDIT_UNKNOWN = "not recorded";
+function contestTag(a) {
+  if (a?.contested == null)
+    return `<span class="shrink-0 rounded bg-slate-700/60 text-slate-400 px-1 py-0.5 text-[10px] font-semibold"
+      title="This award predates the audit trail.">${AUDIT_UNKNOWN}</span>`;
+  return a.contested
+    ? `<span class="shrink-0 rounded bg-wcred/20 text-red-300 px-1 py-0.5 text-[10px] font-bold tracking-wide">CONTESTED</span>`
+    : `<span class="shrink-0 rounded bg-slate-700/60 text-slate-400 px-1 py-0.5 text-[10px] font-semibold tracking-wide">UNCONTESTED</span>`;
+}
+
+const mgrName = (id) => S.managers.find((m) => m.id === id)?.name || "someone";
+
+function roundupHtml(key) {
+  const me = myManager();
+  const awards = windowAwards(key).slice().sort((a, b) =>
+    (a.waiver_pos ?? 99) - (b.waiver_pos ?? 99)
+    || String(a.created_at).localeCompare(String(b.created_at)));
+  const story = myWindowStory(key);
+  const contested = awards.filter((a) => a.contested).length;
+  /* "N awarded from M" only when M is actually the bigger number. Claims are
+     deleted as windows pass and an older window's roundup outlives them, so
+     the count on hand can be smaller than the awards it is supposed to
+     contain -- which read as "5 claims awarded from 1". */
+  const claims = (S.faClaims || []).length;
+  const from = claims > awards.length ? claims : 0;
+
+  const swap = (a) => `<div class="flex items-center gap-1.5 text-sm min-w-0 mt-0.5">
+      <span class="min-w-0 truncate text-live font-semibold">${esc(a.in_player_name || "?")}</span>
+      <span class="shrink-0 text-slate-500 text-xs">◀</span>
+      <span class="min-w-0 truncate text-danger/85">${esc(a.out_player_name || "?")}</span>
+    </div>`;
+
+  const row = (a, i) => {
+    const m = S.managers.find((x) => x.id === a.manager_id);
+    const isMine = me && a.manager_id === me.id;
+    const rivals = Array.isArray(a.rivals) ? a.rivals : [];
+    return `<li class="rounded-lg border px-2.5 py-2 ${isMine
+      ? "border-wcgold bg-wcgold/5" : "border-slate-700 bg-slate-800/40"}">
+      <div class="flex items-center gap-2 min-w-0">
+        <span class="shrink-0 w-5 text-right font-mono text-xs ${
+          isMine ? "text-wcgold font-bold" : "text-slate-500"}">${a.waiver_pos ?? i + 1}</span>
+        ${txMgrChip(m)}
+        ${isMine ? '<span class="shrink-0 rounded bg-wcgold text-slate-900 px-1 py-0.5 text-[10px] font-bold">YOU</span>' : ""}
+        <span class="ml-auto">${contestTag(a)}</span>
+      </div>
+      ${swap(a)}
+      ${rivals.length ? `<p class="text-[11px] text-slate-500 mt-0.5">beat ${
+        rivals.map((r) => `<b class="text-slate-400">${esc(mgrName(r))}</b>`).join(" and ")} to him</p>`
+        : a.contested === false
+          ? '<p class="text-[11px] text-slate-500 mt-0.5">nobody else claimed him</p>' : ""}
+    </li>`;
+  };
+
+  return `
+    <div class="text-center"><div class="eyebrow">Window closed</div>
+      <div class="text-xl font-bold mt-1">Waivers settled</div>
+      <div class="text-xs text-slate-400">${awards.length} claim${
+        awards.length === 1 ? "" : "s"} awarded${from ? ` from ${from}` : ""}${
+        contested ? ` · ${contested} contested` : ""}</div></div>
+
+    ${story && (story.mine.length || story.lost.length) ? `
+      <div class="rounded-xl border border-wcgold/50 bg-wcgold/5 p-2.5 space-y-1.5">
+        <div class="eyebrow">Your window</div>
+        ${story.mine.map((a) => `<div class="flex items-baseline gap-2 min-w-0">
+          <span class="shrink-0 text-live">✓</span>${swap(a)}</div>`).join("")}
+        ${story.lost.map((l) => `<div class="flex items-baseline gap-2 min-w-0 text-sm">
+          <span class="shrink-0 text-danger">✗</span>
+          <span class="min-w-0 truncate text-slate-400">${esc(l.name)} — <b class="text-slate-300">${
+            esc(mgrName(l.to))}</b> took him</span></div>`).join("")}
+        ${story.capped ? `<p class="text-[11px] text-slate-500">${story.mine.length} of ${
+          story.cap} moves used — anything below that could not fire.</p>` : ""}
+      </div>` : ""}
+
+    ${awards.length
+      ? `<div><div class="eyebrow px-0.5 pb-1">In waiver order</div>
+          <ol class="space-y-1.5">${awards.map(row).join("")}</ol></div>`
+      : '<p class="text-sm text-slate-400 text-center py-3">No claims were awarded this window.</p>'}`;
+}
+
+function openRoundup(key) {
   const body = $("recap-body");
   if (!body) return;
-  const top = transferRoundup(collectMoves(), 6);
-  body.innerHTML = `
-    <div class="text-center"><div class="eyebrow">Window closed</div>
-      <div class="text-xl font-bold mt-1">Transfer roundup</div>
-      <div class="text-xs text-slate-400">The moves that shifted the most points</div></div>
-    ${top.length ? `<ol class="space-y-1.5">${top.map((m, i) => `
-      <li class="rounded-lg border border-slate-700 bg-slate-800/50 px-2.5 py-2">
-        <div class="flex items-center gap-2">
-          <span class="text-slate-400 font-mono text-xs w-4">${i + 1}</span>
-          <span class="rounded px-1.5 py-0.5 text-xs font-bold ${m.isTrade
-            ? "bg-wcgold/20 text-wcgold" : "bg-slate-700 text-slate-300"}">${m.isTrade ? "TRADE" : "FREE AGENT"}</span>
-          <span class="ml-auto font-mono text-sm text-wcgold">${Math.round(m.swing)}p</span>
-        </div>
-        <div class="mt-1 text-sm"><b>${esc(m.manager)}</b>${m.with ? ` ↔ <b>${esc(m.with)}</b>` : ""}</div>
-        <div class="text-xs text-slate-400 truncate">
-          <span class="text-live">in</span> ${esc(m.inName || "?")} · <span class="text-danger">out</span> ${esc(m.outName || "?")}</div>
-      </li>`).join("")}</ol>`
-      : '<p class="text-sm text-slate-400 text-center py-3">Nobody moved. A quiet window.</p>'}`;
+  body.innerHTML = roundupHtml(key);
   $("recap-sheet").classList.remove("hidden");
   lockScroll(true);
-  if (S.league?.id) localStorage.setItem("wcf_roundup_" + S.league.id, String(windowStamp()));
+  // Only the automatic showing marks the window seen; opening it by hand from
+  // History must not consume the one it would have popped up for.
+  if (!key && S.league?.id)
+    localStorage.setItem("wcf_roundup_" + S.league.id, String(windowStamp()));
 }
 
 // A stable id for the current trade window, so a roundup shows once per window.
@@ -9442,7 +9516,9 @@ function maybeRoundup() {
   S._roundupChecked = true;
   const seen = localStorage.getItem("wcf_roundup_" + S.league.id);
   if (seen === String(windowStamp())) return;
-  if (!collectMoves().length) { localStorage.setItem("wcf_roundup_" + S.league.id, String(windowStamp())); return; }
+  // Nothing awarded THIS window: no sheet, and mark it seen so it does not sit
+  // waiting to open on a window that produced nothing.
+  if (!windowAwards().length) { localStorage.setItem("wcf_roundup_" + S.league.id, String(windowStamp())); return; }
   openRoundup();
 }
 
@@ -14167,7 +14243,7 @@ async function processFaClaims() {
   /* The shuffled order the resolver returns is NOT written back. It is how the
      turns were taken inside this batch, not a standing the next window
      inherits -- priority resets to the table every window. */
-  const { awards, failed } =
+  const { awards, failed, contest } =
     resolveFaClaims(pending, order, taken, maxFaPerWindow(), holds);
   // Same reason as saveLineup: pin the played rounds before the squads move.
   for (const mid of new Set(awards.map((c) => c.manager_id)))
@@ -14199,12 +14275,26 @@ async function processFaClaims() {
        memo cannot see the change. Only saying so tells it. */
     if (outPick) Object.assign(outPick, upd);
     bustScores();
-    S.sb.from("transactions").insert({
+    const tx = {
       league_id: S.league.id, manager_id: c.manager_id, kind: "waiver",
       window_key: faWindowKey(),
       out_player_id: c.out_player_id, out_player_name: c.out_player_name,
       in_player_id: c.in_player_id, in_player_name: c.in_player_name,
-    }).then(() => {}, () => {});
+    };
+    const au = contest?.[c.id];
+    /* The audit trail, and a way back without it. On a database that has not
+       had the three columns added yet the insert is rejected outright -- and
+       this row is the ONLY record that the award happened, so losing it to a
+       missing column would take the move out of the log entirely. Retry
+       without them: an award with no audit trail beats no award at all. */
+    const withAudit = au
+      ? { ...tx, contested: au.contested, waiver_pos: au.pos,
+          rivals: au.rivals?.length ? au.rivals : null }
+      : tx;
+    S.sb.from("transactions").insert(withAudit).then((r) => {
+      if (r?.error && /contested|rivals|waiver_pos/.test(r.error.message || ""))
+        return S.sb.from("transactions").insert(tx).then(() => {}, () => {});
+    }, () => S.sb.from("transactions").insert(tx).then(() => {}, () => {}));
   }
   /* Stamp the winners' squads at the lock following the window these claims
      belong to. Run on time that is a future stamp; run late — nobody opened the
@@ -15010,7 +15100,26 @@ function transactionsLogHtml() {
   const shown = current.length ? current : entries.slice(0, 3);
   const rest  = current.length ? earlier : entries.slice(3);
 
+  /* The roundup, permanently reachable. It used to exist only as a sheet that
+     opened itself once per window -- miss it, or be on another tab when it
+     fired, and the summary of what the window did was gone for good while the
+     individual rows that make it up sat right here. */
+  const windows = [...new Set((S.transactions || [])
+    .filter((x) => x.kind === "waiver" && x.window_key)
+    .map((x) => x.window_key))];
+  const roundupBtn = windows.length ? `
+    <button data-roundup="${esc(windows[windows.length - 1])}"
+      class="w-full rounded-xl border border-wcgold/50 bg-wcgold/10 px-3 py-2.5 flex items-center gap-2 text-left">
+      <span class="shrink-0 text-base leading-none">⏳</span>
+      <span class="min-w-0 flex-1">
+        <span class="block text-sm font-semibold text-wcgold">Waiver roundup</span>
+        <span class="block text-xs text-slate-400">Who won what, in waiver order</span>
+      </span>
+      <span class="shrink-0 text-wcgold text-sm">›</span>
+    </button>` : "";
+
   return `<div class="space-y-2">
+    ${roundupBtn}
     <div class="flex items-baseline justify-between gap-2 px-1">
       <h3 class="font-semibold text-sm">Every move</h3>
       <span class="eyebrow">${current.length ? "this window" : "recent"}</span>
@@ -15593,6 +15702,8 @@ function renderTrades() {
     renderTrades();
     renderBoardNav(S.boardTab);   // the shared strip shows which tab is on
   });
+  box.querySelectorAll("[data-roundup]").forEach((b) =>
+    b.onclick = () => openRoundup(b.dataset.roundup));
   wireTrades(me);
 }
 
