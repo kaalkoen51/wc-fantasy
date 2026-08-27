@@ -4593,3 +4593,71 @@ test("a player who has left the competition can still be swapped for a free agen
 
   expect(errors, "something threw while resolving the batch").toEqual([]);
 });
+
+test("changing today's captain does not move the armband on rounds already played",
+  async ({ page }) => {
+  /* Reported from the app: pick a new captain for the coming round and the C
+     on every past round's pitch moves with it -- last week's match redrawn as
+     though you had captained someone you did not.
+
+     The data was never wrong. snapshotAt and recordRoundLineups both write
+     is_captain onto the roster they lock, precisely so a played round keeps
+     the choice that was live at the time, and computeScores reads the armband
+     off those entries -- which is why the scoring stayed right while the badge
+     lied. squadBoardHtml simply read managers.captain_id instead, and that is
+     one value for the whole season. */
+  await openLeague(page, { managers: 4, played: 3 });
+
+  const seen = await page.evaluate(async () => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    S.league.config = { ...(S.league.config || {}), captain: true };
+
+    const me = myManager();
+    const xi = managerPicks(me.id).filter((p) => !p.is_sub && p.slot !== "TEAM");
+    const was = xi[0], now = xi[1];
+
+    /* The round that has been played, with the armband locked onto its roster
+       the way a real lock writes it. */
+    const hist = () => managerHistory(me.id);
+    const past = hist().rounds.find((r) => r.items.some((it) => (it.pts || 0) !== 0))
+      || hist().rounds[0];
+    for (const sn of S.snapshots || [])
+      if (sn.manager_id === me.id)
+        for (const e of sn.roster || []) e.is_captain = e.player_id === was.player_id;
+
+    me.captain_id = was.player_id;
+    bustScores();
+    const drawn = () => {
+      const r = managerHistory(me.id).rounds.find((x) => x.n === past.n);
+      const html = squadBoardHtml(r.items, me.id, { roundMode: true, curView: false,
+        cameOn: r.cameOn || [], missed: r.missed || [], swaps: r.swaps || [] });
+      const cap = /data-hp="([^"]+)"[^>]*>(?:(?!data-hp)[\s\S])*?>C</.exec(html);
+      return { cap: cap && cap[1], has: html.includes(">C<") };
+    };
+    const before = drawn();
+
+    // ...and now the manager picks somebody else for the round ahead.
+    me.captain_id = now.player_id;
+    bustScores();
+    const after = drawn();
+
+    // The live squad, which SHOULD follow today's choice.
+    const liveItems = managerHistory(me.id).current.items;
+    const liveHtml = squadBoardHtml(liveItems, me.id, { curView: true });
+    const live = /data-hp="([^"]+)"[^>]*>(?:(?!data-hp)[\s\S])*?>C</.exec(liveHtml);
+
+    return { before, after, live: live && live[1],
+             was: was.player_id, now: now.player_id, round: past.n };
+  });
+
+  expect(seen.before.has, "no armband was drawn at all, so this proves nothing")
+    .toBe(true);
+  expect(seen.before.cap, "the played round did not start on the captain it locked")
+    .toBe(seen.was);
+  expect(seen.after.cap, "changing today's captain moved the C on a round already played")
+    .toBe(seen.was);
+  // The other half: the live squad must still follow the new choice.
+  expect(seen.live, "the live pitch ignored the captain just picked").toBe(seen.now);
+});

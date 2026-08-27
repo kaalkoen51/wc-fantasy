@@ -8217,6 +8217,33 @@ function squadBoardHtml(items, mgrId, opts = {}) {
   const offFor = new Map(swaps.map((s) => [s.on, s.off]));   // sub -> starter
   const onFor = new Map(swaps.map((s) => [s.off, s.on]));    // starter -> sub
   const mgr = S.managers.find((m) => m.id === mgrId);
+  /* The armband AS IT STOOD FOR THIS ROUND.
+
+     Every locked round snapshots it onto the entries -- snapshotAt and
+     recordRoundLineups both write is_captain, precisely so "past rounds keep
+     their choice" -- and this read it off the manager row instead. So changing
+     today's captain moved the C on every past round's pitch at once. Reported
+     from the app; scoring was never affected, because computeScores has always
+     taken the armband off the entries, which is exactly the disagreement
+     between screens that this is supposed to prevent.
+
+     Same shape and the same fallback as openH2HFixture's armOf and
+     computeScores' capByRnd, so the three cannot drift apart again: the
+     round's own answer when it has one, today's only when it does not.
+
+     The fallback is load-bearing, not a safety net. The live squad's entries
+     carry no armband -- the armband lives on the manager row until a lock
+     writes it into a snapshot -- so `live` is the ONLY thing that draws the C
+     on the current pitch. It also covers rounds recorded before the armband
+     was captured, and there it agrees with what scoring did for that round,
+     which is the property that matters. Both directions are pinned by
+     "changing today's captain does not move the armband on rounds already
+     played", which fails if either half is removed. */
+  const armOf = (flag, live) => captainEnabled()
+    ? (items.find((it) => it.entry[flag])?.entry.player_id ?? live ?? null)
+    : null;
+  const capId = armOf("is_captain", mgr?.captain_id);
+  const viceId = armOf("is_vice", mgr?.vice_id);
   const isPlayer = (it) => it.entry.position && it.entry.position !== "TEAM"
     && it.entry.slot !== "WIN" && it.entry.slot !== "—";
   const play = items.filter(isPlayer);
@@ -8254,9 +8281,8 @@ function squadBoardHtml(items, mgrId, opts = {}) {
       dim: out,
       // The sub badge wins over the captain armband: coming on is the rarer
       // fact and the one being asked about.
-      badge: up ? "▲" : (!captainEnabled() ? ""
-           : mgr?.captain_id === e.player_id ? "C"
-           : mgr?.vice_id === e.player_id ? "V" : ""),
+      badge: up ? "▲" : e.player_id === capId ? "C"
+           : e.player_id === viceId ? "V" : "",
       title: up ? `Came on for ${nameOf(offFor.get(e.player_id))}`
            : out ? "Did not play — no substitute available" : undefined,
     });
