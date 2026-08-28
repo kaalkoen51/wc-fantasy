@@ -5159,3 +5159,80 @@ test("a single window's moves are not split into 'this window' and 'earlier'",
   expect(seen.trades, "a trade made inside the window was pushed out of it")
     .toBeGreaterThan(0);
 });
+
+test("while a round is being played, the Team page leads with that round's score",
+  async ({ page }) => {
+  /* Asked for as matchweek 2 kicked off: the first thing on the page was a
+     season total, and the line-up card underneath said "season to date" with
+     no way to switch, because the round view waited for the first stat row to
+     land. Between kick-off and that row there is a stretch where "how am I
+     doing right now" is the only question anybody has, and the page answered a
+     different one. */
+  const seed = await openLeague(page, { managers: 4, played: 2 });
+
+  const live = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    /* A matchweek that has KICKED OFF but produced no stats yet -- the exact
+       stretch being complained about. Weeks 0 and 1 are played in this seed,
+       so week 2 is the one that has fixtures and no points. */
+    const ws = matchweeksOf(S.fixtures);
+    const w = ws[2];
+    return { first: w.first, last: w.last, weeks: ws.length };
+  });
+  await page.clock.setFixedTime(new Date(live.first + 30 * 60e3));
+
+  const seen = await page.evaluate(() => {
+    bustScores();
+    renderHomeTab();
+    const box = document.getElementById("board-home");
+    const card = box.querySelector("[data-myscore]");
+    const h = managerHistory(myManager().id);
+    const roundPts = h.current.items.reduce((s, it) => s + (it.roundPts || 0), 0)
+      + h.current.former.reduce((s, it) => s + (it.roundPts || 0), 0);
+    return { inPlay: !!weekInPlay(matchweeksOf(S.fixtures), Date.now()),
+      big: card?.querySelector(".scoreboard")?.textContent.trim(),
+      label: card?.querySelector(".eyebrow")?.textContent.trim(),
+      tail: card?.textContent.replace(/\s+/g, " "),
+      total: h.total, roundPts, roundPlayed: h.curRoundPlayed,
+      squad: box.querySelector(".home-squad")?.textContent.replace(/\s+/g, " ") };
+  });
+
+  expect(live.weeks, "the seed has no unplayed matchweek to sit inside")
+    .toBeGreaterThan(2);
+  expect(seen.inPlay, "the clock is not inside a matchweek, so this proves nothing")
+    .toBe(true);
+  /* No stat row has landed for this round yet. That is the whole point: the
+     round view used to wait for one, so the page had nothing to offer between
+     kick-off and the first goal. */
+  expect(seen.roundPlayed, "this round already has points, so the gap is not covered")
+    .toBe(false);
+  expect(seen.total, "the season total equals the round score here, so the swap is invisible")
+    .not.toBe(seen.roundPts);
+
+  // 1 · The big number is the round, not the season.
+  expect(seen.big, "the headline number is still the season total")
+    .toBe(String(seen.roundPts));
+  expect(seen.label, "the headline is not labelled as the round").toBe("this round");
+  // ...and the season total is still on the card, just smaller.
+  expect(seen.tail, "the season total was dropped rather than demoted")
+    .toContain(`${seen.total} total`);
+
+  // 2 · The line-up card offers the round view instead of season-to-date only.
+  expect(seen.squad, "the squad card is still stuck on season totals")
+    .toContain("This round");
+
+  // 3 · Between matchweeks it goes back to being a season total.
+  await page.clock.setFixedTime(new Date(live.last + 6 * 3600e3));
+  const after = await page.evaluate(() => {
+    bustScores(); renderHomeTab();
+    const card = document.getElementById("board-home").querySelector("[data-myscore]");
+    return { mode: card?.dataset.myscore,
+             big: card?.querySelector(".scoreboard")?.textContent.trim(),
+             label: card?.querySelector(".eyebrow")?.textContent.trim() };
+  });
+  expect(after.label, "the card is still shouting about a round that has finished")
+    .toBe("points");
+  expect(after.big, "the season total did not come back").toBe(String(seen.total));
+});

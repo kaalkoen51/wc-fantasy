@@ -8523,8 +8523,13 @@ function historyViewHtml(mgrId) {
      finished round's points be read against the next round's squad. roundMode
      follows hasRound rather than standing on its own, or a remembered "round"
      preference would show a bare 0 with no toggle to escape it. */
-  const hasRound = onCurrent && !h.eliminated
-    && (h.curRound || 0) >= 1 && h.curRoundPlayed;
+  /* ...or while it is being PLAYED. Waiting for the first stat row meant that
+     from the moment a matchweek kicked off until somebody's points landed, the
+     page offered nothing but season totals -- which is the one stretch when
+     "how am I doing right now" is the only question anybody has. A live round
+     showing 0 is honest, and the toggle is right there to leave it. */
+  const hasRound = onCurrent && !h.eliminated && (h.curRound || 0) >= 1
+    && (h.curRoundPlayed || !!weekInPlay(matchweeksOf(S.fixtures || []), Date.now()));
   const roundMode = hasRound && S.homeScoreMode === "round";
 
   let body;
@@ -10032,6 +10037,16 @@ function renderHomeTab() {
   const scores = computeScores().sort((a, b) => b.total - a.total);
   const rank = scores.findIndex((s) => s.manager.id === me.id) + 1;
   const myScore = scores[rank - 1];
+  /* The round in progress, and what this manager has made of it so far. Same
+     items and the same roundPts the line-up card totals, so the two numbers on
+     one screen cannot disagree about the same round. */
+  const roundLive = !me.eliminated
+    && !!weekInPlay(matchweeksOf(S.fixtures || []), Date.now());
+  const roundPts = !roundLive ? 0 : (() => {
+    const h = managerHistory(me.id);
+    return h.current.items.reduce((s2, it) => s2 + (it.roundPts || 0), 0)
+         + h.current.former.reduce((s2, it) => s2 + (it.roundPts || 0), 0);
+  })();
   /* Order of the tab, top to bottom: who you are, what you owe the game right
      now, who you're playing, then your actual team. Identity leads because it
      is the one thing that is always true; the deadline card is second because
@@ -10058,6 +10073,9 @@ function renderHomeTab() {
           convenience above the thing the manager came here for. Second on the
           page is prominent enough for something shown once. */""}
     ${installHintHtml()}
+    ${/* The round in progress, and what this manager has made of it so far.
+          Same source as the line-up card's own subtotal, so the two numbers on
+          one screen cannot disagree. */""}
     <div class="rounded-xl border bg-slate-900 p-3 flex items-center gap-3"
          style="border-color:${managerColor(me)}55">
       <button id="home-crest" class="relative shrink-0" title="Edit your crest and colour">
@@ -10069,9 +10087,18 @@ function renderHomeTab() {
         <div class="text-lg font-bold truncate leading-tight">${esc(me.name)}</div>
         <div class="text-xs text-slate-400 flex items-center gap-1.5">#${rank} of ${scores.length} ${formBadge(me.id)}</div>
       </div>
-      <div class="text-right shrink-0">
-        <div class="text-2xl font-bold text-wcgold scoreboard leading-none">${myScore?.total ?? 0}</div>
-        <div class="eyebrow">points</div>
+      ${/* While a round is being played, THAT is the number people open the app
+            for -- the season total is the standing, and the standing is not what
+            changes on a Saturday afternoon. So the two swap places for as long
+            as the round is live, and swap back when it is over. The rank stays
+            put either way: it is the other half of the identity, and moving it
+            about would make the card unreadable at a glance. */""}
+      <div class="text-right shrink-0" data-myscore="${roundLive ? "round" : "total"}">
+        <div class="text-2xl font-bold text-wcgold scoreboard leading-none">${
+          roundLive ? roundPts : (myScore?.total ?? 0)}</div>
+        <div class="eyebrow">${roundLive ? "this round" : "points"}</div>
+        ${roundLive ? `<div class="text-[11px] text-slate-400 leading-tight pt-0.5">${
+          myScore?.total ?? 0} total</div>` : ""}
       </div>
     </div>
     ${h2hFixtureCardHtml(me)}
