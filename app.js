@@ -9585,15 +9585,20 @@ function myWindowStory(key) {
   return { mine, lost, cap, capped: cap != null && mine.length >= cap };
 }
 
-const AUDIT_UNKNOWN = "not recorded";
-function contestTag(a) {
-  if (a?.contested == null)
-    return `<span class="shrink-0 rounded bg-slate-700/60 text-slate-400 px-1 py-0.5 text-[10px] font-semibold"
-      title="This award predates the audit trail.">${AUDIT_UNKNOWN}</span>`;
-  return a.contested
-    ? `<span class="shrink-0 rounded bg-wcred/20 text-red-300 px-1 py-0.5 text-[10px] font-bold tracking-wide">CONTESTED</span>`
-    : `<span class="shrink-0 rounded bg-slate-700/60 text-slate-400 px-1 py-0.5 text-[10px] font-semibold tracking-wide">UNCONTESTED</span>`;
-}
+/* Only a contested win carries a badge.
+
+   The first draft labelled all three states, and on a real window that put a
+   grey pill on every row -- "UNCONTESTED" on most of them and, before the
+   audit columns exist, "not recorded" on all eleven. A column of identical
+   tags is noise whatever it says, and "not recorded" is worse than noise: it
+   explains an implementation detail eleven times.
+
+   Uncontested is the ordinary case and needs no label; a missing trail is one
+   fact about the WINDOW, said once under the list. What is left is the only
+   thing worth catching the eye, which is the row where somebody was beaten. */
+const contestTag = (a) => a?.contested
+  ? `<span class="shrink-0 rounded bg-wcred/20 text-red-300 px-1 py-0.5 text-[10px] font-bold tracking-wide">CONTESTED</span>`
+  : "";
 
 const mgrName = (id) => S.managers.find((m) => m.id === id)?.name || "someone";
 
@@ -9621,20 +9626,26 @@ function roundupHtml(key) {
     const m = S.managers.find((x) => x.id === a.manager_id);
     const isMine = me && a.manager_id === me.id;
     const rivals = Array.isArray(a.rivals) ? a.rivals : [];
-    return `<li class="rounded-lg border px-2.5 py-2 ${isMine
+    /* Two lines for the ordinary award, three only when there is something to
+       say. The seat number is its own column so the list reads down as the
+       queue it is, rather than as eleven cards that each happen to start with
+       a digit. "nobody else claimed him" is gone for the same reason the
+       UNCONTESTED pill is: it was on most rows, and a thing on most rows
+       tells you nothing. */
+    return `<li class="rounded-lg border pl-1.5 pr-2.5 py-1.5 flex gap-2 ${isMine
       ? "border-wcgold bg-wcgold/5" : "border-slate-700 bg-slate-800/40"}">
-      <div class="flex items-center gap-2 min-w-0">
-        <span class="shrink-0 w-5 text-right font-mono text-xs ${
-          isMine ? "text-wcgold font-bold" : "text-slate-500"}">${a.waiver_pos ?? i + 1}</span>
-        ${txMgrChip(m)}
-        ${isMine ? '<span class="shrink-0 rounded bg-wcgold text-slate-900 px-1 py-0.5 text-[10px] font-bold">YOU</span>' : ""}
-        <span class="ml-auto">${contestTag(a)}</span>
-      </div>
-      ${swap(a)}
-      ${rivals.length ? `<p class="text-[11px] text-slate-500 mt-0.5">beat ${
-        rivals.map((r) => `<b class="text-slate-400">${esc(mgrName(r))}</b>`).join(" and ")} to him</p>`
-        : a.contested === false
-          ? '<p class="text-[11px] text-slate-500 mt-0.5">nobody else claimed him</p>' : ""}
+      <span class="shrink-0 w-5 text-center font-mono text-sm leading-6 ${
+        isMine ? "text-wcgold font-bold" : "text-slate-500"}">${a.waiver_pos ?? i + 1}</span>
+      <span class="min-w-0 flex-1">
+        <span class="flex items-center gap-1.5 min-w-0">
+          ${txMgrChip(m)}
+          ${isMine ? '<span class="shrink-0 rounded bg-wcgold text-slate-900 px-1 text-[10px] font-bold">YOU</span>' : ""}
+          <span class="ml-auto">${contestTag(a)}</span>
+        </span>
+        ${swap(a)}
+        ${rivals.length ? `<span class="block text-[11px] text-slate-500">beat ${
+          rivals.map((r) => `<b class="text-slate-400">${esc(mgrName(r))}</b>`).join(" and ")} to him</span>` : ""}
+      </span>
     </li>`;
   };
 
@@ -9660,7 +9671,10 @@ function roundupHtml(key) {
 
     ${awards.length
       ? `<div><div class="eyebrow px-0.5 pb-1">In waiver order</div>
-          <ol class="space-y-1.5">${awards.map(row).join("")}</ol></div>`
+          <ol class="space-y-1">${awards.map(row).join("")}</ol>
+          ${awards.every((a) => a.contested == null)
+            ? `<p class="text-[11px] text-slate-600 pt-1.5 px-0.5">Who beat whom was not
+                 recorded for this window.</p>` : ""}</div>`
       : '<p class="text-sm text-slate-400 text-center py-3">No claims were awarded this window.</p>'}`;
 }
 

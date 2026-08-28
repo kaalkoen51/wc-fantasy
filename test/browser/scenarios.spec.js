@@ -4835,8 +4835,12 @@ test("the transfer roundup waits for the window's own waivers", async ({ page })
   /* These fixture rows carry no `contested`, which is what a row written
      before the audit columns existed looks like. It must read as unknown, not
      be quietly reported as uncontested. */
+  /* Said ONCE for the window, not stamped on all of them: a missing trail is a
+     fact about the pull, not a property of each award. */
   expect(seen.after.text, "an award with no audit trail is being called uncontested")
-    .toContain("not recorded");
+    .toContain("not recorded for this window");
+  expect((seen.after.text.match(/not recorded/g) || []).length,
+    "the missing trail is being repeated on every row").toBe(1);
 });
 
 test("the waiver roundup shows every award in queue order, with yours picked out",
@@ -4901,7 +4905,12 @@ test("the waiver roundup shows every award in queue order, with yours picked out
 
   // 3 · The audit trail, from both sides.
   expect(seen.html, "a contested win is not labelled").toContain("CONTESTED");
-  expect(seen.html, "an unopposed win is not labelled").toContain("UNCONTESTED");
+  /* ...and only that one. Labelling all three states put a grey pill on every
+     row, which is a column of noise whatever it says. */
+  expect((seen.html.match(/CONTESTED/g) || []).length,
+    "more rows are badged than were actually contested").toBe(2);
+  expect(seen.html, "the ordinary case is still being labelled")
+    .not.toContain("nobody else claimed him");
   expect(seen.html, "the beaten rivals are not named").toContain(seen.cName);
 
   // 4 · The personal block: what I won, and what was taken off me.
