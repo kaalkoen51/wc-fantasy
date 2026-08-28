@@ -5005,3 +5005,80 @@ test("between rounds, the fixture card shows who you play next, not who you just
   expect(opened, "the card and the sheet it opens disagree about the round")
     .toContain("Round 2");
 });
+
+test("squads carried into a draft: ambiguity is asked, then the picks are kept",
+  async ({ page }) => {
+  /* A league whose managers already own players. The risk here is not the
+     layout -- it is a squad that imports wrong and cannot be untangled once a
+     draft has run on top of it, so the screen must refuse to write while any
+     row is still a question. */
+  await openLeague(page, { managers: 4, played: 0 });
+
+  const seen = await page.evaluate(async () => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    S.authUser = { id: "00000000-0000-4000-8000-000000000001", email: "koen.johan.c@gmail.com" };
+    // The state a draft starts from: nobody has picked yet.
+    S.league.current_pick = null;
+    // Pre-draft in the database too, not just in memory: openLeague seeds a
+    // drafted league, and this feature only ever runs before the first pick.
+    window.__db.tables.picks = [];
+    S.picks = [];
+    const mgrs = activeManagers();
+    // Two players who share a surname, so one sheet row is genuinely ambiguous.
+    const a = S.players[0], b = S.players[1], c = S.players[2];
+    S._poolBase = S._poolBase.map((p) =>
+      p.player_id === a.player_id ? { ...p, name: "Jaco van der Merwe" }
+      : p.player_id === b.player_id ? { ...p, name: "Johan van der Merwe" }
+      : p.player_id === c.player_id ? { ...p, name: "Damian Willemse" } : p);
+    applyPoolOverrides();
+
+    const csv = "manager,player,position,club\n"
+      + `${mgrs[0].name},Damian Willemse,,\n`
+      + `${mgrs[1].name},van der Merwe,,\n`;
+    S._keepRows = parseSquadsCsv(csv).rows;
+    S._keepPick = null;
+    // Through the real entry point: admin is a view, not a board tab.
+    renderAdmin(); showView("admin");
+
+    const box = document.getElementById("adm-keep-preview");
+    const before = { text: box.textContent.replace(/\s+/g, " "),
+                     disabled: !!document.getElementById("adm-keep-go")?.disabled,
+                     choices: box.querySelectorAll("[data-keeppick]").length };
+
+    // Answer the question the way a person would: tap one of the two.
+    box.querySelector("[data-keeppick]").click();
+    const after = { disabled: !!document.getElementById("adm-keep-go")?.disabled,
+                    text: document.getElementById("adm-keep-preview").textContent
+                            .replace(/\s+/g, " ") };
+
+    window.confirm = () => true;
+    await applyKeepImport();
+    const rows = window.__db.tables.picks;
+    return { before, after, mgrs: mgrs.map((m) => m.name),
+      kept: rows.map((p) => ({ m: p.manager_id, name: p.player_name,
+                               kept: p.kept, slot: p.slot })),
+      chosen: S.players.find((p) => p.name === "Jaco van der Merwe")?.player_id };
+  });
+
+  // 1 · The ambiguous row is a question, and it blocks the write.
+  expect(seen.before.choices, "no choice was offered for the ambiguous name")
+    .toBe(2);
+  expect(seen.before.disabled, "it would have written with a question still open")
+    .toBe(true);
+  expect(seen.before.text, "the preview does not say what is unresolved")
+    .toContain("Which one?");
+
+  // 2 · Answering it unblocks the write.
+  expect(seen.after.disabled, "answering the question did not unblock it").toBe(false);
+  /* Each keeper costs the earliest round, and the screen says so BEFORE the
+     button is pressed -- that is the whole bargain of keeping a player. */
+  expect(seen.after.text, "the cost of keeping is not shown").toContain("round 2");
+
+  // 3 · The picks land, marked kept.
+  expect(seen.kept.length, "the picks were not written").toBe(2);
+  expect(seen.kept.every((p) => p.kept), "a kept pick was not marked kept").toBe(true);
+  expect(seen.kept.map((p) => p.name).sort())
+    .toEqual(["Damian Willemse", "Jaco van der Merwe"]);
+});

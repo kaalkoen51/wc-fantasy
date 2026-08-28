@@ -17826,6 +17826,148 @@ function preDraftPoolNote(players) {
     + `finalise them in the admin panel first.`;
 }
 
+/* ---------- admin: carrying squads into a draft ----------
+
+   The sheet lives in S._keepRows and the answers in S._keepPick, and the
+   preview is re-derived from planSquadImport every render rather than kept
+   alongside it. A screen with its own tally is a screen that can disagree with
+   what would actually be written, which on this feature means a draft order
+   computed from the wrong keeper counts. */
+function keepPlan() {
+  if (!S._keepRows) return null;
+  return planSquadImport(S._keepRows, activeManagers(), S.players || [],
+    posQuota(), S._keepPick || {});
+}
+
+function renderKeepImport() {
+  const card = $("adm-keep-card");
+  if (!card) return;
+  // Only ever the state a draft STARTS from: once a pick exists, the squads
+  // are the draft's business and this would be rewriting history.
+  const open = isAdmin() && !S.league?.current_pick && (S.players || []).length > 0;
+  card.classList.toggle("hidden", !open);
+  if (!open) return;
+  const box = $("adm-keep-preview");
+  const plan = keepPlan();
+  if (!plan) { box.innerHTML = ""; return; }
+
+  const tal = (n, label, cls) => `<div class="flex-1 rounded-lg border border-slate-800 bg-slate-900 px-2 py-1.5 text-center">
+      <div class="text-base font-bold ${cls}">${n}</div>
+      <div class="text-[10px] uppercase tracking-wide text-slate-500">${label}</div></div>`;
+
+  const ask = (it) => `<div class="rounded-lg border border-amber-300/50 bg-amber-950/30 px-2.5 py-2">
+      <div class="flex items-baseline gap-2 min-w-0">
+        <span class="shrink-0 text-[10px] uppercase tracking-wide text-slate-500">${esc(it.manager.name)}</span>
+        <span class="min-w-0 truncate text-sm font-semibold">${esc(it.sheet.player)}</span>
+      </div>
+      <p class="text-[11px] text-slate-400 mt-0.5">${it.hits.length} players match. Which one?</p>
+      <div class="flex flex-wrap gap-1 pt-1">${it.hits.map((p) => `
+        <button data-keeppick="${it.line}" data-keepid="${esc(p.player_id)}"
+          class="rounded border px-1.5 py-0.5 text-[11px] ${
+            (S._keepPick || {})[it.line] === p.player_id
+              ? "border-wcgold text-wcgold" : "border-slate-600 text-slate-300"}">${
+          esc(p.name)} · ${esc(p.position)} · ${esc(p.team)}</button>`).join("")}</div>
+    </div>`;
+
+  const missing = (it) => `<div class="rounded-lg border border-red-400/50 bg-red-950/25 px-2.5 py-2">
+      <div class="flex items-baseline gap-2 min-w-0">
+        <span class="shrink-0 text-[10px] uppercase tracking-wide text-slate-500">${esc(it.manager.name)}</span>
+        <span class="min-w-0 truncate text-sm font-semibold">${esc(it.sheet.player)}</span>
+      </div>
+      <p class="text-[11px] text-slate-400 mt-0.5">Nobody in the pool by that name.
+        Add them in the pool editor above, or take the row out and draft the slot.</p>
+    </div>`;
+
+  const dup = (it) => `<div class="rounded-lg border border-red-400/50 bg-red-950/25 px-2.5 py-2">
+      <div class="flex items-baseline gap-2 min-w-0">
+        <span class="shrink-0 text-[10px] uppercase tracking-wide text-slate-500">${esc(it.manager.name)}</span>
+        <span class="min-w-0 truncate text-sm font-semibold">${esc(it.sheet.player)}</span>
+      </div>
+      <p class="text-[11px] text-slate-400 mt-0.5">Already kept by
+        <b class="text-slate-300">${esc(it.dupOf.manager.name)}</b> on line ${it.dupOf.line}.
+        Only one of you can have him.</p>
+    </div>`;
+
+  const needs = plan.items.filter((i) => i.status !== "one");
+  box.innerHTML = `
+    <div class="flex gap-1.5 pt-1">
+      ${tal(plan.matched, "matched", "text-live")}
+      ${tal(plan.items.filter((i) => i.status === "many").length, "to confirm", "text-amber-300")}
+      ${tal(plan.items.filter((i) => i.status === "none" || i.status === "dup").length,
+            "blocked", "text-danger")}
+    </div>
+    ${plan.errors.length ? `<div class="rounded-lg border border-red-400/50 bg-red-950/25 px-2.5 py-2">
+      ${plan.errors.map((e) => `<p class="text-[11px] text-red-300">${esc(e)}</p>`).join("")}</div>` : ""}
+    ${needs.length ? `<div class="space-y-1.5"><div class="eyebrow">Needs you</div>
+      ${needs.map((i) => i.status === "many" ? ask(i) : i.status === "dup" ? dup(i) : missing(i)).join("")}
+    </div>` : ""}
+    <div class="space-y-1.5"><div class="eyebrow">Squads after import</div>
+      ${plan.perManager.map((p) => `<div class="rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-2">
+        <div class="flex items-baseline gap-2 min-w-0">
+          <span class="min-w-0 truncate text-sm">${esc(p.manager.name)}</span>
+          <span class="ml-auto shrink-0 text-xs text-slate-400">${p.kept} kept</span>
+        </div>
+        <p class="text-[11px] ${p.over.length ? "text-danger" : "text-slate-500"} mt-0.5">${
+          p.over.length
+            ? p.over.map((o) => `${o.kept} ${o.group} — the quota allows ${o.max}`).join(" · ")
+            : p.kept ? `joins the draft at round ${p.joinsAtRound}` : "drafts from round 1"}</p>
+      </div>`).join("")}
+    </div>
+    <button id="adm-keep-go" ${plan.ready ? "" : "disabled"}
+      class="w-full rounded-lg px-3 py-2.5 text-sm font-semibold ${plan.ready
+        ? "bg-wcgold text-slate-900" : "border border-slate-700 text-slate-500"}">${
+      plan.ready ? `Keep ${plan.matched} player${plan.matched === 1 ? "" : "s"} and open the draft`
+                 : "Resolve every row above first"}</button>`;
+
+  box.querySelectorAll("[data-keeppick]").forEach((b) => b.onclick = () => {
+    S._keepPick = { ...(S._keepPick || {}), [b.dataset.keeppick]: b.dataset.keepid };
+    renderKeepImport();
+  });
+  const go = $("adm-keep-go");
+  if (go) go.onclick = applyKeepImport;
+}
+
+/* Write the kept picks. Deliberately NOT wrapped in a "some succeeded" path:
+   plan.ready is re-checked here because the button is only as fresh as the
+   last render, and a partial squad would hand draftSequence the wrong counts
+   for the rest of the draft. */
+async function applyKeepImport() {
+  const plan = keepPlan();
+  if (!plan || !plan.ready) return toast("Some rows still need resolving.");
+  const n = plan.matched;
+  if (!confirm(`Keep ${n} player${n === 1 ? "" : "s"} across `
+    + `${plan.perManager.filter((p) => p.kept).length} squad(s)? `
+    + `Each keeper costs that manager their earliest draft round.`)) return;
+  const log = $("adm-keep-log");
+  log.textContent = "Writing…";
+  const starters = starterQuota();
+  const placed = {};
+  let done = 0;
+  for (const it of plan.items) {
+    const p = it.player, mid = it.manager.id;
+    const mine = (placed[mid] ||= []);
+    // First keeper in a position starts, extras go to the bench — the same
+    // slotting the redraft does, so a kept squad lines up like a drafted one.
+    const have = mine.filter((x) => x === p.position).length;
+    const slot = have < (starters[p.position] || 0) ? p.position : "SUB_" + p.position;
+    mine.push(p.position);
+    const { error } = await S.sb.from("picks").insert({
+      league_id: S.league.id, manager_id: mid,
+      player_id: p.player_id, player_name: p.name,
+      position: p.position, team: p.team,
+      pick_number: (leaguePhase() - 1) * 1000 + 900 + done,
+      is_sub: slot.startsWith("SUB_"), slot, kept: true,
+    });
+    if (error) { log.textContent = "Stopped: " + error.message; return; }
+    done++;
+  }
+  S._keepRows = null; S._keepPick = null;
+  log.textContent = `${done} player(s) kept. The draft order now skips each `
+    + `manager's earliest rounds.`;
+  await refetchAll();
+  renderKeepImport();
+}
+
 function renderPoolEditor() {
   const card = $("adm-pool-card");
   if (!card) return;
@@ -18095,6 +18237,7 @@ function renderAdmin() {
   renderConfigEditor();
   renderPositionEditor();
   renderPoolEditor();
+  renderKeepImport();
   // Competition selector + current-pool status.  (see syncCompRefresh)
   if (!$("adm-comp-select").options.length)
     $("adm-comp-select").innerHTML = competitionsFor().map((c) =>
@@ -18681,6 +18824,22 @@ function wire() {
     try { await savePoolCsvText(await f.text()); }
     catch (e) { toast("Could not read that file: " + e.message); }
     $("adm-pool-file").value = "";
+  };
+  $("adm-keep-down").onclick = () =>
+    downloadCsv("squads-template", squadsCsvTemplate(activeManagers()));
+  $("adm-keep-up").onclick = () => $("adm-keep-file").click();
+  $("adm-keep-file").onchange = async () => {
+    const f = $("adm-keep-file").files?.[0];
+    if (!f) return;
+    try {
+      const { rows, errors } = parseSquadsCsv(await f.text());
+      $("adm-keep-log").textContent = errors.join("\n");
+      // A file the parser refused outright leaves the previous plan alone
+      // rather than replacing it with nothing.
+      if (rows.length) { S._keepRows = rows; S._keepPick = null; }
+      renderKeepImport();
+    } catch (e) { toast("Could not read that file: " + e.message); }
+    $("adm-keep-file").value = "";
   };
   $("adm-pos-up").onclick = () => $("adm-pos-file").click();
   $("adm-pos-file").onchange = async () => {

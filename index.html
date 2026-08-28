@@ -797,6 +797,31 @@
           the position a player holds now, not the one they held at the time.</p>
         <pre id="adm-pool-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
       </div>
+
+<!-- Squads that already exist before the draft does: a league carrying teams
+     forward from somewhere outside the app. Kept players fill quota slots and
+     cost their holder the earliest draft rounds, so nobody buys an advantage
+     by keeping more. Hidden once a pick has been made — this can only be the
+     state a draft STARTS from. -->
+<div id="adm-keep-card" class="hidden rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
+        <h3 class="font-semibold text-sm">🏉 Carry squads into the draft</h3>
+        <p class="text-xs text-slate-400">For a league whose managers already own players. Everyone in the
+          sheet is <b>kept</b>; everyone else is drafted as normal.</p>
+        <div class="flex items-center gap-2">
+          <button id="adm-keep-down" class="flex-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold">⬇ Download template</button>
+          <button id="adm-keep-up" class="flex-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold">⬆ Upload squads CSV</button>
+          <input id="adm-keep-file" type="file" accept=".csv,text/csv" class="hidden">
+        </div>
+        <p class="text-xs text-slate-500">Columns: <b>manager</b> and <b>player</b> are required;
+          <b>position</b> and <b>club</b> only break ties. Download the pool CSV above for the exact
+          spellings. Nothing is written until every row is resolved — a name that matches two players
+          is a question, not a guess.</p>
+        <p class="text-xs text-amber-300">⚠ Each kept player costs that manager their earliest draft
+          round: keep six and they join from round seven. Squads end the same size, so keeping more is
+          never an advantage.</p>
+        <div id="adm-keep-preview" class="space-y-2"></div>
+        <pre id="adm-keep-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
+      </div>
 <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">⚙️ Design your draft — scoring &amp; bonuses</h3>
         <p class="text-xs text-slate-400">Customise how points are scored for this league. Editable until
