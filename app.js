@@ -11836,10 +11836,18 @@ const statRowsFor = (pid) =>
 
 // Per-rule breakdown for one player; the pts sum equals playerPoints()
 // (each rule evaluated per match, so 'per N' floors match-by-match).
-function playerBreakdown(pid, pos) {
+/* `label` scopes it to one match.
+
+   The table sums across every game, and after two it stops meaning anything:
+   pass accuracy came out as "x193" -- two percentages added together -- and
+   minutes as "x137", which is not a count of anything. Man of the match sat in
+   the same list with no clue which game earned it. Reported from the app:
+   "I'm not able to see what they are getting points for this round". */
+function playerBreakdown(pid, pos, label) {
   const acc = scoringRules().map((rule) => ({ rule, count: 0, pts: 0 }));
   for (const r of statRowsFor(pid)) {
     if (!r.appeared) continue;
+    if (label && r.match_label !== label) continue;
     const raw = rawStatsOf(r);
     for (const a of acc) {
       a.count += raw[a.rule.stat] || 0;
@@ -12456,7 +12464,7 @@ function formDots(pid, pos) {
 // data for — minutes/DNP, stat line, points, and lineup status. With
 // managerId the status is relative to that manager (Starter/Sub/not in
 // team); without it (global Stats view) it shows who fielded them and how.
-function matchLogHtml(pid, position, team, managerId) {
+function matchLogHtml(pid, position, team, managerId, selected) {
   const rowByLabel = {};
   for (const r of statRowsFor(pid)) rowByLabel[r.match_label] = r;
   /* The player's OWN games, plus their current club's -- not the club's alone.
@@ -12498,7 +12506,13 @@ function matchLogHtml(pid, position, team, managerId) {
             slotLabel(os.entry) === "sub" ? "(sub)" : "(start)"}</span>`
         : '<span class="text-slate-500">free agent</span>';
     }
-    return `<div data-matchrow class="rounded-lg bg-slate-800/60 px-2 py-1.5">
+    /* Only a game they actually played opens: a "did not play" row has no
+       stats to scope to, and a control that does nothing is worse than none. */
+    const tap = played ? ` data-openmatch="${esc(label)}"` : "";
+    const on = selected === label;
+    return `<div data-matchrow${tap} class="rounded-lg px-2 py-1.5 ${
+      on ? "bg-wcgold/10 border border-wcgold/60"
+         : "bg-slate-800/60" + (played ? " border border-transparent" : "")}">
       <div class="flex items-center gap-2 text-xs">
         <span class="text-slate-400 shrink-0">${homeAt ? "vs" : "@"}</span>
         ${avatarHtml("team:" + opp, opp, "w-4 h-4")}
@@ -12521,8 +12535,16 @@ function matchLogHtml(pid, position, team, managerId) {
 // Used by the Stats tab (global) and the Home roster sheet (opts.managerId
 // = you, so the log shows your starter/sub/not-in-team status per game).
 function playerDetailHtml(p, opts = {}) {
-  const total = playerPoints(p.player_id, p.position);
-  const breakdown = playerBreakdown(p.player_id, p.position);
+  /* One match, or all of them. Everything above the log follows the choice --
+     the headline number, the depth line and the breakdown -- because a card
+     showing a season total over a single match's rules would be the same
+     confusion in a different arrangement. */
+  const sel = opts.matchLabel
+    ? statRowsFor(p.player_id).find((r) => r.match_label === opts.matchLabel && r.appeared)
+    : null;
+  const total = sel ? calcPlayerPoints(sel, p.position)
+                    : playerPoints(p.player_id, p.position);
+  const breakdown = playerBreakdown(p.player_id, p.position, sel && sel.match_label);
   const owner = ownerOf(p.player_id);
   // Next fixture: opponent crest + date/time.
   const fx = fixtureCrestHtml(p.team);
@@ -12533,12 +12555,6 @@ function playerDetailHtml(p, opts = {}) {
   const mins = sumMinutes(appRows);
   const per90pts = mins > 0 ? Math.round((total / mins) * 90 * 10) / 10 : 0;
   const dots = formDots(p.player_id, p.position);
-  const statLine = appRows.length ? `<div class="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
-      <span>${appRows.length} app${appRows.length === 1 ? "" : "s"}</span>
-      <span class="text-slate-500">·</span><span>${mins}′</span>
-      <span class="text-slate-500">·</span><span>${per90pts} pts/90</span>${
-        dots ? `<span class="text-slate-500">·</span><span class="flex items-center gap-1">Form ${dots}</span>` : ""}
-    </div>` : "";
   /* The card is three bands, in order of what you came here for: who this is,
      what they've scored, and the detail. Previously the close button, the score
      and the shortlist star were stacked in one right-hand column, which read as
@@ -12564,20 +12580,29 @@ function playerDetailHtml(p, opts = {}) {
             owner ? `👤 ${esc(owner)}` : "free agent"}</div>
         </div>
         <div class="shrink-0 text-right">
-          <div class="text-3xl font-bold text-wcgold scoreboard leading-none">${total}</div>
+          <div data-playerpts="${sel ? "match" : "season"}"
+               class="text-3xl font-bold text-wcgold scoreboard leading-none">${total}</div>
           <div class="eyebrow mt-1">pts</div>
         </div>
       </div>
     </div>
+    ${/* Scoped to one match, appearances and points-per-90 have nothing to
+          average over -- what is worth saying is which game this is, how long
+          he was on for, and the way back out. */""}
     <div class="flex items-center justify-between gap-2 border-t border-slate-800 pt-2.5">
-      <div class="min-w-0 text-xs text-slate-400">${
-        appRows.length ? `${appRows.length} app${appRows.length === 1 ? "" : "s"} · ${mins}′ · ${per90pts} pts/90${
-          dots ? "" : ""}` : "No appearances yet"}</div>
+      <div class="min-w-0 text-xs text-slate-400 flex items-center gap-1.5 flex-wrap">${sel
+        ? `<span class="shrink-0 rounded bg-wcgold/15 text-wcgold px-1.5 py-0.5 text-[11px] font-semibold">${
+             esc(roundLabelShort(sel.round_key || roundKeyOfLabel(sel.match_label)) || "this match")}</span>
+           <span class="shrink-0">${sel.minutes != null ? `${sel.minutes}′` : "played"}</span>
+           <button data-allmatches class="shrink-0 rounded border border-slate-600 px-1.5 py-0.5 text-[11px] font-semibold text-slate-300">← All matches</button>`
+        : appRows.length
+          ? `${appRows.length} app${appRows.length === 1 ? "" : "s"} · ${mins}′ · ${per90pts} pts/90`
+          : "No appearances yet"}</div>
       <button data-star="${esc(p.player_id)}" class="shrink-0 rounded-lg border px-2.5 py-1 text-xs font-semibold ${
         shortlisted ? "border-wcgold/60 text-wcgold" : "border-slate-700 text-slate-400"}">${
         shortlisted ? "★ Shortlisted" : "☆ Shortlist"}</button>
     </div>
-    ${dots ? `<div class="flex items-center gap-1.5 text-xs text-slate-400"><span class="eyebrow">Form</span>${dots}</div>` : ""}
+    ${dots && !sel ? `<div class="flex items-center gap-1.5 text-xs text-slate-400"><span class="eyebrow">Form</span>${dots}</div>` : ""}
     ${fxLine}
     ${breakdown.length ? `<table class="w-full text-xs"><tbody>
       ${breakdown.map((r) => `<tr class="border-b border-slate-800">
@@ -12588,21 +12613,38 @@ function playerDetailHtml(p, opts = {}) {
         }">${r.pts > 0 ? "+" : ""}${r.pts}</td>
       </tr>`).join("")}
     </tbody></table>` : ""}
-    <div class="text-xs uppercase tracking-wide text-slate-400 pt-1">Match by match${
-      opts.managerId ? " · " + (opts.perspectiveLabel || "your lineup") : ""}</div>
-    ${matchLogHtml(p.player_id, p.position, p.team, opts.managerId)}`;
+    ${/* The hint gets its own line: beside a header that already reads
+          "Match by match · your lineup", both wrapped and neither was
+          legible at 390px. */""}
+    <div class="pt-1">
+      <div class="text-xs uppercase tracking-wide text-slate-400">Match by match${
+        opts.managerId ? " · " + (opts.perspectiveLabel || "your lineup") : ""}</div>
+      ${appRows.length > 1 && !sel
+        ? '<div class="text-[11px] text-slate-500">Tap a game to see just that game.</div>' : ""}
+    </div>
+    ${matchLogHtml(p.player_id, p.position, p.team, opts.managerId, sel && sel.match_label)}`;
 }
 
 // Player detail in a bottom sheet (Home, Stats, shortlist, draft pool).
-function openPlayerDetail(pid, managerId, perspectiveLabel) {
+function openPlayerDetail(pid, managerId, perspectiveLabel, matchLabel) {
   const p = S.playerById[pid];
   if (!p) return;
+  const again = (ml) => openPlayerDetail(pid, managerId, perspectiveLabel, ml);
   $("player-sheet-body").innerHTML =
     `<div class="space-y-3">${playerDetailHtml(p,
-      { managerId, perspectiveLabel, closeId: "player-sheet-close" })}</div>`;
+      { managerId, perspectiveLabel, matchLabel, closeId: "player-sheet-close" })}</div>`;
   $("player-sheet").classList.remove("hidden");
   $("player-sheet-close").onclick = () => $("player-sheet").classList.add("hidden");
-  wireStars($("player-sheet-body"), () => openPlayerDetail(pid, managerId, perspectiveLabel));
+  /* Tapping a game scopes the card to it; tapping it again, or All matches,
+     comes back out. Re-opening rather than patching in place keeps one path
+     through the render, so the header, the breakdown and the log cannot end up
+     describing different things. */
+  $("player-sheet-body").querySelectorAll("[data-openmatch]").forEach((el) =>
+    el.onclick = () => again(el.dataset.openmatch === matchLabel
+      ? null : el.dataset.openmatch));
+  const all = $("player-sheet-body").querySelector("[data-allmatches]");
+  if (all) all.onclick = () => again(null);
+  wireStars($("player-sheet-body"), () => again(matchLabel));
 }
 
 // Best starting XI by scoped points (per-90 optional), grouped by position.

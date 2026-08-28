@@ -5236,3 +5236,85 @@ test("while a round is being played, the Team page leads with that round's score
     .toBe("points");
   expect(after.big, "the season total did not come back").toBe(String(seen.total));
 });
+
+test("tapping a game on a player card scopes it to that game", async ({ page }) => {
+  /* Reported after two matchweeks: the breakdown sums every game, so pass
+     accuracy showed as two percentages added together and minutes as a count
+     of nothing, and man of the match sat in the list with no clue which game
+     earned it. "I'm not able to see what they are getting points for this
+     round." */
+  await openLeague(page, { managers: 4, played: 2 });
+
+  const seen = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    const me = myManager();
+    // Somebody who actually played more than once, or there is nothing to scope.
+    const pid = S.picks.filter((p) => p.manager_id === me.id && p.slot !== "TEAM")
+      .map((p) => p.player_id)
+      .find((id) => S.stats.filter((r) => r.player_id === id && r.appeared).length > 1);
+    const rows = S.stats.filter((r) => r.player_id === pid && r.appeared);
+    const pos = S.playerById[pid].position;
+
+    openPlayerDetail(pid, me.id);
+    const body = document.getElementById("player-sheet-body");
+    const all = { text: body.textContent.replace(/\s+/g, " "),
+                  taps: body.querySelectorAll("[data-openmatch]").length,
+                  breakdown: playerBreakdown(pid, pos)
+                    .reduce((n, r) => n + r.count, 0) };
+
+    // Tap the older of the two games.
+    const label = rows[0].match_label;
+    body.querySelector(`[data-openmatch="${label}"]`).click();
+    const oneBody = document.getElementById("player-sheet-body");
+    const oneHead = oneBody.querySelector("[data-playerpts]");
+    const one = { text: oneBody.textContent.replace(/\s+/g, " "),
+                  head: oneHead?.textContent.trim(), scope: oneHead?.dataset.playerpts,
+                  breakdown: playerBreakdown(pid, pos, label)
+                    .reduce((n, r) => n + r.count, 0) };
+
+    // ...and back out again.
+    document.getElementById("player-sheet-body")
+      .querySelector("[data-allmatches]").click();
+    const back = document.getElementById("player-sheet-body").textContent
+      .replace(/\s+/g, " ");
+
+    return { all, one, back, pid, label,
+      seasonPts: playerPoints(pid, pos),
+      matchPts: calcPlayerPoints(rows[0], pos),
+      apps: rows.length };
+  });
+
+  expect(seen.apps, "nobody played twice in this seed, so nothing can be scoped")
+    .toBeGreaterThan(1);
+  expect(seen.seasonPts, "the season and the match score the same, so scoping is invisible")
+    .not.toBe(seen.matchPts);
+
+  // 1 · Every played game is a tap, and the hint says so.
+  expect(seen.all.taps, "the games are not tappable").toBe(seen.apps);
+  expect(seen.all.text, "nothing tells you the games can be opened")
+    .toContain("Tap a game to see just that game");
+
+  // 2 · Scoped, the card is about that game and nothing else.
+  /* Counted, not counted rows: the same rule can fire in both games, so a
+     shorter table is not what scoping looks like -- smaller NUMBERS are. This
+     is the "x193 pass accuracy" that started it. */
+  expect(seen.one.breakdown, "the breakdown still totals every game")
+    .toBeLessThan(seen.all.breakdown);
+  /* Read off the headline element, not the card text: the same number turns
+     up in the match log, so a substring check passes on the season total. */
+  expect(seen.one.scope, "the headline is not scoped to the match").toBe("match");
+  expect(seen.one.head, "the headline is still the season total")
+    .toBe(String(seen.matchPts));
+  /* The cumulative depth line has to go with it: "2 apps · 137' · 9.2 pts/90"
+     over one match's rules is the same confusion rearranged. */
+  expect(seen.one.text, "the season depth line is still on a single-match card")
+    .not.toContain("apps");
+  expect(seen.one.text, "there is no way back out").toContain("All matches");
+
+  // 3 · And back out returns the season card.
+  expect(seen.back, "leaving the match did not restore the season view")
+    .toContain(`${seen.apps} apps`);
+  expect(seen.back).not.toContain("All matches");
+});
