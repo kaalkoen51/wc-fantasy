@@ -16720,6 +16720,61 @@ async function fixtureEvents(apiKey, f) {
 }
 
 // the admin daily pull and the on-demand history pull.
+/* A pull may add what it knows. It may not replace what was known with less.
+
+   Two of the numbers on a stat row are DERIVED here rather than reported by
+   the feed, and both can come back worse on a later pull of the same finished
+   match:
+
+   MOTM is the fixture's top rating, and only if that is 7.5 or better. Ratings
+   are revised for days afterwards, so re-pulling a settled round can move the
+   award -- reported from the app: a forward's man-of-the-match went to a
+   goalkeeper overnight, three points off a score that had already been read
+   and settled.
+
+   Goals conceded while on the pitch needs the events list, and the events call
+   returns [] on ANY failure by design, at which point the builder falls back
+   to the club's whole-match total. That is the right first answer and a strictly
+   worse second one -- and it was being written straight over the good value,
+   which is why the number "reverts a lot" and why a manual re-pull was needed
+   to put it back. That re-pull is what kept moving MOTM. One bug feeding the
+   other.
+
+   So: one rule, applied to a fixture that has been written before. The award
+   stays where it was made, and a pull with no events keeps the conceded
+   figures already stored rather than flattening them to the club total. A pull
+   that DOES have events still corrects a stored fallback, which is the path
+   every real correction takes.
+
+   Pure, and separate from the builder, so both writers can use it and the
+   suite can hold it to all four combinations. */
+function mergeFixtureRows(fresh, prior, hadEvents) {
+  const priorRows = prior || [];
+  if (!priorRows.length) return fresh;                  // first write: nothing to protect
+  const byPid = {};
+  for (const p of priorRows) byPid[p.player_id] = p;
+  const heldMotm = priorRows.find((p) => p.motm);
+  return (fresh || []).map((r) => {
+    const p = byPid[r.player_id];
+    const out = { ...r, raw: { ...r.raw } };
+    if (heldMotm) {
+      // The award as it was made, reproduced exactly: on that player, off
+      // everyone else, regardless of what today's ratings say.
+      const mine = heldMotm.player_id === r.player_id;
+      out.motm = mine;
+      out.raw.motm = mine ? 1 : 0;
+    }
+    if (!hadEvents && p) {
+      /* No events this time. Whatever is stored was derived with more
+         information than this pull has, including the clean sheet that hangs
+         off the same number. */
+      out.raw["goals.conceded"] = p.raw?.["goals.conceded"] ?? out.raw["goals.conceded"];
+      out.clean_sheet = p.clean_sheet;
+    }
+    return out;
+  });
+}
+
 function buildFixtureStatRows(f, teamBlocks, keyField, fixName, pidOf, skipped, events) {
   const home = fixName(f.teams.home.name), away = fixName(f.teams.away.name);
   const label = `${home} vs ${away} (${f.fixture.date.slice(0, 10)})`;
@@ -16935,7 +16990,14 @@ async function pullStatsNow() {
       // Diagnostic (maxMin/cs): a stuck-at-49 game is then obviously an upstream
       // (API) issue, not the write.
       const { rows, label, maxMin, cs } = buildFixtureStatRows(f, teamBlocks, keyField, fixName, pidOf, skipped, events);
-      await resilientWrite(statsTable, rows, { upsert: true, onConflict });
+      /* What this fixture already says, so the merge can refuse to make it
+         worse. One extra read per fixture; the alternative is a re-pull that
+         quietly costs somebody three points. */
+      const prior = await S.sb.from(statsTable).select("player_id, motm, clean_sheet, raw")
+        .match({ ...keyField, match_label: label })
+        .then((r) => r.data || [], () => []);
+      const merged = mergeFixtureRows(rows, prior, !!(events && events.length));
+      await resilientWrite(statsTable, merged, { upsert: true, onConflict });
       total += rows.length;
       summary.push(`${label}: ${rows.length} rows · API max ${maxMin}′ · ${cs} clean sheets`);
     }

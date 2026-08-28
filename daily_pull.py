@@ -767,6 +767,73 @@ def _post_upsert(table: str, on_conflict: str, payload: list) -> list:
         sys.exit(f"Supabase upsert failed ({resp.status_code}): {resp.text}")
 
 
+def fetch_prior_rows(table: str, filters: dict) -> list:
+    """What a fixture already says, so a pull can refuse to make it worse.
+
+    Best effort: on any failure this returns [], which merge_fixture_rows
+    reads as "nothing to protect" and writes the fresh rows as they come --
+    the behaviour before this existed. A pull must not die because the
+    protective read failed.
+    """
+    supabase_url = os.environ.get("SUPABASE_URL")
+    service_key = os.environ.get("SUPABASE_SERVICE_KEY")
+    if not supabase_url or not service_key:
+        return []
+    params = {k: f"eq.{v}" for k, v in filters.items()}
+    params["select"] = "player_id,motm,clean_sheet,raw"
+    try:
+        resp = requests.get(
+            f"{supabase_url.rstrip('/')}/rest/v1/{table}",
+            params=params,
+            headers={"apikey": service_key,
+                     "Authorization": f"Bearer {service_key}"},
+            timeout=30,
+        )
+        return resp.json() if resp.status_code < 400 else []
+    except Exception:                              # noqa: BLE001 - see docstring
+        return []
+
+
+def merge_fixture_rows(fresh: list, prior: list, had_events: bool) -> list:
+    """A pull may add what it knows. It may not replace what was known with less.
+
+    Mirrors mergeFixtureRows in app.js, and for the same two reasons.
+
+    MOTM is the fixture's top rating and only above the threshold. Ratings are
+    revised for days after a match, so re-pulling a settled round can move the
+    award -- reported from the app: a forward's went to a goalkeeper overnight,
+    three points off a score people had already read.
+
+    Goals conceded while on the pitch needs the events list, and
+    fetch_fixture_events returns [] on any failure by design, at which point
+    the builder falls back to the club's whole-match total. Right as a first
+    answer, strictly worse as a second -- and writing it over the good value is
+    why that number "reverts a lot", which is what forced the manual re-pulls
+    that kept moving MOTM. One bug feeding the other.
+
+    A pull that DOES have events still corrects a stored fallback: that is the
+    path every real correction takes, and it must stay open.
+    """
+    if not prior:
+        return fresh                              # first write: nothing to protect
+    by_pid = {p.get("player_id"): p for p in prior}
+    held = next((p for p in prior if p.get("motm")), None)
+    for row in fresh:
+        if held:
+            # The award as it was made, reproduced exactly.
+            mine = held.get("player_id") == row["player_id"]
+            row["motm"] = mine
+            if isinstance(row.get("raw"), dict):
+                row["raw"]["motm"] = 1 if mine else 0
+        p = by_pid.get(row["player_id"])
+        if not had_events and p:
+            stored = (p.get("raw") or {}).get("goals.conceded")
+            if stored is not None and isinstance(row.get("raw"), dict):
+                row["raw"]["goals.conceded"] = stored
+            row["clean_sheet"] = p.get("clean_sheet")
+    return fresh
+
+
 def upsert_match_stats(rows: list, league_ids) -> None:
     payload = build_stats_payload(rows, league_ids)
     dropped = _post_upsert("match_stats", "league_id,player_id,match_label", payload)
@@ -818,14 +885,40 @@ def print_summary(rows: list) -> None:
         )
 
 
-def pull_competition_rows(date: str, league_id: int, season: int, mock: bool) -> list:
-    """Completed-match player rows for one competition, keyed by API id."""
+def pull_competition_rows(date: str, league_id: int, season: int, mock: bool,
+                          competition_key: str = None) -> list:
+    """Completed-match player rows for one competition, keyed by API id.
+
+    Events are fetched here for the same reason the players-json path fetches
+    them: without them every row falls back to the club's whole-match total for
+    goals conceded, charging a substitute for goals scored before he came on.
+
+    This call was simply missing, so the SCHEDULED pull -- the one that runs
+    every night for a competition league -- rebuilt each row with no events and
+    flattened the figure back every time. It did not revert occasionally; it
+    reverted on a timer, which is what made it look like the fix would not
+    stick and forced the manual re-pulls that kept moving man of the match.
+
+    Skipped for a goalless match by scored_in: no goals, nothing to place.
+    """
     fixtures = fetch_fixtures(date, league_id, season, mock)
     rows = []
     for fixture in fixtures:
-        teams_data = fetch_fixture_players(fixture["fixture"]["id"], mock)
-        rows.extend(extract_player_rows(fixture, teams_data, None, use_api_ids=True))
-    return [r for r in rows if featured(r) and r["player_id"]]
+        fixture_id = fixture["fixture"]["id"]
+        teams_data = fetch_fixture_players(fixture_id, mock)
+        events = fetch_fixture_events(fixture_id, mock) if scored_in(fixture) else []
+        fresh = [r for r in extract_player_rows(
+            fixture, teams_data, None, use_api_ids=True, events=events)
+            if featured(r) and r["player_id"]]
+        # Merged per fixture, where `events` is still in scope and the label
+        # is one value: what is stored may know more than this pull does.
+        if competition_key and fresh:
+            prior = fetch_prior_rows("competition_stats", {
+                "competition_key": competition_key,
+                "match_label": fresh[0]["match_label"]})
+            fresh = merge_fixture_rows(fresh, prior, bool(events))
+        rows.extend(fresh)
+    return rows
 
 
 def parse_competition_key(key: str):
@@ -859,7 +952,7 @@ def run_competition_pulls(date: str, mock: bool, dry_run: bool) -> None:
             print(f"  skip competition_key {key!r} (not an API-Football key)")
             continue
         league_id, season = parsed
-        rows = pull_competition_rows(date, league_id, season, mock)
+        rows = pull_competition_rows(date, league_id, season, mock, key)
         print(f"  {key} (league {league_id}, season {season}): {len(rows)} player rows")
         if not rows:
             continue

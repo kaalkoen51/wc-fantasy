@@ -22,6 +22,7 @@ from daily_pull import (
     build_stats_payload,
     extract_player_rows,
     featured,
+    merge_fixture_rows,
     normalize_name,
     parse_league_ids,
     surname_key,
@@ -284,6 +285,101 @@ class TestCompetitionMode(unittest.TestCase):
         self.assertEqual(payload[0]["player_id"], "api_500")
         self.assertEqual(payload[0]["goals"], 1)
         self.assertNotIn("league_id", payload[0])
+
+
+class TestScheduledPullUsesEvents(unittest.TestCase):
+    """The scheduled competition pull must ask for events.
+
+    Without them every row falls back to the club's whole-match total for
+    goals conceded, charging a substitute for goals scored before he came on.
+    The call was simply absent from pull_competition_rows, so the nightly job
+    rebuilt each row with no events and flattened the figure back every night
+    -- which is why the fix looked like it would not stick, and why the manual
+    re-pulls that kept moving man of the match were needed at all.
+
+    Asserted on the CALL rather than on the number, because the number is what
+    the on-pitch tests already cover; what was missing here was the wiring.
+    """
+
+    def setUp(self):
+        self.asked = []
+        self.fx = [{
+            "fixture": {"id": 7, "date": "2026-08-15T18:00:00+00:00"},
+            "teams": {"home": {"id": 33, "name": "Man Utd"},
+                      "away": {"id": 40, "name": "Liverpool"}},
+            "goals": {"home": 1, "away": 2},
+        }]
+        self.teams = [{
+            "team": {"id": 33, "name": "Man Utd"},
+            "players": [{
+                "player": {"id": 500, "name": "B. Fernandes"},
+                "statistics": [{"games": {"minutes": 90, "position": "Midfielder",
+                                          "number": 8, "rating": "7.6"},
+                                "goals": {"total": 1}, "cards": {}, "penalty": {},
+                                "tackles": {}}],
+            }],
+        }]
+
+    def _run(self, fixtures):
+        import daily_pull as dp
+        orig = (dp.fetch_fixtures, dp.fetch_fixture_players, dp.fetch_fixture_events)
+        dp.fetch_fixtures = lambda *a, **k: fixtures
+        dp.fetch_fixture_players = lambda *a, **k: self.teams
+        def spy(fixture_id, mock=False):
+            self.asked.append(fixture_id)
+            return [{"time": {"elapsed": 10}, "team": {"id": 40},
+                     "type": "Goal", "player": {"id": 900}}]
+        dp.fetch_fixture_events = spy
+        try:
+            return dp.pull_competition_rows("2026-08-15", 39, 2026, False)
+        finally:
+            (dp.fetch_fixtures, dp.fetch_fixture_players,
+             dp.fetch_fixture_events) = orig
+
+    def test_events_are_fetched_for_a_scoring_fixture(self):
+        rows = self._run(self.fx)
+        self.assertEqual(self.asked, [7], "the scheduled pull never asked for events")
+        self.assertTrue(rows)
+
+    def test_a_goalless_fixture_costs_no_extra_call(self):
+        goalless = [dict(self.fx[0], goals={"home": 0, "away": 0})]
+        self._run(goalless)
+        self.assertEqual(self.asked, [], "asked for events nobody could need")
+
+
+class TestMergeFixtureRows(unittest.TestCase):
+    """A pull may add what it knows; it may not replace what was known with
+    less. Mirrors the mergeFixtureRows assertions in test_logic.js."""
+
+    def row(self, pid, motm, conc, cs):
+        return {"player_id": pid, "motm": motm, "clean_sheet": cs,
+                "raw": {"motm": 1 if motm else 0, "goals.conceded": conc}}
+
+    def setUp(self):
+        self.stored = [self.row("a", True, 1, False), self.row("b", False, 0, True)]
+
+    def test_an_award_already_made_does_not_move(self):
+        moved = [self.row("a", False, 1, False), self.row("b", True, 0, True)]
+        out = merge_fixture_rows(moved, self.stored, True)
+        self.assertEqual([(r["player_id"], r["motm"]) for r in out],
+                         [("a", True), ("b", False)])
+        self.assertEqual([r["raw"]["motm"] for r in out], [1, 0])
+
+    def test_no_events_keeps_the_stored_conceded(self):
+        flat = [self.row("a", False, 2, False), self.row("b", False, 2, False)]
+        out = merge_fixture_rows(flat, self.stored, False)
+        self.assertEqual([r["raw"]["goals.conceded"] for r in out], [1, 0])
+        self.assertEqual([r["clean_sheet"] for r in out], [False, True])
+
+    def test_events_still_correct_a_stored_fallback(self):
+        out = merge_fixture_rows([self.row("a", False, 0, True)], self.stored, True)
+        self.assertEqual(out[0]["raw"]["goals.conceded"], 0)
+        self.assertTrue(out[0]["clean_sheet"])
+
+    def test_a_first_write_is_taken_as_it_comes(self):
+        fresh = [self.row("a", False, 1, False), self.row("b", True, 0, True)]
+        self.assertEqual([r["motm"] for r in merge_fixture_rows(fresh, [], True)],
+                         [False, True])
 
 
 class TestMultiLeague(unittest.TestCase):
