@@ -5091,3 +5091,71 @@ test("squads carried into a draft: ambiguity is asked, then the picks are kept",
   expect(seen.kept.map((p) => p.name).sort())
     .toEqual(["Damian Willemse", "Jaco van der Merwe"]);
 });
+
+test("a single window's moves are not split into 'this window' and 'earlier'",
+  async ({ page }) => {
+  /* Reported from the app: "there was only one window so far", over a log
+     showing three moves under RECENT and ten under "Earlier windows" -- all
+     thirteen from the same window, on the same evening.
+
+     The cut was the most recent LINE-UP LOCK, which is a different moment from
+     a window and the wrong one. Waivers resolve when the window shuts; the
+     next round's line-up locks a day later; from then on every move sat before
+     the cut, "this window" came out empty, and the fallback sliced the list at
+     an arbitrary three and named the remainder after a window that had never
+     happened. */
+  await openLeague(page, { managers: 4, played: 2 });
+
+  const seen = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    const me = myManager();
+    const wins = closedTradeWindows(S.fixtures || [], Date.now(), cfgOf().windows || {});
+    // Every award written as the one and only window shut.
+    const at = new Date(wins[wins.length - 1].closeAt + 60e3).toISOString();
+    S.transactions = [1, 2, 3, 4, 5].map((i) => ({
+      id: "t" + i, league_id: S.league.id, manager_id: me.id, kind: "waiver",
+      window_key: faWindowKey(), created_at: at,
+      in_player_id: "in" + i, in_player_name: "In " + i,
+      out_player_id: "ou" + i, out_player_name: "Out " + i }));
+    /* ...and a trade accepted midway THROUGH that window. Awards are written
+       as a window shuts, trades are made while it is open, and both belong to
+       it -- which is why the boundary has to be the window's open time and not
+       its close. */
+    const mid = new Date((wins[wins.length - 1].openAt
+      + wins[wins.length - 1].closeAt) / 2).toISOString();
+    S.trades = [{ id: "tr1", league_id: S.league.id, status: "accepted",
+      updated_at: mid, created_at: mid,
+      proposer_manager_id: me.id, from_manager_id: me.id,
+      target_manager_id: S.managers[1].id, trade_items: [] }];
+
+    /* The line-up for the NEXT round has since locked -- the state that broke
+       it. Without this the old code would have passed by luck. */
+    S.snapshots = [...(S.snapshots || []), { manager_id: me.id,
+      effective_from: new Date(Date.now() - 60e3).toISOString(), roster: [] }];
+
+    const html = transactionsLogHtml();
+    return { html,
+      lockAfterMoves: (txWindowStarts()[0] || 0) > Date.parse(at),
+      windows: wins.length,
+      shown: (html.match(/won a waiver claim/g) || []).length,
+      trades: (html.match(/wants to deal|⇄/g) || []).length,
+      earlier: html.includes("Earlier windows") };
+  });
+
+  // The precondition, or this proves nothing: one window, and a lock after it.
+  expect(seen.windows, "the seed has more than one closed window").toBe(1);
+  expect(seen.lockAfterMoves, "no lock sits after the moves, so the old cut would have worked")
+    .toBe(true);
+
+  expect(seen.earlier, "one window's moves were split under 'Earlier windows'")
+    .toBe(false);
+  expect(seen.shown, "not every move is listed").toBe(5);
+  expect(seen.html, "the log claims more windows than have happened")
+    .toContain("one window so far");
+  /* The trade was accepted while the window was OPEN, hours before its awards
+     were written. Cutting at the close would drop it out of its own window. */
+  expect(seen.trades, "a trade made inside the window was pushed out of it")
+    .toBeGreaterThan(0);
+});

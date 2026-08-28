@@ -15291,15 +15291,32 @@ function transactionsLogHtml() {
       <p class="text-sm text-slate-300">Nothing has moved yet.</p>
       <p class="text-xs text-slate-500">Trades, free agents and waiver claims all land here.</p></div>`;
 
-  // Everything since the most recent lock is "this window".
-  const cut = txWindowStarts()[0] ?? null;
-  const current = cut == null ? entries
-    : entries.filter((e) => Date.parse(e.when) >= cut);
-  const earlier = cut == null ? []
-    : entries.filter((e) => Date.parse(e.when) < cut);
-  // With no lock yet, or a window nobody has used, still show the recent few.
-  const shown = current.length ? current : entries.slice(0, 3);
-  const rest  = current.length ? earlier : entries.slice(3);
+  /* A window is a SPAN on the fixture calendar, and both halves of the log
+     follow from that: everything inside the newest window that saw any
+     activity, and everything before it.
+
+     It used to cut at the most recent LINE-UP LOCK, which is a different
+     moment and the wrong one. A window's waivers resolve when the window
+     shuts; the next round's line-up locks a day later; from that moment every
+     one of those moves sat before the cut, "this window" came out empty, and
+     the fallback sliced the list at an arbitrary three and labelled the other
+     ten "Earlier windows". They were all the same window. Reported from the
+     app: "there was only one window so far".
+
+     Trades belong to a window too, and by the span they land in rather than by
+     a separate rule -- they are made while it is open, awards are written as it
+     shuts, and both are inside it. */
+  const times = entries.map((e) => Date.parse(e.when)).filter((t) => !isNaN(t));
+  const wins = closedTradeWindows(S.fixtures || [], Date.now(), cfgOf().windows || {});
+  const newest = times.length ? Math.max(...times) : 0;
+  const win = wins.filter((w) => w.openAt <= newest).pop() || wins[wins.length - 1];
+  const cut = win ? win.openAt : null;
+  /* No calendar to read -- a manual league, or one with no fixtures yet. Then
+     nothing is known about windows, and one undivided list is the honest
+     answer. Slicing at three and naming the remainder was inventing a
+     boundary rather than admitting there wasn't one. */
+  const shown = cut == null ? entries : entries.filter((e) => Date.parse(e.when) >= cut);
+  const rest  = cut == null ? [] : entries.filter((e) => Date.parse(e.when) < cut);
 
   /* The roundup, permanently reachable. It used to exist only as a sheet that
      opened itself once per window -- miss it, or be on another tab when it
@@ -15323,7 +15340,8 @@ function transactionsLogHtml() {
     ${roundupBtn}
     <div class="flex items-baseline justify-between gap-2 px-1">
       <h3 class="font-semibold text-sm">Every move</h3>
-      <span class="eyebrow">${current.length ? "this window" : "recent"}</span>
+      <span class="eyebrow">${cut == null ? "all of it"
+        : rest.length ? "this window" : "one window so far"}</span>
     </div>
     ${shown.map((e) => e.html).join("")}
     ${rest.length ? `<details class="rounded-xl border border-slate-700 bg-slate-900">
