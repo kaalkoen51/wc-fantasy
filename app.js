@@ -1889,6 +1889,173 @@ function poolCsv(players) {
 const manualPlayerId = (name, team) =>
   "man_" + `${name}-${team}`.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
+/* ---------- carrying squads into a draft ----------
+
+   A league whose managers already own players -- a URC side coming from a
+   previous season kept somewhere else -- starts part-drafted. The rest of the
+   machinery for this exists: picks carry a `kept` flag, kept players fill quota
+   slots, and draftSequence() already charges a keeper his earliest round, so a
+   manager carrying twelve joins the snake at thirteen rather than getting a
+   full set of picks on top of a full squad.
+
+   What is missing is the way in, and one hard problem inside it: a name typed
+   in a spreadsheet is not the name the feed uses. "Damian Willemse" against
+   "D. Willemse"; rugby names carry apostrophes, hyphens and accents.
+
+   NOTHING IS GUESSED. Every row lands in exactly one of three buckets -- one
+   match, several, or none -- and the middle one is a question for a person. A
+   silently wrong squad cannot be undone once the draft has run on top of it. */
+
+/* Does a sheet name refer to this pool player?
+
+   Folding is foldName(), the same one mapApiPlayer uses. The MATCHING is
+   deliberately stricter than mapApiPlayer's, and the reason is the size of the
+   haystack: that one searches a single club's roster, twenty-odd names, where
+   "either end matches" is safe and a shirt number is there to break ties. This
+   searches the whole competition -- hundreds of players, no shirt to fall back
+   on -- and the same looseness would put half a dozen candidates on most rows.
+
+   Three ways, in this order and no further:
+     1. the whole fold matches
+     2. surnames match AND the first names agree, where an initial counts as
+        agreement ("D. Willemse" vs "Damian Willemse")
+     3. surnames match and one side gave no first name at all
+
+   Anything looser starts matching brothers and namesakes, which is exactly the
+   error this is built to refuse. */
+function nameMatches(sheet, poolName) {
+  const a = foldName(sheet), b = foldName(poolName);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const pa = a.split(" "), pb = b.split(" ");
+  /* The surname is the longest run of tokens the two names END with, not the
+     last word. Half this competition is "van der Merwe", "du Toit", "de Klerk"
+     -- take only the last token as the surname and "van der Merwe" reads as
+     first names "van der" plus a surname "merwe", which then disagrees with
+     every spelling that includes an initial. */
+  let k = 0;
+  while (k < pa.length && k < pb.length && pa[pa.length - 1 - k] === pb[pb.length - 1 - k]) k++;
+  if (!k) return false;                                        // no shared surname at all
+  const fa = pa.slice(0, pa.length - k), fb = pb.slice(0, pb.length - k);
+  if (!fa.length || !fb.length) return true;                   // one side gave none
+  const x = fa[fa.length - 1], y = fb[fb.length - 1];
+  return x === y || (x.length === 1 && y.startsWith(x)) || (y.length === 1 && x.startsWith(y));
+}
+
+/* One sheet row against the pool: exactly one player, several, or none.
+
+   `club` narrows before it decides, never after -- a club that rules out the
+   only match is a disagreement worth surfacing, not a reason to look wider. */
+function matchPoolName(name, pool, club) {
+  let hits = (pool || []).filter((p) => nameMatches(name, p.name));
+  if (hits.length > 1 && club) {
+    const c = foldName(club);
+    const narrowed = hits.filter((p) => foldName(p.team) === c);
+    if (narrowed.length) hits = narrowed;
+  }
+  return { hits, status: hits.length === 1 ? "one" : hits.length ? "many" : "none" };
+}
+
+/* The sheet -> rows. Loose about the file, strict about the data, and loud
+   about anything it refused, like every other importer here. */
+function parseSquadsCsv(text) {
+  const lines = String(text || "").split(/\r?\n/).filter((l) => l.trim());
+  if (!lines.length) return { rows: [], errors: ["The file is empty."] };
+  const head = csvSplit(lines[0]).map((h) => h.toLowerCase().trim());
+  const iM = head.indexOf("manager"), iP = head.indexOf("player");
+  if (iM < 0 || iP < 0)
+    return { rows: [], errors: ["Needs `manager` and `player` columns."] };
+  const iPos = head.indexOf("position"), iC = head.indexOf("club");
+  const rows = [], errors = [];
+  for (let n = 1; n < lines.length; n++) {
+    const f = csvSplit(lines[n]);
+    const manager = (f[iM] || "").trim(), player = (f[iP] || "").trim();
+    if (!manager && !player) continue;                         // a spacer line
+    if (!manager || !player) {
+      errors.push(`Line ${n + 1}: needs both a manager and a player.`);
+      continue;
+    }
+    rows.push({ line: n + 1, manager, player,
+      position: String((iPos >= 0 && f[iPos]) || "").toUpperCase().trim(),
+      club: ((iC >= 0 && f[iC]) || "").trim() });
+  }
+  return { rows, errors };
+}
+
+/* The whole import, decided before a single row is written.
+
+   Pure, and given everything it needs, so the suite can hold it to a squad
+   that overruns its quota, two managers claiming the same player, a name the
+   pool has never heard of, and a manager who is not in the league -- none of
+   which are hypothetical in a sheet somebody typed by hand.
+
+   `resolved` carries the answers to the ambiguous rows: sheet line -> chosen
+   player_id. Re-planning with it folded in is how the preview updates as the
+   questions get answered, rather than the screen keeping its own tally that
+   can drift from what would actually be written.
+
+   ready is false while ANYTHING is unresolved. Half an import is worse than
+   none: draftSequence charges each manager for the keepers he holds, so a
+   squad written now and completed later would hand out a draft order computed
+   from the wrong counts. */
+function planSquadImport(rows, managers, pool, quota, resolved) {
+  const byName = {};
+  for (const m of managers || []) byName[foldName(m.name)] = m;
+  const pick = resolved || {};
+  const items = [], errors = [];
+  const claimed = new Map();               // player_id -> first row that took him
+  for (const r of rows || []) {
+    const mgr = byName[foldName(r.manager)];
+    if (!mgr) {
+      errors.push(`Line ${r.line}: no manager called "${r.manager}" in this league.`);
+      continue;
+    }
+    const chosen = pick[r.line];
+    const m = matchPoolName(r.player, pool, r.club);
+    const hits = chosen ? m.hits.filter((p) => p.player_id === chosen) : m.hits;
+    const status = chosen && hits.length === 1 ? "one" : m.status;
+    const it = { line: r.line, manager: mgr, sheet: r, status,
+                 hits: m.hits, player: status === "one" ? hits[0] : null };
+    /* Two managers cannot both keep him, and neither can one manager twice.
+       Reported against the SECOND row: the first is the one that stands. */
+    if (it.player) {
+      const prior = claimed.get(it.player.player_id);
+      if (prior) {
+        it.status = "dup";
+        it.dupOf = prior;
+        it.player = null;
+      } else claimed.set(it.player.player_id, it);
+    }
+    items.push(it);
+  }
+  // Per manager: what they would hold, and whether it can legally be held.
+  const perManager = (managers || []).map((m) => {
+    const mine = items.filter((i) => i.manager.id === m.id && i.player);
+    const counts = {};
+    for (const i of mine) counts[i.player.position] = (counts[i.player.position] || 0) + 1;
+    const over = Object.keys(counts).filter((g) => counts[g] > ((quota || {})[g] || 0))
+      .map((g) => ({ group: g, kept: counts[g], max: (quota || {})[g] || 0 }));
+    return { manager: m, kept: mine.length, counts, over,
+             /* draftSequence charges the earliest rounds, so this is simply
+                where they join the snake -- shown so nobody is surprised by it
+                after the fact. */
+             joinsAtRound: mine.length + 1 };
+  });
+  const unresolved = items.filter((i) => i.status !== "one").length;
+  const overs = perManager.filter((p) => p.over.length).length;
+  return { items, perManager, errors, unresolved,
+           matched: items.filter((i) => i.status === "one").length,
+           ready: !errors.length && !unresolved && !overs && items.length > 0 };
+}
+
+// The sheet to hand out: every manager named, one blank row each, and the
+// header the parser wants. The pool export supplies the exact spellings.
+function squadsCsvTemplate(managers) {
+  return ["manager,player,position,club"]
+    .concat((managers || []).map((m) => csvRow([m.name, "", "", ""])))
+    .join("\n");
+}
+
 /* A sheet back into pool changes. Same posture as the positions parser: loose
    about the file, strict about the data, and loud about anything it refused. */
 function parsePoolCsv(text, players, groups) {
