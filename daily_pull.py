@@ -464,7 +464,7 @@ def featured(row: dict) -> bool:
 
 def extract_player_rows(
     fixture: dict, teams_data: list, matcher, use_api_ids: bool = False,
-    events: list = None,
+    events: list = None, provisional: bool = False,
 ) -> list:
     """Flatten API-Football fixture-player stats into per-player dicts.
 
@@ -632,7 +632,12 @@ def extract_player_rows(
                 }
             )
 
-    assign_motm(rows)
+    # A rating mid-match is provisional, and an award made from one is a
+    # guess -- one that now STICKS, because a held award is deliberately not
+    # moved by later pulls. So a live pull leaves it alone and the settled
+    # pull, running once the match is done, makes the call.
+    if not provisional:
+        assign_motm(rows)
     return rows
 
 

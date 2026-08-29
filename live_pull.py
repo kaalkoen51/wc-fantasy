@@ -55,7 +55,9 @@ from daily_pull import (
     featured,
     fetch_fixture_events,
     fetch_fixture_players,
+    fetch_prior_rows,
     fetch_scheduled_competitions,
+    merge_fixture_rows,
     scored_in,
     parse_competition_key,
     parse_league_ids,
@@ -204,7 +206,7 @@ def pull_fixture(fixture: dict, target: Target, dry_run: bool) -> None:
     events = fetch_fixture_events(fid) if scored_in(fixture) else []
     rows = extract_player_rows(
         fixture, fetch_fixture_players(fid, mock=False), target.matcher,
-        use_api_ids=competition, events=events)
+        use_api_ids=competition, events=events, provisional=True)
     appeared = [r for r in rows if featured(r)]
     matched = [r for r in appeared if r["player_id"]]
     unmatched = len(appeared) - len(matched)
@@ -212,6 +214,26 @@ def pull_fixture(fixture: dict, target: Target, dry_run: bool) -> None:
     log(f"  [{target}] {home} vs {away} [{status}]: {len(matched)} players{note}")
     if dry_run or not matched:
         return
+    """A live pull knows less than the match will, and must not overwrite what
+    is already stored with the smaller answer.
+
+    Two things it can take away. Man of the match it no longer awards at all
+    (provisional=True above) -- but every row it writes therefore carries
+    motm=False, which without this would CLEAR an award the settled pull had
+    already made. And goals conceded falls back to the club's whole-match
+    total for anybody the events cannot place yet, which is every substitute
+    who has not come on.
+
+    So the same rule the scheduled pull uses: add what this pull knows, keep
+    what it does not."""
+    prior = fetch_prior_rows(
+        "competition_stats" if competition else "match_stats",
+        {"competition_key": target.key, "match_label": matched[0]["match_label"]}
+        if competition
+        else {"league_id": target.league_ids[0],
+              "match_label": matched[0]["match_label"]})
+    matched = merge_fixture_rows(matched, prior, bool(events))
+
     if competition:
         # Same shape the twice-daily sweep writes, so a live row and the row
         # that later replaces it agree rather than differing by a column.

@@ -347,6 +347,123 @@ class TestScheduledPullUsesEvents(unittest.TestCase):
         self.assertEqual(self.asked, [], "asked for events nobody could need")
 
 
+class TestProvisionalPulls(unittest.TestCase):
+    """A live pull must not award man of the match.
+
+    A rating mid-match is provisional, and an award made from one is a guess --
+    one that now sticks, because a held award is deliberately not moved by
+    later pulls. So the live path asks for provisional rows and the settled
+    pull, which runs once the match is done, makes the call.
+    """
+
+    def rows(self, provisional):
+        fixture = {
+            "fixture": {"id": 7, "date": "2026-08-15T18:00:00+00:00"},
+            "teams": {"home": {"id": 33, "name": "Man Utd"},
+                      "away": {"id": 40, "name": "Liverpool"}},
+            "goals": {"home": 1, "away": 0},
+        }
+        teams = [{
+            "team": {"id": 33, "name": "Man Utd"},
+            "players": [{
+                "player": {"id": 500, "name": "B. Fernandes"},
+                "statistics": [{"games": {"minutes": 90, "position": "Midfielder",
+                                          "number": 8, "rating": "8.4"},
+                                "goals": {"total": 1}, "cards": {}, "penalty": {},
+                                "tackles": {}}],
+            }],
+        }]
+        return extract_player_rows(fixture, teams, None, use_api_ids=True,
+                                   provisional=provisional)
+
+    def test_a_settled_pull_awards_it(self):
+        self.assertTrue(self.rows(False)[0]["motm"],
+                        "a finished match with an 8.4 rating awarded nobody")
+
+    def test_a_live_pull_does_not(self):
+        self.assertFalse(self.rows(True)[0]["motm"],
+                         "a live pull awarded man of the match off a "
+                         "provisional rating")
+
+    def test_the_live_path_asks_for_provisional_rows(self):
+        """Asserted on the CALL: the rule is only worth anything if live_pull
+        actually uses it, and nothing else would notice if it stopped."""
+        import live_pull
+        seen = {}
+        orig = live_pull.extract_player_rows
+        def spy(*a, **k):
+            seen.update(k)
+            return []
+        live_pull.extract_player_rows = spy
+        live_pull.fetch_fixture_players = lambda *a, **k: []
+        live_pull.fetch_fixture_events = lambda *a, **k: []
+        try:
+            live_pull.pull_fixture(
+                {"fixture": {"id": 1, "status": {"short": "1H"}},
+                 "teams": {"home": {"name": "A"}, "away": {"name": "B"}},
+                 "goals": {"home": 0, "away": 0}},
+                live_pull.Target(39, 2026, "competition", key="39-2026"), False)
+        finally:
+            live_pull.extract_player_rows = orig
+        self.assertTrue(seen.get("provisional"),
+                        "the live pull is still asking for settled rows")
+
+
+class TestLivePullDoesNotDegrade(unittest.TestCase):
+    """A live pull writes motm=False on every row -- it no longer awards one --
+    so without the merge it would CLEAR an award the settled pull had made.
+    Asserted on what actually reaches the upsert."""
+
+    def _run(self, prior):
+        import live_pull
+        written = {}
+        fixture = {
+            "fixture": {"id": 7, "date": "2026-08-15T18:00:00+00:00",
+                        "status": {"short": "2H"}},
+            "teams": {"home": {"id": 33, "name": "Man Utd"},
+                      "away": {"id": 40, "name": "Liverpool"}},
+            "goals": {"home": 1, "away": 0},
+        }
+        teams = [{
+            "team": {"id": 33, "name": "Man Utd"},
+            "players": [{
+                "player": {"id": 500, "name": "B. Fernandes"},
+                "statistics": [{"games": {"minutes": 60, "position": "Midfielder",
+                                          "number": 8, "rating": "8.4"},
+                                "goals": {"total": 1}, "cards": {}, "penalty": {},
+                                "tackles": {}}],
+            }],
+        }]
+        orig = (live_pull.fetch_fixture_players, live_pull.fetch_fixture_events,
+                live_pull.fetch_prior_rows, live_pull.upsert_competition_stats)
+        live_pull.fetch_fixture_players = lambda *a, **k: teams
+        live_pull.fetch_fixture_events = lambda *a, **k: []
+        live_pull.fetch_prior_rows = lambda *a, **k: prior
+        live_pull.upsert_competition_stats = lambda rows, key: written.update(rows=rows)
+        try:
+            live_pull.pull_fixture(
+                fixture, live_pull.Target(39, 2026, "competition", key="39-2026"),
+                False)
+        finally:
+            (live_pull.fetch_fixture_players, live_pull.fetch_fixture_events,
+             live_pull.fetch_prior_rows, live_pull.upsert_competition_stats) = orig
+        return written.get("rows") or []
+
+    def test_a_held_award_survives_a_live_pull(self):
+        rows = self._run([{ "player_id": "api_500", "motm": True,
+                            "clean_sheet": False, "raw": {"motm": 1}}])
+        self.assertTrue(rows, "the live pull wrote nothing")
+        self.assertTrue(rows[0]["motm"],
+                        "a live pull cleared an award already made")
+
+    def test_with_nothing_stored_it_writes_what_it_has(self):
+        rows = self._run([])
+        self.assertTrue(rows, "the live pull wrote nothing")
+        self.assertFalse(rows[0]["motm"],
+                         "a live pull awarded man of the match off a "
+                         "provisional rating")
+
+
 class TestMergeFixtureRows(unittest.TestCase):
     """A pull may add what it knows; it may not replace what was known with
     less. Mirrors the mergeFixtureRows assertions in test_logic.js."""
