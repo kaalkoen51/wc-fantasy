@@ -5318,3 +5318,63 @@ test("tapping a game on a player card scopes it to that game", async ({ page }) 
     .toContain(`${seen.apps} apps`);
   expect(seen.back).not.toContain("All matches");
 });
+
+test("the captain's double is in the round view, not only the season total",
+  async ({ page }) => {
+  /* Reported off a live round: the armband was on a player who had scored, and
+     the card total was the plain sum of the pitch -- no double anywhere.
+
+     Two sums, one missing it. `pts`, what the Total view shows, comes from
+     earnedByPlayer and has the bonus. roundPts is a separate sum over today's
+     picks and never did. Harmless while Total was the default; making This
+     round the default put it in front of everybody. */
+  await openLeague(page, { managers: 4, played: 2 });
+  /* Inside a matchweek that has been PLAYED, or the round on show is the one
+     coming up and nobody has scored in it yet -- nothing to double. */
+  const at = await page.evaluate(() => matchweeksOf(S.fixtures)[1].first + 3600e3);
+  await page.clock.setFixedTime(new Date(at));
+
+  const seen = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    const me = myManager();
+    /* Measured by turning the rule off and on rather than by appointing a
+       captain: the armband is locked into a played round by its snapshot, so
+       setting one here would be overridden -- correctly -- and the test would
+       be about the wrong player. */
+    const read = (on) => {
+      S.league.config = { ...(S.league.config || {}), captain: on };
+      bustScores();
+      const h = managerHistory(me.id);
+      const by = {};
+      for (const it of h.current.items)
+        if (it.entry.slot !== "TEAM") by[it.entry.player_id] = it.roundPts || 0;
+      return { by, total: Object.values(by).reduce((s, v) => s + v, 0),
+               season: Object.fromEntries(h.current.items.map(
+                 (it) => [it.entry.player_id, it.pts])) };
+    };
+    const off = read(false), on = read(true);
+    const moved = Object.keys(on.by).filter((pid) => on.by[pid] !== off.by[pid]);
+    return { off, on, moved, curRound: managerHistory(me.id).curRound };
+  });
+
+  // Exactly one player's round score moves, and it is the armband.
+  expect(seen.moved.length, "the captain's bonus reached nobody, or reached several")
+    .toBe(1);
+  const cap = seen.moved[0];
+  expect(seen.off.by[cap], "the captain scored nothing, so a double proves nothing")
+    .toBeGreaterThan(0);
+  expect(seen.on.by[cap], "the captain's round points were not doubled")
+    .toBe(seen.off.by[cap] * 2);
+  // ...and it reaches the round total, which is the number the card shows.
+  expect(seen.on.total, "the round total does not include the double")
+    .toBe(seen.off.total + seen.off.by[cap]);
+  /* Both views credit the SAME player -- the disagreement was never about who
+     wore the armband, only about one of the two sums forgetting it. Not an
+     equality: the season figure carries a bonus for every round he captained,
+     so it moves by more than this round's. */
+  expect(seen.on.season[cap] - seen.off.season[cap],
+    "the season view did not credit the captain the round view just did")
+    .toBeGreaterThanOrEqual(seen.on.by[cap] - seen.off.by[cap]);
+});

@@ -7826,6 +7826,31 @@ function managerHistory(mgrId) {
     for (const pid in mp) roundByPlayer[pid] = (roundByPlayer[pid] || 0) + mp[pid];
     for (const pk of picks) if (appearedIn(pk.player_id, label)) playedRoundSet.add(pk.player_id);
   }
+  /* The captain's double, in the round view too.
+
+     `pts` -- what the Total view shows -- comes from earnedByPlayer, which has
+     the bonus added above. roundByPlayer is a SEPARATE sum, over today's picks
+     rather than the snapshot roster, and never had it. So one line-up showed
+     its captain doubled under Total and single under This round, and This
+     round is now what the Team page opens on, so the doubling simply looked
+     like it had stopped working. Reported as exactly that.
+
+     Same rule and the same function as the season path, so the two cannot
+     drift: the vice inherits only once the captain is CONFIRMED absent, and
+     the armband is the round's own if a lock recorded one, else today's pick
+     -- the order squadBoardHtml and computeScores already read it in. */
+  if (capOn && curRound >= 1) {
+    const mgrNow = S.managers.find((x) => x.id === mgrId);
+    const cap = capByRnd[curRound] ?? mgrNow?.captain_id ?? null;
+    const vice = viceByRnd[curRound] ?? mgrNow?.vice_id ?? null;
+    const capEntry = capEntryByRnd[curRound]
+      ?? picks.find((pk) => pk.player_id === cap) ?? null;
+    const missed = !!cap && !playedRoundSet.has(cap)
+      && !!capEntry && missedRound(capEntry, curRound);
+    const eff = effectiveCaptain(cap, vice, missed);
+    if (eff && roundByPlayer[eff]) roundByPlayer[eff] += roundByPlayer[eff];
+  }
+
   // "played in this snapshot" = has stats since the most recent lineup lock.
   const snapshotStart = snaps.length ? Date.parse(snaps[snaps.length - 1].effective_from) : 0;
   const nowMs = Date.now();
