@@ -600,6 +600,11 @@ function simSquadCheck() {
       <span class="min-w-0 flex-1 truncate text-slate-300">${esc(a)}</span>
       <span class="shrink-0 ${cls}">${esc(b)}</span></div>`;
   const clean = !chk.gone.length && !chk.moved.length;
+  /* The one check here that does not depend on the feed having noticed
+     anything: a player who has FEATURED for another club has said he moved,
+     and no squad list has to agree before we can see it. */
+  const ev = clubEvidence(S.players || [], S.stats || [],
+    S._compPool?.updated_at ? Date.parse(S._compPool.updated_at) : null);
   return simCard("🔎 What the squad list actually says",
     "Read straight from the stored pool — nothing is pulled and nothing is written. "
     + "If a transfer has happened and this still shows the old club, the pool has not been "
@@ -616,7 +621,12 @@ function simSquadCheck() {
      ${chk.moved.length ? `<div><p class="text-xs font-semibold text-amber-300 pt-1">${
         chk.moved.length} whose pick disagrees with the pool</p>${
         chk.moved.map((m) => row("text-amber-300", m.name, `${m.from} → ${m.to}`)).join("")}</div>` : ""}
-     ${clean ? '<p class="text-xs text-emerald-400 pt-1">Every drafted player is in the pool, at the club his pick says. The pool and the app agree.</p>' : ""}
+     ${ev.length ? `<div><p class="text-xs font-semibold text-sky-300 pt-1">${
+        ev.length} played for somebody else since the last pull</p>${
+        ev.map((e) => row("text-sky-300", e.name, `${e.pool} → ${e.played}`)).join("")}
+        <p class="text-[11px] text-slate-500">They turned out for that club after the
+          squads were last read, so the pool is behind. Fix the club in the pool editor.</p></div>` : ""}
+     ${clean && !ev.length ? '<p class="text-xs text-emerald-400 pt-1">Every drafted player is in the pool, at the club his pick says, and nobody has turned out anywhere else. The pool and the app agree.</p>' : ""}
      <div class="pt-1 border-t border-slate-800">
        <input id="sim-pool-find" placeholder="Look a player up in the pool…"
          class="w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs">

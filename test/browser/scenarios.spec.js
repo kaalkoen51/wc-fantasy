@@ -4234,6 +4234,51 @@ test("the squad check says what the stored pool actually holds", async ({ page }
     .toContain("has left the competition");
 });
 
+test("a player who has turned out elsewhere is reported, without asking the feed",
+  async ({ page }) => {
+  /* Reported from the app: "this player moved to Tottenham and already played
+     a game for them, but still the squad refresh did not update".
+
+     It cannot. The pool is built from squad lists, and a squad list is a
+     snapshot somebody at the feed has to update -- Rodri sat in Manchester
+     City's for nine days after signing for Barcelona. But the stat rows carry
+     the club each was played FOR, so a player who has featured for his new
+     side has already said he moved, at no extra cost. */
+  await openLeague(page, { managers: 4, played: 2 });
+
+  const seen = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    S.authUser = { id: "00000000-0000-4000-8000-000000000001", email: "koen.johan.c@gmail.com" };
+    S.league.competition = { name: "Prem", apiLeagueId: 39, season: 2026, sport: "football" };
+    // Squads read a fortnight ago; he played for somebody else last week.
+    S._compPool = { updated_at: new Date(Date.parse("2026-08-10")).toISOString() };
+    const p = S.players[0];
+    S.stats = [...S.stats, { player_id: p.player_id, team: "Tottenham",
+      appeared: true, match_label: "Tottenham vs Burnley (2026-08-30)" }];
+    bustScores();
+    setBoardTab("test"); renderBoard();
+    const text = document.getElementById("board-test").textContent.replace(/\s+/g, " ");
+    // ...and the guard: the same match, but from before the squads were read.
+    S.stats[S.stats.length - 1].match_label = "Tottenham vs Burnley (2026-08-01)";
+    renderBoard();
+    const older = document.getElementById("board-test").textContent.replace(/\s+/g, " ");
+    return { text, older, name: p.name, was: p.team };
+  });
+
+  expect(seen.text, "a player who turned out elsewhere is not reported")
+    .toContain("played for somebody else");
+  expect(seen.text, "it does not say who").toContain(seen.name);
+  expect(seen.text, "it does not say where he went")
+    .toContain(`${seen.was} \u2192 Tottenham`);
+  /* The guard that makes this safe: a match from BEFORE the squads were read
+     is the old answer, and acting on it walks a player back to the club he has
+     just left -- which is what a 30-June loan return did to J. Gelhardt. */
+  expect(seen.older, "a match older than the pool pull was reported as news")
+    .not.toContain("played for somebody else");
+});
+
 test("a claim confirmed after the deadline does not queue", async ({ page }) => {
   /* openSwap() gates on the window, but that gate ran when the sheet OPENED
      and nothing looked again when it was confirmed. Leave the picker sitting

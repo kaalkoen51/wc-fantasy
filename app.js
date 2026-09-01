@@ -16575,6 +16575,46 @@ function mapApiPlayer(team, shirt, apiName) {
 
    Read-only, and pure so it can be pinned. Returns the disagreements, not the
    agreements -- a squad where everything matches is one line, not eighteen. */
+/* Where a player has actually turned out, against where the pool says he is.
+
+   Evidence, not a feed opinion. competition_stats records the club each row
+   was played FOR -- it is stamped at ingest precisely so a later transfer
+   cannot strand the row -- so a player who has featured for his new side has
+   already told us he moved. No transfer endpoint, no extra call, and it cannot
+   go stale the way a squad list can: it describes a match that happened.
+
+   That is the gap this closes. A squad list is a snapshot somebody at the feed
+   has to update, and it lags by days or weeks -- Rodri sat in Manchester
+   City's for nine days after signing for Barcelona. Until now the only way to
+   catch that was to suspect a name and ask about him one at a time.
+
+   GUARDED ON THE MATCH BEING NEWER THAN THE POOL PULL, which is the whole
+   reason this is safe. A row from before the last refresh is the OLD answer,
+   and acting on it walks a player backwards into the club he has just left --
+   which is exactly what a 30-June loan return did to J. Gelhardt when it was
+   read as news. Newer than the pull, and it is the pool that is behind. */
+function clubEvidence(players, stats, pooledAtMs) {
+  const newest = {};
+  for (const r of stats || []) {
+    if (!r.player_id || !r.team || !r.appeared) continue;
+    const when = labelDate(r.match_label);
+    if (!when) continue;                       // undated: cannot be ordered
+    if (!newest[r.player_id] || when > newest[r.player_id].when)
+      newest[r.player_id] = { when, team: r.team };
+  }
+  const out = [];
+  for (const p of players || []) {
+    const n = newest[p.player_id];
+    if (!n || !p.team || n.team === p.team) continue;
+    // Same day as the pull is not newer: a pool refreshed after the match
+    // already had its chance to see the move.
+    if (pooledAtMs && Date.parse(n.when + "T23:59:59Z") <= pooledAtMs) continue;
+    out.push({ player_id: p.player_id, name: p.name,
+               pool: p.team, played: n.team, when: n.when });
+  }
+  return out.sort((a, b) => String(b.when).localeCompare(String(a.when)));
+}
+
 function squadCheck(picks, playerById) {
   const out = { total: 0, gone: [], moved: [] };
   for (const pk of (picks || [])) {
