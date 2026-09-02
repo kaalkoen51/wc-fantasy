@@ -560,6 +560,15 @@ const COMPETITIONS = [
   { name: "Serie A",               apiLeagueId: 135, kind: "league", yellowBan: 5 },
   { name: "Bundesliga",            apiLeagueId: 78,  kind: "league", yellowBan: 5 },
   { name: "Ligue 1",               apiLeagueId: 61,  kind: "league", yellowBan: 5 },
+  /* South Africa's top flight. `yellowBan: null` is not an oversight and not a
+     placeholder: yellowBanCount returns it, suspendedNext reads it as "no
+     accumulation rule we know of" and says nothing, and red cards still show.
+     The alternative was to copy Europe's five into a competition whose
+     threshold nobody here has checked -- and the whole reason this field
+     exists is that a hardcoded guess lit a SUSP badge on the busiest screen in
+     the app and was wrong. Silence is the honest answer until somebody
+     confirms the rule; filling it in later is one number. */
+  { name: "South African Premiership", apiLeagueId: 288, kind: "league", yellowBan: null },
 ];
 /* Which seasons you may start a league on.
 

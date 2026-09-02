@@ -29,6 +29,11 @@ on:
         description: "Club name — dumps what transfers?team= answers with (paging, direction). Blank = normal player probe"
         required: false
         default: ""
+      league_info:
+        description: "Tick to print that league's name and clubs instead — checks an id before it ships"
+        type: boolean
+        required: false
+        default: false
       league:
         description: "API-Football league id (39 = Premier League)"
         required: false
@@ -57,6 +62,7 @@ jobs:
           API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
         run: |
           python probe_feed.py \
+            ${{ inputs.league_info && '--league-info' || '' }} \
             ${{ inputs.team_transfers && format('--team-transfers "{0}"', inputs.team_transfers) || '' }} \
             --player "${{ inputs.player }}" \
             --clubs "${{ inputs.clubs }}" \

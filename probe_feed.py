@@ -252,6 +252,37 @@ def probe_team_transfers(club, league, season, want):
                       f"  ->  {(tm.get('in') or {}).get('name')}   [{x.get('type')}]")
 
 
+def probe_league(league, season):
+    """What league is this id, and who plays in it?
+
+    Adding a competition to the app means writing an API-Football league id
+    into COMPETITIONS, and a wrong one is not a small mistake: "Load
+    competition" would fill the shared pool for that key with somebody else's
+    clubs. There is no reaching the feed from the container this repo is
+    written in, so the id cannot be checked there -- it gets checked here.
+
+    Two calls, read-only: the league's own name and country, then its clubs.
+    """
+    got = api_get("leagues", {"id": league})
+    if not got:
+        print(f"league {league}: NOTHING. That id does not exist.")
+        return
+    info = got[0]
+    lg, country = info.get("league") or {}, info.get("country") or {}
+    print(f"league {league}: {lg.get('name')}  ({country.get('name')})  "
+          f"type={lg.get('type')}")
+    seasons = [s.get("year") for s in (info.get("seasons") or [])]
+    print(f"  seasons on record: {seasons[-6:] if seasons else 'none'}")
+    if season not in seasons:
+        print(f"  !! {season} is NOT among them -- the app would pull nothing.")
+
+    teams = api_get("teams", {"league": league, "season": season})
+    print(f"  {len(teams)} club(s) in {season}:")
+    for t in teams:
+        c = t.get("team") or {}
+        print(f"    {c.get('name')}  ({c.get('country')})")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--team-transfers", help="club name: dump what transfers?team= answers with")
@@ -260,11 +291,16 @@ def main():
     ap.add_argument("--player", help="probe where a player is, by name substring")
     ap.add_argument("--clubs", default="",
                     help="comma-separated club names to search (blank = every club)")
+    ap.add_argument("--league-info", action="store_true",
+                    help="name and clubs for --league: checks an id before it ships")
     ap.add_argument("--league", type=int, default=39)
     ap.add_argument("--season", type=int, default=2026)
     ap.add_argument("--limit", type=int, default=3, help="max fixtures per date")
     args = ap.parse_args()
 
+    if args.league_info:
+        probe_league(args.league, args.season)
+        return
     if args.team_transfers:
         probe_team_transfers(args.team_transfers, args.league, args.season, args.player)
         return
@@ -277,7 +313,8 @@ def main():
         probe(args.fixture, f"fixture {args.fixture}")
         return
     if not args.date:
-        sys.exit("Give --date YYYY-MM-DD, --fixture <id>, or --player <name>.")
+        sys.exit("Give --date YYYY-MM-DD, --fixture <id>, --player <name>, "
+                 "or --league-info.")
 
     fixtures = fixtures_on(args.date, args.league, args.season)
     if not fixtures:

@@ -966,6 +966,26 @@ S.league = {};
     clubEvidence(null, null, null), []);
 }
 
+/* Competitions you can start a league on. Two things about a new entry are
+   worth pinning, because both are silent when wrong: an id that collides with
+   another competition would send two leagues to one shared pool, and a
+   yellow-card threshold nobody has checked would light a SUSP badge on a rule
+   that may not exist. */
+{
+  const football = competitionsFor("football");
+  const sa = football.find((c) => /South African/.test(c.name));
+  check("competitions: the South African Premiership is offered", !!sa, true);
+  check("competitions: ...as a league, not a cup", sa.kind, "league");
+  /* Deliberately null. suspendedNext reads a falsy threshold as "no
+     accumulation rule we know of" and says nothing, which beats copying
+     Europe's five into a competition whose rule nobody here has confirmed. */
+  check("competitions: ...with no yellow-card rule claimed", sa.yellowBan, null);
+  check("competitions: every id is unique, or two competitions share a pool",
+    new Set(football.map((c) => c.apiLeagueId)).size, football.length);
+  check("competitions: every entry names itself and its kind",
+    football.every((c) => c.name && (c.kind === "league" || c.kind === "cup")), true);
+}
+
 /* Round recap: the results moment, composed from one round's items.
 
    Two numbers live on every item: `pts`, what counted for you, and `scored`,
