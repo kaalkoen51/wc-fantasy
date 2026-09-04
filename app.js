@@ -9664,9 +9664,14 @@ const mgrName = (id) => S.managers.find((m) => m.id === id)?.name || "someone";
 
 function roundupHtml(key) {
   const me = myManager();
+  /* In the order they FIRED. The seat a manager started on is a different
+     fact and still shown, but it cannot order the list: a contested win sends
+     the winner to the back, so his next award comes after somebody else's, and
+     sorting by seat put his two side by side as though he had taken two turns
+     running. */
   const awards = windowAwards(key).slice().sort((a, b) =>
-    (a.waiver_pos ?? 99) - (b.waiver_pos ?? 99)
-    || String(a.created_at).localeCompare(String(b.created_at)));
+    String(a.created_at).localeCompare(String(b.created_at))
+    || (a.waiver_pos ?? 99) - (b.waiver_pos ?? 99));
   const story = myWindowStory(key);
   const contested = awards.filter((a) => a.contested).length;
   /* "N awarded from M" only when M is actually the bigger number. Claims are
@@ -9682,20 +9687,37 @@ function roundupHtml(key) {
       <span class="min-w-0 truncate text-danger/85">${esc(a.out_player_name || "?")}</span>
     </div>`;
 
+  const seats = awards.some((a) => a.waiver_pos != null);
+
   const row = (a, i) => {
     const m = S.managers.find((x) => x.id === a.manager_id);
     const isMine = me && a.manager_id === me.id;
     const rivals = Array.isArray(a.rivals) ? a.rivals : [];
     /* Two lines for the ordinary award, three only when there is something to
-       say. The seat number is its own column so the list reads down as the
-       queue it is, rather than as eleven cards that each happen to start with
-       a digit. "nobody else claimed him" is gone for the same reason the
+       say. "nobody else claimed him" is gone for the same reason the
        UNCONTESTED pill is: it was on most rows, and a thing on most rows
-       tells you nothing. */
+       tells you nothing.
+
+       The big number is the ORDER THIS FIRED IN; the small one under it is the
+       seat the manager started the window on. They used to be the same number
+       because the list was sorted by seat, which is what made a manager's two
+       awards sit next to each other and read as two turns running -- the very
+       demotion that separated them was invisible. Keeping both, and saying on
+       the contested row what it cost, is the whole explanation. */
+    const note = rivals.length
+      ? `beat ${rivals.map((r) => `<b class="text-slate-400">${esc(mgrName(r))}</b>`)
+          .join(" and ")} to him${a.contested ? " — dropped to the back of the queue" : ""}`
+      : a.contested ? "contested — dropped to the back of the queue" : "";
     return `<li class="rounded-lg border pl-1.5 pr-2.5 py-1.5 flex gap-2 ${isMine
-      ? "border-wcgold bg-wcgold/5" : "border-slate-700 bg-slate-800/40"}">
-      <span class="shrink-0 w-5 text-center font-mono text-sm leading-6 ${
-        isMine ? "text-wcgold font-bold" : "text-slate-500"}">${a.waiver_pos ?? i + 1}</span>
+      ? "border-wcgold bg-wcgold/5" : "border-slate-700 bg-slate-800/40"}" data-award="${
+        esc(a.manager_id || "")}">
+      <span class="shrink-0 w-5 text-center">
+        <span class="block font-mono text-sm leading-5 ${
+          isMine ? "text-wcgold font-bold" : "text-slate-500"}" data-fired>${i + 1}</span>
+        ${a.waiver_pos != null
+          ? `<span class="block font-mono text-[9px] leading-3 text-slate-600" data-seat>#${
+              a.waiver_pos}</span>` : ""}
+      </span>
       <span class="min-w-0 flex-1">
         <span class="flex items-center gap-1.5 min-w-0">
           ${txMgrChip(m)}
@@ -9703,8 +9725,7 @@ function roundupHtml(key) {
           <span class="ml-auto">${contestTag(a)}</span>
         </span>
         ${swap(a)}
-        ${rivals.length ? `<span class="block text-[11px] text-slate-500">beat ${
-          rivals.map((r) => `<b class="text-slate-400">${esc(mgrName(r))}</b>`).join(" and ")} to him</span>` : ""}
+        ${note ? `<span class="block text-[11px] text-slate-500">${note}</span>` : ""}
       </span>
     </li>`;
   };
@@ -9730,11 +9751,14 @@ function roundupHtml(key) {
       </div>` : ""}
 
     ${awards.length
-      ? `<div><div class="eyebrow px-0.5 pb-1">In waiver order</div>
+      ? `<div><div class="eyebrow px-0.5 pb-1">In the order they fired</div>
           <ol class="space-y-1">${awards.map(row).join("")}</ol>
           ${awards.every((a) => a.contested == null)
             ? `<p class="text-[11px] text-slate-600 pt-1.5 px-0.5">Who beat whom was not
-                 recorded for this window.</p>` : ""}</div>`
+                 recorded for this window.</p>`
+            : seats
+              ? `<p class="text-[11px] text-slate-600 pt-1.5 px-0.5">Small number is the
+                   waiver seat each manager started the window on.</p>` : ""}</div>`
       : '<p class="text-sm text-slate-400 text-center py-3">No claims were awarded this window.</p>'}`;
 }
 
@@ -14616,10 +14640,18 @@ async function processFaClaims() {
       ? { ...tx, contested: au.contested, waiver_pos: au.pos,
           rivals: au.rivals?.length ? au.rivals : null }
       : tx;
-    S.sb.from("transactions").insert(withAudit).then((r) => {
-      if (r?.error && /contested|rivals|waiver_pos/.test(r.error.message || ""))
-        return S.sb.from("transactions").insert(tx).then(() => {}, () => {});
-    }, () => S.sb.from("transactions").insert(tx).then(() => {}, () => {}));
+    /* Awaited, so created_at is the order the awards actually FIRED in.
+       Fired and forgotten, eleven inserts race and can land in any order --
+       and the roundup had nothing else to sequence them by, so it fell back to
+       the seat each manager started the window on. Two awards by one manager
+       carry the same seat, so they sorted adjacent and read as two turns in a
+       row when a contested win had in fact sent him to the back between them.
+       Reported as exactly that. One extra round trip per award, once a
+       window. */
+    const wrote = await S.sb.from("transactions").insert(withAudit)
+      .then((r) => r, (e) => ({ error: e }));
+    if (wrote?.error && /contested|rivals|waiver_pos/.test(wrote.error.message || ""))
+      await S.sb.from("transactions").insert(tx).then(() => {}, () => {});
   }
   /* Stamp the winners' squads at the lock following the window these claims
      belong to. Run on time that is a future stamp; run late — nobody opened the

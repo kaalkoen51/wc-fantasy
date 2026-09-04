@@ -4907,20 +4907,24 @@ test("the waiver roundup shows every award in queue order, with yours picked out
     const me = myManager();
     const [a, b, c] = S.managers.filter((m) => m.id !== me.id);
     const key = faWindowKey();
-    const tx = (mid, inN, outN, pos, contested, rivals, wkey) => ({
+    /* `seq` is when the award FIRED -- the roundup sequences by created_at,
+       which the settler writes one awaited insert at a time. `pos` is the seat
+       the manager started the window on, which is a different fact. */
+    const tx = (mid, inN, outN, seq, pos, contested, rivals, wkey) => ({
       id: "t" + inN, league_id: S.league.id, manager_id: mid, kind: "waiver",
-      window_key: wkey || key, created_at: new Date().toISOString(),
+      window_key: wkey || key,
+      created_at: new Date(Date.parse("2026-08-20T10:00:00Z") + seq * 1000).toISOString(),
       in_player_id: "in_" + inN, in_player_name: inN,
       out_player_id: "out_" + outN, out_player_name: outN,
       contested, rivals, waiver_pos: pos });
 
     S.transactions = [
-      // Deliberately out of order, to prove the sheet sorts by the queue.
-      tx(b.id, "Wissa", "Florentino", 3, true, [c.id]),
-      tx(me.id, "Minteh", "Ndoye", 2, false, []),
-      tx(a.id, "Semenyo", "Mateta", 1, true, [b.id, c.id]),
+      // Deliberately out of order, to prove the sheet sorts them itself.
+      tx(b.id, "Wissa", "Florentino", 3, 3, true, [c.id]),
+      tx(me.id, "Minteh", "Ndoye", 2, 2, false, []),
+      tx(a.id, "Semenyo", "Mateta", 1, 1, true, [b.id, c.id]),
       // Last window's award: must not appear at all.
-      tx(c.id, "Ghost", "Old", 1, false, [], "some-older-window"),
+      tx(c.id, "Ghost", "Old", 1, 1, false, [], "some-older-window"),
     ];
     // A player I claimed and someone else took.
     S.faClaims = [{ id: "f1", manager_id: me.id, status: "failed",
@@ -4930,15 +4934,15 @@ test("the waiver roundup shows every award in queue order, with yours picked out
     const html = roundupHtml();
     /* Read the ORDERED LIST only. The personal block above it draws the same
        swap markup, so matching the whole sheet counts your own awards twice. */
-    const list = html.split("In waiver order")[1] || "";
+    const list = html.split("In the order they fired")[1] || "";
     const order = [...list.matchAll(/>([A-Z][a-z]+)<\/span>\s*<span class="shrink-0 text-slate-500 text-xs">◀/g)]
       .map((m) => m[1]);
     return { html, order, meName: me.name, aName: a.name,
              bName: b.name, cName: c.name };
   });
 
-  // 1 · Queue order, not points swing, and scoped to this window.
-  expect(seen.order, "the awards are not in waiver order")
+  // 1 · Firing order, not points swing, and scoped to this window.
+  expect(seen.order, "the awards are not in the order they fired")
     .toEqual(["Semenyo", "Minteh", "Wissa"]);
   expect(seen.html, "an award from an earlier window leaked in")
     .not.toContain("Ghost");
@@ -4962,6 +4966,84 @@ test("the waiver roundup shows every award in queue order, with yours picked out
   expect(seen.html, "there is no personal summary").toContain("Your window");
   expect(seen.html, "a player somebody took off me is not reported")
     .toMatch(new RegExp(`Wissa[\\s\\S]{0,80}${seen.bName}`));
+});
+
+test("a contested win separates a manager's two awards, and the roundup says so",
+  async ({ page }) => {
+  /* Reported off a live window: "why does it look like Tarrzan got two claims
+     in a row when his first one was contested?" -- and he was right to ask,
+     because a contested win costs the winner his turn.
+
+     It had, in fact, cost him it. The resolution was correct; the sheet was
+     not. It sorted by `waiver_pos`, the seat a manager starts the window on,
+     which is the SAME NUMBER for both of his awards -- so they sorted adjacent
+     and were numbered 6, 6, reading as two turns running with the demotion
+     that separated them shown nowhere at all.
+
+     Three facts, three places: the big number is the order it fired, the small
+     one is the seat he started on, and the contested row says what it cost. */
+  await openLeague(page, { managers: 4, played: 2 });
+
+  const seen = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true;
+    S.faClaims = [];
+
+    const me = myManager();
+    const [a, b] = S.managers.filter((m) => m.id !== me.id);
+    const key = faWindowKey();
+    const tx = (mid, inN, seq, pos, contested, rivals) => ({
+      id: "t" + inN, league_id: S.league.id, manager_id: mid, kind: "waiver",
+      window_key: key,
+      created_at: new Date(Date.parse("2026-08-20T10:00:00Z") + seq * 1000).toISOString(),
+      in_player_id: "in_" + inN, in_player_name: inN,
+      out_player_id: "out_" + inN, out_player_name: "Old" + seq,
+      contested, rivals, waiver_pos: pos });
+
+    /* b holds seat 1 and wins a contested claim, which sends him to the back;
+       a fires next off seat 2; b's second award can only come after that.
+       Seeded newest-first, so nothing passes by accident of array order. */
+    S.transactions = [
+      tx(b.id, "Wissa", 3, 1, false, []),
+      tx(a.id, "Minteh", 2, 2, false, []),
+      tx(b.id, "Semenyo", 1, 1, true, [a.id]),
+    ];
+
+    const box = document.createElement("div");
+    box.innerHTML = roundupHtml();
+    const rows = [...box.querySelectorAll("[data-award]")].map((li) => ({
+      mgr: li.dataset.award,
+      fired: li.querySelector("[data-fired]")?.textContent.trim(),
+      seat: li.querySelector("[data-seat]")?.textContent.trim(),
+      player: li.querySelector(".text-live")?.textContent.trim(),
+    }));
+    return { rows, text: box.textContent, aId: a.id, bId: b.id };
+  });
+
+  // 1 · The order they fired -- which is the thing that was wrong.
+  expect(seen.rows.map((r) => r.player),
+    "the awards are not in the order they fired").toEqual(["Semenyo", "Minteh", "Wissa"]);
+  expect(seen.rows.map((r) => r.mgr),
+    "one manager's two awards are still sitting next to each other")
+    .toEqual([seen.bId, seen.aId, seen.bId]);
+
+  // 2 · Numbered by that order, not by the seat -- the "6, 6" that was read
+  //     as two turns in a row.
+  expect(seen.rows.map((r) => r.fired),
+    "the rows are numbered by seat rather than by when they fired")
+    .toEqual(["1", "2", "3"]);
+
+  // 3 · The seat is not lost, it is just no longer pretending to be the order.
+  expect(seen.rows.map((r) => r.seat),
+    "the seat each manager started the window on is gone")
+    .toEqual(["#1", "#2", "#1"]);
+
+  // 4 · And the row that caused the gap says what it cost.
+  expect(seen.text, "a contested win does not say it cost the winner his turn")
+    .toContain("dropped to the back of the queue");
+  expect(seen.text.split("dropped to the back of the queue").length - 1,
+    "rows that were not contested are claiming a demotion").toBe(1);
 });
 
 test("the roundup is reachable from History, and opening it there does not consume it",
