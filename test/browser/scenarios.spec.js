@@ -5423,3 +5423,58 @@ test("the captain's double is in the round view, not only the season total",
     "the season view did not credit the captain the round view just did")
     .toBeGreaterThanOrEqual(seen.on.by[cap] - seen.off.by[cap]);
 });
+
+test("the roundup opens the newest window, not the first of the season",
+  async ({ page }) => {
+  /* Reported after a second window settled: "the transfer window roundup is
+     still on the old window".
+
+     S.transactions comes back ordered created_at DESCENDING, so the distinct
+     window keys were newest-first and "the last one" was the OLDEST. The
+     History button had been opening the first roundup of the season every
+     time -- invisible while there had only ever been one window. */
+  await openLeague(page, { managers: 4, played: 2 });
+
+  const seen = await page.evaluate(() => {
+    document.getElementById("reveal-sheet")?.classList.add("hidden");
+    document.getElementById("recap-sheet")?.classList.add("hidden");
+    S._recapChecked = true; S._roundupChecked = true;
+    const me = myManager();
+    const tx = (i, key, when, who) => ({
+      id: "t" + i, league_id: S.league.id, manager_id: me.id, kind: "waiver",
+      window_key: key, created_at: when,
+      in_player_id: "in" + i, in_player_name: who,
+      out_player_id: "ou" + i, out_player_name: "Out " + i,
+      contested: false, rivals: [], waiver_pos: 1 });
+    /* Newest FIRST, the order the database hands them back -- which is the
+       whole reason the old code picked the wrong end. */
+    S.transactions = [
+      tx(2, "window-two", "2026-09-01T20:00:00Z", "Newest Signing"),
+      tx(1, "window-one", "2026-08-27T20:00:00Z", "Older Signing"),
+    ];
+
+    S.tradeTab = "history";
+    setBoardTab("trades"); renderBoard();
+    const btn = document.querySelector("#board-trades [data-roundup]");
+    btn.click();
+    const sheet = document.getElementById("recap-body").textContent.replace(/\s+/g, " ");
+
+    // ...and the automatic showing, which takes no key at all.
+    document.getElementById("recap-body").innerHTML = "";
+    openRoundup();
+    const auto = document.getElementById("recap-body").textContent.replace(/\s+/g, " ");
+    return { btnKey: btn.dataset.roundup, sheet, auto, latest: latestAwardWindow() };
+  });
+
+  expect(seen.latest, "the newest window is not being identified by time")
+    .toBe("window-two");
+  expect(seen.btnKey, "the History button still points at the oldest window")
+    .toBe("window-two");
+  expect(seen.sheet, "the sheet opened the first window of the season")
+    .toContain("Newest Signing");
+  expect(seen.sheet, "last window's awards are still on screen")
+    .not.toContain("Older Signing");
+  // The automatic showing has to agree with the button.
+  expect(seen.auto, "the automatic roundup shows a different window than the button")
+    .toContain("Newest Signing");
+});

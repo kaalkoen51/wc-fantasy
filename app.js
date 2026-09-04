@@ -9588,8 +9588,29 @@ function maybeSquadReveal() {
    cap needed it -- NOT on a timestamp cut, because the boundary a timestamp
    would be compared against is derived from the fixture list and moves when a
    game is rescheduled, dragging last window's moves into this one. */
+/* The window whose awards are newest -- decided by the timestamps, not by
+   where a row happens to sit in the array.
+
+   S.transactions comes back ordered created_at DESCENDING, so the distinct
+   window keys are newest-first and "the last one" was the OLDEST. The History
+   button read it that way and opened the first roundup of the season, every
+   time. Reported as "the roundup is still on the old window".
+
+   Reading it off the rows rather than off faWindowKey() is the other half:
+   faWindowKey answers "which window is open NOW", which is the right question
+   when WRITING an award and the wrong one a minute after a window shuts,
+   because by then it has moved on to the next. */
+function latestAwardWindow() {
+  let best = null;
+  for (const x of (S.transactions || [])) {
+    if (x.kind !== "waiver" || !x.window_key) continue;
+    if (!best || String(x.created_at) > String(best.created_at)) best = x;
+  }
+  return best ? best.window_key : null;
+}
+
 function windowAwards(key) {
-  const k = key || faWindowKey();
+  const k = key || latestAwardWindow() || faWindowKey();
   return (S.transactions || []).filter((x) => x.kind === "waiver" && x.window_key === k);
 }
 
@@ -15425,11 +15446,9 @@ function transactionsLogHtml() {
      opened itself once per window -- miss it, or be on another tab when it
      fired, and the summary of what the window did was gone for good while the
      individual rows that make it up sat right here. */
-  const windows = [...new Set((S.transactions || [])
-    .filter((x) => x.kind === "waiver" && x.window_key)
-    .map((x) => x.window_key))];
-  const roundupBtn = windows.length ? `
-    <button data-roundup="${esc(windows[windows.length - 1])}"
+  const latest = latestAwardWindow();
+  const roundupBtn = latest ? `
+    <button data-roundup="${esc(latest)}"
       class="w-full rounded-xl border border-wcgold/50 bg-wcgold/10 px-3 py-2.5 flex items-center gap-2 text-left">
       <span class="shrink-0 text-base leading-none">⏳</span>
       <span class="min-w-0 flex-1">
