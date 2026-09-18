@@ -84,10 +84,27 @@ language sql stable security definer set search_path = public as $$
   select exists (select 1 from leagues g where g.id = l and g.owner_id = auth.uid());
 $$;
 
+/* Owner vs admin, and they are not the same job. The OWNER is the one account
+   that created the league; an ADMIN is the owner or anyone the owner handed
+   the admin code to (managers.is_admin, set only through the guarded functions
+   in schema.sql). Running the league -- adding a bot, removing a manager -- is
+   an admin's job. Deleting the league, or changing who administers it, stays
+   with the owner, so a co-admin can never lock the owner out. */
+create or replace function public.is_league_admin(l uuid)
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from leagues g where g.id = l and g.owner_id = auth.uid())
+      or exists (select 1 from managers m
+                  where m.league_id = l and m.user_id = auth.uid()
+                    and coalesce(m.is_admin, false));
+$$;
+
 revoke execute on function public.is_league_member(uuid) from public;
 revoke execute on function public.is_league_owner(uuid)  from public;
+revoke execute on function public.is_league_admin(uuid)  from public;
 grant  execute on function public.is_league_member(uuid) to authenticated;
 grant  execute on function public.is_league_owner(uuid)  to authenticated;
+grant  execute on function public.is_league_admin(uuid)  to authenticated;
 
 
 -- ---------------------------------------------------------------------------
@@ -151,14 +168,14 @@ create policy leagues_owner_delete on leagues
 create policy managers_read on managers
   for select to authenticated using (true);
 
--- Join a league as yourself -- or, as the league's owner, add a bot. Bots
--- deliberately have no user_id (nobody owns them), so without the second clause
--- "fill empty slots with bots" would be refused.
+-- Join a league as yourself -- or, as one of the league's admins, add a bot.
+-- Bots deliberately have no user_id (nobody owns them), so without the second
+-- clause "fill empty slots with bots" would be refused.
 create policy managers_insert on managers
   for insert to authenticated
   with check (
     user_id = auth.uid()
-    or (coalesce(is_bot, false) and is_league_owner(league_id))
+    or (coalesce(is_bot, false) and is_league_admin(league_id))
   );
 
 -- Any member of the league, NOT just the owner or the row's own user. This is
@@ -174,7 +191,7 @@ create policy managers_update on managers
   with check (is_league_member(league_id));
 
 create policy managers_owner_delete on managers
-  for delete to authenticated using (is_league_owner(league_id));
+  for delete to authenticated using (is_league_admin(league_id));
 
 
 -- ---------------------------------------------------------------------------
@@ -226,13 +243,22 @@ create policy competition_stats_write on competition_stats
 -- ---------------------------------------------------------------------------
 -- leagues.admin_token is a bearer secret sitting in a world-readable row: with
 -- broad SELECT (needed for invite lookup) anyone could read it and claim admin.
--- Once the app has stopped using the token (owner-by-account is already the
--- primary path), revoke it:
+--
+-- RUN THIS ONE. The admin code is how a second person becomes an admin now
+-- (schema.sql, claim_league_admin), and the whole design of that rests on the
+-- code never reaching a client that has not been given it:
 --
 --   revoke select (admin_token) on leagues from authenticated;
 --
--- Do this only after confirming no live league still depends on the token, and
--- backfill owner_id for legacy leagues first:
+-- The app no longer reads the column. The creator sees the code at creation
+-- from the value its own client generated, and afterwards through
+-- league_admin_code(), which returns it only to the creator. Until this revoke
+-- is applied, co-admin works but is not yet a guarantee -- anyone signed in can
+-- still read the code off the league row and claim it.
+--
+-- Backfill owner_id for legacy leagues first, or they will have no admin at
+-- all: with the column unreadable, the old client-side token comparison that
+-- was their only path can no longer succeed.
 --
 --   update leagues set owner_id = '<your-auth-uid>' where owner_id is null;
 --

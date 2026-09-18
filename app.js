@@ -446,16 +446,28 @@ function myManager() {
   if (uid && bySession?.user_id && bySession.user_id !== uid) return null;
   return bySession;
 }
-function isAdmin() {
-  /* An OWNED league is admin-by-account only. The token must not also work,
-     because finding a league by invite code has to be possible before you are
-     a member -- so leagues.admin_token is readable by any signed-in user. If a
-     matching token still conferred admin, anyone could read another league's
-     token and take it over. Every league the app creates now has an owner, so
-     the token path survives only for pre-account leagues that never had one. */
-  if (!S.league) return false;
+/* The one account that created this league. Admin, always, and the only one
+   who can change who ELSE is -- so a co-admin can run the league without ever
+   being able to lock its owner out of it. */
+function isLeagueOwner() {
   const uid = authUid();
-  if (S.league.owner_id) return !!uid && S.league.owner_id === uid;
+  return !!(uid && S.league?.owner_id && S.league.owner_id === uid);
+}
+
+function isAdmin() {
+  /* Creator, or somebody the creator gave the admin code to.
+     managers.is_admin is the flag, and it is worth saying where it CANNOT come
+     from: the browser never compares the admin code. It is checked inside
+     claim_league_admin() in the database, because finding a league by invite
+     code has to work before you are a member -- so the league row, and the
+     code in it, is readable by any signed-in user until the revoke in rls.sql
+     §7 is applied. A code the browser compares is a code anyone can read and
+     then hold up. A code the database compares is not.
+
+     The token branch below is the pre-account path, and only that: a league
+     with no owner_id at all. Every league the app creates has one. */
+  if (!S.league) return false;
+  if (S.league.owner_id) return isLeagueOwner() || !!myManager()?.is_admin;
   const s = getSession();
   return !!(s?.adminToken && s.adminToken === S.league.admin_token);
 }
@@ -480,9 +492,13 @@ function showView(name) {
     document.body.classList.toggle("has-rail", !off);
   }
   if (name === "join") renderJoinGate();
+  /* Every member, not just an admin. The gate behind this button -- "paste the
+     admin code" -- was unreachable for precisely the people it is for: it only
+     opened for somebody who was already an admin and had no use for it. A
+     non-admin gets the gate, an admin gets the panel. */
   const gear = $("hdr-admin");
   if (gear) gear.classList.toggle("hidden",
-    !(isAdmin() && ["board", "lobby", "draft"].includes(name)));
+    !((isAdmin() || !!myManager()) && ["board", "lobby", "draft"].includes(name)));
   // Only jump to top when the view actually changes — a re-render of the
   // same view (e.g. the refetch after starring a player) must preserve
   // the current scroll position.
@@ -3396,9 +3412,13 @@ async function createLeague() {
     const { data, error } = await insertLeagueRow(row);
     if (error) throw new Error(error.message);
 
-    setSession({ leagueId: data.id, adminToken: data.admin_token, managerId: null });
+    /* From `row`, not from what came back. This client generated the code a
+       moment ago, so it can show it without reading the column -- which is
+       what lets rls.sql §7 revoke SELECT on it. Reading it back here would
+       make the creation screen the one place that still needed it. */
+    setSession({ leagueId: data.id, adminToken: row.admin_token, managerId: null });
     $("create-code").textContent = data.invite_code;
-    $("create-admin").textContent = data.admin_token;
+    $("create-admin").textContent = row.admin_token;
     $("create-result").classList.remove("hidden");
     log(competition ? `✅ ${competition.name} ${competition.season} ready.` : "");
   } catch (e) {
@@ -3488,10 +3508,51 @@ async function findLeague() {
 
 function joinSessionBase() {
   const tok = $("join-admin-token").value.trim();
+  /* A typed code is only ever KEPT for a pre-account league, where isAdmin()'s
+     client-side comparison is the only path it has. For every league the app
+     makes, the code goes to claim_league_admin() in the database instead and
+     nothing about it is stored on the device. */
+  const legacy = (!S.joinTarget.owner_id && tok && tok === S.joinTarget.admin_token)
+    ? tok : null;
   return {
     leagueId: S.joinTarget.id,
-    adminToken: tok && tok === S.joinTarget.admin_token ? tok : (getSession()?.leagueId === S.joinTarget.id ? getSession()?.adminToken : null),
+    adminToken: legacy
+      || (getSession()?.leagueId === S.joinTarget.id ? getSession()?.adminToken : null),
   };
+}
+
+/* Paste the admin code, become an admin of this league.
+
+   The code is not compared here, and that is the point of the whole feature.
+   leagues SELECT has to stay broad -- looking a league up by invite code
+   happens before you are a member of it -- so any signed-in user can read the
+   league row. A code the browser checks is a code anyone can read and then
+   hold up; a code the database checks is not. claim_league_admin() compares it
+   under SECURITY DEFINER and flags the caller's own manager row. */
+async function claimAdminCode(code, leagueId) {
+  const tok = String(code || "").trim();
+  if (!tok) return { ok: false, why: "Enter the admin code." };
+  const id = leagueId || S.league?.id;
+  if (!id) return { ok: false, why: "No league open." };
+  const { data, error } = await S.sb.rpc("claim_league_admin",
+    { p_league: id, p_code: tok });
+  /* A missing function is not a wrong code, and saying "that code didn't
+     match" when the migration simply has not been run would send somebody off
+     hunting for a code that was right all along. */
+  if (error) return { ok: false, why: /claim_league_admin/.test(error.message || "")
+    ? "This league's database hasn't had the co-admin update applied yet — run schema.sql."
+    : error.message };
+  return data === true ? { ok: true }
+    : { ok: false, why: "That code didn't match. You also have to join the league first." };
+}
+
+// The join screen's optional code field, applied once the manager row exists --
+// claim_league_admin needs somebody to flag.
+async function claimTypedAdminCode() {
+  const tok = $("join-admin-token")?.value.trim();
+  if (!tok || !S.joinTarget?.owner_id) return;
+  const r = await claimAdminCode(tok, S.joinTarget.id);
+  toast(r.ok ? "Admin code accepted — you can manage this league." : r.why);
 }
 
 async function joinLeague() {
@@ -3507,6 +3568,7 @@ async function joinLeague() {
   const { data, error } = await insertManagerRow(row);
   if (error) return toast("Join failed: " + error.message);
   setSession({ ...joinSessionBase(), managerId: data.id });
+  await claimTypedAdminCode();
   await enterLeague();
 }
 
@@ -3524,6 +3586,7 @@ async function claimManager(m) {
     await S.sb.from("managers").update({ user_id: uid })
       .eq("id", m.id).is("user_id", null).then(() => {}, () => {});
   setSession({ ...joinSessionBase(), managerId: m.id });
+  await claimTypedAdminCode();
   await enterLeague();
 }
 
@@ -3659,7 +3722,9 @@ async function startPracticeDraft(bots, competition) {
   row.owner_id = authUid();
   const { data: league, error } = await insertLeagueRow(row);
   if (error) throw new Error(error.message);
-  setSession({ leagueId: league.id, adminToken: league.admin_token, managerId: null });
+  // row, not league: the code this client generated, so nothing here depends
+  // on being able to read the column back. See createLeague.
+  setSession({ leagueId: league.id, adminToken: row.admin_token, managerId: null });
   S.league = league;
   const meRow = { league_id: league.id, name: "You", join_token: crypto.randomUUID(),
                   user_id: authUid() };
@@ -18381,6 +18446,69 @@ async function resetConfigEditor() {
   renderAdmin(); renderBoard();
 }
 
+/* Who can run this league, and the code that lets somebody else.
+
+   Only the creator sees the code or the buttons. A co-admin sees the list --
+   knowing who else holds the keys is part of holding them -- and cannot change
+   it, which is the same split set_league_admin() enforces in the database. */
+function renderAdminPeople() {
+  if (!$("adm-sec-people")) return;
+  const owner = isLeagueOwner();
+  const people = (S.managers || []).filter((m) => !m.is_bot);
+  const isCreator = (m) => !!S.league?.owner_id && m.user_id === S.league.owner_id;
+  const creator = people.find(isCreator) || null;
+  const co = people.filter((m) => m.is_admin && !isCreator(m));
+  const n = co.length + 1;   // the creator is always one of them
+  $("adm-people-count").textContent = n === 1 ? "only you" : `${n} admins`;
+
+  const pill = (text, cls) =>
+    `<span class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wide ${cls}">${text}</span>`;
+  const row = (m, kind) => {
+    /* The creator's own row never offers a button. Standing down would leave a
+       league whose only un-appointer had un-appointed himself, and nothing in
+       the app could put it back. */
+    const act = kind === "creator" ? pill("👑 CREATOR", "bg-wcgold text-slate-900")
+      : !owner ? (kind === "admin" ? pill("ADMIN", "bg-wcgold/20 text-wcgold") : "")
+      : `<button data-people-set="${esc(m.id)}" data-people-on="${kind === "admin" ? "0" : "1"}"
+           class="shrink-0 rounded-lg border px-2.5 py-1 text-[11px] font-semibold ${kind === "admin"
+             ? "border-wcgold/50 bg-wcgold/10 text-wcgold" : "border-slate-700 bg-slate-800 text-slate-300"}"
+           >${kind === "admin" ? "Admin ✓" : "Make admin"}</button>`;
+    return `<li class="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800/40 px-2.5 py-1.5">
+      <span class="min-w-0 flex-1">${txMgrChip(m)}</span>${act}</li>`;
+  };
+
+  const rows = [];
+  if (creator) rows.push(row(creator, "creator"));
+  else rows.push(`<li class="rounded-lg border border-slate-700 bg-slate-800/40 px-2.5 py-1.5
+    text-xs text-slate-400">👑 The creator isn't playing in this league.</li>`);
+  for (const m of people) {
+    if (isCreator(m)) continue;
+    rows.push(row(m, m.is_admin ? "admin" : "member"));
+  }
+  $("adm-people-list").innerHTML = rows.join("");
+  $("adm-people-code").classList.toggle("hidden", !owner);
+  $("adm-people-note").textContent = owner
+    ? "An admin can run the season. Only you can add or remove one, or delete the league."
+    : "Only the league's creator can change this list.";
+  // A new list means a stale reveal: hide the code again rather than leaving
+  // somebody else's screen showing it after a refetch.
+  const tok = $("adm-people-token");
+  if (tok && tok.dataset.shown !== "1") tok.textContent = "••••••••";
+
+  $("adm-people-list").querySelectorAll("[data-people-set]").forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true;
+      const on = b.dataset.peopleOn === "1";
+      const { error } = await S.sb.rpc("set_league_admin",
+        { p_manager: b.dataset.peopleSet, p_on: on });
+      if (error) { b.disabled = false; return toast(error.message); }
+      await refetchAll();
+      renderAdmin();
+      toast(on ? "They can manage this league now." : "Admin removed.");
+    };
+  });
+}
+
 function renderAdmin() {
   const ok = isAdmin();
   $("admin-gate").classList.toggle("hidden", ok);
@@ -18396,6 +18524,7 @@ function renderAdmin() {
      locks, scoring, positions, the pool, waivers, the draft and the managers. */
   const owner = isAppOwner();
   $("adm-owner-note")?.classList.toggle("hidden", !owner);
+  renderAdminPeople();
   const injNote = $("adm-injury-note");
   if (injNote) injNote.textContent = injuryFeedNote();
   document.querySelectorAll("[data-owner-only]").forEach((el) => {
@@ -19005,11 +19134,44 @@ function wire() {
   });
   // Leave the admin view first, then let route() pick the phase view.
   $("admin-back").onclick = () => { showView("board"); route(); };
-  $("admin-unlock").onclick = () => {
-    const tok = $("admin-token-input").value.trim();
-    if (!tok || tok !== S.league?.admin_token) return toast("Wrong token.");
-    setSession({ ...getSession(), adminToken: tok });
-    renderAdmin();
+  $("admin-unlock").onclick = async () => {
+    const btn = $("admin-unlock");
+    btn.disabled = true;
+    try {
+      const r = await claimAdminCode($("admin-token-input").value);
+      if (!r.ok) return toast(r.why);
+      /* Refetch rather than patch the local row. The flag was set on the
+         server by a function, so the only copy this client can trust is the
+         one it reads back -- and every screen that asks isAdmin() is about to
+         start answering differently. */
+      await refetchAll();
+      $("admin-token-input").value = "";
+      toast("You're an admin of this league now.");
+      renderAdmin(); renderBoard(); showView("admin");
+    } finally { btn.disabled = false; }
+  };
+  /* Fetched, not read off S.league. The code is deliberately not in the league
+     row this client holds -- rls.sql §7 revokes SELECT on it -- so the only
+     way to show it is to ask for it, and league_admin_code() hands it back to
+     the creator and nobody else. */
+  const reveal = $("adm-people-reveal");
+  if (reveal) reveal.onclick = async () => {
+    reveal.disabled = true;
+    try {
+      const { data, error } = await S.sb.rpc("league_admin_code", { p_league: S.league.id });
+      if (error) return toast(error.message);
+      if (!data) return toast("Only the league's creator can see the code.");
+      $("adm-people-token").textContent = data;
+      $("adm-people-token").dataset.shown = "1";
+      reveal.classList.add("hidden");
+      $("adm-people-copy").classList.remove("hidden");
+    } finally { reveal.disabled = false; }
+  };
+  const copyCode = $("adm-people-copy");
+  if (copyCode) copyCode.onclick = async () => {
+    const txt = $("adm-people-token").textContent;
+    try { await navigator.clipboard.writeText(txt); toast("Admin code copied."); }
+    catch { toast("Copy failed — select it by hand."); }
   };
   $("adm-psearch").oninput = admRenderPlayerSearch;
   $("adm-drafted").onchange = admRenderPlayerSearch;

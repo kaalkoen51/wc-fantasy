@@ -5560,3 +5560,133 @@ test("the roundup opens the newest window, not the first of the season",
   expect(seen.auto, "the automatic roundup shows a different window than the button")
     .toContain("Newest Signing");
 });
+
+test("the admin code makes a second person an admin, and the code is never compared here",
+  async ({ page }) => {
+  /* A league had exactly one admin -- the account that created it -- and the
+     admin code conferred nothing. It was shown at creation and offered on the
+     join screen, and isAdmin() ignored it, so a manager handed the code could
+     paste it and silently get nothing at all. Reported as exactly that.
+
+     The code is now checked by claim_league_admin() in the database, never in
+     the browser. That is not an implementation detail: leagues SELECT has to
+     stay broad, because looking a league up by invite code happens before you
+     are a member, so a code the browser compares is one anybody can read out
+     of the league row and then hold up. */
+  await openLeague(page, { managers: 4, played: 2 });
+
+  const seen = await page.evaluate(async () => {
+    document.querySelectorAll("[id$='-sheet']").forEach((e) => e.classList.add("hidden"));
+    S._recapChecked = true;
+
+    // Become an ordinary member: someone else's league, and not its creator.
+    const me = myManager();
+    S.league.owner_id = "somebody-else";
+    const before = { admin: isAdmin(), owner: isLeagueOwner() };
+
+    // The gate is what a non-admin gets, and it has to be REACHABLE -- it used
+    // to open only for people who were already admins and had no use for it.
+    showView("board");
+    const gear = !document.getElementById("hdr-admin").classList.contains("hidden");
+    renderAdmin();
+    const gated = !document.getElementById("admin-gate").classList.contains("hidden")
+      && document.getElementById("admin-panel").classList.contains("hidden");
+
+    const wrong = await claimAdminCode("not-the-code");
+    const stillOut = isAdmin();
+
+    const right = await claimAdminCode(S.league.admin_token);
+    // What the database did, read back the way the app reads it.
+    S.managers = (await S.sb.from("managers").select("*")
+      .eq("league_id", S.league.id)).data;
+    const after = { admin: isAdmin(), owner: isLeagueOwner() };
+
+    renderAdmin();
+    const opened = !document.getElementById("admin-panel").classList.contains("hidden");
+    return { before, after, gear, gated, wrong, right, stillOut, opened,
+             flagged: S.managers.find((m) => m.id === me.id)?.is_admin };
+  });
+
+  // 1 · Before: an ordinary member, offered the gate rather than the panel.
+  expect(seen.before.admin, "a plain member is already an admin").toBe(false);
+  expect(seen.gear, "the way in to the gate is hidden from the people it is for").toBe(true);
+  expect(seen.gated, "a non-admin is not shown the gate").toBe(true);
+
+  // 2 · A wrong code is refused, and says so rather than failing silently --
+  //     which is the whole complaint this change answers.
+  expect(seen.wrong.ok, "a wrong code was accepted").toBe(false);
+  expect(seen.wrong.why, "a wrong code is refused without saying anything").toBeTruthy();
+  expect(seen.stillOut, "a wrong code still made somebody an admin").toBe(false);
+
+  // 3 · The right code works, and the flag is what the DATABASE holds.
+  expect(seen.right.ok, "the admin code did not work").toBe(true);
+  expect(seen.flagged, "nothing was written to the manager row").toBe(true);
+  expect(seen.after.admin, "the code was accepted but the app still says no").toBe(true);
+  expect(seen.opened, "an admin is still being shown the gate").toBe(true);
+
+  // 4 · ...without becoming the creator. A co-admin runs the league; they do
+  //     not own it, and cannot appoint or remove anyone.
+  expect(seen.after.owner, "a co-admin was promoted to league creator").toBe(false);
+});
+
+test("only the creator can appoint or remove an admin, and never demote themselves",
+  async ({ page }) => {
+  await openLeague(page, { managers: 4, played: 2 });
+
+  const seen = await page.evaluate(async () => {
+    document.querySelectorAll("[id$='-sheet']").forEach((e) => e.classList.add("hidden"));
+    S._recapChecked = true;
+    const me = myManager();                 // Mgr1 IS the league's creator
+    const other = S.managers.find((m) => m.id !== me.id);
+
+    renderAdmin();
+    const list = document.getElementById("adm-people-list");
+    const rowOf = (id) => [...list.querySelectorAll("li")].find(
+      (li) => li.querySelector(`[data-people-set="${id}"]`))
+      || [...list.querySelectorAll("li")][0];
+    const mineHasButton = !!list.querySelector(`[data-people-set="${me.id}"]`);
+    // Read now, while this render is still the creator's own view of the list.
+    const creatorRow = rowOf(me.id).textContent;
+    const btn = list.querySelector(`[data-people-set="${other.id}"]`);
+    const labelBefore = btn?.textContent.trim();
+    btn?.click();
+    await new Promise((r) => setTimeout(r, 60));
+    const flagged = (await S.sb.from("managers").select("*")
+      .eq("id", other.id)).data?.[0]?.is_admin;
+    const labelAfter = document.getElementById("adm-people-list")
+      .querySelector(`[data-people-set="${other.id}"]`)?.textContent.trim();
+
+    // Now be a co-admin rather than the creator: the list stays, the buttons go.
+    S.league.owner_id = "somebody-else";
+    S.managers.find((m) => m.id === me.id).is_admin = true;
+    renderAdmin();
+    const asCoAdmin = {
+      panel: !document.getElementById("admin-panel").classList.contains("hidden"),
+      buttons: document.getElementById("adm-people-list")
+        .querySelectorAll("[data-people-set]").length,
+      code: !document.getElementById("adm-people-code").classList.contains("hidden"),
+      names: document.getElementById("adm-people-list").textContent,
+    };
+    return { mineHasButton, labelBefore, labelAfter, flagged,
+             asCoAdmin, otherName: other.name, creatorRow };
+  });
+
+  // 1 · The creator can appoint, and it lands in the database.
+  expect(seen.labelBefore, "the creator is not offered a way to appoint anyone")
+    .toContain("Make admin");
+  expect(seen.flagged, "appointing an admin wrote nothing").toBe(true);
+  expect(seen.labelAfter, "the list does not show the new admin as one").toContain("Admin");
+
+  // 2 · The creator's own row has no toggle. Standing down would leave a league
+  //     whose only un-appointer had un-appointed himself.
+  expect(seen.mineHasButton, "the creator can demote themselves out of their own league")
+    .toBe(false);
+  expect(seen.creatorRow, "the creator is not marked as such").toContain("CREATOR");
+
+  // 3 · A co-admin runs the league but cannot staff it, and never sees the code.
+  expect(seen.asCoAdmin.panel, "a co-admin is locked out of the panel they were given").toBe(true);
+  expect(seen.asCoAdmin.names, "a co-admin cannot see who else is an admin")
+    .toContain(seen.otherName);
+  expect(seen.asCoAdmin.buttons, "a co-admin can appoint and remove admins").toBe(0);
+  expect(seen.asCoAdmin.code, "a co-admin is shown the admin code").toBe(false);
+});

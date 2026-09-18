@@ -174,6 +174,37 @@
            renders correctly around a trade. Whether the real function swaps
            correctly is schema.sql's business, and test_sql.sh's. */
         rpc: async (name, args) => {
+          /* The co-admin functions, modelled to the same standard and with the
+             same caveat as accept_trade below: what these prove is that the
+             APP asks the right question and renders the answer, not that the
+             real functions are correct -- that is schema.sql's business.
+
+             The two rules worth modelling are the ones the screens depend on:
+             a wrong code returns false rather than raising, and appointing or
+             revoking is refused for anyone but the league's creator. */
+          if (name === "claim_league_admin") {
+            const l = rowsOf("leagues").find((x) => x.id === args.p_league);
+            const code = String(args.p_code ?? "").trim();
+            if (!l || !code || l.admin_token !== code) return { data: false, error: null };
+            const m = rowsOf("managers").find(
+              (x) => x.league_id === args.p_league && x.user_id === USER.id);
+            if (!m) return { data: false, error: null };
+            m.is_admin = true;
+            return { data: true, error: null };
+          }
+          if (name === "set_league_admin") {
+            const m = rowsOf("managers").find((x) => x.id === args.p_manager);
+            if (!m) return err("P0001", "no such manager");
+            const l = rowsOf("leagues").find((x) => x.id === m.league_id);
+            if (l?.owner_id !== USER.id)
+              return err("P0001", "only the league creator can change who administers it");
+            m.is_admin = !!args.p_on;
+            return { data: null, error: null };
+          }
+          if (name === "league_admin_code") {
+            const l = rowsOf("leagues").find((x) => x.id === args.p_league);
+            return { data: l && l.owner_id === USER.id ? l.admin_token : null, error: null };
+          }
           if (name !== "accept_trade") return { data: null, error: null };
           const trade = rowsOf("trades").find((t) => t.id === args.p_trade_id);
           const league = rowsOf("leagues").find((l) => l.id === trade?.league_id);

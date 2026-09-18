@@ -77,6 +77,7 @@ function seedLeague({ managers = 2, played = 3, quirk = null,
     leagues: [{
       id: LEAGUE, name: "Scenario", invite_code: "SCEN", current_pick: 9999,
       num_managers: managers, sim: false, owner_id: OWNER,
+      admin_token: "scenario-admin-code",
       ...(predraft ? { current_pick: 1, pick_duration_seconds: 60 } : {}),
       config: { autoWindows: true, fa_defer_to_close: true, captain: true,
                 ...(h2h ? { h2hEnabled: true } : {}) },
