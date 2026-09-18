@@ -735,6 +735,121 @@ alter table lineup_snapshots add column if not exists round_key text;
 create index if not exists lineup_snapshots_round_idx
     on lineup_snapshots (league_id, manager_id, round_key);
 
+-- ---------------------------------------------------------------------------
+-- Co-admins — more than one person may run a league
+-- ---------------------------------------------------------------------------
+/* A league had exactly one admin: leagues.owner_id, the account that created
+   it. The admin code (leagues.admin_token) was shown at creation and offered
+   on the join screen, but conferred nothing -- isAdmin() ignored it the moment
+   a league had an owner, and every league the app makes has one. So a second
+   person could be handed the code, paste it, and silently get nothing.
+
+   The code was demoted for a real reason. leagues SELECT has to stay broad
+   (finding a league by invite code happens BEFORE you are a member), so the
+   row -- and the token in it -- is readable by any signed-in user. A token
+   that both grants admin and can be read by anyone is a takeover waiting to
+   happen.
+
+   So the code is never compared in the browser. claim_league_admin() compares
+   it HERE, under SECURITY DEFINER, and the app stops reading the column at
+   all: the creator sees the code once at creation from the value its own
+   client generated, and afterwards through league_admin_code(), which hands it
+   back only to the creator. That makes the revoke in rls.sql §7 --
+   `revoke select (admin_token) on leagues from authenticated` -- safe to
+   apply, and it is what actually closes the hole. Until it is applied the code
+   is still readable; the feature works either way, but the guarantee does not
+   arrive until you run it. */
+alter table managers add column if not exists is_admin boolean not null default false;
+
+/* The flag cannot be an ordinary column write. managers_update (rls.sql §4) is
+   deliberately open to ANY member of the league -- resolving waivers rewrites
+   every manager's waiver_order from whichever client noticed the window shut,
+   so restricting it to the row's own user would leave waivers unresolved. A
+   plain is_admin column under that policy is self-grantable by anyone with the
+   anon key and a manager row.
+
+   Same shape as guard_sim_flag above, and for the same reason: a trigger fires
+   regardless of RLS, so this holds even where the rls.sql lockdown has never
+   been applied. The two functions below raise the session flag around their
+   own writes; nothing else can. */
+create or replace function guard_is_admin() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+    if coalesce(new.is_admin, false) is not distinct from coalesce(old.is_admin, false)
+        then return new; end if;
+    if coalesce(current_setting('draftbaron.admin_write', true), '') <> 'on' then
+        raise exception 'managers.is_admin is set through claim_league_admin() or set_league_admin()';
+    end if;
+    return new;
+end $$;
+
+drop trigger if exists managers_guard_is_admin on managers;
+create trigger managers_guard_is_admin before update on managers
+    for each row execute function guard_is_admin();
+
+/* Paste the code, become an admin of that league. Returns false rather than
+   raising on a wrong code: a wrong code is an ordinary typo, not an error
+   worth a stack trace, and the caller needs to tell those two apart from "you
+   are not in this league yet" anyway -- which is why joining first is a
+   precondition rather than something this silently fixes. A co-admin is one of
+   the league's managers; there is no admin who is not playing. */
+create or replace function claim_league_admin(p_league uuid, p_code text)
+returns boolean
+language plpgsql security definer set search_path = public as $$
+declare v_mgr uuid;
+begin
+    if p_code is null or btrim(p_code) = '' then return false; end if;
+    if not exists (select 1 from leagues l
+                    where l.id = p_league and l.admin_token = btrim(p_code))
+        then return false; end if;
+    select m.id into v_mgr from managers m
+      where m.league_id = p_league and m.user_id = auth.uid() limit 1;
+    if v_mgr is null then return false; end if;
+    /* Lowered again immediately. set_config(..., true) is TRANSACTION-local,
+       not statement-local, so leaving it raised would let anything else in the
+       same transaction write is_admin freely -- which is the entire thing the
+       trigger exists to stop. Caught by test/sql/admins.sql. */
+    perform set_config('draftbaron.admin_write', 'on', true);
+    update managers set is_admin = true where id = v_mgr;
+    perform set_config('draftbaron.admin_write', 'off', true);
+    return true;
+end $$;
+
+/* Taking it back, and handing it out without the code. Creator only -- sharing
+   the code is how you appoint, but only the creator can un-appoint, so a
+   co-admin can run the league and cannot lock its owner out of it. */
+create or replace function set_league_admin(p_manager uuid, p_on boolean)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare v_league uuid;
+begin
+    select league_id into v_league from managers where id = p_manager;
+    if v_league is null then raise exception 'no such manager'; end if;
+    if not exists (select 1 from leagues
+                    where id = v_league and owner_id = auth.uid()) then
+        raise exception 'only the league creator can change who administers it';
+    end if;
+    perform set_config('draftbaron.admin_write', 'on', true);
+    update managers set is_admin = coalesce(p_on, false) where id = p_manager;
+    perform set_config('draftbaron.admin_write', 'off', true);   -- see above
+end $$;
+
+-- The creator's own copy of the code, for handing to somebody. Returns null to
+-- everyone else, including co-admins: they can run the league, not staff it.
+create or replace function league_admin_code(p_league uuid)
+returns text
+language sql stable security definer set search_path = public as $$
+    select l.admin_token from leagues l
+     where l.id = p_league and l.owner_id = auth.uid();
+$$;
+
+revoke execute on function claim_league_admin(uuid, text) from public;
+revoke execute on function set_league_admin(uuid, boolean) from public;
+revoke execute on function league_admin_code(uuid)         from public;
+grant  execute on function claim_league_admin(uuid, text)  to authenticated;
+grant  execute on function set_league_admin(uuid, boolean) to authenticated;
+grant  execute on function league_admin_code(uuid)         to authenticated;
+
 -- RLS. Open policies are created ONLY while the rls.sql lockdown has never
 -- been applied (detected by its is_league_member() helper). This block used to
 -- drop-and-recreate "open access" unconditionally, which meant re-running

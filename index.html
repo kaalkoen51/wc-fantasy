@@ -440,8 +440,8 @@
         <div id="join-reclaim-list" class="space-y-2"></div>
       </div>
       <div>
-        <label class="block text-sm text-slate-400">Admin? Paste your admin token to manage this league on this device
-          <input id="join-admin-token" placeholder="admin token (optional)" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100"></label>
+        <label class="block text-sm text-slate-400">Been given the admin code? Paste it to help run this league
+          <input id="join-admin-token" placeholder="admin code (optional)" class="mt-1 w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-100"></label>
       </div>
     </div>
     <button class="back-btn w-full text-xs text-slate-400 underline">back</button>
@@ -644,10 +644,12 @@
   <section data-view="admin" class="hidden space-y-4">
     <button id="admin-back" class="text-xs text-slate-400 underline">← back</button>
     <div id="admin-gate" class="space-y-3">
-      <h2 class="text-xl font-semibold">Admin access</h2>
-      <p class="text-sm text-slate-400">Paste the admin token you got when the league was created.</p>
-      <input id="admin-token-input" placeholder="admin token" class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2">
-      <button id="admin-unlock" class="w-full btn-primary rounded-lg py-2 font-semibold">Unlock</button>
+      <h2 class="text-xl font-semibold">League settings</h2>
+      <p class="text-sm text-slate-400">Only this league's admins can change how it runs.
+        If you've been given the <b class="text-slate-300">admin code</b>, paste it here and you'll
+        become one too.</p>
+      <input id="admin-token-input" placeholder="admin code" class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2">
+      <button id="admin-unlock" class="w-full btn-primary rounded-lg py-2 font-semibold">Become an admin</button>
     </div>
     <div id="admin-panel" class="hidden space-y-3">
       <!-- Shown to the app owner only, because it is the only person who can
@@ -837,6 +839,29 @@
           <span id="adm-sort-status" class="text-sm font-semibold"></span>
           <button id="adm-sort-toggle" class="rounded-lg px-4 py-2 text-sm font-semibold btn-primary"></button>
         </div>
+      </div>
+        </div>
+      </details>
+      <details id="adm-sec-people" class="rounded-xl border border-slate-700 bg-slate-900/40">
+        <summary class="px-4 py-3 cursor-pointer select-none flex items-baseline justify-between gap-2">
+          <span class="font-semibold text-sm">👥 Who can manage this league</span>
+          <span id="adm-people-count" class="text-xs text-slate-400"></span></summary>
+        <div class="px-2 pb-2 space-y-3">
+<div class="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
+        <p class="text-xs text-slate-400">Anyone you give the admin code to can run this league
+          with you — the window, line-up locks, scoring, the pool, waivers and the draft.
+          Only you can take it back.</p>
+        <div id="adm-people-code" class="hidden space-y-1">
+          <div class="eyebrow">Admin code</div>
+          <div class="flex items-center gap-2">
+            <code id="adm-people-token" class="min-w-0 flex-1 truncate rounded-lg bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs text-amber-300">••••••••</code>
+            <button id="adm-people-reveal" class="shrink-0 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold">Show</button>
+            <button id="adm-people-copy" class="hidden shrink-0 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold">Copy</button>
+          </div>
+          <p class="text-[11px] text-slate-500">They join the league first, then paste this under ⚙︎.</p>
+        </div>
+        <ul id="adm-people-list" class="space-y-1"></ul>
+        <p id="adm-people-note" class="text-[11px] text-slate-500"></p>
       </div>
         </div>
       </details>

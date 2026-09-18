@@ -73,4 +73,7 @@ step "settlement claim semantics"
 step "accept_trade window guard"
 "${PSQL[@]}" -f "$ROOT/test/sql/trades.sql"
 
+step "co-admins"
+"${PSQL[@]}" -f "$ROOT/test/sql/admins.sql"
+
 echo "all sql checks passed"
