@@ -169,12 +169,14 @@ def main():
         ms = rounds[r]
         first_ko = min(str(m.get("date")) for m in ms)
         print(f"   {r:>5} : {len(ms):>2}  {first_ko}")
-    upcoming = sorted((when(m), m) for m in kept if when(m) and when(m) > now)
+    upcoming = sorted(((when(m), m) for m in kept if when(m) and when(m) > now),
+                      key=lambda x: x[0])
     if upcoming:
         w, m = upcoming[0]
         print(f"\n  -> next settled match after now: round {m.get('round')} at {w:%Y-%m-%d %H:%M}Z")
-    dropped_soon = sorted((when(m), m) for m in season
-                          if not settled(m) and when(m) and when(m) > now)[:5]
+    dropped_soon = sorted(((when(m), m) for m in season
+                           if not settled(m) and when(m) and when(m) > now),
+                          key=lambda x: x[0])[:5]
     for w, m in dropped_soon:
         print(f"  dropped (TBC) {w:%Y-%m-%d}: round {m.get('round')} "
               f"{(m.get('homeTeam') or {}).get('name')} v {(m.get('awayTeam') or {}).get('name')} "

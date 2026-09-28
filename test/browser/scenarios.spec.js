@@ -5690,3 +5690,297 @@ test("only the creator can appoint or remove an admin, and never demote themselv
   expect(seen.asCoAdmin.buttons, "a co-admin can appoint and remove admins").toBe(0);
   expect(seen.asCoAdmin.code, "a co-admin is shown the admin code").toBe(false);
 });
+
+/* ---------- a live URC league: four reports from one message ---------- */
+
+const RUGBY_COMP = { name: "United Rugby Championship", apiLeagueId: 1068,
+                     season: 2026, sport: "rugby" };
+
+test("a rugby line-up is an XV, and never asks for a keeper", async ({ page }) => {
+  /* "The app still refers to 'XI', and when setting a lineup it says I need to
+     select a keeper." The keeper half was one line: the validity message tested
+     `counts.GK !== 1`, and a rugby side has no GK count, so `undefined !== 1`
+     was true for every unfinished rugby line-up. The line above it had already
+     worked out the sport's own exact-count groups -- rugby has none -- and was
+     ignored. */
+  await openLeague(page, { managers: 2, played: 2 });
+  const seen = await page.evaluate(() => {
+    document.querySelectorAll("[id$='-sheet']").forEach((e) => e.classList.add("hidden"));
+    S._recapChecked = true;
+    S.league.competition = { name: "United Rugby Championship", apiLeagueId: 1068,
+                             season: 2026, sport: "rugby" };
+    const me = myManager();
+    // A rugby squad with too few starters named.
+    const pos = ["PR", "HK", "PR", "LK", "LK", "LF", "LF", "LF", "SH", "FH", "CE", "CE", "OB", "OB", "OB"];
+    S.picks = S.picks.filter((pk) => pk.manager_id !== me.id);
+    pos.forEach((p, i) => S.picks.push({ id: "rp" + i, league_id: S.league.id, manager_id: me.id,
+      player_id: "rug_" + i, player_name: "Player " + i, position: p, team: "Leinster",
+      slot: i < 12 ? p : "SUB_" + p, is_sub: i >= 12, pick_number: 500 + i }));
+    S.lineupOpenOverride = true;
+    openLineup();
+    S.lineupEdit = true;
+    renderLineup();
+    return { valid: document.getElementById("lineup-valid").textContent,
+             rule: document.getElementById("lineup-rule").textContent,
+             count: document.getElementById("lineup-count").textContent,
+             dreamBtn: document.querySelector('[data-statsview="dream"]')?.textContent };
+  });
+  expect(seen.valid, "a rugby line-up is still being asked for a keeper").not.toMatch(/keeper/i);
+  expect(seen.count, "...or the count line still wants one").not.toMatch(/keeper|GK/);
+  expect(seen.valid, "an unfinished line-up doesn't say what's wrong").toMatch(/starters/);
+  expect(seen.rule, "the line-up sheet still calls a rugby side an XI").toMatch(/XV/);
+  expect(seen.rule).not.toMatch(/\bXI\b/);
+});
+
+test("in a deals-at-close league, accepting locks a deal in and nobody moves until the window shuts",
+  async ({ page }) => {
+  /* "Manager to manager trades should also only execute when the trade window
+     closes." Accepting marks a deal 'agreed'; settlement executes it, after the
+     waiver claims. A deal overtaken in the meantime fails with its reason. */
+  page.on("dialog", (d) => d.accept());
+  await openLeague(page, { managers: 3, played: 2 });
+  const seen = await page.evaluate(async () => {
+    document.querySelectorAll("[id$='-sheet']").forEach((e) => e.classList.add("hidden"));
+    S._recapChecked = true;
+    S.league.config = { ...(S.league.config || {}), trades_defer_to_close: true };
+    const me = myManager();
+    const [a, b] = S.managers.filter((m) => m.id !== me.id);
+    const mine = (mid) => S.picks.filter((pk) => pk.manager_id === mid && pk.slot !== "TEAM");
+    const [p1, p2] = [mine(a.id)[0], mine(me.id)[0]];
+    const [q1, q2] = [mine(b.id)[1], mine(me.id)[1]];
+    const deal = (id, from, give, get) => ({ id, league_id: S.league.id,
+      proposer_manager_id: from, target_manager_id: me.id, status: "proposed",
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      trade_items: [{ id: id + "i", trade_id: id, offered_pick_id: give.id, requested_pick_id: get.id,
+        offered_player_id: give.player_id, requested_player_id: get.player_id,
+        offered_player_name: give.player_name, requested_player_name: get.player_name }] });
+    const t1 = deal("t-keep", a.id, p1, p2), t2 = deal("t-stale", b.id, q1, q2);
+    for (const t of [t1, t2]) {
+      const { trade_items, ...row } = t;
+      window.__db.tables.trades.push(row);
+      window.__db.tables.trade_items = [...(window.__db.tables.trade_items || []), ...trade_items];
+    }
+    S.trades = [t1, t2];
+    const before = { p1: p1.player_id, p2: p2.player_id };
+
+    // Accept both, as the target would.
+    window.tradingOpen = () => true;
+    // Through the Accept button's own handler, not agreeTrade directly -- the
+    // routing between "swap now" and "agree" is part of what is under test.
+    await acceptTrade(t1); await acceptTrade(t2);
+    const dbStatus = (id) => window.__db.tables.trades.find((t) => t.id === id).status;
+    const afterAccept = { t1: dbStatus("t-keep"), t2: dbStatus("t-stale"),
+      p1: window.__db.tables.picks.find((pk) => pk.id === p1.id).player_id };
+
+    // The Deals tab shows what is waiting.
+    S.trades = S.trades.map((t) => ({ ...t, status: "agreed" }));
+    setBoardTab("trades"); S.tradeTab = "deals"; renderTrades();
+    const tab = document.getElementById("board-trades").textContent;
+
+    // Before the window closes, one player in the second deal moves on.
+    window.__db.tables.picks.find((pk) => pk.id === q1.id).player_id = "gone_elsewhere";
+    const r = await processAgreedTrades();
+    const pick = (id) => window.__db.tables.picks.find((pk) => pk.id === id).player_id;
+    const failed = window.__db.tables.trades.find((t) => t.id === "t-stale");
+    return { before, afterAccept, tab, r,
+             swapped: { p1: pick(p1.id), p2: pick(p2.id) },
+             t1: dbStatus("t-keep"), t2: failed.status, note: failed.note };
+  });
+
+  // 1 · Accepting agrees; it does not swap.
+  expect(seen.afterAccept.t1, "accepting did not lock the deal in").toBe("agreed");
+  expect(seen.afterAccept.p1, "players moved the moment the deal was accepted")
+    .toBe(seen.before.p1);
+  expect(seen.tab, "the Deals tab doesn't show what's waiting")
+    .toMatch(/Agreed — at window close/);
+  expect(seen.tab, "an agreed deal can't be called off").toMatch(/Call it off/);
+
+  // 2 · At the close, the good deal goes through...
+  expect(seen.t1, "an agreed deal didn't execute at the close").toBe("accepted");
+  expect(seen.swapped.p1, "the deal was marked done but nobody moved").toBe(seen.before.p2);
+  expect(seen.swapped.p2).toBe(seen.before.p1);
+
+  // 3 · ...and the overtaken one fails, saying why, instead of vanishing.
+  expect(seen.t2, "a stale deal was not marked as failed").toBe("failed");
+  expect(seen.note, "a failed deal gives no reason").toBeTruthy();
+  expect(seen.r).toEqual({ done: 1, failed: 1 });
+});
+
+test("a live league's pool takes new players, but won't change a drafted player under his owner",
+  async ({ page }) => {
+  /* "Ability to add players to the pool in normal league setup -- it worked for
+     pre-draft, but there's no option once the league is live." */
+  page.on("dialog", (d) => d.accept());
+  await openLeague(page, { managers: 2, played: 2 });
+  const seen = await page.evaluate(async () => {
+    document.querySelectorAll("[id$='-sheet']").forEach((e) => e.classList.add("hidden"));
+    S._recapChecked = true;
+    S.league.competition = { name: "United Rugby Championship", apiLeagueId: 1068,
+                             season: 2026, sport: "rugby" };
+    S.league.config = {};
+    const owned = S.picks.find((pk) => pk.slot !== "TEAM");
+    const players = [
+      { player_id: owned.player_id, name: owned.player_name, team: owned.team,
+        team_code: "LEI", position: owned.position, pos_starts: 4 },
+      { player_id: "rug_free", name: "Free Agent", team: "Ulster", team_code: "ULS",
+        position: "LK", pos_starts: 3 },
+    ];
+    window.__db.tables.competition_pools = [
+      { competition_key: "rugby-1068-2026", players, fixtures: [], round_order: [] }];
+    S._compPool = { players, fixtures: [], round_order: [] };
+    S.players = players; S._poolBase = players;
+    applyPoolOverrides();
+    showView("admin"); renderAdmin();
+    const shown = !document.getElementById("adm-pool-card").classList.contains("hidden");
+    const other = owned.position === "OB" ? "CE" : "OB";
+    await savePoolCsvText(
+      "player_id,name,team,team_code,position,remove\n"
+      + `${owned.player_id},${owned.player_name},${owned.team},LEI,${other},\n`
+      + "rug_free,Free Agent,Ulster,ULS,LK,x\n"
+      + ",A Debutant,Ulster,ULS,FH,\n");
+    return { shown, live: !!S.league.current_pick,
+             log: document.getElementById("adm-pool-log").textContent,
+             ownedPos: S.playerById[owned.player_id]?.position, heldPos: owned.position,
+             names: S.players.map((p) => p.name) };
+  });
+  expect(seen.live, "the seeded league is not live, so this proves nothing").toBe(true);
+  expect(seen.shown, "the pool card is still hidden once the league is live").toBe(true);
+  expect(seen.names, "a debutant can't be added mid-season").toContain("A Debutant");
+  expect(seen.names, "an undrafted player can't be removed mid-season").not.toContain("Free Agent");
+  expect(seen.ownedPos, "a drafted player's position changed under his owner").toBe(seen.heldPos);
+  expect(seen.log, "the refused change is not named").toMatch(/drafted, so their position stays/);
+});
+
+test("a hand-added player is re-pointed at the feed's id once the feed has seen him",
+  async ({ page }) => {
+  /* A hand-added player has an id the app made up; the feed scores him under
+     its own. Left alone he never scores. Once his record is seen, every place
+     this league holds the made-up id is moved across. */
+  page.on("dialog", (d) => d.accept());
+  await openLeague(page, { managers: 2, played: 2 });
+  const seen = await page.evaluate(async () => {
+    document.querySelectorAll("[id$='-sheet']").forEach((e) => e.classList.add("hidden"));
+    S._recapChecked = true;
+    S.league.competition = { name: "United Rugby Championship", apiLeagueId: 1068,
+                             season: 2026, sport: "rugby" };
+    const manual = { player_id: "man_jj-kenny-leinster", name: "JJ Kenny", team: "Leinster",
+                     team_code: "LEI", position: "OB" };
+    S.league.config = { poolAdd: [manual] };
+    window.__db.tables.leagues.find((l) => l.id === S.league.id).config = S.league.config;
+    const me = myManager();
+    // He was picked up as a free agent and is in a saved line-up.
+    const pk = window.__db.tables.picks.find((p) => p.manager_id === me.id && p.slot !== "TEAM");
+    pk.player_id = manual.player_id;
+    const snap = { id: "sn-kenny", league_id: S.league.id, manager_id: me.id,
+      effective_from: new Date().toISOString(), round_key: "Round 2",
+      roster: [{ player_id: manual.player_id, player_name: "JJ Kenny", position: "OB", slot: "OB" }] };
+    window.__db.tables.lineup_snapshots.push(snap);
+    await refetchAll();
+    const n = await promoteManualPlayers(manualTwins(S.league.config.poolAdd,
+      [{ player_id: "rug_555", name: "JJ Kenny", team: "Leinster Rugby" }]));
+    const db = window.__db.tables;
+    return { n,
+             pick: db.picks.find((p) => p.id === pk.id).player_id,
+             roster: db.lineup_snapshots.find((s) => s.id === "sn-kenny").roster[0].player_id,
+             poolAdd: db.leagues.find((l) => l.id === S.league.id).config.poolAdd,
+             inPool: !!S.playerById.rug_555, stale: !!S.playerById[manual.player_id] };
+  });
+  expect(seen.n, "nothing was promoted").toBe(1);
+  expect(seen.pick, "the manager still owns the made-up id").toBe("rug_555");
+  expect(seen.roster, "a saved line-up still names the made-up id").toBe("rug_555");
+  expect(seen.inPool, "the player is gone from the pool").toBe(true);
+  expect(seen.stale, "the made-up id is still in the pool alongside him").toBe(false);
+  expect(seen.poolAdd[0].player_id).toBe("rug_555");
+});
+
+test("re-reading a rugby league's fixtures brings back the rounds it lost, and the line-ups aimed at December",
+  async ({ page }) => {
+  /* "The real world fixtures in the app isn't correct (saying the next round is
+     19 December)." Established against the live feed by probe_rugby.py: it
+     answers newest-first, size=100 stops at 2026-12-19, and the league's list
+     was captured by a client that asked for 100. Nothing re-reads rugby
+     fixtures on a schedule, so it stayed that way.
+
+     The second half matters as much. Every line-up saved while the list was
+     stale was stamped for December's round, and the scorer ignores a LATER
+     round's line-up when scoring an earlier one. Fixing the dates alone would
+     have left every saved team invisible until Christmas. */
+  page.on("dialog", (d) => d.accept());
+  await openLeague(page, { managers: 2, played: 2 });
+  // The page runs on the harness's frozen clock; the fixtures have to agree with it.
+  const DAY = 86400e3, now = await page.evaluate(() => Date.now());
+  // Eight rounds, a week apart: round 1 already played, round 2 in four days.
+  const kick = (r) => new Date(now - 3 * DAY + (r - 1) * 7 * DAY).toISOString();
+  const season = [];
+  for (let r = 1; r <= 8; r++) for (let g = 0; g < 2; g++)
+    season.push({ id: r * 10 + g, status: r === 1 ? "result" : "fixture", tbc: 0, round: r,
+      date: kick(r), homeTeam: { id: 4 + g, name: g ? "Ulster" : "Leinster", score: r === 1 ? 20 : null },
+      awayTeam: { id: 8 + g, name: g ? "Connacht" : "Munster", score: r === 1 ? 10 : null } });
+  season.reverse();                                    // the feed answers newest-first
+  const sizes = [];
+  await page.route("**/*", async (route) => {
+    const url = decodeURIComponent(route.request().url());
+    if (!(url.includes("incrowdsports.com") || url.includes("/functions/v1/")))
+      return route.continue();
+    const size = +(url.match(/size=(\d+)/) || [])[1];
+    sizes.push(size);
+    // Like the real feed: `size` rows from the newest down. The old client's
+    // hundred is modelled as the newest few rounds.
+    const rows = size <= 100 ? season.slice(0, 6) : season;
+    return route.fulfill({ contentType: "application/json",
+      body: JSON.stringify({ status: "success", data: rows }) });
+  });
+  const seen = await page.evaluate(async (stale) => {
+    document.querySelectorAll("[id$='-sheet']").forEach((e) => e.classList.add("hidden"));
+    S._recapChecked = true;
+    S.league.competition = { name: "United Rugby Championship", apiLeagueId: 1068,
+                             season: 2026, sport: "rugby" };
+    S.league.config = { ...(S.league.config || {}), autoWindows: true };
+    Object.assign(window.__db.tables.leagues.find((l) => l.id === S.league.id),
+      { competition: S.league.competition, config: S.league.config });
+    // What the league actually held: only the newest rounds.
+    const held = stale.map(parseRugbyMatch);
+    const key = compKeyOf(S.league.competition);
+    window.__db.tables.competition_pools = [{ competition_key: key, players: S.players,
+      fixtures: held, round_order: rugbyRoundOrder(held) }];
+    S._compPool = { ...window.__db.tables.competition_pools[0] };
+    S.fixtures = held; S.roundOrder = rugbyRoundOrder(held);
+    const nextBefore = matchweeksOf(S.fixtures).find((w) => w.last + MATCH_MS > Date.now())?.round;
+
+    // A line-up saved while the list was stale: aimed at the stale "next" round.
+    const me = myManager();
+    const staleLock = nextLockMs(S.fixtures, Date.now(), cfgOf().windows || {});
+    const snap = { id: "sn-stale", league_id: S.league.id, manager_id: me.id,
+      effective_from: new Date(staleLock).toISOString(),
+      round_key: roundKeyLockedAt(S.fixtures, staleLock),
+      created_at: new Date().toISOString(),
+      roster: orderedRoster(me).map((pk) => ({ player_id: pk.player_id, slot: pk.slot })) };
+    window.__db.tables.lineup_snapshots.push(snap);
+    S.snapshots = [...(S.snapshots || []), snap];
+    const staleKey = snap.round_key;       // read now: the stub updates this row in place
+
+    const r = await refreshRugbyFixtures();
+    await refetchAll();
+    showView("admin"); renderAdmin();
+    const moved = window.__db.tables.lineup_snapshots.find((s) => s.id === "sn-stale");
+    return { nextBefore, staleKey, r,
+             nextAfter: matchweeksOf(S.fixtures).find((w) => w.last + MATCH_MS > Date.now())?.round,
+             shared: window.__db.tables.competition_pools[0].fixtures.length,
+             sharedPlayers: window.__db.tables.competition_pools[0].players.length === S.players.length,
+             movedKey: moved?.round_key,
+             summary: document.getElementById("adm-fix-summary").textContent,
+             cardShown: !document.getElementById("adm-fix-card").classList.contains("hidden") };
+  }, season.slice(0, 6));
+
+  expect(seen.nextBefore, "the stale list does not reproduce the report").not.toBe("Round 2");
+  expect(sizes.every((s) => s > 100), "the refresh asked the feed for only a page's worth").toBe(true);
+  expect(seen.r.changed, "the refresh saw no difference").toBe(true);
+  expect(seen.nextAfter, "the next round is still the stale one").toBe("Round 2");
+  expect(seen.shared, "the shared fixture list was not updated").toBe(16);
+  expect(seen.sharedPlayers, "re-reading fixtures touched the squads").toBe(true);
+  expect(seen.staleKey, "the stray line-up was not aimed at a stale round").not.toBe("Round 2");
+  expect(seen.movedKey, "a line-up aimed at the stale round was left there").toBe("Round 2");
+  expect(seen.r.moved).toBe(1);
+  expect(seen.cardShown, "a rugby admin has no way to re-read fixtures").toBe(true);
+  expect(seen.summary, "the admin card doesn't say what's next").toMatch(/Next up: Round 2/);
+});

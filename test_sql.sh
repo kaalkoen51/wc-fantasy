@@ -76,4 +76,7 @@ step "accept_trade window guard"
 step "co-admins"
 "${PSQL[@]}" -f "$ROOT/test/sql/admins.sql"
 
+step "deals that go through at window close"
+"${PSQL[@]}" -f "$ROOT/test/sql/deferred_trades.sql"
+
 echo "all sql checks passed"

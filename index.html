@@ -353,6 +353,14 @@
         </div>
         <p class="text-xs text-slate-400">Instant: free-agent swaps apply immediately (first-come). Waiver: claims queue and
           resolve when the window closes, in reverse-standings priority (last place picks first).</p>
+        <div class="text-xs text-slate-400 font-medium pt-1">Deals between managers</div>
+        <div class="flex gap-2">
+          <button type="button" data-deal="now" class="flex-1 rounded-lg py-2 text-xs font-semibold border">Swap on accept</button>
+          <button type="button" data-deal="close" class="flex-1 rounded-lg py-2 text-xs font-semibold border">At window close</button>
+        </div>
+        <p class="text-xs text-slate-400">Swap on accept: players move the moment both managers say yes. At window close:
+          an accepted deal is locked in and goes through when the window shuts, after the waiver claims — so nobody
+          reshapes a squad mid-window. If a player in it has moved on by then, the deal fails and both managers are told why.</p>
         <label class="text-xs text-slate-400">Max free-agent moves per manager, per trade window <span class="text-slate-400">(blank = unlimited)</span>
           <input data-cfg="max_fa_per_window" type="number" min="0" placeholder="unlimited" class="mt-0.5 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"></label>
         <p class="text-xs text-slate-400">Applies to both modes — the number of free agents a manager can bring in
@@ -688,6 +696,24 @@
           <button id="adm-lineup-toggle" class="rounded-lg px-4 py-2 text-sm font-semibold bg-slate-800 border border-slate-700"></button>
         </div>
         <button id="adm-snapshot" class="w-full bg-slate-800 border border-slate-700 rounded-lg py-1.5 text-xs font-semibold">Re-lock current lineups now (fallback)</button>
+        <div class="space-y-1.5 border-t border-slate-800 pt-2">
+          <div class="text-sm font-semibold">Deals between managers</div>
+          <div class="flex gap-1 rounded-lg bg-slate-800 p-1 text-xs">
+            <button data-dealmode="now" class="flex-1 rounded-md py-1.5 font-semibold">Swap on accept</button>
+            <button data-dealmode="close" class="flex-1 rounded-md py-1.5 font-semibold">At window close</button>
+          </div>
+          <p id="adm-dealmode-note" class="text-xs text-slate-400"></p>
+        </div>
+      </div>
+<!-- Rugby only: fixtures are one call to an open feed, so any league admin can
+     re-read them. Squads are NOT touched -- that is the app owner's card. -->
+<div id="adm-fix-card" class="hidden rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-2">
+        <h3 class="font-semibold text-sm">Real-world fixtures</h3>
+        <p id="adm-fix-summary" class="text-xs text-slate-400"></p>
+        <button id="adm-fix-refresh" class="w-full rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-semibold">Re-read fixtures from the feed</button>
+        <p class="text-[11px] text-slate-500">Dates, kick-off times and rounds only — squads and scores are left alone.
+          The app also re-checks this once a day on its own.</p>
+        <pre id="adm-fix-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
       </div>
 <div data-owner-only class="rounded-xl border border-wcgold/60 bg-slate-900 p-4 space-y-3">
         <h3 class="font-semibold text-sm">Pull stats now</h3>
@@ -793,10 +819,11 @@
           who has left. Changes apply to <b>this league only</b> — the shared pool is never rewritten, so
           nothing you upload here can reach anybody else's draft. Carry a sheet to another league by
           uploading it there too.</p>
-        <p class="text-xs text-amber-300">⚠ A player added by hand scores nothing until the feed has seen
-          them play and the competition is re-pulled. And changing the position of anyone with matches
-          already played re-scores those matches — per-position scoring and automatic substitutions read
-          the position a player holds now, not the one they held at the time.</p>
+        <p class="text-xs text-amber-300">⚠ A player added by hand is linked to the feed's own record the first
+          time stats are pulled after their debut, and scores from then on — so spell the name the way the
+          feed does and use their club exactly as it appears in the sheet. A name that could be two
+          people is not guessed at. And changing the position of anyone with matches already played
+          re-scores those matches — scoring reads the position a player holds now.</p>
         <pre id="adm-pool-log" class="text-xs text-slate-400 whitespace-pre-wrap"></pre>
       </div>
 

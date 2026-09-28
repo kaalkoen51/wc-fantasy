@@ -209,13 +209,38 @@
           const trade = rowsOf("trades").find((t) => t.id === args.p_trade_id);
           const league = rowsOf("leagues").find((l) => l.id === trade?.league_id);
           if (!trade) return err("P0001", "trade is no longer open");
-          if (league?.trading_open !== true) return err("P0001", "the trading window is closed");
-          if (trade.status !== "proposed") return err("P0001", "trade is no longer open");
-          trade.status = "accepted";
-          for (const it of rowsOf("trade_items").filter((x) => x.trade_id === trade.id)) {
+          /* The window rules as schema.sql now has them (proved in
+             test/sql/deferred_trades.sql). A PROPOSED trade executes only in
+             an open window, and never in a deals-at-close league; an AGREED
+             one is that league's settlement executing it after the close. */
+          const cfg = league?.config || {};
+          const auto = cfg.autoWindows === true;
+          if (trade.status === "proposed") {
+            if (cfg.trades_defer_to_close === true)
+              return err("P0001", "this league puts deals through when the window closes");
+            if (!auto && league?.trading_open !== true)
+              return err("P0001", "the trading window is closed");
+          } else if (trade.status === "agreed") {
+            if (!auto && league?.trading_open === true)
+              return err("P0001", "this deal goes through when the window closes, not before");
+          } else return err("P0001", "trade is no longer open");
+          const items = rowsOf("trade_items").filter((x) => x.trade_id === trade.id);
+          /* The stale-player guard, which the real function has always had and
+             this model did not: every pick must still hold the player the deal
+             was made on. Checked before anything moves, as the real one's
+             rollback guarantees. */
+          for (const it of items) {
             const a2 = rowsOf("picks").find((p) => p.id === it.offered_pick_id);
             const b2 = rowsOf("picks").find((p) => p.id === it.requested_pick_id);
             if (!a2 || !b2) return err("P0001", "trade references a missing pick");
+            if ((it.offered_player_id && a2.player_id !== it.offered_player_id)
+                || (it.requested_player_id && b2.player_id !== it.requested_player_id))
+              return err("P0001", "this trade is no longer valid — a player in it was traded away");
+          }
+          trade.status = "accepted";
+          for (const it of items) {
+            const a2 = rowsOf("picks").find((p) => p.id === it.offered_pick_id);
+            const b2 = rowsOf("picks").find((p) => p.id === it.requested_pick_id);
             const keep = ["player_id", "player_name", "position", "team"];
             for (const k of keep) { const t = a2[k]; a2[k] = b2[k]; b2[k] = t; }
           }

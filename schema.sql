@@ -303,6 +303,17 @@ create table if not exists trades (
     updated_at timestamptz default now()
 );
 
+/* 'agreed': both sides said yes in a league whose deals go through when the
+   window closes (trades_defer_to_close); settlement executes it. 'failed': it
+   was agreed and could not execute -- a player in it had moved on by then --
+   and `note` says which. Widened in place: the constraint was created inline
+   with the table, so an existing database has it under Postgres's default
+   name. */
+alter table trades drop constraint if exists trades_status_check;
+alter table trades add constraint trades_status_check
+    check (status in ('proposed','countered','accepted','rejected','cancelled','agreed','failed'));
+alter table trades add column if not exists note text;
+
 create table if not exists trade_items (
     id uuid primary key default gen_random_uuid(),
     trade_id uuid references trades(id) on delete cascade,
@@ -411,6 +422,8 @@ declare
     b picks%rowtype;
     v_open boolean;
     v_auto boolean;
+    v_defer boolean;
+    v_status text;
 begin
     /* Window guard: a pending proposal can only be accepted while the league's
        trading window is open. Mirrors the client check so a stale or raced tab
@@ -432,15 +445,31 @@ begin
        closing that properly means teaching this function to group fixtures
        into matchweeks -- the same arithmetic fixtureWindows() does -- which is
        a bigger change than the one that unblocks a live league today. */
-    select l.trading_open, coalesce((l.config->>'autoWindows')::boolean, false)
-      into v_open, v_auto
+    select l.trading_open, coalesce((l.config->>'autoWindows')::boolean, false),
+           coalesce((l.config->>'trades_defer_to_close')::boolean, false), t.status
+      into v_open, v_auto, v_defer, v_status
         from trades t join leagues l on l.id = t.league_id
         where t.id = p_trade_id;
-    if not v_auto and v_open is distinct from true then
-        raise exception 'the trading window is closed';
+    /* Deals that go through at window close (trades_defer_to_close). Accepting
+       one only marks it 'agreed'; the swap is this function, run by whichever
+       client settles the window. So in such a league a merely PROPOSED trade
+       must not execute, or the rule would be a button and nothing more. */
+    if v_status = 'proposed' then
+        if v_defer then
+            raise exception 'this league puts deals through when the window closes';
+        end if;
+        if not v_auto and v_open is distinct from true then
+            raise exception 'the trading window is closed';
+        end if;
+    elsif v_status = 'agreed' then
+        -- The mirror image: an agreed deal executes AFTER the window, never in
+        -- it. Manual leagues only, for the reason the guard above gives.
+        if not v_auto and v_open is true then
+            raise exception 'this deal goes through when the window closes, not before';
+        end if;
     end if;
     update trades set status = 'accepted', updated_at = now()
-        where id = p_trade_id and status = 'proposed';
+        where id = p_trade_id and status in ('proposed', 'agreed');
     if not found then
         raise exception 'trade is no longer open';
     end if;

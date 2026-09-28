@@ -87,6 +87,8 @@ const SPORTS = {
     rules:        () => DEFAULT_RULES,
     competitions: () => COMPETITIONS,
     squadSize:    () => 15,
+    side:         () => "XI",
+    matchMinutes: () => 90,
   },
 };
 const DEFAULT_SPORT = "football";
@@ -102,6 +104,11 @@ const sportDef = (name) => SPORTS[name || sportOf()] || SPORTS[DEFAULT_SPORT];
 
 // The squad a league drafts, unless its organiser has set their own.
 const squadSize  = () => cfgOf().squadSize ?? sportDef().squadSize();
+/* What a starting side is called: "XI" in football, "XV" in rugby. Every
+   string on screen that names the side goes through this -- a rugby manager
+   was told to set their "starting XI" and to "pick exactly one keeper". */
+const sideName = () => sportDef().side?.() || "XI";
+const fullMatch = () => sportDef().matchMinutes?.() || 90;
 const posGroups  = () => sportDef().groups();
 const playGroups  = () => sportDef().playGroups();
 const slotPosMap  = () => sportDef().slotPos();
@@ -1118,6 +1125,8 @@ SPORTS.rugby = {
   rules:        () => RUGBY_RULES,
   competitions: () => RUGBY_COMPETITIONS,
   squadSize:    () => RUGBY_SQUAD_SIZE,
+  side:         () => "XV",
+  matchMinutes: () => 80,
   crestUrl:     rugbyCrestUrl,
 };
 
@@ -1914,6 +1923,94 @@ function poolCsv(players) {
 const manualPlayerId = (name, team) =>
   "man_" + `${name}-${team}`.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
+/* ---------- a hand-added player meets the feed ----------
+
+   A player added by hand has an id the app made up, and the feed reports his
+   stats under its own. Left alone he scores nothing for ever -- and once a
+   squad refresh brings the feed's own row for him, the league holds two of
+   him, the one somebody owns being the one that never scores.
+
+   So as soon as the feed's record of him is SEEN -- a stat pull, which reads
+   every player's name, or a squad refresh -- he is re-pointed at the feed's
+   id everywhere this league refers to him. Only an unambiguous match counts:
+   same club, same name by nameMatches(), and exactly one candidate. A name
+   that could be two people is left alone rather than guessed at. Pure. */
+const sameClub = (a, b) => {
+  const x = foldName(a), y = foldName(b);
+  return !!x && !!y && (x === y || x.includes(y) || y.includes(x));
+};
+function manualTwins(manual, seen) {
+  const out = [];
+  for (const m of manual || []) {
+    if (!String(m.player_id).startsWith("man_")) continue;
+    const hits = (seen || []).filter((f) => !String(f.player_id).startsWith("man_")
+      && sameClub(m.team, f.team) && nameMatches(m.name, f.name));
+    const ids = [...new Set(hits.map((f) => f.player_id))];
+    if (ids.length === 1) out.push({ from: m.player_id, to: ids[0], name: m.name });
+  }
+  return out;
+}
+
+/* Re-point each pair everywhere THIS league holds the made-up id. Admin only:
+   it writes the league's config and other managers' rows. Each write is
+   narrowed to the old id, so running it twice, or from two admins at once,
+   changes nothing the second time. Returns how many players were promoted. */
+async function promoteManualPlayers(pairs) {
+  if (!pairs.length || !isAdmin() || !S.sb || !S.league?.id) return 0;
+  const L = S.league.id;
+  const baseIds = new Set((S._poolBase || []).map((p) => p.player_id));
+  const cfg = { ...(S.league.config || {}) };
+  let poolAdd = [...(cfg.poolAdd || [])];
+  const edits = { ...(cfg.poolEdit || {}) };
+  let drops = [...(cfg.poolDrop || [])];
+  const swap = (v, from, to) => (v === from ? to : v);
+  for (const { from, to } of pairs) {
+    await S.sb.from("picks").update({ player_id: to }).eq("league_id", L).eq("player_id", from);
+    await S.sb.from("fa_claims").update({ in_player_id: to }).eq("league_id", L).eq("in_player_id", from);
+    await S.sb.from("transactions").update({ in_player_id: to }).eq("league_id", L).eq("in_player_id", from);
+    await S.sb.from("transactions").update({ out_player_id: to }).eq("league_id", L).eq("out_player_id", from);
+    // accept_trade checks each pick still holds the id the deal was made on,
+    // so a pending deal left on the old id would fail as "traded away".
+    for (const t of S.trades || []) for (const it of t.trade_items || []) {
+      const upd = {};
+      if (it.offered_player_id === from) upd.offered_player_id = to;
+      if (it.requested_player_id === from) upd.requested_player_id = to;
+      if (Object.keys(upd).length)
+        await S.sb.from("trade_items").update(upd).eq("id", it.id);
+    }
+    // A saved line-up is a photograph of the squad, ids and all. The round he
+    // debuted in is scored from one of these, so it has to say the new id too.
+    for (const sn of S.snapshots || []) {
+      if (!(sn.roster || []).some((r) => r.player_id === from)) continue;
+      const roster = sn.roster.map((r) => (r.player_id === from ? { ...r, player_id: to } : r));
+      await S.sb.from("lineup_snapshots").update({ roster }).eq("id", sn.id);
+    }
+    /* The pool entry. If the feed's own row is in the shared pool now, the
+       hand-made one simply goes; if not (the link came from a stat pull),
+       this league's entry is kept and takes the feed's id. */
+    poolAdd = baseIds.has(to)
+      ? poolAdd.filter((p) => p.player_id !== from)
+      : poolAdd.map((p) => (p.player_id === from ? { ...p, player_id: to } : p));
+    if (edits[from]) { edits[to] = { ...edits[from], ...(edits[to] || {}) }; delete edits[from]; }
+    drops = drops.map((d) => swap(d, from, to));
+  }
+  if (poolAdd.length) cfg.poolAdd = poolAdd; else delete cfg.poolAdd;
+  if (Object.keys(edits).length) cfg.poolEdit = edits; else delete cfg.poolEdit;
+  if (drops.length) cfg.poolDrop = drops; else delete cfg.poolDrop;
+  const { error } = await S.sb.from("leagues").update({ config: cfg }).eq("id", L);
+  if (error) return 0;
+  S.league.config = cfg;
+  applyPoolOverrides();
+  await refetchAll().catch(() => {});
+  return pairs.length;
+}
+
+// The squad-refresh half: the feed's own row for him is now in the shared pool.
+async function promoteFromPool() {
+  if (!isAdmin()) return 0;
+  return promoteManualPlayers(manualTwins(S.league?.config?.poolAdd, S._poolBase));
+}
+
 /* ---------- carrying squads into a draft ----------
 
    A league whose managers already own players -- a URC side coming from a
@@ -2702,6 +2799,9 @@ async function enterLeague() {
   await Promise.all([loadPlayers(), loadFixtures(), loadExtras()]);
   await refetchAll({ initial: true });
   subscribeRealtime();
+  // Not awaited: the league is on screen already, and this is a background check.
+  maybeRefreshRugbyFixtures();
+  promoteFromPool().catch(() => {});
 }
 
 /* The first load, with something on screen for every outcome. It used to be a
@@ -2735,11 +2835,11 @@ function flexFieldsHtml(eff) {
     ${cfgNum(`formation.${p}.1`, "max", f[p][1], false)}</div>`;
   return `
     <p class="text-xs text-slate-400">Each manager drafts any mix of players (as long as they can field a valid
-      XI) and picks their own formation within these bounds each round. The bench can be any positions — but an
+      ${sideName()}) and picks their own formation within these bounds each round. The bench can be any positions — but an
       all-forward bench can't cover a defender, so a manager trades sub flexibility for extra attackers.</p>
     <div class="grid grid-cols-2 gap-2">
       ${cfgNum("squadSize", "Squad size", eff.squadSize, false)}
-      ${cfgNum("formation.starters", "Starting XI", f.starters, false)}
+      ${cfgNum("formation.starters", `Starting ${sideName()}`, f.starters, false)}
     </div>
     <div class="text-xs text-slate-400 font-medium">Formation bounds — min–max per position</div>
     ${playGroups().map(boundRow).join("")}`;
@@ -2801,7 +2901,7 @@ function updateCreateSummaries() {
   if ($("create-order-summary")) $("create-order-summary").textContent =
     (S._createOrder === "manual") ? "set by admin" : "random";
   if ($("create-format-summary")) $("create-format-summary").textContent =
-    `${S._createH2H ? "H2H" : "points"} · ${S._createWaiver ? "waiver" : "instant"}${S._createCaptain ? " · ©" : ""}${S._createAutoWin ? " · auto-windows" : ""}`;
+    `${S._createH2H ? "H2H" : "points"} · ${S._createWaiver ? "waiver" : "instant"}${S._createDealDefer ? " · deals at close" : ""}${S._createCaptain ? " · ©" : ""}${S._createAutoWin ? " · auto-windows" : ""}`;
 }
 
 // Highlight the active Format & Trades toggles + show/hide H2H params.
@@ -2812,6 +2912,9 @@ function syncCreateFormat() {
   for (const b of document.querySelectorAll("[data-trade]"))
     b.className = "flex-1 rounded-lg py-2 text-xs font-semibold border " +
       ((b.dataset.trade === "waiver") === S._createWaiver ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400");
+  for (const b of document.querySelectorAll("[data-deal]"))
+    b.className = "flex-1 rounded-lg py-2 text-xs font-semibold border " +
+      ((b.dataset.deal === "close") === !!S._createDealDefer ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400");
   for (const b of document.querySelectorAll("[data-cap]"))
     b.className = "flex-1 rounded-lg py-2 text-xs font-semibold border " +
       ((b.dataset.cap === "on") === S._createCaptain ? "border-wcgold bg-wcgold/10 text-wcgold" : "border-slate-700 text-slate-400");
@@ -3107,7 +3210,7 @@ const CREATE_PRESETS = {
 function applyCreatePreset(key) {
   S._createPreset = key;
   paintCreateFields();                 // back to defaults before layering the preset on
-  S._createTeamOn = true; S._createH2H = false; S._createWaiver = false;
+  S._createTeamOn = true; S._createH2H = false; S._createWaiver = false; S._createDealDefer = false;
   S._createCaptain = false; S._createAutoWin = false; S._createRumbleScoring = "pairwise";
   (CREATE_PRESETS[key] || CREATE_PRESETS.classic).apply();
   S._createAdvanced = key === "custom";
@@ -3199,7 +3302,7 @@ function renderCreateForm() {
   });
   $("create-pull-history").onclick = pullCreateHistory;
   syncApi();
-  S._createTeamOn = true; S._createH2H = false; S._createWaiver = false; S._createCaptain = false; S._createAutoWin = false;
+  S._createTeamOn = true; S._createH2H = false; S._createWaiver = false; S._createDealDefer = false; S._createCaptain = false; S._createAutoWin = false;
   S._createOrder = S._createOrder || "random";
   /* Checkboxes and text inputs keep their own state across re-renders, unlike
      the S._create* flags reset above. A rumble ticked while exploring one
@@ -3221,6 +3324,8 @@ function renderCreateForm() {
     b.onclick = () => { S._createOrder = b.dataset.dorder; syncCreateFormat(); };
   for (const b of document.querySelectorAll("[data-trade]"))
     b.onclick = () => { S._createWaiver = b.dataset.trade === "waiver"; syncCreateFormat(); };
+  for (const b of document.querySelectorAll("[data-deal]"))
+    b.onclick = () => { S._createDealDefer = b.dataset.deal === "close"; syncCreateFormat(); };
   for (const b of document.querySelectorAll("[data-cap]"))
     b.onclick = () => { S._createCaptain = b.dataset.cap === "on"; syncCreateFormat(); };
   for (const b of document.querySelectorAll("[data-win]"))
@@ -3239,7 +3344,7 @@ function renderCreateForm() {
   syncCreateTeam();
   syncCreateFormat();
   $("create-reset").onclick = () => {
-    S._createTeamOn = true; S._createH2H = false; S._createWaiver = false; S._createCaptain = false; S._createAutoWin = false;
+    S._createTeamOn = true; S._createH2H = false; S._createWaiver = false; S._createDealDefer = false; S._createCaptain = false; S._createAutoWin = false;
     S._createRumbleScoring = "pairwise";
     applyCreatePreset("classic");
   };
@@ -3340,6 +3445,7 @@ function readCreateConfig() {
     }
   }
   if (S._createWaiver) cfg.fa_defer_to_close = true;   // waiver-order trades
+  if (S._createDealDefer) cfg.trades_defer_to_close = true;   // deals at window close
   const faCap = document.querySelector('[data-view="create"] [data-cfg="max_fa_per_window"]')?.value;
   if (faCap != null && faCap !== "") cfg.max_fa_per_window = Number(faCap);  // per-window FA cap (both modes)
   if (S._createCaptain) cfg.captain = true;            // captain + vice-captain
@@ -6557,7 +6663,7 @@ function matchdayPlan(o) {
       cta = { label: "See the table", act: "live" };
     } else {
       title = "Lineups locked"; deadlineAt = o.kickoffAt;
-      deadlineLabel = "First kick-off"; cta = { label: "View your XI", act: "lineup" };
+      deadlineLabel = "First kick-off"; cta = { label: `View your ${sideName()}`, act: "lineup" };
     }
   } else {
     title = "Games in progress"; cta = { label: "Watch live", act: "live" };
@@ -8070,6 +8176,7 @@ function boardRulesNote() {
   }
   if (h2hEnabled()) bits.push("Standings are a head-to-head log — you play one rival each round.");
   if (faDeferToClose()) bits.push("Free-agent claims queue and resolve at window close, in waiver order.");
+  if (tradesDeferToClose()) bits.push("Deals between managers are locked in on accept and go through when the window closes.");
   return bits.join(" ");
 }
 
@@ -8245,7 +8352,7 @@ function draftFactCards() {
 
   const starterLine = playGroups()
     .filter((g) => sq[g] > 0).map((g) => `${sq[g]} ${g}`).join(", ");
-  cards.push(["⚡", "Starting XI", (flex
+  cards.push(["⚡", `Starting ${sideName()}`, (flex
     ? `Each round you pick a formation within ${formationRangeText(fb)} (${fb.starters}-a-side).`
     : `Name your starters (${starterLine}) before each round — everyone else is a sub.`)
     + (captainEnabled() ? " Your captain scores double, with a vice-captain who takes over if they don't play." : "")
@@ -8434,7 +8541,7 @@ function lineupRowHtml(it, mgrId, former, opts = {}) {
   // round (their team's latest match), not merely since the last lineup lock.
   const played = !former && !!it.playedRound;
   const inDream = curView && !former && !bonus && currentRoundDreamIds().has(e.player_id);
-  const dreamBadge = inDream ? ` <span class="rounded bg-amber-400/20 text-amber-300 px-1 py-0.5 text-xs font-semibold align-middle" title="In this round's Dream XI">★ XI</span>` : "";
+  const dreamBadge = inDream ? ` <span class="rounded bg-amber-400/20 text-amber-300 px-1 py-0.5 text-xs font-semibold align-middle" title="In this round's Dream ${sideName()}">★ ${sideName()}</span>` : "";
   const fxt = tap && !former ? fixtureText(e.team) : "";
   return `<div class="flex items-center gap-2 rounded-lg bg-slate-800/60 px-2 py-2${
       tap ? " cursor-pointer hover:bg-slate-800" : ""}"${
@@ -8776,7 +8883,7 @@ function lineupTodo(me) {
   const counts = zeroByGroup();
   for (const pk of mine) if (!pk.is_sub) counts[pk.position] = (counts[pk.position] || 0) + 1;
   if (!lineupValid(counts))
-    todo.push({ text: "Your starting XI isn't valid yet", act: "lineup" });
+    todo.push({ text: `Your starting ${sideName()} isn't valid yet`, act: "lineup" });
   if (captainEnabled() && !me.captain_id)
     // Straight into the armband picker, with the pitch already lit.
     todo.push({ text: "No captain picked", act: "captain",
@@ -9592,14 +9699,14 @@ function openReveal() {
     <div class="text-center">
       <div class="text-xs text-slate-400">Draft complete</div>
       <div class="text-2xl font-bold">${esc(me.name)}</div>
-      <div class="text-xs text-slate-400">${mine.length} players · ${counts} outfield shape</div>
+      <div class="text-xs text-slate-400">${mine.length} players${sportOf() === "football" ? ` · ${counts} outfield shape` : ""}</div>
     </div>
     <div id="reveal-page" class="space-y-2">${
       [...playGroups().map((g) => [g, g]), ["TEAM", "CLUB"]]
         .map(group).join("")}</div>
     ${foil ? `<p class="text-xs text-slate-400 text-center">✨ <b class="text-slate-200">${
       esc(shortName(foil.player_name))}</b> — your first pick.</p>` : ""}
-    <p class="text-xs text-slate-400 text-center">Set your starting XI before the first deadline — the matchday card on your team page counts it down.</p>`;
+    <p class="text-xs text-slate-400 text-center">Set your starting ${sideName()} before the first deadline — the matchday card on your team page counts it down.</p>`;
 
   /* Held back, then opened. The count is on the cover because a cover that
      does not say what is behind it is just a rectangle.
@@ -12924,9 +13031,9 @@ function renderDreamTeam(round, per90, worst) {
 
   const picked = playGroups().reduce((a, g) => a + dt[g].length, 0) + dt.FLEX.length;
   const scope = round ? `Round ${round}` : "Season";
-  const title = worst ? "Nightmare XI" : "Dream XI";
+  const title = `${worst ? "Nightmare" : "Dream"} ${sideName()}`;
   const blurb = worst
-    ? `The lowest ${per90 ? "points per 90" : "points"} of anyone who played a full 90 in scope — the XI you would not have wanted.`
+    ? `The lowest ${per90 ? "points per 90" : "points"} of anyone who played a full ${fullMatch()} in scope — the ${sideName()} you would not have wanted.`
     : `The best ${per90 ? "points per 90" : "points"} in each position under this league's scoring.`;
   $("stats-dream").innerHTML = `
     <div class="flex items-center justify-between gap-2">
@@ -13029,6 +13136,9 @@ function renderStatsTab() {
     b.className = "flex-1 rounded-md py-1.5 font-semibold " +
       (on ? "is-selected" : "text-slate-400");
     b.onclick = () => { S.statsView = b.dataset.statsview; renderStatsTab(); };
+    // The markup says "XI"; a rugby league's best side is an XV.
+    if (b.dataset.statsview !== "list")
+      b.textContent = `${b.dataset.statsview === "dream" ? "Dream" : "Nightmare"} ${sideName()}`;
   });
   // Leaderboard-only controls are hidden in Dream XI mode (round/per-90 shared).
   $("stats-search").classList.toggle("hidden", dream);
@@ -13556,7 +13666,7 @@ function openLineup(opts = {}) {
   S.viceDraft = me.vice_id || "";
   const sq = starterQuota(), flex = leagueFlex();
   $("lineup-rule").textContent =
-    "Pick an eligible starting XI. The rest are subs — a sub only scores when their starter doesn't play.";
+    `Pick an eligible starting ${sideName()}. The rest are subs — a sub only scores when their starter doesn't play.`;
   if (opts.arm && captainEnabled()) {
     enterLineupEdit();            // snapshots for Discard, then renders
     S.armPick = opts.arm;
@@ -14179,8 +14289,12 @@ function renderLineup() {
      work out whether that shape was allowed. */
   const vmsg = $("lineup-valid");
   // Says WHY, not the numbers — those are already on the line above it.
-  vmsg.textContent = ok ? "✓ This XI is legal"
-    : counts.GK !== 1 ? "Pick exactly one keeper"
+  /* From `missing`, the sport's own exact-count groups -- not `counts.GK`. A
+     rugby side has no GK count at all, so `undefined !== 1` was always true
+     and every unfinished rugby line-up was told to pick a keeper. */
+  vmsg.textContent = ok ? `✓ This ${sideName()} is legal`
+    : missing.length ? `Pick exactly ${missing.map((g) =>
+        `${starterQuota()[g] || 0} ${g === "GK" ? "keeper" : g}`).join(", ")}`
     : total > need ? "Too many starters — move some to the bench"
     : total < need ? "Not enough starters yet"
     : "That shape isn't allowed in this league";
@@ -14516,6 +14630,11 @@ async function doSwap(pick, entry) {
 
 /* ---------- waiver-order free-agent claims (mechanics-notes §1) ---------- */
 const faDeferToClose = () => cfgOf().fa_defer_to_close === true;
+/* Deals between managers go through when the window closes, not on accept.
+   Accepting marks the trade 'agreed'; processAgreedTrades() executes it during
+   settlement, after the waiver claims. accept_trade enforces the same rule on
+   the server, so this is not only a button. */
+const tradesDeferToClose = () => cfgOf().trades_defer_to_close === true;
 // Optional cap on free-agent moves per manager, PER trade window. Waiver mode
 // enforces it at claim resolution; instant mode counts swaps made this window.
 const maxFaPerWindow = () => cfgOf().max_fa_per_window ?? null;
@@ -14944,6 +15063,8 @@ async function settleRound(due, resolveClaims) {
   if (resolveClaims && faDeferToClose()
       && (S.faClaims || []).some((c) => c.status === "pending"))
     await processFaClaims();
+  if (resolveClaims && (S.trades || []).some((t) => t.status === "agreed"))
+    await processAgreedTrades();
   for (const m of activeManagers())
     await repairLineupFor(m.id).catch(() => {});
 
@@ -15353,13 +15474,17 @@ function builderHtml(me) {
 const TRADE_STATUS_STYLE = {
   proposed: "text-amber-300", accepted: "text-wcgold", rejected: "text-red-400",
   cancelled: "text-slate-400", countered: "text-sky-300",
+  agreed: "text-live", failed: "text-red-400",
 };
 
 /* A proposal, as the deal it is: their face, your players out on one side and
    theirs in on the other, with the arrow between them. The old card was two
    names and a slot code on one line of 12px text. */
-function tradeSectionHtml(title, list, incoming) {
+function tradeSectionHtml(title, list, incomingArg) {
   const cards = list.map((t) => {
+    // Agreed and failed deals list both directions under one heading, so
+    // which side "you" are on is per card rather than per section.
+    const incoming = typeof incomingArg === "function" ? incomingArg(t) : incomingArg;
     const other = S.managers.find((m) =>
       m.id === (incoming ? t.proposer_manager_id : t.target_manager_id));
     const col = managerColor(other);
@@ -15381,8 +15506,11 @@ function tradeSectionHtml(title, list, incoming) {
         <span class="shrink-0 text-slate-500 text-xs">⇄</span>
         <span class="flex justify-end min-w-0">${col2(gain, "text-live/70")}</span>
       </div>`).join("");
-    const actions = t.status !== "proposed" ? "" : incoming
-      ? `${tradingOpen() ? `<button data-acc="${t.id}" class="flex-1 btn-primary rounded-lg py-2 text-xs font-semibold">✓ Accept</button>` : ""}
+    const actions = t.status === "agreed"
+      ? `<button data-off="${t.id}" class="w-full bg-slate-800 border border-slate-700 rounded-lg py-2 text-xs font-semibold text-slate-400">Call it off</button>`
+      : t.status !== "proposed" ? "" : incoming
+      ? `${tradingOpen() ? `<button data-acc="${t.id}" class="flex-1 btn-primary rounded-lg py-2 text-xs font-semibold">✓ ${
+          tradesDeferToClose() ? "Agree" : "Accept"}</button>` : ""}
          <button data-cnt="${t.id}" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg py-2 text-xs font-semibold">↩ Counter</button>
          <button data-rej="${t.id}" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg py-2 text-xs font-semibold text-slate-400">Reject</button>`
       : `<button data-can="${t.id}" class="w-full bg-slate-800 border border-slate-700 rounded-lg py-2 text-xs font-semibold text-slate-400">Withdraw offer</button>`;
@@ -15393,7 +15521,10 @@ function tradeSectionHtml(title, list, incoming) {
               style="background:${col}26;border:1px solid ${col}99">${managerMark(other)}</span>
         <span class="min-w-0 flex-1 leading-tight">
           <span class="block text-sm font-semibold truncate">${esc(other?.name ?? "?")}</span>
-          <span class="block text-[11px] text-slate-400">${incoming ? "wants to deal" : "waiting on them"}${
+          <span class="block text-[11px] text-slate-400">${
+            t.status === "agreed" ? "agreed · goes through when the window closes"
+            : t.status === "failed" ? "agreed, but didn't go through"
+            : incoming ? "wants to deal" : "waiting on them"}${
             t.parent_trade_id ? " · counter-offer" : ""}</span>
         </span>
         <span class="shrink-0 text-[11px] font-semibold ${TRADE_STATUS_STYLE[t.status] || ""}">${t.status}</span>
@@ -15402,6 +15533,8 @@ function tradeSectionHtml(title, list, incoming) {
         <span>you give</span><span></span><span class="text-right">you get</span>
       </div>
       <div class="space-y-1">${rows}</div>
+      ${t.status === "failed" && t.note ? `<p class="text-xs text-red-300/90 px-0.5">${
+        esc(t.note)}</p>` : ""}
       ${actions ? `<div class="flex gap-1.5 pt-0.5">${actions}</div>` : ""}
     </div>`;
   }).join("");
@@ -16154,7 +16287,20 @@ function tradeTabBodyHtml(tab, me, { open, pendingIn, pendingOut }) {
       body += tradeSectionHtml(`🔔 Waiting on you (${pendingIn.length})`, pendingIn, true);
     if (pendingOut.length)
       body += tradeSectionHtml(`📤 Sent — awaiting reply (${pendingOut.length})`, pendingOut, false);
-    if (!S.builder && !pendingIn.length && !pendingOut.length && !faDeferToClose())
+    const mine = (t) => t.proposer_manager_id === me.id || t.target_manager_id === me.id;
+    const isIn = (t) => t.target_manager_id === me.id;
+    const agreed = S.trades.filter((t) => t.status === "agreed" && mine(t));
+    if (agreed.length)
+      body += tradeSectionHtml(`🤝 Agreed — at window close (${agreed.length})`, agreed, isIn);
+    /* A deal that was agreed and then could not execute. Shown for a week, so
+       it is still there the next time either manager looks, and then gone. */
+    const weekAgo = Date.now() - 7 * 86400e3;
+    const failed = S.trades.filter((t) => t.status === "failed" && mine(t)
+      && Date.parse(t.updated_at || t.created_at || 0) > weekAgo);
+    if (failed.length)
+      body += tradeSectionHtml(`❌ Didn't go through (${failed.length})`, failed, isIn);
+    if (!S.builder && !pendingIn.length && !pendingOut.length && !agreed.length
+        && !failed.length && !faDeferToClose())
       body += `<div class="rounded-xl border border-slate-700 bg-slate-900 p-6 text-center space-y-2">
         <div class="text-3xl">🤝</div>
         <p class="text-sm text-slate-300">No deals on the table.</p>
@@ -16295,6 +16441,10 @@ function wireTrades(me) {
     setTradeStatus(byId(b.dataset.rej), "rejected").catch((e) => toast(e.message)));
   box.querySelectorAll("[data-can]").forEach((b) => b.onclick = () =>
     setTradeStatus(byId(b.dataset.can), "cancelled").catch((e) => toast(e.message)));
+  box.querySelectorAll("[data-off]").forEach((b) => b.onclick = () => {
+    if (!confirm("Call off this deal? Nobody moves, and it won't go through at window close.")) return;
+    setTradeStatus(byId(b.dataset.off), "cancelled", "agreed").catch((e) => toast(e.message));
+  });
   box.querySelectorAll("[data-cnt]").forEach((b) => b.onclick = () => {
     const t = byId(b.dataset.cnt);
     openBuilder(t.proposer_manager_id, t.id);
@@ -16353,6 +16503,7 @@ async function acceptTrade(t) {
   }));
   const err = tradeError(pairs);
   if (err) return toast("Trade is no longer valid: " + err);
+  if (tradesDeferToClose()) return agreeTrade(t);
   if (!confirm("Accept this trade? Players swap immediately.")) return;
   // Before the swap, not after: pinning afterwards would record the new squads
   // as history and protect nothing.
@@ -16373,10 +16524,60 @@ async function acceptTrade(t) {
   scheduleRefetch();
 }
 
-async function setTradeStatus(t, status) {
+/* Both sides have said yes; the swap waits for the window to close. Nothing
+   moves here, which is the point -- the squads on screen stay the squads that
+   play until settlement runs. */
+async function agreeTrade(t) {
+  if (!confirm("Agree this deal? It's locked in and goes through when the window "
+      + "closes. Either of you can call it off until then.")) return;
+  const { error } = await S.sb.from("trades")
+    .update({ status: "agreed", updated_at: new Date().toISOString() })
+    .eq("id", t.id).eq("status", "proposed");
+  if (error) return toast(/check constraint|trades_status_check/.test(error.message || "")
+    ? "Deals at window close need a schema update — run schema.sql." : error.message);
+  toast("Deal agreed — it goes through when the window closes.");
+  scheduleRefetch();
+}
+
+/* Execute every agreed deal, oldest agreement first. Run during settlement,
+   AFTER the waiver claims: claims were queued against the squads as they stood,
+   and a deal that no longer adds up because of one fails on its own terms --
+   accept_trade checks every pick still holds the player that was agreed.
+
+   A failure is recorded, not swallowed. Both managers see the deal come back
+   as "didn't go through" with the reason, instead of finding their squad
+   unchanged and no word why. */
+async function processAgreedTrades() {
+  const agreed = (S.trades || []).filter((t) => t.status === "agreed")
+    .sort((a, b) => String(a.updated_at || a.created_at)
+      .localeCompare(String(b.updated_at || b.created_at)));
+  let done = 0, failed = 0;
+  for (const t of agreed) {
+    for (const mid of new Set([t.proposer_manager_id, t.target_manager_id].filter(Boolean)))
+      await pinHistory(mid).catch(() => {});
+    const { error } = await S.sb.rpc("accept_trade", { p_trade_id: t.id });
+    if (!error) { done++; continue; }
+    // Only a deal still marked agreed is failed: a racing settler may already
+    // have executed it, and that must not be overwritten as a failure.
+    await S.sb.from("trades")
+      .update({ status: "failed", note: error.message || "could not execute",
+                updated_at: new Date().toISOString() })
+      .eq("id", t.id).eq("status", "agreed").then(() => {}, () => {});
+    failed++;
+  }
+  if (done || failed) {
+    await refetchAll().catch(() => {});
+    for (const t of agreed)
+      for (const mid of new Set([t.proposer_manager_id, t.target_manager_id].filter(Boolean)))
+        await snapshotForNextLock(mid).catch(() => {});
+  }
+  return { done, failed };
+}
+
+async function setTradeStatus(t, status, from = "proposed") {
   const { error } = await S.sb.from("trades")
     .update({ status, updated_at: new Date().toISOString() })
-    .eq("id", t.id).eq("status", "proposed");
+    .eq("id", t.id).eq("status", from);
   if (error) return toast(error.message);
   scheduleRefetch();
 }
@@ -16844,6 +17045,156 @@ function syncCompRefresh() {
   }
 }
 
+/* ---------- rugby: re-reading the real-world fixtures ----------
+
+   A rugby league's fixture list is whatever was captured when its pool was
+   loaded, and nothing re-reads it: the scheduled pullers are API-Football
+   only. A URC league loaded by a client that asked the feed for 100 matches
+   got the newest hundred -- 19 December onward, because the feed answers
+   newest-first -- and showed its next round as December for the rest of the
+   season. Established against the live feed by probe_rugby.py: size=100 stops
+   at 2026-12-19, size=400 reaches back to 2024.
+
+   Fixtures only. Squads are rebuilt from the most recent PLAYED matches, and
+   a refresh early in a season would rebuild them mostly from last season's --
+   a drafted player who has not featured lately would drop out of the pool and
+   read as "left the competition". Dates are one call and move nothing else. */
+
+/* Line-ups the stale calendar misfiled.
+
+   A saved line-up is stamped for the lock it was aimed at, and the stale
+   calendar aimed every one at December's round. The scorer deliberately
+   ignores a LATER round's line-up when scoring an earlier one -- those are
+   plans, not records -- so once the dates are fixed, everything managers saved
+   would be invisible to every round before December.
+
+   Only line-ups dated in the FUTURE are touched. Anything a played round could
+   depend on is a record and stays exactly as it is. Per manager the newest
+   stray plan moves to the real next lock and any older ones go; if a line-up
+   is already stamped for that lock it was written against the true calendar,
+   so it stands and the strays go. Pure, so the cases are pinned by tests. */
+function strandedPlans(snaps, nowMs, nextAt, nextKey) {
+  if (nextAt == null || !nextKey) return [];
+  const at = (sn) => Date.parse(sn.created_at || sn.effective_from || 0) || 0;
+  const right = (sn) => sn.round_key === nextKey && Date.parse(sn.effective_from) === nextAt;
+  const byMgr = {};
+  for (const sn of snaps || []) {
+    if (!(Date.parse(sn.effective_from) > nowMs) || right(sn)) continue;
+    (byMgr[sn.manager_id] ||= []).push(sn);
+  }
+  const out = [];
+  for (const mid in byMgr) {
+    const settled = (snaps || []).some((sn) => sn.manager_id === mid && right(sn));
+    byMgr[mid].sort((a, b) => at(b) - at(a)).forEach((sn, i) =>
+      out.push({ id: sn.id, manager_id: mid, move: i === 0 && !settled }));
+  }
+  return out;
+}
+
+async function repointStrandedPlans() {
+  if (!autoWindowsEnabled() || !S.sb) return 0;
+  const now = Date.now();
+  const nextAt = nextLockMs(S.fixtures || [], now, cfgOf().windows || {});
+  const nextKey = nextAt == null ? null : roundKeyLockedAt(S.fixtures || [], nextAt);
+  let n = 0;
+  for (const p of strandedPlans(S.snapshots, now, nextAt, nextKey)) {
+    const q = p.move
+      ? S.sb.from("lineup_snapshots").update({
+          effective_from: new Date(nextAt).toISOString(), round_key: nextKey })
+      : S.sb.from("lineup_snapshots").delete();
+    const { error } = await q.eq("id", p.id);
+    if (!error) n++;
+  }
+  return n;
+}
+
+const fixtureCheckKey = () => "wcf_fixcheck_" + compKeyOf(leagueCompetition());
+
+async function refreshRugbyFixtures() {
+  const comp = leagueCompetition();
+  if (!comp || comp.sport !== "rugby") return null;
+  const fixtures = await fetchRugbyFixtures(comp);
+  const held = S.fixtures || [];
+  /* Never trade a fuller list for a thinner one. A feed hiccup that answers
+     with nothing, or with a fraction of a season, must not blank the calendar
+     every window and lock in the league is computed from. */
+  if (!fixtures.length)
+    throw new Error("The feed returned no fixtures for this season — nothing was changed.");
+  if (fixtures.length < held.length / 2)
+    throw new Error(`The feed returned ${fixtures.length} fixtures against the ${held.length} `
+      + "already held — refusing to replace a fuller list with a thinner one.");
+  try { localStorage.setItem(fixtureCheckKey(), String(Date.now())); } catch { /* private mode */ }
+  const same = JSON.stringify(fixtures) === JSON.stringify(held);
+  if (same) return { changed: false, count: fixtures.length, moved: 0 };
+  const roundOrder = rugbyRoundOrder(fixtures);
+  const { error } = await S.sb.from("competition_pools")
+    .update({ fixtures, round_order: roundOrder })
+    .eq("competition_key", compKeyOf(comp));
+  if (error) throw new Error(error.message);
+  S.fixtures = fixtures; S.roundOrder = roundOrder;
+  if (S._compPool) { S._compPool.fixtures = fixtures; S._compPool.round_order = roundOrder; }
+  bustScores();
+  const moved = await repointStrandedPlans();
+  return { changed: true, count: fixtures.length, was: held.length, moved };
+}
+
+/* Once a day, from whoever opens the league. Rugby only: it is one call to an
+   open feed, and only a CHANGED list is written. Quiet -- a failure here is a
+   missed check, not something to interrupt a manager with. */
+async function maybeRefreshRugbyFixtures() {
+  if (sportOf() !== "rugby" || !leagueCompetition()) return;
+  let last = 0;
+  try { last = +localStorage.getItem(fixtureCheckKey()) || 0; } catch { /* private mode */ }
+  if (Date.now() - last < 20 * 3600e3) return;
+  const r = await refreshRugbyFixtures().catch(() => null);
+  if (r?.changed) { await refetchAll().catch(() => {}); renderBoard(); }
+}
+
+/* Swap on accept, or at window close. Switchable mid-season: turning it off
+   does not strand anything, because agreed deals are executed at the next
+   close whatever the setting -- the setting decides what ACCEPTING does. */
+function renderDealMode() {
+  const on = tradesDeferToClose();
+  document.querySelectorAll("[data-dealmode]").forEach((b) => {
+    const sel = (b.dataset.dealmode === "close") === on;
+    b.className = "flex-1 rounded-md py-1.5 font-semibold " + (sel ? "is-selected" : "text-slate-400");
+    b.onclick = () => setDealMode(b.dataset.dealmode === "close").catch((e) => toast(e.message));
+  });
+  const waiting = (S.trades || []).filter((t) => t.status === "agreed").length;
+  const note = $("adm-dealmode-note");
+  if (note) note.textContent = (on
+    ? "Accepting a deal locks it in; it goes through when the window closes, after the waiver claims."
+    : "Players swap the moment both managers accept.")
+    + (waiting ? ` ${waiting} agreed deal${waiting === 1 ? " is" : "s are"} waiting and will go through at the next close either way.` : "");
+}
+
+async function setDealMode(on) {
+  if (on === tradesDeferToClose()) return;
+  const cfg = { ...(S.league.config || {}) };
+  if (on) cfg.trades_defer_to_close = true; else delete cfg.trades_defer_to_close;
+  const { error } = await S.sb.from("leagues").update({ config: cfg }).eq("id", S.league.id);
+  if (error) return toast(error.message);
+  S.league.config = cfg;
+  toast(on ? "Deals now go through when the window closes." : "Deals now swap on accept.");
+  renderAdmin(); renderTrades();
+}
+
+function renderFixturesCard() {
+  const card = $("adm-fix-card");
+  if (!card) return;
+  const on = sportOf() === "rugby" && !!leagueCompetition();
+  card.classList.toggle("hidden", !on);
+  if (!on) return;
+  const weeks = matchweeksOf(S.fixtures || []);
+  const now = Date.now();
+  const next = weeks.find((w) => w.last + MATCH_MS > now);
+  const day = (ms) => new Date(ms).toLocaleDateString(undefined,
+    { weekday: "short", day: "numeric", month: "short" });
+  $("adm-fix-summary").textContent = !weeks.length ? "No fixtures held for this league yet."
+    : `${(S.fixtures || []).length} matches, ${weeks[0].round} to ${weeks[weeks.length - 1].round}. `
+      + (next ? `Next up: ${next.round}, ${day(next.first)}.` : "The season is over.");
+}
+
 async function loadCompetition(opts = {}) {
   const apiKey = $("adm-api-key").value.trim();
   const apiLeagueId = +$("adm-comp-select").value;
@@ -16909,6 +17260,7 @@ async function loadCompetition(opts = {}) {
     S.players = players; S._poolBase = players;
     applyPoolOverrides();
     S.fixtures = fixtures;
+    await promoteFromPool().catch(() => 0);
     const lines = [];
     if (unmapped.length) {
       lines.push(`${unmapped.length} squad row${unmapped.length === 1 ? " has a position" : "s have positions"}`
@@ -17357,19 +17709,26 @@ async function pullRugbyStats(date, log, keyField, statsTable, onConflict) {
         + ` pick one of those dates to pull them.` : ""));
     return;
   }
-  const skipped = [], summary = [];
+  const skipped = [], summary = [], seen = [];
   let total = 0;
   for (const m of played) {
     log(`Pulling ${m.homeTeam?.name} v ${m.awayTeam?.name}…`);
     const detail = await rugbyFeed(`matches/${m.id}`);
-    const rows = rugbyStatRows(detail?.data || detail, keyField,
-      (team, pl) => "rug_" + pl.id, skipped);
+    const rows = rugbyStatRows(detail?.data || detail, keyField, (team, pl) => {
+      // Every name the feed shows us, so a hand-added debutant can be linked.
+      seen.push({ player_id: "rug_" + pl.id, team,
+                  name: decodeEntities(pl.known || [pl.firstName, pl.lastName].filter(Boolean).join(" ")) });
+      return "rug_" + pl.id;
+    }, skipped);
     if (rows.length) await resilientWrite(statsTable, rows, { upsert: true, onConflict });
     total += rows.length;
     summary.push(`${m.homeTeam?.name} v ${m.awayTeam?.name}: ${rows.length} rows`);
   }
+  const linked = await promoteManualPlayers(
+    manualTwins(S.league?.config?.poolAdd, seen)).catch(() => 0);
   log(`Done — ${total} player rows from ${played.length} match(es).`
     + "\n" + summary.join("\n")
+    + (linked ? `\n${linked} player${linked === 1 ? "" : "s"} added by hand now linked to the feed — they score from here on.` : "")
     + (skipped.length ? `\nCould not map: ${[...new Set(skipped)].join(", ")}` : ""));
   scheduleRefetch();
 }
@@ -17645,7 +18004,7 @@ async function startRedraft() {
     .eq("league_id", S.league.id);
   // Open proposals reference deleted picks — clear them out.
   await S.sb.from("trades").update({ status: "cancelled" })
-    .eq("league_id", S.league.id).eq("status", "proposed");
+    .eq("league_id", S.league.id).in("status", ["proposed", "agreed"]);
   const payload = {
     phase: (S.league.phase || 1) + 1,
     phase_quota: quota, phase_starters: starters, phase_flex: flex,
@@ -18113,8 +18472,8 @@ function preDraftPoolNote(players) {
   return `The pool is fixed when the draft starts: ${n} players`
     + (guessed ? `, ${guessed} with a guessed position` : "")
     + (manual ? `, ${manual} added by hand` : "")
-    + `. Positions and pool changes are only possible until the first pick — `
-    + `finalise them in the admin panel first.`;
+    + `. Positions are fixed at the first pick — finalise them in the admin `
+    + `panel first. Players can still be added once the league is live.`;
 }
 
 /* ---------- admin: carrying squads into a draft ----------
@@ -18259,21 +18618,64 @@ async function applyKeepImport() {
   renderKeepImport();
 }
 
+/* Open before AND after the draft. It was pre-draft only, which left a live
+   league no way to add a debutant or a mid-season signing -- exactly the
+   players a free-agent pickup is for. What the draft changes is what an
+   upload may do to players somebody already OWNS: see poolRowsAfterDraft. */
 function renderPoolEditor() {
   const card = $("adm-pool-card");
   if (!card) return;
-  const open = isAdmin() && !S.league?.current_pick && (S.players || []).length > 0;
+  const open = isAdmin() && (S.players || []).length > 0;
   card.classList.toggle("hidden", !open);
   if (!open) return;
   const manual = S.players.filter((p) => String(p.player_id).startsWith("man_")).length;
+  const live = !!S.league?.current_pick;
   $("adm-pool-intro").textContent =
-    `${S.players.length} players${manual ? `, ${manual} of them added by hand` : ""}. `
-    + `A new season starts from last season's squads — the feed has no way to name a `
-    + `squad before a game is played — so transfers, retirements and debutants are yours to fix.`;
+    `${S.players.length} players${manual ? `, ${manual} of them added by hand and not yet seen by the feed` : ""}. `
+    + (live
+      ? "The league is live: add new players and fix names or clubs freely. A drafted player's "
+        + "position can't be changed and a drafted player can't be removed — that would change "
+        + "somebody's squad under them."
+      : "A new season starts from last season's squads — the feed has no way to name a "
+        + "squad before a game is played — so transfers, retirements and debutants are yours to fix.");
+}
+
+/* What an upload may do once the league is live. Adding a player and fixing a
+   name or club are always fine. Changing a DRAFTED player's position, or
+   removing a drafted player, would move a pick out of the quota slot it was
+   drafted into -- or delete it from someone's squad -- and there is no honest
+   way to do that to a manager's team from a spreadsheet. Those rows are
+   refused, by name, and the rest of the sheet still applies. Pure. */
+function poolRowsAfterDraft(parsed, owned) {
+  const { added, updated, removed, errors } = parsed;
+  const out = { added, updated: [], removed: [], errors: [...errors] };
+  for (const p of updated) {
+    const was = owned.get(p.player_id);
+    if (was && was.position !== p.position) {
+      out.errors.push(`${p.name} — drafted, so their position stays ${was.position}`);
+      out.updated.push({ ...p, position: was.position });
+    } else out.updated.push(p);
+  }
+  for (const id of removed) {
+    if (owned.has(id)) out.errors.push(`${owned.get(id).player_name} — drafted, so can't be removed`);
+    else out.removed.push(id);
+  }
+  // A row whose only change was the refused position is no change at all.
+  out.updated = out.updated.filter((p) => {
+    const cur = S.playerById?.[p.player_id];
+    return !cur || ["name", "team", "team_code", "position"].some((k) =>
+      p[k] !== (k === "position" ? (cur.pos_feed ?? cur.position) : cur[k]));
+  });
+  return out;
 }
 
 async function savePoolCsvText(text) {
-  const parsed = parsePoolCsv(text, S.players, playGroups());
+  let parsed = parsePoolCsv(text, S.players, playGroups());
+  if (S.league?.current_pick) {
+    const owned = new Map((S.picks || []).filter((pk) => pk.player_id && pk.slot !== "TEAM")
+      .map((pk) => [pk.player_id, pk]));
+    parsed = poolRowsAfterDraft(parsed, owned);
+  }
   const log = $("adm-pool-log");
   const { added, updated, removed, errors } = parsed;
   if (!added.length && !updated.length && !removed.length) {
@@ -18525,6 +18927,8 @@ function renderAdmin() {
   const owner = isAppOwner();
   $("adm-owner-note")?.classList.toggle("hidden", !owner);
   renderAdminPeople();
+  renderFixturesCard();
+  renderDealMode();
   const injNote = $("adm-injury-note");
   if (injNote) injNote.textContent = injuryFeedNote();
   document.querySelectorAll("[data-owner-only]").forEach((el) => {
@@ -18747,6 +19151,12 @@ async function toggleTrading() {
   const { error } = await S.sb.from("leagues")
     .update({ trading_open: next }).eq("id", S.league.id);
   if (error) return toast(error.message);
+  /* Agreed deals AFTER the flag is down: accept_trade refuses to execute an
+     agreed deal in a manual league while its window is still open. */
+  if (!next && (S.trades || []).some((t) => t.status === "agreed")) {
+    S.league.trading_open = false;
+    await processAgreedTrades();
+  }
   // Fresh window, fresh queue. Priority needs no seeding -- it is derived from
   // the table every time it is asked for (see waiverPriorityOrder).
   if (next && waiver)
@@ -19154,6 +19564,22 @@ function wire() {
      row this client holds -- rls.sql §7 revokes SELECT on it -- so the only
      way to show it is to ask for it, and league_admin_code() hands it back to
      the creator and nobody else. */
+  const fixBtn = $("adm-fix-refresh");
+  if (fixBtn) fixBtn.onclick = async () => {
+    fixBtn.disabled = true;
+    const log = $("adm-fix-log");
+    log.textContent = "Reading the feed…";
+    try {
+      const r = await refreshRugbyFixtures();
+      if (!r) { log.textContent = ""; return; }
+      if (r.changed) await refetchAll();
+      log.textContent = !r.changed ? `Already up to date — ${r.count} matches.`
+        : `Updated: ${r.was} → ${r.count} matches.` + (r.moved
+          ? ` ${r.moved} saved line-up${r.moved === 1 ? "" : "s"} moved to the real next deadline.` : "");
+      renderAdmin(); renderBoard();
+    } catch (e) { log.textContent = e.message; }
+    finally { fixBtn.disabled = false; }
+  };
   const reveal = $("adm-people-reveal");
   if (reveal) reveal.onclick = async () => {
     reveal.disabled = true;
