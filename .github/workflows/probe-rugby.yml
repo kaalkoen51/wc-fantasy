@@ -1,0 +1,41 @@
+name: What does the rugby feed say about fixtures
+
+# Read-only. Asks the rugby feed how it pages a competition's matches and which
+# rounds it holds for a season, and prints the evidence to the run log. It
+# writes nothing, anywhere, and needs no secret -- the feed is open.
+#
+# Exists because the development container cannot reach the feed, and a URC
+# league was showing its next round as 19 December in late September. See
+# probe_rugby.py for the four questions it asks.
+on:
+  workflow_dispatch:
+    inputs:
+      competition:
+        description: "Feed competition name"
+        required: true
+        default: "United Rugby Championship"
+      season:
+        description: "Season START year, as the league stores it"
+        required: true
+        default: "2026"
+      kind:
+        description: "league (runs July-July) or cup (calendar year)"
+        required: true
+        default: "league"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Ask the feed
+        run: |
+          python probe_rugby.py \
+            --competition "${{ inputs.competition }}" \
+            --season "${{ inputs.season }}" \
+            --kind "${{ inputs.kind }}"
