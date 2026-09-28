@@ -19135,6 +19135,178 @@ function renderAdminPeople() {
   });
 }
 
+/* ---------- tickets: bugs and ideas, from the admin panel to the app owners ----------
+
+   Filed by a league's admin, read by the app owners. The database decides who
+   sees what (schema.sql, `tickets`): an admin gets back only their own, an app
+   owner gets everything. So this code never filters by author for privacy --
+   it would be decoration -- and only filters for the two views it draws. */
+const TICKET_KIND = { bug: "🐞 Bug", feature: "💡 Feature" };
+
+/* One ticket as plain text, the way it will be pasted: into an issue, a chat
+   with whoever builds the fix, or a list. Everything the reader needs to act
+   on it and nothing that only makes sense inside the app. */
+function ticketText(t) {
+  const when = new Date(t.created_at).toLocaleString("en-GB",
+    { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  const ctx = t.context || {};
+  const where = [t.league_name || "no league", ctx.sport, ctx.competition].filter(Boolean);
+  return [
+    `${t.kind === "feature" ? "FEATURE" : "BUG"}: ${t.title}`,
+    `League: ${where[0]}${where.length > 1 ? ` (${where.slice(1).join(" · ")})` : ""}`
+      + ` · From: ${t.author_name || "unknown"} · ${when}`,
+    `Ticket ${String(t.id).slice(0, 8)} · ${t.status}`,
+    "",
+    (t.body || "").trim() || "(no description)",
+    ...(ctx.device ? ["", `Device: ${ctx.device}`] : []),
+  ].join("\n");
+}
+
+async function copyText(txt) {
+  try { await navigator.clipboard.writeText(txt); return true; }
+  catch {
+    // Some in-app browsers refuse the async clipboard; the old way still works there.
+    const ta = document.createElement("textarea");
+    ta.value = txt; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch { /* nothing left to try */ }
+    ta.remove();
+    return ok;
+  }
+}
+
+async function loadTickets() {
+  if (!S.sb) return;
+  const { data, error } = await S.sb.from("tickets").select("*")
+    .order("created_at", { ascending: false }).limit(300);
+  /* No table yet is not an empty inbox: say so, rather than showing "No
+     tickets" to an owner whose admins have been filing into nothing. */
+  S._tkMissing = !!error && /tickets|relation|schema cache/.test(error.message || "");
+  S.tickets = error ? [] : (data || []);
+  if (isAppOwner()) {
+    const r = await S.sb.rpc("is_app_owner").then((x) => x, () => ({ data: null }));
+    S._tkOwnerDb = r?.error ? null : r?.data;
+  }
+  renderTickets();
+}
+
+function renderTickets() {
+  if (!$("adm-sec-ticket")) return;
+  const kind = S._tkKind || "bug";
+  document.querySelectorAll("[data-tkind]").forEach((b) => {
+    b.className = "flex-1 rounded-md py-1.5 font-semibold "
+      + (b.dataset.tkind === kind ? "is-selected" : "text-slate-400");
+    b.onclick = () => { S._tkKind = b.dataset.tkind; renderTickets(); };
+  });
+  $("tk-body").placeholder = kind === "bug"
+    ? "What happened, what you expected instead, and how to make it happen again."
+    : "What you'd like the app to do, and what it would let you do that you can't now.";
+
+  const pill = (t) => `<span class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${
+    t.status === "open" ? "bg-amber-400/15 text-amber-300" : "bg-live/15 text-live"}">${
+    t.status === "open" ? "OPEN" : t.status === "done" ? "DONE" : "CLOSED"}</span>`;
+  const day = (t) => new Date(t.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+
+  // Your own, newest first. The database only returns yours anyway, unless
+  // you are an owner -- hence the filter, which is for the view, not privacy.
+  const uid = authUid();
+  const mine = (S.tickets || []).filter((t) => t.user_id === uid).slice(0, 10);
+  $("tk-mine").innerHTML = S._tkMissing
+    ? '<p class="text-xs text-amber-300">Tickets need a database update before they can be saved — ask the app owner to run schema.sql.</p>'
+    : !mine.length ? "" : `<div class="eyebrow pt-1">Your tickets</div>` + mine.map((t) => `
+      <div class="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-800/40 px-2.5 py-1.5" data-myticket="${esc(t.id)}">
+        <span class="shrink-0 text-xs">${t.kind === "feature" ? "💡" : "🐞"}</span>
+        <span class="min-w-0 flex-1 truncate text-sm">${esc(t.title)}</span>
+        <span class="shrink-0 text-[11px] text-slate-500">${day(t)}</span>${pill(t)}</div>`).join("");
+
+  if (!isAppOwner()) return;
+  const filter = S._tkFilter || "open";
+  document.querySelectorAll("[data-tfilter]").forEach((b) => {
+    b.className = "flex-1 rounded-md py-1.5 font-semibold "
+      + (b.dataset.tfilter === filter ? "is-selected" : "text-slate-400");
+    b.onclick = () => { S._tkFilter = b.dataset.tfilter; renderTickets(); };
+  });
+  const all = S.tickets || [];
+  const shown = all.filter((t) => filter === "all" || (filter === "open") === (t.status === "open"));
+  const open = all.filter((t) => t.status === "open").length;
+  $("tk-inbox-count").textContent = open ? `${open} open` : "none open";
+  const note = $("tk-inbox-note");
+  const warn = S._tkMissing ? "The tickets table isn't in the database yet — run schema.sql."
+    : S._tkOwnerDb === false ? "The app knows you as an owner but the database doesn't, so you're only "
+      + "seeing your own tickets. Run schema.sql (it adds you to app_owners) and reload."
+    : "";
+  note.textContent = warn;
+  note.classList.toggle("hidden", !warn);
+  $("tk-copy-all").textContent = `Copy ${shown.length ? `all ${shown.length}` : "all"}`;
+  $("tk-copy-all").disabled = !shown.length;
+  $("tk-copy-all").onclick = async () => {
+    const ok = await copyText(shown.map(ticketText).join("\n\n---\n\n"));
+    toast(ok ? `${shown.length} ticket${shown.length === 1 ? "" : "s"} copied.` : "Copy failed — select the text by hand.");
+  };
+  $("tk-inbox").innerHTML = !shown.length
+    ? `<p class="px-2 py-3 text-center text-xs text-slate-500">${filter === "open" ? "Nothing open. 🎉" : "No tickets here."}</p>`
+    : shown.map((t) => `<div class="rounded-xl border border-slate-700 bg-slate-900 p-3 space-y-1.5" data-ticket="${esc(t.id)}">
+      <div class="flex items-center gap-2">
+        <span class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${
+          t.kind === "feature" ? "bg-sky-400/15 text-sky-300" : "bg-wcred/20 text-red-300"}">${
+          t.kind === "feature" ? "FEATURE" : "BUG"}</span>
+        ${pill(t)}
+        <span class="ml-auto text-[11px] text-slate-500">${day(t)}</span>
+      </div>
+      <div class="text-sm font-semibold leading-snug">${esc(t.title)}</div>
+      <div class="text-[11px] text-slate-400 truncate">${esc(t.league_name || "no league")} · ${esc(t.author_name || "unknown")}${
+        t.context?.sport ? ` · ${esc(t.context.sport)}` : ""}</div>
+      ${t.body ? `<p class="text-xs text-slate-300 whitespace-pre-wrap break-words">${esc(t.body)}</p>` : ""}
+      <div class="flex gap-1.5 pt-0.5">
+        <button data-tkcopy="${esc(t.id)}" class="flex-1 rounded-lg border border-slate-700 bg-slate-800 py-1.5 text-xs font-semibold">Copy</button>
+        <button data-tkstatus="${esc(t.id)}" data-to="${t.status === "open" ? "done" : "open"}"
+          class="flex-1 rounded-lg border py-1.5 text-xs font-semibold ${t.status === "open"
+            ? "border-live/50 bg-live/10 text-live" : "border-slate-700 bg-slate-800 text-slate-300"}">${
+          t.status === "open" ? "✓ Mark done" : "Reopen"}</button>
+      </div></div>`).join("");
+  $("tk-inbox").querySelectorAll("[data-tkcopy]").forEach((b) => b.onclick = async () => {
+    const t = (S.tickets || []).find((x) => x.id === b.dataset.tkcopy);
+    toast((await copyText(ticketText(t))) ? "Ticket copied." : "Copy failed — select the text by hand.");
+  });
+  $("tk-inbox").querySelectorAll("[data-tkstatus]").forEach((b) => b.onclick = () =>
+    setTicketStatus(b.dataset.tkstatus, b.dataset.to).catch((e) => toast(e.message)));
+}
+
+async function submitTicket() {
+  const title = $("tk-title").value.trim(), body = $("tk-body").value.trim();
+  if (!title) return toast("Give the ticket a short title.");
+  const btn = $("tk-submit");
+  btn.disabled = true;
+  try {
+    const comp = leagueCompetition();
+    const row = {
+      user_id: authUid(), kind: S._tkKind || "bug", status: "open", title: title.slice(0, 140),
+      body: body.slice(0, 5000) || null,
+      author_name: myManager()?.name || S.authUser?.email || null,
+      league_id: S.league?.id || null, league_name: S.league?.name || null,
+      context: { sport: sportOf(), competition: comp ? `${comp.name} ${comp.season}` : null,
+                 device: `${navigator.userAgent.slice(0, 160)} · ${innerWidth}×${innerHeight}` },
+    };
+    const { error } = await S.sb.from("tickets").insert(row);
+    if (error) return toast(/tickets|relation|schema cache/.test(error.message || "")
+      ? "Tickets need a database update — ask the app owner to run schema.sql." : error.message);
+    $("tk-title").value = ""; $("tk-body").value = "";
+    toast("Ticket sent — thanks.");
+    await loadTickets();
+  } finally { btn.disabled = false; }
+}
+
+async function setTicketStatus(id, status) {
+  const { error } = await S.sb.from("tickets")
+    .update({ status, updated_at: new Date().toISOString() }).eq("id", id);
+  if (error) return toast(error.message);
+  const t = (S.tickets || []).find((x) => x.id === id);
+  if (t) t.status = status;
+  toast(status === "done" ? "Marked done." : "Reopened.");
+  renderTickets();
+}
+
 function renderAdmin() {
   const ok = isAdmin();
   $("admin-gate").classList.toggle("hidden", ok);
@@ -19152,6 +19324,8 @@ function renderAdmin() {
   $("adm-owner-note")?.classList.toggle("hidden", !owner);
   renderAdminPeople();
   renderFixturesCard();
+  if (S.tickets === undefined) { S.tickets = []; loadTickets().catch(() => {}); }
+  renderTickets();
   renderDealMode();
   renderSquadLimitsMode();
   const injNote = $("adm-injury-note");
@@ -19798,6 +19972,8 @@ function wire() {
      row this client holds -- rls.sql §7 revokes SELECT on it -- so the only
      way to show it is to ask for it, and league_admin_code() hands it back to
      the creator and nobody else. */
+  const tkBtn = $("tk-submit");
+  if (tkBtn) tkBtn.onclick = () => submitTicket().catch((e) => toast(e.message));
   const fixBtn = $("adm-fix-refresh");
   if (fixBtn) fixBtn.onclick = async () => {
     fixBtn.disabled = true;

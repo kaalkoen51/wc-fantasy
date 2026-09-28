@@ -182,6 +182,9 @@
              The two rules worth modelling are the ones the screens depend on:
              a wrong code returns false rather than raising, and appointing or
              revoking is refused for anyone but the league's creator. */
+          // Whether the DATABASE counts the caller as an app owner. A test flips
+          // window.__notAppOwnerInDb to model an owner missing from app_owners.
+          if (name === "is_app_owner") return { data: !window.__notAppOwnerInDb, error: null };
           if (name === "claim_league_admin") {
             const l = rowsOf("leagues").find((x) => x.id === args.p_league);
             const code = String(args.p_code ?? "").trim();

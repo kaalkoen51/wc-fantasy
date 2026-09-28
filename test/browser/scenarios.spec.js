@@ -6153,3 +6153,82 @@ test("the draft's recent picks show the draft, not the squads carried into it", 
   expect(seen, "the tracker is still showing carried-in players").not.toMatch(/Kept/);
   expect(seen, "the real picks are missing from the tracker").toMatch(/Second Pick.*First Pick/);
 });
+
+test("an admin logs a ticket, and the app owner reads, copies and closes it", async ({ page }) => {
+  page.on("dialog", (d) => d.accept());
+  await openLeague(page, { managers: 2, played: 2 });
+  const seen = await page.evaluate(async () => {
+    document.querySelectorAll("[id$='-sheet']").forEach((e) => e.classList.add("hidden"));
+    S._recapChecked = true;
+    const copied = [];
+    Object.defineProperty(navigator, "clipboard", { configurable: true,
+      value: { writeText: async (t) => { copied.push(t); } } });
+    window.__db.tables.tickets = [];
+    const vis = (id) => { const el = document.getElementById(id);
+      return !!el && !el.classList.contains("hidden") && !el.closest(".hidden"); };
+
+    // 1 · A league admin, not an app owner.
+    S.authUser = { ...(S.authUser || {}), email: "admin@example.com" };
+    showView("admin"); renderAdmin();
+    await new Promise((r) => setTimeout(r, 30));
+    const adminSees = { form: vis("adm-sec-ticket"), inbox: vis("adm-sec-inbox") };
+    document.querySelector('[data-tkind="feature"]').click();
+    document.getElementById("tk-title").value = "Let admins set the waiver order";
+    document.getElementById("tk-body").value = "Line 1\nLine 2";
+    await submitTicket();
+    const row = window.__db.tables.tickets[0];
+    const mineListed = document.getElementById("tk-mine").textContent;
+
+    // Someone else's ticket, from another league.
+    window.__db.tables.tickets.push({ id: "t-other-0000", user_id: "someone-else",
+      kind: "bug", title: "Keeper asked for in rugby", body: "Every time",
+      status: "open", author_name: "Rugby Admin", league_name: "URC Mates",
+      context: { sport: "rugby" }, created_at: new Date(Date.now() - 60e3).toISOString() });
+
+    // 2 · The app owner.
+    S.authUser.email = "koen.johan.c@gmail.com";
+    await loadTickets(); renderAdmin();
+    const ownerSees = { inbox: vis("adm-sec-inbox"), cards: document.querySelectorAll("[data-ticket]").length,
+      count: document.getElementById("tk-inbox-count").textContent,
+      warned: vis("tk-inbox-note") };
+    document.querySelector(`[data-tkcopy="${row.id}"]`).click();
+    await new Promise((r) => setTimeout(r, 10));
+    document.getElementById("tk-copy-all").click();
+    await new Promise((r) => setTimeout(r, 10));
+    document.querySelector('[data-tkstatus="t-other-0000"]').click();
+    await new Promise((r) => setTimeout(r, 30));
+    const afterDone = { status: window.__db.tables.tickets.find((t) => t.id === "t-other-0000").status,
+      openCards: document.querySelectorAll("[data-ticket]").length };
+
+    // 3 · An owner the database does not know about is told so.
+    window.__notAppOwnerInDb = true;
+    await loadTickets();
+    const warn = document.getElementById("tk-inbox-note").textContent;
+    return { adminSees, row, mineListed, ownerSees, copied, afterDone, warn };
+  });
+
+  expect(seen.adminSees.form, "an admin has nowhere to log a ticket").toBe(true);
+  expect(seen.adminSees.inbox, "an ordinary admin can see the owners' inbox").toBe(false);
+  expect(seen.row).toMatchObject({ kind: "feature", title: "Let admins set the waiver order",
+    body: "Line 1\nLine 2", league_name: "Scenario" });
+  expect(seen.row.user_id, "the ticket was not filed as its author").toBeTruthy();
+  expect(seen.row.context?.sport, "the ticket carries no context").toBeTruthy();
+  expect(seen.mineListed, "the admin cannot see what they filed").toMatch(/Let admins set the waiver order/);
+
+  expect(seen.ownerSees.inbox, "the app owner has no inbox").toBe(true);
+  expect(seen.ownerSees.cards, "the inbox does not show every open ticket").toBe(2);
+  expect(seen.ownerSees.count).toBe("2 open");
+  expect(seen.ownerSees.warned, "a recognised owner is being warned").toBe(false);
+
+  const one = seen.copied[0];
+  expect(one, "Copy did not copy the ticket").toMatch(/^FEATURE: Let admins set the waiver order/);
+  expect(one).toMatch(/League: Scenario/);
+  expect(one, "the description is missing from the copy").toMatch(/Line 1\nLine 2/);
+  expect(seen.copied[1].split("\n\n---\n\n").length, "Copy all did not copy every ticket").toBe(2);
+  expect(seen.copied[1]).toMatch(/BUG: Keeper asked for in rugby/);
+
+  expect(seen.afterDone.status, "Mark done did not save").toBe("done");
+  expect(seen.afterDone.openCards, "a closed ticket is still in the open list").toBe(1);
+  expect(seen.warn, "an owner missing from app_owners is not told why they see less")
+    .toMatch(/database doesn't/);
+});

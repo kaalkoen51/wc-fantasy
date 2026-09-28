@@ -879,6 +879,66 @@ grant  execute on function claim_league_admin(uuid, text)  to authenticated;
 grant  execute on function set_league_admin(uuid, boolean) to authenticated;
 grant  execute on function league_admin_code(uuid)         to authenticated;
 
+-- ---------------------------------------------------------------------------
+-- Tickets — bugs and feature requests filed from a league's admin panel
+-- ---------------------------------------------------------------------------
+/* Locked from the first line, not left to rls.sql. A ticket can say anything
+   about anyone's league, so it is never world-readable, even on a database
+   whose lockdown has not been applied: you read your own, the app owners read
+   all of them, and only an app owner can change or remove one.
+
+   Not in the RLS block below or in rls.sql's table list, deliberately: both
+   of those manage OTHER tables' policies, and neither may ever open this one. */
+create table if not exists tickets (
+    id uuid primary key default gen_random_uuid(),
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    user_id uuid default auth.uid(),
+    author_name text,
+    league_id uuid references leagues(id) on delete set null,
+    league_name text,                -- kept: the league may be deleted later
+    kind text not null default 'bug' check (kind in ('bug', 'feature')),
+    title text not null check (length(btrim(title)) between 1 and 140),
+    body text check (body is null or length(body) <= 5000),
+    status text not null default 'open' check (status in ('open', 'done', 'wontfix')),
+    context jsonb                    -- sport, competition, device: what a bug report needs
+);
+create index if not exists tickets_created_idx on tickets (created_at desc);
+alter table tickets enable row level security;
+
+/* "Is the caller an app owner?", answerable from inside a policy. app_owners
+   has RLS on and no policies, so a policy that read it directly would see an
+   empty table and nobody would ever be an owner. SECURITY DEFINER reads it as
+   its owner instead. Also callable by the app, so the inbox can say plainly
+   when an account the client thinks is an owner is not one to the database. */
+create or replace function is_app_owner() returns boolean
+language sql stable security definer set search_path = public as $$
+    select exists (select 1 from app_owners where user_id = auth.uid());
+$$;
+revoke execute on function is_app_owner() from public;
+grant  execute on function is_app_owner() to authenticated;
+
+drop policy if exists tickets_insert on tickets;
+drop policy if exists tickets_read   on tickets;
+drop policy if exists tickets_update on tickets;
+drop policy if exists tickets_delete on tickets;
+-- File one as yourself, and only as a new, open ticket.
+create policy tickets_insert on tickets for insert to authenticated
+    with check (user_id = auth.uid() and status = 'open');
+create policy tickets_read on tickets for select to authenticated
+    using (user_id = auth.uid() or is_app_owner());
+create policy tickets_update on tickets for update to authenticated
+    using (is_app_owner()) with check (is_app_owner());
+create policy tickets_delete on tickets for delete to authenticated
+    using (is_app_owner());
+
+/* The account app.js already names in APP_OWNER_EMAILS, so the inbox works
+   without a separate step. Idempotent; a no-op until that account has signed
+   up. Anyone else is added the way the sim-flag note above describes. */
+insert into app_owners (user_id, note)
+    select id, email from auth.users where lower(email) = 'koen.johan.c@gmail.com'
+    on conflict (user_id) do nothing;
+
 -- RLS. Open policies are created ONLY while the rls.sql lockdown has never
 -- been applied (detected by its is_league_member() helper). This block used to
 -- drop-and-recreate "open access" unconditionally, which meant re-running

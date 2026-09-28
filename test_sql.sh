@@ -79,4 +79,7 @@ step "co-admins"
 step "deals that go through at window close"
 "${PSQL[@]}" -f "$ROOT/test/sql/deferred_trades.sql"
 
+step "tickets"
+"${PSQL[@]}" -f "$ROOT/test/sql/tickets.sql"
+
 echo "all sql checks passed"
