@@ -5984,3 +5984,172 @@ test("re-reading a rugby league's fixtures brings back the rounds it lost, and t
   expect(seen.cardShown, "a rugby admin has no way to re-read fixtures").toBe(true);
   expect(seen.summary, "the admin card doesn't say what's next").toMatch(/Next up: Round 2/);
 });
+
+/* ---------- a live URC league, second message ---------- */
+
+test("closing and reopening a manual window gives every manager a fresh move allowance",
+  async ({ page }) => {
+  /* "I made 2 trades, closed the window, they executed, but now opening the
+     window again I can't trade." A manual window was identified by the last
+     line-up LOCK, and trading and line-ups are separate switches -- so closing
+     and reopening trading without a lock was still the same window. */
+  page.on("dialog", (d) => d.accept());
+  await openLeague(page, { managers: 2, played: 2 });
+  const seen = await page.evaluate(async () => {
+    document.querySelectorAll("[id$='-sheet']").forEach((e) => e.classList.add("hidden"));
+    S._recapChecked = true;
+    const row = window.__db.tables.leagues.find((l) => l.id === S.league.id);
+    row.config = { ...(row.config || {}), autoWindows: false, max_fa_per_window: 2 };
+    row.trading_open = false;
+    await refetchAll();
+    await toggleTrading();                 // open
+    await refetchAll();
+    const me = myManager();
+    // Two moves in this window, recorded the way doSwap records them.
+    for (let i = 0; i < 2; i++)
+      window.__db.tables.transactions.push({ id: "tx" + i, league_id: S.league.id,
+        manager_id: me.id, kind: "swap", window_key: faWindowKey(),
+        created_at: new Date().toISOString(), in_player_id: "x" + i, out_player_id: "y" + i });
+    await refetchAll();
+    const used = faMovesLeft(me.id);
+    await toggleTrading();                 // close
+    await refetchAll();
+    // No time passes: the page runs on a frozen clock, which is the point --
+    // a new window must not depend on the clock having moved.
+    await toggleTrading();                 // open again
+    await refetchAll();
+    return { used, fresh: faMovesLeft(me.id), open: S.league.trading_open,
+             stamped: !!S.league.config.window_opened_at && S.league.config.window_seq === 2 };
+  });
+  expect(seen.used, "the two moves did not count in the window they were made").toBe(0);
+  expect(seen.open, "the window did not reopen").toBe(true);
+  expect(seen.stamped, "opening did not record when the window began").toBe(true);
+  expect(seen.fresh, "last window's moves still count against this one").toBe(2);
+});
+
+test("the admin can set the waiver order, and the resolver uses it", async ({ page }) => {
+  page.on("dialog", (d) => d.accept());
+  await openLeague(page, { managers: 3, played: 2 });
+  const seen = await page.evaluate(async () => {
+    document.querySelectorAll("[id$='-sheet']").forEach((e) => e.classList.add("hidden"));
+    S._recapChecked = true;
+    S.league.config = { ...(S.league.config || {}), fa_defer_to_close: true };
+    Object.assign(window.__db.tables.leagues.find((l) => l.id === S.league.id), { config: S.league.config });
+    const before = waiverPriorityFor(activeManagers()).ids;
+    showView("admin"); renderAdmin();
+    const card = document.getElementById("adm-wvorder");
+    const shown = !card.classList.contains("hidden");
+    const modeBefore = document.getElementById("adm-wvorder-mode").textContent;
+    // Send the table's first-refusal manager to the back: two taps down.
+    const down = () => card.querySelector(`[data-wvmove="${before[0]}"][data-wvdir="1"]`).click();
+    down(); down();
+    document.getElementById("adm-wvorder-save").click();
+    await new Promise((r) => setTimeout(r, 50));
+    const saved = window.__db.tables.leagues.find((l) => l.id === S.league.id).config.waiverOrder;
+    const after = waiverPriorityFor(activeManagers()).ids;
+    // Both of the first two in the table claim the same player; the admin's order decides.
+    const [first, second] = [after[0], before[0]];
+    const out = (mid) => S.picks.find((pk) => pk.manager_id === mid && pk.slot !== "TEAM");
+    const owned = new Set(S.picks.map((pk) => pk.player_id));
+    const target = S.players.find((p) => !owned.has(p.player_id) && p.position === out(first).position);
+    const claim = (mid, id) => ({ id, league_id: S.league.id, manager_id: mid, pick_id: out(mid).id,
+      rank: 0, status: "pending", out_player_id: out(mid).player_id, out_player_name: out(mid).player_name,
+      in_player_id: target.player_id, in_player_name: target.name, created_at: new Date().toISOString() });
+    window.__db.tables.fa_claims.push(claim(second, "c-table-first"), claim(first, "c-admin-first"));
+    await refetchAll();
+    await processFaClaims();
+    const won = window.__db.tables.fa_claims.find((c) => c.status === "awarded")?.id;
+    renderAdmin();
+    const modeAfter = document.getElementById("adm-wvorder-mode").textContent;
+    document.getElementById("adm-wvorder-auto").click();
+    await new Promise((r) => setTimeout(r, 50));
+    return { shown, modeBefore, modeAfter, before, saved, after, won,
+             reset: waiverPriorityFor(activeManagers()).ids.join() === before.join(),
+             cleared: !("waiverOrder" in window.__db.tables.leagues.find((l) => l.id === S.league.id).config) };
+  });
+  expect(seen.shown, "a waiver league's admin has no waiver-order editor").toBe(true);
+  expect(seen.modeBefore).toBe("automatic");
+  expect(seen.saved, "the order was not saved").toEqual(seen.after);
+  expect(seen.after[2], "the manager sent to the back is not at the back").toBe(seen.before[0]);
+  expect(seen.won, "the resolver ignored the admin's order").toBe("c-admin-first");
+  expect(seen.modeAfter).toBe("set by you");
+  expect(seen.cleared, "putting it back left the admin's order in place").toBe(true);
+  expect(seen.reset, "the order does not follow the table again").toBe(true);
+});
+
+test("in a rugby league, a move that breaks the squad limits is refused", async ({ page }) => {
+  /* "I shouldn't be allowed to make a trade that results in me having fewer
+     than 4 props, or more than 10 loose forwards." */
+  page.on("dialog", (d) => d.accept());
+  await openLeague(page, { managers: 2, played: 2 });
+  const seen = await page.evaluate(async () => {
+    document.querySelectorAll("[id$='-sheet']").forEach((e) => e.classList.add("hidden"));
+    S._recapChecked = true;
+    const me = myManager(), other = S.managers.find((m) => m.id !== me.id);
+    const rugbyCfg = { quota: { PR: 4, HK: 1, LK: 2, LF: 3, SH: 1, FH: 1, CE: 2, OB: 3, TEAM: 0 },
+                       fa_defer_to_close: false, autoWindows: false };
+    Object.assign(window.__db.tables.leagues.find((l) => l.id === S.league.id),
+      { competition: { name: "United Rugby Championship", apiLeagueId: 1068, season: 2026, sport: "rugby" },
+        config: rugbyCfg, trading_open: true });
+    const shape = ["PR", "PR", "PR", "PR", "HK", "LK", "LK", "LF", "LF", "LF", "SH", "FH", "CE", "CE", "OB", "OB", "OB"];
+    window.__db.tables.picks = window.__db.tables.picks.filter((pk) => pk.slot === "TEAM");
+    const players = [];
+    for (const [mi, m] of [me, other].entries()) shape.forEach((pos, i) => {
+      const pid = `rug_${mi}_${i}`;
+      players.push({ player_id: pid, name: `P${mi}-${i}`, team: "Leinster", position: pos });
+      window.__db.tables.picks.push({ id: `pk_${mi}_${i}`, league_id: S.league.id, manager_id: m.id,
+        player_id: pid, player_name: `P${mi}-${i}`, position: pos, team: "Leinster",
+        slot: pos, is_sub: false, pick_number: mi * 100 + i });
+    });
+    players.push({ player_id: "rug_free_lf", name: "Free Flanker", team: "Munster", position: "LF" });
+    players.push({ player_id: "rug_free_pr", name: "Free Prop", team: "Munster", position: "PR" });
+    S._poolBase = players; S.players = players;
+    await refetchAll();
+    S._poolBase = players; applyPoolOverrides();
+    const pk = (id) => S.picks.find((p) => p.id === id);
+    // My prop for their flanker: I'd have 3 props.
+    const bad = tradeError([{ mine: pk("pk_0_0"), theirs: pk("pk_1_7") }]);
+    // Prop for prop is always fine.
+    const good = tradeError([{ mine: pk("pk_0_0"), theirs: pk("pk_1_1") }]);
+    // A free-agent swap that drops a prop for a flanker.
+    await doSwap(pk("pk_0_1"), S.playerById.rug_free_lf);
+    const stillProp = window.__db.tables.picks.find((p) => p.id === "pk_0_1").player_id;
+    // ...and one that keeps the shape goes through.
+    await doSwap(pk("pk_0_2"), S.playerById.rug_free_pr);
+    const swapped = window.__db.tables.picks.find((p) => p.id === "pk_0_2").player_id;
+    /* Football's default (off) is not asserted here: these picks carry rugby
+       positions, which football's limits never look at, so it would pass
+       whatever the default was. It is pinned in test_logic.js, and end to end
+       by "a player who has left the competition can still be swapped", a
+       cross-position claim in a football league that fails if limits apply. */
+    return { bad, good, stillProp, swapped };
+  });
+  expect(seen.bad, "a trade leaving 3 props went through").toMatch(/You would be left with 3 props — a squad needs at least 4/);
+  expect(seen.good, "a like-for-like trade was refused").toBeNull();
+  expect(seen.stillProp, "a free-agent swap broke the prop minimum").toBe("rug_0_1");
+  expect(seen.swapped, "a free-agent swap within the limits was refused").toBe("rug_free_pr");
+});
+
+test("the draft's recent picks show the draft, not the squads carried into it", async ({ page }) => {
+  /* "In the drafting phase, the recently picked tracker seems to be stuck,
+     when some players have already been added to managers' squads in the
+     pre-draft phase." Carried-in squads are written at pick numbers 900 and
+     up, and the tracker showed the last five by pick number. */
+  await openLeague(page, { managers: 2, played: 2, predraft: true });
+  const seen = await page.evaluate(() => {
+    document.querySelectorAll("[id$='-sheet']").forEach((e) => e.classList.add("hidden"));
+    const [a, b] = S.managers;
+    const mk = (id, mid, n, name, kept) => ({ id, league_id: S.league.id, manager_id: mid,
+      player_id: "p_" + id, player_name: name, position: "MID", team: "X", slot: "MID",
+      is_sub: false, pick_number: n, ...(kept ? { kept: true } : {}) });
+    S.picks = [
+      ...[0, 1, 2, 3, 4, 5].map((i) => mk("k" + i, i % 2 ? b.id : a.id, 900 + i, "Kept " + i, true)),
+      mk("d1", a.id, 1, "First Pick"), mk("d2", b.id, 2, "Second Pick"),
+    ];
+    S.league.current_pick = 3;
+    renderDraft();
+    return document.getElementById("draft-recent").textContent.replace(/\s+/g, " ");
+  });
+  expect(seen, "the tracker is still showing carried-in players").not.toMatch(/Kept/);
+  expect(seen, "the real picks are missing from the tracker").toMatch(/Second Pick.*First Pick/);
+});

@@ -5071,9 +5071,18 @@ function flashPick(pk) {
 
 // Announce only genuinely new picks — not the backlog on first render, and not
 // your own pick (you just made it, you know).
+/* Picks made IN the draft, in the order they were made. Squads carried into
+   a draft are written with pick numbers from 900 up (so they can never collide
+   with a real pick), which put them last in pick-number order -- so "the five
+   most recent picks" was the carried-in players for the whole draft, and "the
+   newest pick" was one of them, so no real pick was ever announced. */
+const draftedInOrder = () => (S.picks || []).filter((pk) => !pk.kept)
+  .sort((a, b) => a.pick_number - b.pick_number);
+
 function announceNewPicks() {
   _pickJustLanded = false;
-  const last = S.picks.reduce((a, b) => (a && a.pick_number > b.pick_number ? a : b), null);
+  const made = draftedInOrder();
+  const last = made.length ? made[made.length - 1] : null;
   /* An empty board still seeds the marker. Returning without seeding it left
      the marker null until the first pick LANDED, and the backlog guard below
      then read that pick as the backlog and swallowed it — so the one pick that
@@ -5717,7 +5726,7 @@ function renderDraft() {
   renderPool();          // memoised: rebuilds only when the pool's inputs change
 
   announceNewPicks();
-  $("draft-recent").innerHTML = [...S.picks].slice(-5).reverse().map((pk, i) => {
+  $("draft-recent").innerHTML = draftedInOrder().slice(-5).reverse().map((pk, i) => {
     const m = S.managers.find((x) => x.id === pk.manager_id);
     // Only the newest row animates, and only when a pick actually landed —
     // it used to flash on every re-render, including a queue reorder.
@@ -8177,6 +8186,7 @@ function boardRulesNote() {
   if (h2hEnabled()) bits.push("Standings are a head-to-head log — you play one rival each round.");
   if (faDeferToClose()) bits.push("Free-agent claims queue and resolve at window close, in waiver order.");
   if (tradesDeferToClose()) bits.push("Deals between managers are locked in on accept and go through when the window closes.");
+  if (squadLimitsOn()) bits.push("Trades and free-agent moves must keep every position within the squad limits.");
   return bits.join(" ");
 }
 
@@ -14600,6 +14610,8 @@ async function doSwap(pick, entry) {
   if (!tradingOpen()) return toast(autoWindowsEnabled() ? tradeWindowMessage() : "Trading window is closed.");
   if (faMovesLeft(pick.manager_id) <= 0)
     return toast(`No free-agent moves left this window — the cap is ${maxFaPerWindow()}.`);
+  const limit = faSquadError(pick, entry);
+  if (limit) return toast(limit);
   /* The POSITION has to travel with the player. Without it a keeper swapped
      into a forward's pick stays recorded as a forward -- and scoring reads the
      pick's position, so they would be scored as one: no clean sheets, wrong
@@ -14646,10 +14658,27 @@ function faWindowStartMs() {
     const w = autoWindowState();
     if (w.tradeWindow) return w.tradeWindow.openAt;
   }
+  const opened = manualWindowOpenedAt();
+  if (opened != null) return opened;
   // Otherwise the last lock that has actually taken effect. Keyed on
   // effective_from for the same reason txWindowStarts is: created_at is now
   // just "someone edited their team", which would reset the count mid-window.
   return txWindowStarts()[0] ?? 0;
+}
+
+/* When the admin last OPENED trading, in a manual-window league.
+
+   The manual window used to be identified by the last line-up lock -- but
+   trading and line-ups are separate switches, so an admin who closed trading
+   (waivers resolved, moves executed) and opened it again without a lock in
+   between was still in the "same window", and every manager's moves from the
+   one just closed still counted against the cap. Reported as exactly that:
+   "I made 2 trades, closed the window, they executed, but now opening the
+   window again I can't trade". Stamped by toggleTrading on every open. */
+function manualWindowOpenedAt() {
+  if (autoWindowsEnabled()) return null;
+  const t = Date.parse(cfgOf().window_opened_at || "");
+  return isFinite(t) ? t : null;
 }
 /* Which trade window a move belongs to, recorded ON the move when it is made.
 
@@ -14666,6 +14695,10 @@ function faWindowKey() {
     const w = autoWindowState();
     if (w?.tradeWindow) return String(w.tradeWindow.to || w.tradeWindow.closeAt);
   }
+  /* By sequence, not by the timestamp: two openings must be two windows even
+     if they land in the same millisecond or an admin's phone clock is off. */
+  const seq = !autoWindowsEnabled() && Number.isInteger(cfgOf().window_seq) ? cfgOf().window_seq : null;
+  if (seq != null) return "win:" + seq;
   return "lock:" + (txWindowStarts()[0] ?? 0);
 }
 
@@ -14710,6 +14743,8 @@ async function submitFaClaim(pick, entry) {
      reason; this is the other half of the same rule. */
   if (!tradingOpen()) return toast(autoWindowsEnabled()
     ? tradeWindowMessage() : "Trading window is closed.");
+  const limit = faSquadError(pick, entry);
+  if (limit) return toast(limit);
   const mine = myClaims();
   const rank = mine.length ? Math.max(...mine.map((c) => c.rank)) + 1 : 0;
   const { error } = await S.sb.from("fa_claims").insert({
@@ -14762,8 +14797,20 @@ async function cancelClaim(id) {
    the resolver go through here, so what you are shown is what runs -- and
    because it is derived from the table each time, it follows the table right up
    until the window shuts. */
-const waiverPriorityFor = (mgrs) => waiverPriorityOrder(
-  mgrs.map((m) => m.id), standingsOrder().slice().reverse());
+/* An order the admin has set replaces the table outright, and stays until the
+   admin puts it back -- it is a decision, not a one-window nudge. Managers it
+   does not mention (joined since, say) queue behind it in table order, which
+   is what waiverPriorityOrder does with anyone the list leaves out. */
+const manualWaiverOrder = () => {
+  const o = cfgOf().waiverOrder;
+  return Array.isArray(o) && o.length ? o : null;
+};
+const waiverPriorityFor = (mgrs) => {
+  const ids = mgrs.map((m) => m.id);
+  const table = standingsOrder().slice().reverse();
+  const manual = manualWaiverOrder();
+  return waiverPriorityOrder(ids, manual ? [...manual, ...table] : table);
+};
 
 // Resolve every queued claim at window close, in waiver priority (uses the pure
 // resolveFaClaims), applies awards to picks, and writes back the waiver order.
@@ -14781,6 +14828,7 @@ async function processFaClaims() {
   // Same reason as saveLineup: pin the played rounds before the squads move.
   for (const mid of new Set(awards.map((c) => c.manager_id)))
     await pinHistory(mid).catch(() => {});
+  const refused = [];
   for (const c of awards) {
     const inP = S.playerById[c.in_player_id];
     const team = inP?.team || null;
@@ -14788,6 +14836,13 @@ async function processFaClaims() {
     // Same rule as doSwap: the position travels with the player, or scoring
     // will value them as whoever used to hold the slot.
     const pos = inP?.position || outPick?.position || null;
+    /* Squad limits, checked against the squad as it stands NOW -- an earlier
+       award in this same batch may already have moved it. A claim that would
+       break them fails rather than landing. */
+    if (outPick && faSquadError(outPick, { player_id: c.in_player_id, position: pos })) {
+      refused.push(c.id);
+      continue;
+    }
     const upd = { player_id: c.in_player_id, player_name: c.in_player_name, team };
     if (pos) { upd.position = pos; upd.slot = outPick?.is_sub ? "SUB_" + pos : pos; }
     const { error } = await S.sb.from("picks").update(upd)
@@ -14854,9 +14909,11 @@ async function processFaClaims() {
      them play the week with a side that does not add up. */
   for (const mid of new Set(awards.map((c) => c.manager_id)))
     await repairLineupFor(mid).catch(() => {});
-  if (awards.length) await S.sb.from("fa_claims").update({ status: "awarded" }).in("id", awards.map((c) => c.id));
-  if (failed.length) await S.sb.from("fa_claims").update({ status: "failed" }).in("id", failed);
-  toast(`Waivers processed: ${awards.length} awarded, ${failed.length} failed.`);
+  const landed = awards.filter((c) => !refused.includes(c.id));
+  const lost = [...failed, ...refused];
+  if (landed.length) await S.sb.from("fa_claims").update({ status: "awarded" }).in("id", landed.map((c) => c.id));
+  if (lost.length) await S.sb.from("fa_claims").update({ status: "failed" }).in("id", lost);
+  toast(`Waivers processed: ${landed.length} awarded, ${lost.length} failed.`);
 }
 
 /* Resolve an auto-window league's claims once its trade window shuts.
@@ -15258,6 +15315,87 @@ function pairValid(a, b) {
   return !!a && !!b && a.slot !== "TEAM" && b.slot !== "TEAM";
 }
 
+// One free agent in for one player out.
+function faSquadError(pick, entry) {
+  if (!squadLimitsOn()) return null;
+  const inPos = S.playerById?.[entry.player_id]?.position || entry.position;
+  return squadLimitError(managerPicks(pick.manager_id), [pick],
+    [{ position: inPos }], squadBounds(), "You");
+}
+
+/* ---------- squad limits on every move ----------
+
+   A squad is each position's MINIMUM plus some flex places any position can
+   take. So a position's legal range is [minimum, minimum + flex] -- all the
+   flex places going to one position is the most it can hold -- and a group
+   fixed to an exact count (football's keeper) is exactly its minimum.
+
+   Moves never enforced it. Trades were "any position for any position" with
+   the quota left to bite at the next line-up, and a free-agent swap was the
+   same. Reported: "I shouldn't be allowed to make a trade that results in me
+   having fewer than 4 props, or more than 10 loose forwards."
+
+   Only a move that makes a position WORSE is refused. A squad already outside
+   its limits -- carried in, or from before this rule -- can still be traded
+   back towards them; it just can't be pushed further away. */
+const POS_PLURAL = {
+  GK: "keepers", DEF: "defenders", MID: "midfielders", FWD: "forwards",
+  PR: "props", HK: "hookers", LK: "locks", LF: "loose forwards", SH: "scrum-halves",
+  FH: "fly-halves", CE: "centres", OB: "outside backs",
+};
+/* A league setting. On by default for rugby, where it was asked for; off by
+   default for football, whose leagues were built around "any position for any
+   position" -- a live football league with no flex places would otherwise
+   lose every cross-position move the moment this shipped, without anyone
+   choosing that. Either way the admin can switch it. */
+const squadLimitsOn = () => {
+  const v = cfgOf().squad_limits_on_moves;
+  return typeof v === "boolean" ? v : sportOf() === "rugby";
+};
+function squadBounds() {
+  const mins = posQuota(), flex = leagueFlex() || 0;
+  const exact = isFlexFormation() ? [] : sportDef().exactGroups();
+  const out = {};
+  for (const g of playGroups()) {
+    const lo = mins[g] || 0;
+    out[g] = [lo, exact.includes(g) ? lo : lo + flex];
+  }
+  return out;
+}
+// A squad's positions before and after a move -> the first broken limit, or null.
+function squadLimitError(before, outs, ins, bounds, who) {
+  const tally = (list) => {
+    const c = {};
+    for (const pk of list || []) if (pk && pk.position && pk.position !== "TEAM")
+      c[pk.position] = (c[pk.position] || 0) + 1;
+    return c;
+  };
+  const was = tally(before), o = tally(outs), n = tally(ins);
+  for (const g of Object.keys(bounds)) {
+    const [lo, hi] = bounds[g];
+    const now = (was[g] || 0) - (o[g] || 0) + (n[g] || 0);
+    const name = POS_PLURAL[g] || g;
+    if (now < lo && now < (was[g] || 0))
+      return `${who} would be left with ${now} ${name} — a squad needs at least ${lo}.`;
+    if (now > hi && now > (was[g] || 0))
+      return `${who} would have ${now} ${name} — a squad can hold at most ${hi}.`;
+  }
+  return null;
+}
+// Both sides of a proposed deal, against the squads as they stand now.
+function tradeSquadError(pairs) {
+  const ok = pairs.filter((p) => p.mine && p.theirs);
+  if (!ok.length || !squadLimitsOn()) return null;
+  const bounds = squadBounds();
+  const mineMgr = ok[0].mine.manager_id, theirMgr = ok[0].theirs.manager_id;
+  const me = myManager();
+  const label = (mid) => mid === me?.id ? "You"
+    : (S.managers.find((m) => m.id === mid)?.name || "They");
+  const outsA = ok.map((p) => p.mine), outsB = ok.map((p) => p.theirs);
+  return squadLimitError(managerPicks(mineMgr), outsA, outsB, bounds, label(mineMgr))
+    || squadLimitError(managerPicks(theirMgr), outsB, outsA, bounds, label(theirMgr));
+}
+
 // pairs: [{ mine: pick, theirs: pick }] -> error message, or null if valid.
 function tradeError(pairs) {
   if (!pairs.length) return "Add at least one pair.";
@@ -15270,7 +15408,7 @@ function tradeError(pairs) {
     offered.add(mine.id);
     requested.add(theirs.id);
   }
-  return null;
+  return tradeSquadError(pairs);
 }
 
 function openBuilder(targetId = "", parentId = null, pairs = null) {
@@ -15328,6 +15466,7 @@ function waiverOrderHtml(me) {
       <span class="eyebrow">Waiver order</span>
       <span class="text-xs text-slate-400">${mine ? `you're #${mine} of ${ranked.length}` : `${ranked.length} managers`} ▾</span>
     </summary>
+    ${manualWaiverOrder() ? '<p class="px-2.5 pb-1 text-[11px] text-slate-500">Set by the league admin — it doesn\'t follow the table until they change it back.</p>' : ""}
     <ol class="px-2 pb-2 space-y-1">
       ${ranked.map((m, i) => `<li class="flex items-center gap-2 rounded-lg px-2 py-1.5 ${
         m.id === me?.id ? "bg-wcgold/10 border border-wcgold/40" : "bg-slate-900/60"}">
@@ -16555,7 +16694,13 @@ async function processAgreedTrades() {
   for (const t of agreed) {
     for (const mid of new Set([t.proposer_manager_id, t.target_manager_id].filter(Boolean)))
       await pinHistory(mid).catch(() => {});
-    const { error } = await S.sb.rpc("accept_trade", { p_trade_id: t.id });
+    /* Squad limits against the squads as they stand at the close -- a waiver
+       award a moment ago may have changed one. Checked here because the
+       server function knows nothing about quotas. */
+    const limit = tradeSquadError((t.trade_items || []).map((it) => ({
+      mine: pickById(it.offered_pick_id), theirs: pickById(it.requested_pick_id) })));
+    const { error } = limit ? { error: { message: limit } }
+      : await S.sb.rpc("accept_trade", { p_trade_id: t.id });
     if (!error) { done++; continue; }
     // Only a deal still marked agreed is failed: a racing settler may already
     // have executed it, and that must not be overwritten as a failure.
@@ -17150,6 +17295,59 @@ async function maybeRefreshRugbyFixtures() {
   if (r?.changed) { await refetchAll().catch(() => {}); renderBoard(); }
 }
 
+/* The admin's waiver-order editor. Edits a draft (S._wvDraft) with up/down
+   buttons -- no drag on a list this short, and taps are what a phone does
+   reliably -- and writes only on Save. */
+function renderWaiverOrderEditor() {
+  const card = $("adm-wvorder");
+  if (!card) return;
+  const on = faDeferToClose();
+  card.classList.toggle("hidden", !on);
+  if (!on) return;
+  const live = activeManagers();
+  const byId = Object.fromEntries(live.map((m) => [m.id, m]));
+  const current = waiverPriorityFor(live).ids;
+  const draft = (S._wvDraft || current).filter((id) => byId[id]);
+  const dirty = !!S._wvDraft && draft.join() !== current.join();
+  const manual = !!manualWaiverOrder();
+  $("adm-wvorder-mode").textContent = manual ? "set by you" : "automatic";
+  $("adm-wvorder-note").textContent = manual
+    ? "This order stands every window until you put it back — it no longer follows the table. A contested win still sends the winner to the back for the rest of that window."
+    : "Worst-placed first, off the table, every window. Reorder it to set it yourself.";
+  $("adm-wvorder-list").innerHTML = draft.map((id, i) => {
+    const m = byId[id];
+    const btn = (dir, dis, label) => `<button data-wvmove="${esc(id)}" data-wvdir="${dir}"${dis ? " disabled" : ""}
+      class="shrink-0 w-8 h-8 rounded-lg border border-slate-700 bg-slate-800 text-sm disabled:opacity-30" aria-label="${label}">${dir < 0 ? "▲" : "▼"}</button>`;
+    return `<li class="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800/40 pl-2.5 pr-1 py-1">
+      <span class="w-5 shrink-0 font-mono text-sm ${i === 0 ? "text-wcgold font-bold" : "text-slate-500"}">${i + 1}</span>
+      <span class="min-w-0 flex-1">${txMgrChip(m)}</span>
+      ${btn(-1, i === 0, "Move up")}${btn(1, i === draft.length - 1, "Move down")}</li>`;
+  }).join("");
+  $("adm-wvorder-list").querySelectorAll("[data-wvmove]").forEach((b) => b.onclick = () => {
+    const d = draft.slice(), i = d.indexOf(b.dataset.wvmove), j = i + +b.dataset.wvdir;
+    if (j < 0 || j >= d.length) return;
+    [d[i], d[j]] = [d[j], d[i]];
+    S._wvDraft = d;
+    renderWaiverOrderEditor();
+  });
+  const save = $("adm-wvorder-save"), auto = $("adm-wvorder-auto");
+  save.classList.toggle("hidden", !dirty);
+  auto.classList.toggle("hidden", !manual || dirty);
+  save.onclick = () => setWaiverOrder(draft).catch((e) => toast(e.message));
+  auto.onclick = () => setWaiverOrder(null).catch((e) => toast(e.message));
+}
+
+async function setWaiverOrder(ids) {
+  const cfg = { ...(S.league.config || {}) };
+  if (ids) cfg.waiverOrder = ids; else delete cfg.waiverOrder;
+  const { error } = await S.sb.from("leagues").update({ config: cfg }).eq("id", S.league.id);
+  if (error) return toast(error.message);
+  S.league.config = cfg;
+  S._wvDraft = null;
+  toast(ids ? "Waiver order saved — it stands until you change it." : "Waiver order follows the table again.");
+  renderAdmin(); renderBoard();
+}
+
 /* Swap on accept, or at window close. Switchable mid-season: turning it off
    does not strand anything, because agreed deals are executed at the next
    close whatever the setting -- the setting decides what ACCEPTING does. */
@@ -17166,6 +17364,32 @@ function renderDealMode() {
     ? "Accepting a deal locks it in; it goes through when the window closes, after the waiver claims."
     : "Players swap the moment both managers accept.")
     + (waiting ? ` ${waiting} agreed deal${waiting === 1 ? " is" : "s are"} waiting and will go through at the next close either way.` : "");
+}
+
+function renderSquadLimitsMode() {
+  const on = squadLimitsOn();
+  document.querySelectorAll("[data-sqlim]").forEach((b) => {
+    const sel = (b.dataset.sqlim === "on") === on;
+    b.className = "flex-1 rounded-md py-1.5 font-semibold " + (sel ? "is-selected" : "text-slate-400");
+    b.onclick = () => setSquadLimits(b.dataset.sqlim === "on").catch((e) => toast(e.message));
+  });
+  const b = squadBounds();
+  const note = $("adm-sqlim-note");
+  if (note) note.textContent = on
+    ? "Trades and free-agent moves are refused if they'd take a position outside its limits: "
+      + playGroups().map((g) => `${b[g][0] === b[g][1] ? b[g][0] : `${b[g][0]}–${b[g][1]}`} ${
+          POS_PLURAL[g] || g}`).join(", ") + "."
+    : "Any position for any position — the squad shape is only checked when a line-up is picked.";
+}
+
+async function setSquadLimits(on) {
+  if (on === squadLimitsOn()) return;
+  const cfg = { ...(S.league.config || {}), squad_limits_on_moves: on };
+  const { error } = await S.sb.from("leagues").update({ config: cfg }).eq("id", S.league.id);
+  if (error) return toast(error.message);
+  S.league.config = cfg;
+  toast(on ? "Squad limits now apply to every move." : "Squad limits no longer apply to moves.");
+  renderAdmin();
 }
 
 async function setDealMode(on) {
@@ -18929,6 +19153,7 @@ function renderAdmin() {
   renderAdminPeople();
   renderFixturesCard();
   renderDealMode();
+  renderSquadLimitsMode();
   const injNote = $("adm-injury-note");
   if (injNote) injNote.textContent = injuryFeedNote();
   document.querySelectorAll("[data-owner-only]").forEach((el) => {
@@ -18977,6 +19202,8 @@ function renderAdmin() {
       $("adm-waiver-run").onclick = () => processWaiversNow().catch((e) => toast(e.message));
     }
   }
+
+  renderWaiverOrderEditor();
 
   /* Trading windows: fixture-driven or admin-driven, switchable mid-season.
      Switching to manual pins the CURRENT automatic answer into trading_open
@@ -19148,9 +19375,16 @@ async function toggleTrading() {
   const waiver = faDeferToClose();
   // Waiver mode: resolve all queued claims BEFORE the window shuts.
   if (!next && waiver) await processFaClaims();
+  /* Opening stamps the window's start, which is what the per-window move cap
+     counts from (manualWindowOpenedAt). In the same write as the flag, so no
+     client can ever see an open window still carrying the last one's stamp. */
+  const upd = { trading_open: next };
+  if (next) upd.config = { ...(S.league.config || {}), window_opened_at: new Date().toISOString(),
+                           window_seq: (Number.isInteger(cfgOf().window_seq) ? cfgOf().window_seq : 0) + 1 };
   const { error } = await S.sb.from("leagues")
-    .update({ trading_open: next }).eq("id", S.league.id);
+    .update(upd).eq("id", S.league.id);
   if (error) return toast(error.message);
+  if (next) S.league.config = upd.config;
   /* Agreed deals AFTER the flag is down: accept_trade refuses to execute an
      agreed deal in a manual league while its window is still open. */
   if (!next && (S.trades || []).some((t) => t.status === "agreed")) {

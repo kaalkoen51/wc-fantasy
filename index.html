@@ -704,6 +704,14 @@
           </div>
           <p id="adm-dealmode-note" class="text-xs text-slate-400"></p>
         </div>
+        <div class="space-y-1.5 border-t border-slate-800 pt-2">
+          <div class="text-sm font-semibold">Squad limits on moves</div>
+          <div class="flex gap-1 rounded-lg bg-slate-800 p-1 text-xs">
+            <button data-sqlim="on" class="flex-1 rounded-md py-1.5 font-semibold">Enforced</button>
+            <button data-sqlim="off" class="flex-1 rounded-md py-1.5 font-semibold">Off</button>
+          </div>
+          <p id="adm-sqlim-note" class="text-xs text-slate-400"></p>
+        </div>
       </div>
 <!-- Rugby only: fixtures are one call to an open feed, so any league admin can
      re-read them. Squads are NOT touched -- that is the app owner's card. -->
@@ -979,6 +987,20 @@
           or to finish a run that was interrupted.</p>
         <div id="adm-waiver-status" class="text-xs text-slate-400"></div>
         <button id="adm-waiver-run" class="w-full bg-slate-800 border border-wcgold/60 text-wcgold rounded-lg py-2 text-sm font-semibold">Resolve waiting claims now</button>
+      </div>
+      <!-- Waiver leagues only: who picks first. Follows the table unless the
+           admin sets it, and then stays as set until put back. -->
+      <div id="adm-wvorder" class="hidden rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-2">
+        <div class="flex items-baseline justify-between gap-2">
+          <h3 class="font-semibold text-sm">🔢 Waiver order</h3>
+          <span id="adm-wvorder-mode" class="text-xs text-slate-400"></span>
+        </div>
+        <p id="adm-wvorder-note" class="text-xs text-slate-400"></p>
+        <ol id="adm-wvorder-list" class="space-y-1"></ol>
+        <div class="flex gap-2">
+          <button id="adm-wvorder-save" class="hidden flex-1 btn-primary rounded-lg py-2 text-sm font-semibold">Save this order</button>
+          <button id="adm-wvorder-auto" class="hidden flex-1 bg-slate-800 border border-slate-700 rounded-lg py-2 text-sm font-semibold">Back to reverse standings</button>
+        </div>
       </div>
       <details id="adm-sec-manual" data-owner-only class="rounded-xl border border-slate-700 bg-slate-900/40">
         <summary class="px-4 py-3 cursor-pointer select-none flex items-baseline justify-between gap-2">
