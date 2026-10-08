@@ -1,1 +1,478 @@
-[]
+[
+ {
+  "player_id": "api_10329",
+  "status": "out",
+  "reason": "Knee Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_106835",
+  "status": "doubtful",
+  "reason": "Hamstring Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_115589",
+  "status": "doubtful",
+  "reason": "Inactive",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_116117",
+  "status": "doubtful",
+  "reason": "Calf Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_129643",
+  "status": "out",
+  "reason": "Ankle Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_129682",
+  "status": "doubtful",
+  "reason": "Calf Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_138816",
+  "status": "out",
+  "reason": "Ankle Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_152849",
+  "status": "doubtful",
+  "reason": "Wrist Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_152982",
+  "status": "out",
+  "reason": "Muscle Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_157997",
+  "status": "doubtful",
+  "reason": "Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_15908",
+  "status": "doubtful",
+  "reason": "Ankle Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_161800",
+  "status": "out",
+  "reason": "Hamstring Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_162016",
+  "status": "out",
+  "reason": "Knee Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_162714",
+  "status": "out",
+  "reason": "Knee Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_18870",
+  "status": "doubtful",
+  "reason": "Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_18885",
+  "status": "doubtful",
+  "reason": "Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_18963",
+  "status": "doubtful",
+  "reason": "Neck Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_19025",
+  "status": "doubtful",
+  "reason": "Knee Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_19221",
+  "status": "doubtful",
+  "reason": "Muscle Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_19298",
+  "status": "doubtful",
+  "reason": "Leg Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_19321",
+  "status": "out",
+  "reason": "Muscle Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_19354",
+  "status": "out",
+  "reason": "Muscle Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_19362",
+  "status": "doubtful",
+  "reason": "Muscle Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_19495",
+  "status": "doubtful",
+  "reason": "Calf Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_19545",
+  "status": "out",
+  "reason": "Muscle Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_203762",
+  "status": "doubtful",
+  "reason": "Muscle Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_22090",
+  "status": "out",
+  "reason": "Back Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_2413",
+  "status": "out",
+  "reason": "Inactive",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_282637",
+  "status": "doubtful",
+  "reason": "Abdominal strain",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_284322",
+  "status": "out",
+  "reason": "Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_284414",
+  "status": "out",
+  "reason": "Knee Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_284797",
+  "status": "doubtful",
+  "reason": "Illness",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_286894",
+  "status": "out",
+  "reason": "Ankle Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_2931",
+  "status": "out",
+  "reason": "Abdominal strain",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_303467",
+  "status": "out",
+  "reason": "Red Card",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_30435",
+  "status": "doubtful",
+  "reason": "Knee Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_304853",
+  "status": "out",
+  "reason": "Thigh Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_305730",
+  "status": "doubtful",
+  "reason": "Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_313059",
+  "status": "out",
+  "reason": "Knee Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_327631",
+  "status": "out",
+  "reason": "Hamstring Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_333682",
+  "status": "doubtful",
+  "reason": "Muscle Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_336564",
+  "status": "out",
+  "reason": "Knee Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_343311",
+  "status": "out",
+  "reason": "Knee Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_368030",
+  "status": "out",
+  "reason": "Foot Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_36922",
+  "status": "out",
+  "reason": "Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_369674",
+  "status": "doubtful",
+  "reason": "Ankle Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_382452",
+  "status": "doubtful",
+  "reason": "Hamstring Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_383018",
+  "status": "doubtful",
+  "reason": "Thigh Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_383685",
+  "status": "out",
+  "reason": "Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_38695",
+  "status": "doubtful",
+  "reason": "Leg Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_38750",
+  "status": "doubtful",
+  "reason": "Muscle Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_393193",
+  "status": "out",
+  "reason": "Surgery",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_412719",
+  "status": "doubtful",
+  "reason": "Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_47438",
+  "status": "doubtful",
+  "reason": "Muscle Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_51051",
+  "status": "out",
+  "reason": "Thigh Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_511",
+  "status": "doubtful",
+  "reason": "Knee Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_51494",
+  "status": "out",
+  "reason": "Knee Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_524411",
+  "status": "doubtful",
+  "reason": "Lacking Match Fitness",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_532",
+  "status": "out",
+  "reason": "Back Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_545",
+  "status": "doubtful",
+  "reason": "Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_55904",
+  "status": "doubtful",
+  "reason": "Muscle Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_63577",
+  "status": "doubtful",
+  "reason": "Ankle Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_64003",
+  "status": "doubtful",
+  "reason": "Muscle Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_657",
+  "status": "doubtful",
+  "reason": "Concussion",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_792",
+  "status": "doubtful",
+  "reason": "Muscle Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_909",
+  "status": "out",
+  "reason": "Health problems",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_92993",
+  "status": "doubtful",
+  "reason": "Knee Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ },
+ {
+  "player_id": "api_978",
+  "status": "doubtful",
+  "reason": "Muscle Injury",
+  "fixture_date": "2026-10-10",
+  "as_of": "2026-10-08"
+ }
+]
