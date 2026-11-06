@@ -1,0 +1,32 @@
+name: Are a pool's stored fixtures still right
+
+# Read-only. Prints a competition's stored fixtures beside what API-Football
+# says now, for the days around today. See probe_fixtures.py. Writes nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      key:
+        description: "competition_key of the pool (39-2026 = Premier League 2026/27)"
+        required: true
+        default: "39-2026"
+      days:
+        description: "Days either side of now"
+        required: true
+        default: "4"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Compare
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python probe_fixtures.py --key "${{ inputs.key }}" --days "${{ inputs.days }}"
