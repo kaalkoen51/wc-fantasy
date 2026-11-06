@@ -33,9 +33,16 @@ import requests
 BASE = "https://rugby-union-feeds.incrowdsports.com/v1/"
 
 
+APP_ID = None      # set by --app-id
+
+
 def ask(path, **params):
     params["provider"] = "rugbyviz"
-    r = requests.get(BASE + path, params=params, timeout=30)
+    # From November 2026 the feed answers 400 "X-APP-ID: Missing header". Only
+    # ever OUR OWN name goes here -- never an id lifted from someone else's
+    # site, which would be passing ourselves off as them.
+    headers = {"X-APP-ID": APP_ID} if APP_ID else {}
+    r = requests.get(BASE + path, params=params, headers=headers, timeout=30)
     print(f"  GET {r.url} -> {r.status_code}, {len(r.content)} bytes")
     try:
         return r.json()
@@ -106,7 +113,12 @@ def main():
     ap.add_argument("--season", type=int, default=2026,
                     help="season START year, as the league stores it")
     ap.add_argument("--kind", default="league", choices=["league", "cup"])
+    ap.add_argument("--app-id", default="", help="send this as X-APP-ID (our own name only)")
     a = ap.parse_args()
+    global APP_ID
+    APP_ID = a.app_id or None
+    if APP_ID:
+        print(f"Sending X-APP-ID: {APP_ID!r}")
     now = datetime.now(timezone.utc)
     print(f"Probing {a.competition!r}, season {a.season} ({a.kind}), now {now:%Y-%m-%d %H:%M}Z\n")
 

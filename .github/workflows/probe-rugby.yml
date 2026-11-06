@@ -22,6 +22,10 @@ on:
         description: "league (runs July-July) or cup (calendar year)"
         required: true
         default: "league"
+      app_id:
+        description: "Send this as X-APP-ID -- our own app name only"
+        required: false
+        default: ""
 
 jobs:
   probe:
@@ -38,4 +42,5 @@ jobs:
           python probe_rugby.py \
             --competition "${{ inputs.competition }}" \
             --season "${{ inputs.season }}" \
-            --kind "${{ inputs.kind }}"
+            --kind "${{ inputs.kind }}" \
+            --app-id "${{ inputs.app_id }}"
