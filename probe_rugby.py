@@ -183,5 +183,21 @@ def main():
               f"tbc={m.get('tbc')}")
 
 
+    # 5 · Every match in the days around now, with every field that looks like
+    #     a time. Added for "there is a game now and the app says every game is
+    #     tomorrow at 5pm": what the feed hands over, before the app reads it.
+    print("\n5 · Matches from 2 days ago to 9 days ahead, raw")
+    lo5, hi5 = now.timestamp() - 2 * 86400, now.timestamp() + 9 * 86400
+    near = [m for m in rows if (w := when(m)) and lo5 <= w.timestamp() <= hi5]
+    for m in sorted(near, key=lambda m: str(m.get("date"))):
+        timeish = {k: v for k, v in m.items()
+                   if any(t in k.lower() for t in ("date", "time", "kick", "tbc", "status"))}
+        print(f"  {m.get('id')} r{m.get('round')} "
+              f"{(m.get('homeTeam') or {}).get('name')} v {(m.get('awayTeam') or {}).get('name')}"
+              f"  {json.dumps(timeish, default=str)}")
+    if not near:
+        print("  (none)")
+
+
 if __name__ == "__main__":
     sys.exit(main())
