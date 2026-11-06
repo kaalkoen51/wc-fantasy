@@ -5937,6 +5937,21 @@ const PGRST = (col) => ({ error: { code: "PGRST204",
     check("...and the older one goes", act["stray-old"], "drop");
     check("a line-up already stamped for the real lock stands", act.already, undefined);
     check("...and a stray beside it goes rather than overwriting it", act["stray-c"], "drop");
+    /* The Premier League case. Round 11 is being played on the Friday, but
+       every line-up for it was dated at the stale Saturday lock -- still in the
+       future. The next real lock is round 12's. Those line-ups are round 11's,
+       and moving them to round 12 would empty this weekend's teams. */
+    const rk = (k) => Number(String(k).replace(/\D/g, ""));
+    const r12 = Date.parse("2026-11-20T19:00:00Z");
+    const pl = strandedPlans([
+      snap("this-round", "a", Date.parse("2026-11-07T14:00:00Z"), "Regular Season - 11", NOW - 1e6),
+      snap("far-ahead", "b", Date.parse("2026-12-05T14:00:00Z"), "Regular Season - 14", NOW - 1e6),
+      snap("unstamped", "c", Date.parse("2026-11-07T14:00:00Z"), null, NOW - 1e6),
+    ], Date.parse("2026-11-06T21:45:00Z"), r12, "Regular Season - 12", rk);
+    const pact = Object.fromEntries(pl.map((p) => [p.id, p.move ? "move" : "drop"]));
+    check("a line-up for the round being played is never moved to the next one", pact["this-round"], undefined);
+    check("...an unstamped one is left alone", pact.unstamped, undefined);
+    check("...but one aimed past the real next round still is", pact["far-ahead"], "move");
     check("nothing moves when there is no next lock",
       strandedPlans([snap("x", "a", DEC, "Round 7", NOW)], NOW, null, null).length, 0);
 

@@ -347,6 +347,98 @@ class TestScheduledPullUsesEvents(unittest.TestCase):
         self.assertEqual(self.asked, [], "asked for events nobody could need")
 
 
+class TestFixtureRefresh(unittest.TestCase):
+    """The scheduled pull re-reads a competition's fixtures, and only those.
+
+    Reported: "there is a game on now and the app says every game is tomorrow
+    at 5pm". The Premier League pool's fixtures were written on 10 September
+    and nothing re-read them; probe_fixtures.py found 82 of 380 kick-offs had
+    moved, Everton v Coventry among them -- stored as Saturday 15:00 UTC, being
+    played on the Friday at 20:00."""
+
+    def fx(self, fid, ko, status="NS"):
+        return {"fixture": {"id": fid, "date": ko, "status": {"short": status}},
+                "teams": {"home": {"name": "Brighton &amp; Hove Albion"}, "away": {"name": "Nott&#39;m Forest"}},
+                "goals": {"home": None, "away": None},
+                "league": {"round": "Regular Season - 11"}}
+
+    def test_a_fixture_is_stored_in_the_apps_shape(self):
+        f = daily_pull.parse_api_fixture(self.fx(5, "2026-11-06T20:00:00+00:00", "2H"))
+        self.assertEqual(f, {
+            "fixture_id": 5, "home": "Brighton & Hove Albion", "away": "Nott'm Forest",
+            "kickoff_utc": "2026-11-06T20:00:00+00:00", "date": "2026-11-06",
+            "status": "2H", "round": "Regular Season - 11",
+            "home_score": None, "away_score": None})
+
+    def test_a_moved_kickoff_is_written(self):
+        held = [daily_pull.parse_api_fixture(self.fx(5, "2026-11-07T15:00:00+00:00"))]
+        fresh = [daily_pull.parse_api_fixture(self.fx(5, "2026-11-06T20:00:00+00:00"))]
+        write, why = daily_pull.plan_fixture_refresh(held, fresh)
+        self.assertEqual(write, fresh)
+        self.assertIn("1 kick-off", why)
+
+    def test_nothing_changed_writes_nothing(self):
+        held = [daily_pull.parse_api_fixture(self.fx(5, "2026-11-07T15:00:00+00:00"))]
+        self.assertIsNone(daily_pull.plan_fixture_refresh(held, list(held))[0])
+
+    def test_an_empty_or_thin_answer_never_replaces_the_calendar(self):
+        held = [daily_pull.parse_api_fixture(self.fx(i, "2026-11-07T15:00:00+00:00")) for i in range(10)]
+        self.assertIsNone(daily_pull.plan_fixture_refresh(held, [])[0])
+        self.assertIsNone(daily_pull.plan_fixture_refresh(held, held[:4])[0])
+
+    def _refresh(self, held, api_fixtures, fail_read=False):
+        import daily_pull as dp
+        sent = {}
+
+        class R:
+            def __init__(self, ok, body, code=200):
+                self.ok, self._b, self.status_code, self.text = ok, body, code, ""
+            def json(self):
+                return self._b
+        orig = (dp.requests.get, dp.requests.patch, dp.api_get, dict(os.environ))
+        dp.requests.get = lambda *a, **k: R(not fail_read, [{"fixtures": held}], 500 if fail_read else 200)
+        def patch(url, params=None, headers=None, json=None, timeout=None):
+            sent["params"], sent["json"] = params, json
+            return R(True, None)
+        dp.requests.patch = patch
+        dp.api_get = lambda path, params: {"response": api_fixtures}
+        os.environ.update(SUPABASE_URL="https://x.supabase.co", SUPABASE_SERVICE_KEY="k")
+        try:
+            dp.refresh_competition_fixtures("39-2026", 39, 2026, dry_run=False)
+        finally:
+            dp.requests.get, dp.requests.patch, dp.api_get, env = orig
+            os.environ.clear(); os.environ.update(env)
+        return sent
+
+    def test_only_the_fixtures_column_is_written(self):
+        held = [daily_pull.parse_api_fixture(self.fx(5, "2026-11-07T15:00:00+00:00"))]
+        sent = self._refresh(held, [self.fx(5, "2026-11-06T20:00:00+00:00", "2H")])
+        self.assertEqual(sent["params"], {"competition_key": "eq.39-2026"})
+        # Squads are never touched: a re-read squad mid-season can drop a
+        # drafted player out of the pool.
+        self.assertEqual(set(sent["json"]), {"fixtures"})
+        self.assertEqual(sent["json"]["fixtures"][0]["kickoff_utc"], "2026-11-06T20:00:00+00:00")
+
+    def test_an_unreadable_pool_is_left_alone(self):
+        sent = self._refresh([], [self.fx(5, "2026-11-06T20:00:00+00:00")], fail_read=True)
+        self.assertEqual(sent, {}, "wrote fixtures without knowing what was held")
+
+    def test_the_scheduled_pull_refreshes_before_it_pulls(self):
+        import daily_pull as dp
+        order = []
+        orig = (dp.fetch_scheduled_competitions, dp.refresh_competition_fixtures,
+                dp.pull_competition_rows)
+        dp.fetch_scheduled_competitions = lambda: ["39-2026"]
+        dp.refresh_competition_fixtures = lambda *a, **k: order.append("fixtures")
+        dp.pull_competition_rows = lambda *a, **k: order.append("stats") or []
+        try:
+            dp.run_competition_pulls("2026-11-06", mock=False, dry_run=True)
+        finally:
+            (dp.fetch_scheduled_competitions, dp.refresh_competition_fixtures,
+             dp.pull_competition_rows) = orig
+        self.assertEqual(order, ["fixtures", "stats"])
+
+
 class TestProvisionalPulls(unittest.TestCase):
     """A live pull must not award man of the match.
 

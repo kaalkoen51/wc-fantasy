@@ -17218,13 +17218,25 @@ function syncCompRefresh() {
    stray plan moves to the real next lock and any older ones go; if a line-up
    is already stamped for that lock it was written against the true calendar,
    so it stands and the strays go. Pure, so the cases are pinned by tests. */
-function strandedPlans(snaps, nowMs, nextAt, nextKey) {
+/* `rankOf` orders rounds in the corrected calendar. Only a plan aimed at a
+   round LATER than the real next one is stray -- December's round when the
+   next is round 2, which was the rugby case. A plan for the round being played
+   right now is that round's line-up, however wrong its date: the Premier
+   League pool re-read on 6 November had every round-11 line-up dated at the
+   stale Saturday lock, still in the future, with the round already under way
+   on the Friday. Treating those as stray would have moved this weekend's teams
+   into round 12. An unstamped line-up has no round to judge by and is left. */
+function strandedPlans(snaps, nowMs, nextAt, nextKey, rankOf) {
   if (nextAt == null || !nextKey) return [];
+  const rank = rankOf || (() => 0);
+  const nextRank = rank(nextKey);
   const at = (sn) => Date.parse(sn.created_at || sn.effective_from || 0) || 0;
   const right = (sn) => sn.round_key === nextKey && Date.parse(sn.effective_from) === nextAt;
+  const later = (sn) => !!sn.round_key && sn.round_key !== nextKey
+    && (rankOf ? rank(sn.round_key) > nextRank : true);
   const byMgr = {};
   for (const sn of snaps || []) {
-    if (!(Date.parse(sn.effective_from) > nowMs) || right(sn)) continue;
+    if (!(Date.parse(sn.effective_from) > nowMs) || right(sn) || !later(sn)) continue;
     (byMgr[sn.manager_id] ||= []).push(sn);
   }
   const out = [];
@@ -17242,7 +17254,7 @@ async function repointStrandedPlans() {
   const nextAt = nextLockMs(S.fixtures || [], now, cfgOf().windows || {});
   const nextKey = nextAt == null ? null : roundKeyLockedAt(S.fixtures || [], nextAt);
   let n = 0;
-  for (const p of strandedPlans(S.snapshots, now, nextAt, nextKey)) {
+  for (const p of strandedPlans(S.snapshots, now, nextAt, nextKey, roundRank)) {
     const q = p.move
       ? S.sb.from("lineup_snapshots").update({
           effective_from: new Date(nextAt).toISOString(), round_key: nextKey })
@@ -17255,10 +17267,20 @@ async function repointStrandedPlans() {
 
 const fixtureCheckKey = () => "wcf_fixcheck_" + compKeyOf(leagueCompetition());
 
+/* Both sports now. Football's kick-off times are provisional until the TV
+   picks move them, and its fixture list was likewise written once at load and
+   never re-read: a Premier League pool loaded on 10 September still had every
+   match of the 6 November round at 15:00 UK on the Saturday, with one being
+   played on the Friday night. The scheduled pull now re-reads scheduled
+   competitions twice a day (daily_pull.refresh_competition_fixtures); this is
+   the same thing on demand, from the admin panel. */
 async function refreshRugbyFixtures() {
   const comp = leagueCompetition();
-  if (!comp || comp.sport !== "rugby") return null;
-  const fixtures = await fetchRugbyFixtures(comp);
+  if (!comp) return null;
+  const rugby = comp.sport === "rugby";
+  const fixtures = rugby ? await fetchRugbyFixtures(comp)
+    : await fetchCompetitionFixtures(localStorage.getItem("wcf_apikey") || "",
+                                     comp.apiLeagueId, comp.season);
   const held = S.fixtures || [];
   /* Never trade a fuller list for a thinner one. A feed hiccup that answers
      with nothing, or with a fraction of a season, must not blank the calendar
@@ -17271,9 +17293,11 @@ async function refreshRugbyFixtures() {
   try { localStorage.setItem(fixtureCheckKey(), String(Date.now())); } catch { /* private mode */ }
   const same = JSON.stringify(fixtures) === JSON.stringify(held);
   if (same) return { changed: false, count: fixtures.length, moved: 0 };
-  const roundOrder = rugbyRoundOrder(fixtures);
+  /* Rugby's round order is derived from its fixtures; football's comes from
+     its own endpoint and does not move when a kick-off does, so it is left. */
+  const roundOrder = rugby ? rugbyRoundOrder(fixtures) : S.roundOrder;
   const { error } = await S.sb.from("competition_pools")
-    .update({ fixtures, round_order: roundOrder })
+    .update(rugby ? { fixtures, round_order: roundOrder } : { fixtures })
     .eq("competition_key", compKeyOf(comp));
   if (error) throw new Error(error.message);
   S.fixtures = fixtures; S.roundOrder = roundOrder;
@@ -17406,7 +17430,7 @@ async function setDealMode(on) {
 function renderFixturesCard() {
   const card = $("adm-fix-card");
   if (!card) return;
-  const on = sportOf() === "rugby" && !!leagueCompetition();
+  const on = !!leagueCompetition();
   card.classList.toggle("hidden", !on);
   if (!on) return;
   const weeks = matchweeksOf(S.fixtures || []);

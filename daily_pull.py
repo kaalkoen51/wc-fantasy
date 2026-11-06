@@ -30,6 +30,7 @@ Environment variables:
 """
 
 import argparse
+import html
 import json
 import os
 import re
@@ -943,6 +944,83 @@ def parse_competition_key(key: str):
         return None
 
 
+def parse_api_fixture(f: dict) -> dict:
+    """One API-Football fixture in the shape the app stores -- parseApiFixture
+    in app.js, field for field. Keep the two in sync: the app matches stats to
+    fixtures by these fields, so a drift here is a drift in every lock time."""
+    fx, teams = f.get("fixture") or {}, f.get("teams") or {}
+    goals, league = f.get("goals") or {}, f.get("league") or {}
+    ko = fx.get("date")
+    return {
+        "fixture_id": fx.get("id"),
+        "home": html.unescape((teams.get("home") or {}).get("name") or ""),
+        "away": html.unescape((teams.get("away") or {}).get("name") or ""),
+        "kickoff_utc": ko, "date": str(ko or "")[:10],
+        "status": (fx.get("status") or {}).get("short") or "NS",
+        "round": league.get("round") or None,
+        "home_score": goals.get("home"), "away_score": goals.get("away"),
+    }
+
+
+def plan_fixture_refresh(held: list, fresh: list):
+    """The list to write, or None to leave the pool alone, and why.
+
+    Fixtures only. A competition's fixture list is written once, when its pool
+    is loaded, and nothing re-read it -- so Premier League kick-off times stayed
+    as they were in August: every match provisionally at 15:00 UK on the
+    Saturday, long after the TV picks moved them. Reported as "there is a game
+    on now and the app says every game is tomorrow at 5pm"; 5pm is 15:00 UK in
+    South Africa. Every lock and window in a league is computed from this list.
+
+    Never a thinner list for a fuller one: a feed hiccup answering with nothing,
+    or a fraction of a season, must not blank the calendar everything else is
+    computed from. Pure, so the cases are pinned by tests."""
+    if not fresh:
+        return None, "the feed returned no fixtures"
+    if len(fresh) < len(held or []) / 2:
+        return None, f"the feed returned {len(fresh)} fixtures against {len(held)} held"
+    if fresh == (held or []):
+        return None, "unchanged"
+    by_id = {f.get("fixture_id"): f for f in held or []}
+    moved = sum(1 for f in fresh if (h := by_id.get(f["fixture_id"]))
+                and h.get("kickoff_utc") != f["kickoff_utc"])
+    return fresh, f"{moved} kick-off time(s) changed"
+
+
+def refresh_competition_fixtures(key: str, league_id: int, season: int, dry_run: bool) -> None:
+    supabase_url = require_env("SUPABASE_URL", "Supabase project URL").rstrip("/")
+    service_key = require_env("SUPABASE_SERVICE_KEY", "Supabase service role key")
+    auth = {"apikey": service_key, "Authorization": f"Bearer {service_key}"}
+    try:
+        held_resp = requests.get(f"{supabase_url}/rest/v1/competition_pools",
+                                 params={"competition_key": f"eq.{key}", "select": "fixtures"},
+                                 headers=auth, timeout=30)
+        held = (held_resp.json() or [{}])[0].get("fixtures") or [] if held_resp.ok else None
+        if held is None:
+            print(f"  {key}: could not read the stored fixtures ({held_resp.status_code}); left alone")
+            return
+        fresh = [parse_api_fixture(f) for f in
+                 api_get("fixtures", {"league": league_id, "season": season}).get("response", [])]
+    except (requests.RequestException, ValueError) as e:
+        # A fixture refresh is a side job: it must never fail the stats pull.
+        print(f"  {key}: fixture refresh skipped ({e})")
+        return
+    write, why = plan_fixture_refresh(held, fresh)
+    if write is None:
+        print(f"  {key}: fixtures left alone — {why}")
+        return
+    if dry_run:
+        print(f"  [dry-run] {key}: would rewrite fixtures — {why}")
+        return
+    resp = requests.patch(f"{supabase_url}/rest/v1/competition_pools",
+                          params={"competition_key": f"eq.{key}"},
+                          headers={**auth, "Content-Type": "application/json",
+                                   "Prefer": "return=minimal"},
+                          json={"fixtures": write}, timeout=30)
+    print(f"  {key}: fixtures {'re-read' if resp.ok else 'NOT written'} — {why}"
+          + ("" if resp.ok else f" ({resp.status_code}: {resp.text[:200]})"))
+
+
 def run_competition_pulls(date: str, mock: bool, dry_run: bool) -> None:
     """Pull every competition whose app-admin scheduled toggle is on into the
     shared competition_stats — one pull serves every league on it."""
@@ -957,6 +1035,8 @@ def run_competition_pulls(date: str, mock: bool, dry_run: bool) -> None:
             print(f"  skip competition_key {key!r} (not an API-Football key)")
             continue
         league_id, season = parsed
+        if not mock:
+            refresh_competition_fixtures(key, league_id, season, dry_run)
         rows = pull_competition_rows(date, league_id, season, mock, key)
         print(f"  {key} (league {league_id}, season {season}): {len(rows)} player rows")
         if not rows:
